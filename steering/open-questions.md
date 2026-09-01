@@ -335,9 +335,21 @@ decodes above). It is 609 instructions across nine loops, holds only two float c
 
 So **`RT60 = slot5 × 0.1` seconds**, 0.6–5.0 s across the presets — exactly what
 `src/audio/effects.ts` had guessed, now confirmed — and the damping is a one-pole
-`y = a·x + (1−a)·y` with `a` from slot 10, which is also where that file had put it. What remains
-genuinely unknown is only the **topology**: how the ten taps feed one another, and where the damping
-sits in that chain.
+`y = a·x + (1−a)·y` with `a` from slot 10, which is also where that file had put it. **The nine loops are four kernels**, transcribed into `src/audio/effects.ts` and tested. Loops D, E
+and F at `0x1500`, `0x16c0` and `0x17e0` are the *same* kernel at different buffer offsets, and the
+three long-span loops are the outer iteration that runs the short ones once per tap:
+
+| loop | at | what it computes |
+|---|---|---|
+| A | `0x12f0` | `out[i] = (x[i] + x[i + d]) * g` — a tap sum |
+| B | `0x1340` | `y = a·y + b·x[i]`, stored at `buf[i + d]`, `y` kept in the state at `[r12+0x10]` — the damping one-pole |
+| C | `0x13b0` | `prev = y; y = a·prev + b·buf[i] + c·older; buf[i] -= y` — an allpass section; the subtraction is what makes it one |
+| D/E/F | `0x1500`… | `acc[i] += x[i]; y = a·y + b·x[i]; out[i] = g·(y + send[i])` — a damped comb with an injected send |
+
+⚠️ **What remains genuinely unknown is only the topology**: which buffer feeds which kernel, in what
+order, and where the damping sits between the taps. The pieces are now in the codebase; wiring them
+by ear would give a reverb that sounds fine and is not the game's, which is the exact failure this
+project has caught in its own past work three times this session.
 
 ⚠️ Worth doing, and worth doing before more of the mix is tuned: **71,781 of 129,696 instrument
 placements (55%) send to reverb.** Until it is done, `src/audio/effects.ts` carries a Schroeder

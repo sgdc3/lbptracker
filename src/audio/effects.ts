@@ -283,3 +283,91 @@ export function reverbPreset(setting: number): readonly number[] {
   const index = REVERB_REMAP[setting] ?? REVERB_REMAP[0];
   return REVERB_PRESETS[index] ?? REVERB_PRESETS[0];
 }
+
+/**
+ * The four kernels of `sub_0x11a0`, transcribed.
+ *
+ * Its nine loops are four distinct kernels: D, E and F are the same damped comb
+ * at different buffer offsets, and the three long-span loops are the outer
+ * iteration that runs the short ones once per tap. Each takes a block of
+ * samples, since the engine processes 256 frames at a time.
+ *
+ * ⚠️ **These are the pieces, not the machine.** How they are chained -- which
+ * buffer feeds which, in what order, and where the damping sits between the
+ * taps -- is the topology, and that is still the one thing unread. Wiring them
+ * up by taste would produce a reverb that sounds fine and is not the game's,
+ * which is the failure mode this project keeps finding in its own past work.
+ */
+
+/** Loop A at `0x12f0`: `out[i] = (x[i] + x[i + offset]) * gain`. */
+export function combSum(
+  x: Float32Array, out: Float32Array, offset: number, gain: number, n: number,
+): void {
+  for (let i = 0; i < n; i += 1) out[i] = (x[i] + x[i + offset]) * gain;
+}
+
+/**
+ * Loop B at `0x1340`: a one-pole written into a delayed slot.
+ *
+ * `y = a*y + b*x[i]` with the result stored at `buf[i + offset]`, and the final
+ * `y` written back to the state at `[r12+0x10]` — so the filter's memory
+ * survives the block, as it must.
+ */
+export function onePoleInto(
+  buf: Float32Array, offset: number, a: number, b: number, y0: number, n: number,
+): number {
+  let y = y0;
+  for (let i = 0; i < n; i += 1) {
+    y = a * y + b * buf[i];
+    buf[i + offset] = y;
+  }
+  return y;
+}
+
+/**
+ * Loop C at `0x13b0`: an allpass-shaped section.
+ *
+ * ```
+ * prev = y;  y = a*prev + b*buf[i] + c*older;  buf[i] = buf[i] - y;  older = prev
+ * ```
+ *
+ * The `buf[i] - y` is what makes it allpass rather than a comb.
+ */
+export function allpassSection(
+  buf: Float32Array, a: number, b: number, c: number, y0: number, older0: number, n: number,
+): { y: number; older: number } {
+  let y = y0;
+  let older = older0;
+  for (let i = 0; i < n; i += 1) {
+    const prev = y;
+    const value = buf[i];
+    y = a * prev + b * value + c * older;
+    buf[i] = value - y;
+    older = prev;
+  }
+  return { y, older };
+}
+
+/**
+ * Loops D, E and F at `0x1500`, `0x16c0` and `0x17e0` — the same kernel three
+ * times, at different offsets into the state's buffers.
+ *
+ * ```
+ * acc[i] += x[i]                       ; the tap accumulates
+ * y = a*y + b*x[i]                     ; damped
+ * out[i] = gain * (y + send[i])
+ * ```
+ */
+export function dampedComb(
+  x: Float32Array, acc: Float32Array, send: Float32Array, out: Float32Array,
+  a: number, b: number, gain: number, y0: number, n: number,
+): number {
+  let y = y0;
+  for (let i = 0; i < n; i += 1) {
+    const value = x[i];
+    acc[i] += value;
+    y = a * y + b * value;
+    out[i] = gain * (y + send[i]);
+  }
+  return y;
+}
