@@ -14,7 +14,7 @@ import { findSample, readBank, type FsbBank, type FsbSample } from '../src/core/
 import { decodeIma, toFloatChannels } from '../src/core/ima.ts';
 import { DEFAULT_SLOT, type Instrument } from '../src/core/instrument.ts';
 import { resolveSlot } from '../src/core/instrument.ts';
-import { pitchRatio, voiceFor } from '../src/core/voice.ts';
+import { pitchRatio, velocityGain, voiceFor } from '../src/core/voice.ts';
 import { sampleData } from '../src/core/fsb.ts';
 
 /**
@@ -238,6 +238,36 @@ function playNote(note: number, atSeconds = 0, velocity = 96): void {
   });
 }
 
+/**
+ * The control: the same sample, the same pitch, through the browser's own
+ * resampler instead of ours.
+ *
+ * `AudioBuffer` carries its own sampleRate, so the browser does the 22050 ->
+ * device conversion with whatever interpolator it ships, and `playbackRate`
+ * only applies the musical ratio. If this sounds clean and our path does not,
+ * the fault is ours. If both sound the same, the character is in the asset --
+ * IMA ADPCM at 4 bits is not transparent -- and we are chasing nothing.
+ */
+function playNoteViaBrowser(note: number, atSeconds = 0): void {
+  if (!instrument || !context || !master) return;
+  const slotIndex = resolveSlot(instrument, note);
+  const slot = loaded[slotIndex];
+  if (!slot) return;
+
+  const data = slot.channels[0];
+  const buffer = context.createBuffer(1, data.length, slot.sample.freq);
+  buffer.copyToChannel(data, 0);
+
+  const source = new AudioBufferSourceNode(context, {
+    buffer,
+    playbackRate: pitchRatio(instrument.slots[slotIndex], note, 120),
+  });
+  const gain = new GainNode(context, { gain: velocityGain(96) * Math.SQRT1_2 });
+  source.connect(gain);
+  gain.connect(master);
+  source.start(context.currentTime + atSeconds);
+}
+
 function describe(note: number): string {
   if (!instrument) return '';
   const slotIndex = resolveSlot(instrument, note);
@@ -261,16 +291,24 @@ function buildKeyboard(): void {
     key.textContent = noteName(note);
     key.title = 'click to play';
     key.addEventListener('click', () => {
-      playNote(note);
-      $('detail').textContent = describe(note);
+      if (engine === 'ours') playNote(note);
+      else playNoteViaBrowser(note);
+      $('detail').textContent =
+        `${describe(note)} — ${engine === 'ours' ? 'our mixer' : "browser"}`;
     });
     keys.append(key);
   }
 }
 
+/** Which engine the buttons and keys use. The A/B that answers "is it us?". */
+let engine: 'ours' | 'browser' = 'ours';
+
 function playSequence(notes: number[], stepSeconds: number): void {
-  notes.forEach((note, i) => playNote(note, i * stepSeconds));
-  $('detail').textContent = `${notes.length} notes, ${stepSeconds.toFixed(3)}s apart`;
+  const play = engine === 'ours' ? playNote : playNoteViaBrowser;
+  notes.forEach((note, i) => play(note, i * stepSeconds));
+  $('detail').textContent =
+    `${notes.length} notes, ${stepSeconds.toFixed(3)}s apart — ` +
+    `${engine === 'ours' ? 'our mixer' : "the browser's resampler"}`;
 }
 
 function init(): void {
@@ -320,6 +358,10 @@ function init(): void {
     const name = (event.target as HTMLSelectElement).value;
     node?.port.postMessage({ type: 'interpolator', name });
     log(`interpolator: ${name}`);
+  });
+  $<HTMLSelectElement>('engine').addEventListener('change', (event) => {
+    engine = (event.target as HTMLSelectElement).value as 'ours' | 'browser';
+    log(`engine: ${engine === 'ours' ? 'our mixer + worklet' : "the browser's own resampler"}`);
   });
   const gain = $<HTMLInputElement>('gain');
   gain.addEventListener('input', () => {
