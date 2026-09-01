@@ -255,10 +255,41 @@ first written up; it is four instructions of table lookup (`lea rcx, [rip+…]; 
 ret`). The eboot also contains **no Sony audio-DSP library strings at all**, so the "FMOD SFXREVERB
 or Sony's plugin" framing that opened this question was wrong on both halves.
 
-**What to try next, and it is not another pattern search:** find the reverb object's *owner*.
-`v0x3fcfe0` builds it and stores the buffer at `[obj+0xe0]` and the two states at `[obj+0xf0]` and
-`[obj+0xf8]`. Whoever calls `v0x3fcfe0` holds that object and must drive it once per audio block —
-work forward from the callers of the construction rather than backward from the data.
+### FOUND: the process loop is not in the eboot at all
+
+`v0x3fcfe0` has no callers because it is a **callback**, and working forward from where it is
+*registered* found the whole thing in four steps:
+
+1. `v0x3fcfe0`, `v0x3fd260` and `v0x3fd3d0` are each `lea`-referenced exactly once, at `v0x3e64c6`,
+   `v0x3e64d2` and `v0x3e64de` — three consecutive stores into a stack struct.
+2. That struct is an **`FMOD_DSP_DESCRIPTION`**, and `v0x3e6491` writes its name as a pair of
+   immediates: `0x6576655220534d53` + `0x6272` = **"SMS Reverb"**. The slots line up with FMOD Ex's
+   layout — create `+0x28`, release `+0x30`, **read `+0x40`**, numparameters `+0x50`, paramdesc
+   `+0x58`, setparameter `+0x60`, getparameter `+0x68`.
+3. The **read callback is the one field not written from a `lea`**: `v0x3e64f6` loads it from the
+   global `v0x10cc3f0`. That is why every search for it inside the eboot failed — there was nothing
+   to find. The relocation on that global is `R_X86_64_GLOB_DAT` against symbol
+   **`iO5jJEuFaSo#D#E`**, undefined, i.e. an **import**.
+4. Library id `D` = 3 in the eboot's import table is **`FMODSmsReverb`**.
+
+**So the reverb lives in `fmodsmsreverb.prx`, exactly as the sequencer's synth lives in
+`fmodextinput.prx`** — and it is on disk beside it, 14,898 bytes:
+`D:\PS4Games\CUSA00063\gamedata_orbis\spumodsmsreverb.prx`. It **exports `iO5jJEuFaSo#C#A`**,
+the same NID the eboot imports as the DSP's read callback.
+
+**Everything needed to finish it:**
+
+| | |
+|---|---|
+| module | `fmodsmsreverb.prx`, 14,898 bytes — smaller than the synth's 23,614 |
+| code segment | SELF segment `[1]`, `off 0x780`, `filesz 0x2a98` → **`file = vaddr + 0x780`** |
+| the process loop | the export **`iO5jJEuFaSo`** |
+| what the eboot feeds it | the state built by `v0x3fcfe0`, configured by `v0x3fcd50` (decoded above), with the 307 KB buffer at `[state+0x18]` |
+
+⚠️ **And this corrects what this file said two entries ago.** "The reverb is game code, so it can be
+transcribed the way the sequencer's synth was" was right about the conclusion and wrong about the
+place: it is not in the eboot, it is in a PRX — which is *more* like the synth than claimed, and
+readable by exactly the method that worked there.
 
 ⚠️ Worth doing, and worth doing before more of the mix is tuned: **71,781 of 129,696 instrument
 placements (55%) send to reverb.** Until it is done, `src/audio/effects.ts` carries a Schroeder
