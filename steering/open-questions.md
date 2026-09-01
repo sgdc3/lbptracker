@@ -168,8 +168,10 @@ Recovered as names, sizes and defaults only:
   remains is not naming but **implementing**: the three LFOs and the two-bus output are recovered
   and not yet in the mixer, and **what each LFO modulates is only partly established** — LFO 2's
   gain target is measured, LFO 1's pitch target is a natural reading, LFO 3's was not traced.
-  Identifying the oscillator at stub `0x130` would settle all three; its anchor is recorded in the
-  data-model file.
+  The oscillator at stub `0x130` is **identified** — it is libc's sine/cosine, `ZtjspkJQ+vw`, with
+  an integer selector in `edi` — so what is left is following each LFO's result to its destination,
+  not naming the function. The parse that pinned it, and the `PT_SCE_DYNLIBDATA` type mix-up that
+  had blocked it, are written up in [sequencer-data-model.md](sequencer-data-model.md).
 
   ⚠️ **Read the failure record below with this in mind: the shape analysis had already seen the
   answer and mis-read it.** It filed index 13 under "near-boolean — 6 distinct values, 1.0 ×69 and

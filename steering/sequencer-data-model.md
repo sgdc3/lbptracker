@@ -1159,12 +1159,7 @@ renderer (`0x2730` and `0x2588`) indexed by layer and handed to an imported func
 initialiser computes and its shape — a ratio centred on 1, an offset centred on 0. The names above
 follow from that shape and from the corpus, not from the consumer.
 
-⚠️ **`sub_0x130` is unidentified.** It is PLT index 5, symbol index 5, one of the three imported NIDs
-that did not fall to a name search (`H2e8t5ScQGc`, `P330P3dFF68`, `ZtjspkJQ+vw`). The anchor to
-finish it: the JUMP_SLOT relocations are 24-byte `Elf64_Rela` records starting at file `0x5750`, the
-NID strings run from file `0x5543` at 16-byte spacing, and the string table's leading NUL is at
-`0x54ce` — what is missing is the `Elf64_Sym` array that joins them, which resisted a search by
-guessed base address. Parse the SCE dynamic tags properly rather than guessing.
+**`sub_0x130` is `ZtjspkJQ+vw`, libc's sine/cosine — see the section below.**
 
 ## `Params[15..26]` — three LFOs and an output stage. The block is complete
 
@@ -1245,8 +1240,57 @@ The block is a small subtractive synth: stack, filter, two envelopes, three LFOs
 ⚠️ **What the LFOs modulate is only partly established.** LFO 2's result multiplies the per-layer
 gain, which is measured. LFO 1 is combined with the per-layer detune in a region carrying the same
 `0.05` constant the detune itself uses, so pitch is the natural reading — natural, not proven. LFO
-3's target was not traced. **`sub_0x130`, the oscillator, is still unidentified** — see the anchor
-recorded under `Params[0..2]`; naming it would settle all three targets at once.
+3's target was not traced. **The oscillator itself is now identified** (below), which removes one
+reason the targets were unclear; what is left is following each LFO's result to its destination.
+
+## The oscillator at stub `0x130` — libc's sine/cosine
+
+### How the imports were pinned
+
+Guessing at this module's tables had already produced one wrong address (the scale table), so this
+was done by parsing them. The route, all of it reusable:
+
+- The fSELF's ELF header is at file `0x120`. Its program headers give `PT_SCE_DYNLIBDATA` as type
+  **`0x61000000`** — *not* `0x6fffff00`, which is `PT_SCE_COMMENT`. Having those two backwards is
+  what sent the first attempt to the wrong blob.
+- The dynlibdata blob is at file **`0x54a0`**, and `PT_DYNAMIC` lands inside it, at file **`0x5938`**.
+- Every `DT_SCE_*` value is an offset into that blob: `STRTAB 0x18` → `0x54b8`, `SYMTAB 0x160` →
+  `0x5600` (14 symbols × 24 bytes), `JMPREL 0x2b0` → `0x5750` (9 entries), `RELA 0x388` → `0x5828`.
+- A PLT stub's `push N` is its `JMPREL` index, and that entry's `r_info >> 32` is the symbol index.
+
+| stub | JMPREL | symbol | NID | what |
+|---|---|---|---|---|
+| `0xe0` | 0 | 2 | `8zTFvBIAIN8` | `memset` |
+| `0x120` | 4 | 10 | `Ou3iL1abvng` | `__stack_chk_fail` |
+| **`0x130`** | **5** | **5** | **`ZtjspkJQ+vw`** | **sine/cosine** |
+| `0x140` | 6 | 6 | `cpCOXWMgha0` | `rand` |
+| `0x150` | 7 | 7 | `wuAQt-j+p4o` | `exp2f` |
+
+Four of those five were already known semantically — `memset` zeroing the output buffer,
+`__stack_chk_fail` in the epilogues, `rand` from its `2^-30` scaling, `exp2f` from the `× 1/12` — and
+the parse agrees with all four. That agreement is what makes the fifth trustworthy. The string table
+also names the libraries: `libkernel` is library 1, `libc` is library 2, and the `#B#C` group holding
+`memset`, `rand`, `exp2f`, `memcpy` and this one is **libc**.
+
+### What it is
+
+`ZtjspkJQ+vw` is imported by the **eboot** as well (as `#1#0`), where it has **368 call sites** — and
+there the idiom is unmistakable:
+
+```
+xor edi, edi ; vmovss xmm0, angle ; call f     -> A
+mov edi, 1   ; vmovss xmm0, angle ; call f     -> B      ; the SAME angle
+vunpcklps xmm0, xmm1, xmm0                               ; the two packed as a float2
+```
+
+One entry point, an integer selector in `edi`, and the two results packed into a pair: **sine and
+cosine**. The arguments across those sites settle the unit — `3.14159`, `-3.14159`, `0.392699`
+(π/8), and `0.0174533` (π/180) all feed the same calls.
+
+⚠️ **Which of `edi = 0` and `edi = 1` is the sine was not pinned.** It does not matter here, and that
+is measurable rather than hopeful: all six of the sequencer's calls pass `edi = 0`, and the three LFO
+phases are randomised in `[0, 2π)` at note start, so sine versus cosine is a constant offset on an
+already-random phase. It would matter if a phase were ever authored, and none is.
 
 ## The note word — 4 bytes, decoded
 
