@@ -28,6 +28,7 @@ import {
   evaluateParam,
 } from '../src/core/envelope.ts';
 import { resolveSlot } from '../src/core/instrument.ts';
+import { swungFrame } from '../src/core/swing.ts';
 import { LFO_PARAMS, OUTPUT_PARAMS, STACK_PARAMS } from '../src/core/params.ts';
 import {
   channelVolume,
@@ -285,7 +286,10 @@ for (const [eventIndex, event] of events.entries()) {
   // the voice stays flat.
   const base = event.points[0];
   const automation = event.points.map((p) => ({
-    frame: Math.round(p.step * framesPerStep),
+    frame: Math.round(
+      swungFrame(event.step + p.step, framesPerStep, seq.swing) -
+        swungFrame(event.step, framesPerStep, seq.swing),
+    ),
     pitch: quantise(p.pitch, track.scale) - note,
     gain: base.volume > 0 ? p.volume / base.volume : 1,
   }));
@@ -315,8 +319,15 @@ for (const [eventIndex, event] of events.entries()) {
       P(OUTPUT_PARAMS.level) *
       stackGain,
     pan: track.pan,
-    startFrame: Math.round(event.step * framesPerStep),
-    endFrame: Math.round((realEnd.get(eventIndex) ?? event.step + event.durationSteps) * framesPerStep),
+    // Swing bends the step clock, so every frame position goes through it.
+    startFrame: Math.round(swungFrame(event.step, framesPerStep, seq.swing)),
+    endFrame: Math.round(
+      swungFrame(
+        realEnd.get(eventIndex) ?? event.step + event.durationSteps,
+        framesPerStep,
+        seq.swing,
+      ),
+    ),
     envelope: evaluateAdsr(p, ADSR_PARAMS, mod),
     filter: {
       settings: {
@@ -380,7 +391,7 @@ mixer.render(left, right, { echo: [echoL, echoR], reverb: [reverbL, reverbR] });
 // The two sends, mixed back over the dry signal. ⚠️ The echo's topology and the
 // reverb itself are not measured -- see src/audio/effects.ts, which says which
 // parts are the game's and which are ours.
-const echo = new Echo(RATE, seq.echoTime, seq.tempo, seq.echoFeedback, seq.echoMix);
+const echo = new Echo(RATE, seq.echoTime, framesPerStep, seq.echoFeedback, seq.echoMix);
 const preset = reverbPreset(seq.reverb);
 const reverb = new Reverb(RATE, preset, reverbNorm);
 // No extra wet gain here: the preset's own millibel levels are the wet level,
@@ -402,7 +413,8 @@ for (let i = 0; i < frames; i += 1) {
 const rel = (x: number) => `${(100 * Math.sqrt(x / dryEnergy)).toFixed(1)}%`;
 console.log(`effect level against the dry mix — echo ${rel(echoEnergy)}, reverb ${rel(reverbEnergy)}`);
 console.log(
-  `echo ${seq.echoTime} beats = ${echo.seconds.toFixed(3)}s at ${seq.tempo} BPM, ` +
+  `echo ${seq.echoTime} = ${Math.round(seq.echoTime * 8)} steps = ` +
+    `${echo.seconds.toFixed(3)}s at ${seq.tempo} BPM, ` +
     `feedback ${seq.echoFeedback}, mix ${seq.echoMix}; ` +
     `reverb setting ${seq.reverb} -> preset [${preset.join(', ')}]`,
 );

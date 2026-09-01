@@ -43,36 +43,43 @@ export class Echo {
   readonly seconds: number;
 
   /**
-   * @param echoTime the sequencer's field, read as **beats** (see below).
-   * @param tempo the sequencer's tempo in BPM, which is what makes it beats.
+   * @param echoTime the sequencer's field.
+   * @param framesPerStep the sequencer's step length in output frames.
    *
-   * WARNING: **the unit is ours, and it replaced a worse guess.** The field used
-   * to be read as `echoTime * 0.5` seconds, which is tempo-independent -- it
-   * cannot be right in a sequencer whose whole grid is tempo-locked, since the
-   * same project at half the tempo would echo off the beat.
+   * **The unit is measured.** `v0x1c5d32` stores `EchoTime * 0.5` into the audio
+   * state at `[state+0x1a30]`, and `fmodextinput.prx` `0x0faa` turns that into a
+   * delay:
    *
-   * Beats is the reading the corpus supports: across 129,696 placements the
-   * field takes 2 (67,140), 1 (48,374), 1.5 (12,955), 4 (750) and 3 (321), with
-   * a thin continuous tail (1.2, 1.7, 2.8). That is a slider whose detents sit
-   * on musical divisions, not a time in seconds -- as seconds those values would
-   * be 1-4 s, far past the 10-5000 ms an FMOD echo accepts at its low end and
-   * implausible as defaults.
+   * ```
+   * eax = (int)(stored * 16 + 0.5)       ; round to a whole number of steps
+   * ecx = (int)(720000 / tempo)          ; frames in one step
+   * ecx = ecx * eax
+   * ecx = ecx & ~0xf                     ; aligned down to 16 frames
+   * ```
    *
-   * What is *not* established is the beat length the field counts, and the
-   * engine side gives no help: the only `DSP::setParameter` caller outside the
-   * reverb applier is `v0x3e41d1`, a generic dispatcher behind a four-entry jump
-   * table at `v0x3e4220` that forwards ids 6..20 to whatever DSP it is handed.
-   * Nothing names the echo's parameters. See open question 2.
+   * `stored * 16` is `EchoTime * 8`, so the delay is **`round(EchoTime * 8)`
+   * steps** -- eight steps, two beats, per unit of the field.
+   *
+   * The corpus agrees and is worth keeping as the sanity check: `EchoTime` is
+   * 2.00 on 189 of 338 sequencers, which is 16 steps, **a whole bar**; 1.00 on
+   * 95 (half a bar); 1.50 on 47. Those are bar-relative delays, which is what a
+   * musician would set.
+   *
+   * WARNING: an earlier reading called the field **beats**, which made every
+   * echo four times too fast.
    */
-  constructor(sampleRate: number, echoTime: number, tempo: number, feedback: number, mix: number) {
-    const beats = Math.max(echoTime, 0);
-    const beatSeconds = tempo > 0 ? 60 / tempo : 0.5;
-    // WARNING: the ceiling is ours too. The old code clamped at one second on
-    // the strength of an unmeasured "the engine's buffer is one second"; at
-    // slow tempos four beats exceeds that, and silently folding a four-beat
-    // echo down to one beat would be a worse error than a longer buffer.
-    this.seconds = Math.min(beats * beatSeconds, 4);
-    const size = Math.max(1, Math.round(this.seconds * sampleRate));
+  constructor(
+    sampleRate: number,
+    echoTime: number,
+    framesPerStep: number,
+    feedback: number,
+    mix: number,
+  ) {
+    const steps = Math.max(0, Math.trunc(Math.max(echoTime, 0) * 0.5 * 16 + 0.5));
+    // `& ~0xf` in the engine: the delay is aligned down to a multiple of 16
+    // frames, which is its block granularity.
+    const size = Math.max(1, Math.trunc(steps * framesPerStep) & ~0xf);
+    this.seconds = size / sampleRate;
     this.left = new Float32Array(size);
     this.right = new Float32Array(size);
     this.delay = size;

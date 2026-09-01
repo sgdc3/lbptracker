@@ -127,3 +127,19 @@ test('a longer decay parameter gives a longer tail', () => {
   const long = tail(50);
   assert.ok(long > short * 2, `decay 6 gave ${short.toFixed(2)}s, decay 50 gave ${long.toFixed(2)}s`);
 });
+
+test('the echo delay is eight steps per unit of EchoTime', async () => {
+  const { Echo } = await import('../src/audio/effects.ts');
+  // v0x1c5d32 stores EchoTime * 0.5; 0x0faa rounds `stored * 16` to a whole
+  // number of steps and multiplies by the step length, then aligns to 16
+  // frames. So the delay is round(EchoTime * 8) steps.
+  const fps = 4000; // 180 BPM at 48 kHz
+  for (const [field, steps] of [[1, 8], [2, 16], [1.5, 12], [4, 32]] as [number, number][]) {
+    const echo = new Echo(48000, field, fps, 0.5, 0.5);
+    assert.equal(echo.seconds, ((steps * fps) & ~0xf) / 48000, `EchoTime ${field}`);
+  }
+  // ⚠️ The corpus is the sanity check: EchoTime is 2.00 on 189 of 338
+  // sequencers, which is 16 steps -- a whole bar -- and 1.00 on 95, half a bar.
+  const bar = new Echo(48000, 2, fps, 0.5, 0.5);
+  assert.equal(bar.seconds, (16 * fps) / 48000, 'a full bar at four steps to the beat');
+});
