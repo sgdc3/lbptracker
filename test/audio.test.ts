@@ -382,3 +382,93 @@ test('rendering is deterministic across runs', () => {
   };
   assert.deepEqual(render(), render());
 });
+
+test('looping is continuous at the wrap — the high-note transient', () => {
+  // A sine whose loop region holds an exact number of cycles: the looped signal
+  // is then a pure tone, and any discontinuity at the wrap is ours. The frames
+  // after loop.end are SILENT, which is what an interpolator reading past the
+  // loop pulls in.
+  //
+  // ⚠️ The playback rate must be FRACTIONAL. At rate 1.0 every position lands
+  // on an integer, no interpolation crosses the boundary, and the test passes
+  // whether or not the bug is present -- which is how the first version of it
+  // was written, and it was vacuous.
+  const rate = 48000;
+  const freq = 500;
+  const loopStart = 480;
+  const loopEnd = loopStart + 96 * 20;
+  const data = new Float32Array(loopEnd + 64);
+  for (let i = 0; i < loopEnd; i += 1) {
+    data[i] = Math.sin((2 * Math.PI * freq * i) / rate) * 0.8;
+  }
+
+  const sample = {
+    channels: [data],
+    sampleRate: rate,
+    loop: { start: loopStart, end: loopEnd },
+  };
+
+  const playbackRate = 0.5442; // what a 48 kHz sample an octave down actually gets
+  const outHz = freq * playbackRate;
+  const allowed = 0.8 * Math.SQRT1_2 * 2 * Math.sin((Math.PI * outHz) / rate);
+
+  const worstStep = (interp: typeof linear): number => {
+    const mixer = new Mixer(rate, interp);
+    mixer.play({ sample, playbackRate, gain: 1, pan: 0.5, endFrame: 20000 });
+    const left = new Float32Array(20000);
+    const right = new Float32Array(20000);
+    mixer.render(left, right);
+    let worst = 0;
+    for (let i = 900; i < 19000; i += 1) {
+      worst = Math.max(worst, Math.abs(left[i] - left[i - 1]));
+    }
+    return worst;
+  };
+
+  for (const [name, interp] of [['cubic', cubic], ['sinc8', sinc8]] as const) {
+    const worst = worstStep(interp);
+    assert.ok(
+      worst < allowed * 1.1,
+      `${name}: worst step ${worst.toFixed(4)} against ${allowed.toFixed(4)} for a ` +
+        `continuous sine — the loop wrap is discontinuous`,
+    );
+
+    // And the same interpolator ignoring the loop must FAIL that bar, or this
+    // test proves nothing.
+    const blind: typeof linear = (d, p) => interp(d, p);
+    assert.ok(
+      worstStep(blind) > allowed * 1.1,
+      `${name}: ignoring the loop should have been caught, so this assertion is vacuous`,
+    );
+  }
+
+  // Still sounding well past the end of the sample data.
+  const mixer = new Mixer(rate, sinc8);
+  mixer.play({ sample, playbackRate, gain: 1, pan: 0.5, endFrame: 20000 });
+  const left = new Float32Array(20000);
+  const right = new Float32Array(20000);
+  mixer.render(left, right);
+  let tail = 0;
+  for (let i = 19000; i < 19500; i += 1) tail = Math.max(tail, Math.abs(left[i]));
+  assert.ok(tail > 0.3, 'the loop should still be sounding past the sample end');
+});
+
+test('the attack is not wrapped into the loop', () => {
+  // Before reaching loop.start the taps behind the cursor are the attack and
+  // must be read as they stand.
+  const data = new Float32Array(200);
+  for (let i = 0; i < 100; i += 1) data[i] = 1;       // attack: DC 1
+  for (let i = 100; i < 200; i += 1) data[i] = -1;    // loop region: DC -1
+  const mixer = new Mixer(48000, cubic);
+  mixer.play({
+    sample: { channels: [data], sampleRate: 48000, loop: { start: 100, end: 200 } },
+    playbackRate: 1, gain: 1, pan: 0,
+    endFrame: 400,
+  });
+  const left = new Float32Array(400);
+  const right = new Float32Array(400);
+  mixer.render(left, right);
+  assert.ok(Math.abs(left[50] - 1) < 1e-6, 'the attack plays as recorded');
+  assert.ok(Math.abs(left[150] + 1) < 1e-6, 'the loop region plays as recorded');
+  assert.ok(Math.abs(left[350] + 1) < 1e-6, 'and keeps looping');
+});

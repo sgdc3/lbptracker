@@ -144,8 +144,25 @@ Most of it is debris (`CDif` from Cool Edit, `bext`, `acid`, `JUNK`), but two ch
   | `piano_c5` | 30933 | 22361 → 30931 |
   | `piano_c6` | 9966 | 7793 → 9953 |
 
-  All type 0 (forward), count 0 (infinite). ⚠️ **The loop end is INCLUSIVE**; the mixer wants it
-  exclusive, so pass `end + 1`.
+  All type 0 (forward), count 0 (infinite).
+
+  **The loop end is INCLUSIVE** — measured, not assumed: across the 61 looping samples, the wrap is
+  smoother treating it as inclusive (`d[end] → d[start]`) in **56**, against 2 for exclusive and 3
+  too close to call. The mixer wants an exclusive bound, so pass `end + 1`.
+
+  ⚠️ **The loops are not perfectly continuous, and short ones buzz.** Measuring the waveform jump at
+  each wrap against the sample's own typical adjacent step: `piano_c3` jumps **4×**,
+  `eg_d_power_long_a4` 4.2×, `choir_g1` 4.4×, and `power.smp` **69×**. Level continuity is fine
+  (±0.7 dB at worst, so the loops do not pump) — it is phase. How often that jump is heard depends
+  on the loop's length and the playback rate: `piano_c6`'s loop is 2160 frames, 45 ms, wrapping
+  **22 times a second**, and `marimba_c3`'s is 184 frames wrapping **261 times a second**. A
+  listener reported exactly this as a transient on high notes.
+
+  Part of it was ours and is fixed — interpolator taps now wrap inside the loop region instead of
+  reading the frames that follow it in the file. The rest is in the source loops. How the game
+  masks it is **not yet known**; the likeliest answer is that the envelope decays the note before
+  many wraps accumulate, which points back at the instrument's `Params`. Do not paper over it with
+  a crossfade: that would add character the game does not have.
 
   ⚠️ **Skipping this produces a specific, diagnosable symptom**: a note's length becomes the
   sample's length divided by the playback rate, so notes below a slot's base note ring far too long

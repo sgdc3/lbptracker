@@ -107,8 +107,12 @@ class Voice {
       const fade =
         this.release > 0 && this.life < this.release ? this.life / this.release : 1;
 
-      const l = interpolate(srcL, this.position);
-      const r = mono ? l : interpolate(srcR, this.position);
+      // Hand the loop to the interpolator only once the voice is inside it.
+      // Before that the taps behind `loop.start` are the attack and are
+      // correct as they stand; wrapping them would corrupt the note's onset.
+      const region = loop && this.position >= loop.start ? loop : undefined;
+      const l = interpolate(srcL, this.position, region);
+      const r = mono ? l : interpolate(srcR, this.position, region);
       outLeft[i] += l * this.left * fade;
       outRight[i] += r * this.right * fade;
 

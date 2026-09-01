@@ -6,11 +6,18 @@
  * unspecified, differs between engines, and is not FMOD's. See
  * steering/tracker-architecture.md.
  *
- * ⚠️ **Which one FMOD Ex actually uses is open question 7.** Until that is
- * measured, `linear` is the default because it is the most likely and the
- * cheapest, not because it is known to be right. Everything here is behind one
- * signature so swapping is a one-line change and an A/B is trivial.
+ * ⚠️ **Which one FMOD Ex actually uses is still open.** `sinc8` is the default
+ * because it adds least of its own character, not because it is known to match.
+ * Everything here is behind one signature so swapping is a one-line change and
+ * an A/B is trivial.
  */
+
+/** The half-open loop region a voice is currently inside, if any. */
+export interface LoopRegion {
+  readonly start: number;
+  /** Exclusive. */
+  readonly end: number;
+}
 
 /**
  * Sample `data` at fractional position `position`.
@@ -18,22 +25,49 @@
  * Implementations must return 0 outside the buffer rather than reading past
  * the end -- voices are allowed to run off the end of a sample and the mixer
  * relies on that being silent, not a crash.
+ *
+ * ⚠️ When `loop` is given the signal is **periodic** over that region and every
+ * tap must be taken modulo it. Interpolating straight off the array instead
+ * reads the frames that follow `loop.end` in the file -- which are not the
+ * frames that follow it in the looped signal -- and puts a discontinuity at
+ * every wrap. That is audible as a click, and worst on high notes, where the
+ * loop is short and wraps tens of times a second.
  */
-export type Interpolator = (data: Float32Array, position: number) => number;
+export type Interpolator = (
+  data: Float32Array,
+  position: number,
+  loop?: LoopRegion,
+) => number;
+
+/** One tap, wrapped into the loop region when there is one. */
+function tap(data: Float32Array, index: number, loop?: LoopRegion): number {
+  if (loop) {
+    const span = loop.end - loop.start;
+    if (span > 0) {
+      if (index >= loop.end || index < loop.start) {
+        let wrapped = (index - loop.start) % span;
+        if (wrapped < 0) wrapped += span;
+        return data[loop.start + wrapped];
+      }
+    }
+  }
+  return index >= 0 && index < data.length ? data[index] : 0;
+}
 
 /** Nearest-neighbour. Aliases audibly; useful only as a reference point. */
-export const nearest: Interpolator = (data, position) => {
+export const nearest: Interpolator = (data, position, loop) => {
   const i = Math.round(position);
-  return i >= 0 && i < data.length ? data[i] : 0;
+  if (!loop && (i < 0 || i >= data.length)) return 0;
+  return tap(data, i, loop);
 };
 
-/** Linear. The default. */
-export const linear: Interpolator = (data, position) => {
-  if (position < 0 || position >= data.length) return 0;
-  const i = position | 0;
+/** Linear. */
+export const linear: Interpolator = (data, position, loop) => {
+  if (!loop && (position < 0 || position >= data.length)) return 0;
+  const i = Math.floor(position);
   const frac = position - i;
-  const a = data[i];
-  const b = i + 1 < data.length ? data[i + 1] : 0;
+  const a = tap(data, i, loop);
+  const b = tap(data, i + 1, loop);
   return a + (b - a) * frac;
 };
 
@@ -42,11 +76,11 @@ export const linear: Interpolator = (data, position) => {
  * in samplers; included so it can be compared by ear once there is something to
  * compare against.
  */
-export const cubic: Interpolator = (data, position) => {
-  if (position < 0 || position >= data.length) return 0;
-  const i = position | 0;
+export const cubic: Interpolator = (data, position, loop) => {
+  if (!loop && (position < 0 || position >= data.length)) return 0;
+  const i = Math.floor(position);
   const frac = position - i;
-  const at = (n: number) => (n >= 0 && n < data.length ? data[n] : 0);
+  const at = (n: number) => tap(data, n, loop);
   const p0 = at(i - 1);
   const p1 = at(i);
   const p2 = at(i + 1);
@@ -85,8 +119,8 @@ function blackman(x: number, n: number): number {
   return 0.42 - 0.5 * Math.cos(2 * Math.PI * t) + 0.08 * Math.cos(4 * Math.PI * t);
 }
 
-export const sinc8: Interpolator = (data, position) => {
-  if (position < 0 || position >= data.length) return 0;
+export const sinc8: Interpolator = (data, position, loop) => {
+  if (!loop && (position < 0 || position >= data.length)) return 0;
   const centre = Math.floor(position);
   const frac = position - centre;
 
@@ -94,7 +128,7 @@ export const sinc8: Interpolator = (data, position) => {
   let weight = 0;
   for (let k = -SINC_TAPS + 1; k <= SINC_TAPS; k += 1) {
     const index = centre + k;
-    if (index < 0 || index >= data.length) continue;
+    if (!loop && (index < 0 || index >= data.length)) continue;
     const x = k - frac;
     let s: number;
     if (Math.abs(x) < 1e-9) {
@@ -104,7 +138,7 @@ export const sinc8: Interpolator = (data, position) => {
       s = Math.sin(px) / px;
     }
     const w = s * blackman(x, SINC_TAPS);
-    sum += data[index] * w;
+    sum += tap(data, index, loop) * w;
     weight += w;
   }
   // Normalising keeps the DC gain at 1 even where the window is truncated by
