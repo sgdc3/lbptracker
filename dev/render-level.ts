@@ -45,6 +45,17 @@ const RATE = 48000;
 const seqIndex = Number(process.argv[2] ?? 0);
 // 0 (or no argument) renders the sequencer end to end.
 const secondsArg = Number(process.argv[3] ?? 0);
+// Start offset in seconds, for rendering a window out of the middle.
+const fromArg = Number(process.env.LBP_FROM ?? 0);
+/**
+ * ⚠️ A/B switch, not a setting. With `LBP_UNPITCHED_PERCUSSION=1` a slot whose
+ * sample has no loop plays at its own rate rather than being transposed by
+ * `note - baseNote`. It exists because whether the engine pitches a drum kit's
+ * slots is unsettled: `a_kit_1`'s ride sits in a zone spanning notes 60..72 with
+ * a base note of 78, so notes 66 and 68 come out an octave down, and an octave
+ * down is exactly what a cymbal that sounds too quiet would be doing.
+ */
+const unpitchedPercussion = process.env.LBP_UNPITCHED_PERCUSSION === '1';
 
 const manifest = async (dir: string) =>
   new Map<number, { file: string }>(
@@ -131,7 +142,11 @@ const left = new Float32Array(frames);
 const right = new Float32Array(frames);
 const mixer = new Mixer(RATE);
 
-const events = schedule(seq).filter((e) => e.step * framesPerStep < frames);
+const fromFrame = Math.round(fromArg * RATE);
+const events = schedule(seq)
+  .filter((e) => e.step * framesPerStep < fromFrame + frames)
+  .map((e) => ({ ...e, step: e.step - fromFrame / framesPerStep }))
+  .filter((e) => (e.step + e.durationSteps) * framesPerStep > 0);
 let played = 0;
 let skipped = 0;
 for (const event of events) {
@@ -187,7 +202,11 @@ for (const event of events) {
 
   const spec: VoiceSpec = {
     sample: slot.wav,
-    playbackRate: pitchRatio(definition, note, seq.tempo) * (slot.wav.sampleRate / RATE),
+    playbackRate:
+      (unpitchedPercussion && slot.wav.loop === undefined
+        ? 1
+        : pitchRatio(definition, note, seq.tempo)) *
+      (slot.wav.sampleRate / RATE),
     gain:
       velocityGain(event.volume) *
       track.level *
@@ -272,7 +291,7 @@ for (let i = 0; i < frames; i += 1) {
   pcm[i * 2] = Math.max(-32768, Math.min(32767, Math.round(left[i] * norm * 32767)));
   pcm[i * 2 + 1] = Math.max(-32768, Math.min(32767, Math.round(right[i] * norm * 32767)));
 }
-const out = `fixtures/level-seq${seq.uid}.wav`;
+const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
 await writeFile(out, writeWav(pcm, 2, RATE));
 const elapsed = Number(process.hrtime.bigint() - started) / 1e9;
 console.log(
