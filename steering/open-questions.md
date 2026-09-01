@@ -204,9 +204,38 @@ RT60 over `slot5 / 10` seconds, which puts the presets at 0.6–5.0 s). Also une
 divides slot 2's level by 100, and slot 2's raw values are 0–18, which do not read as millibels the
 way slots 0 and 1 do.
 
-The remaining candidates are `v0x3fc8c0` (417 insns, 124 SIMD, 10 callers — it is the *configure*,
-since it reads every coefficient once) and `v0x3fded0` (403 insns, 374 SIMD, 17 callers). The
-process is whichever walks `[state+0x18]` per sample.
+### Finding the process loop: what has been ruled out
+
+A session went looking for it and did not find it. The exclusions are worth more than the search
+was, because each one was a plausible candidate:
+
+| function | what it actually is | how it was excluded |
+|---|---|---|
+| `v0x3fcc00` | init | sets up, no loop |
+| `v0x3fcd50` | configure from a preset | decoded in full, above |
+| `v0x3fc8c0` | configure's table lookups | reads every coefficient exactly once |
+| `v0x3fd0d2` | construction | allocates the buffer and both states |
+| `v0x3fd260` | **release** | frees the buffer and the states — steering had called it the process |
+| `v0x3fd3d0` | per-parameter setter | a 10-way switch, no audio |
+| `v0x3fd4c0` | apply a preset | ten `setParameter` calls |
+| `v0x3fd6c0` | a second constructor | allocates and zeroes a 256-byte state |
+| `v0x3fded0` | **not audio at all** | a 4×4 matrix transpose — geometry |
+| `v0x3fc2b0` | a channel mixer | works on `word`, i.e. int16 PCM, not floats |
+
+⚠️ **Two search methods also failed, and both were reasonable:**
+
+- Counting "SIMD" instructions by the `v` prefix **misses legacy SSE** (`mulss`, `addss`), so the
+  first ranking of candidates was wrong. Match `v?(mul|add|sub|div|max|min)s[sd]` instead.
+- Scanning `.rela.dyn` for `R_X86_64_RELATIVE` addends inside `v0x3fc000`–`v0x3fe000` finds ten
+  pointers at `v0x010c8970`, which look exactly like a vtable and are **not**: nine are C++
+  static-initialisation guards that all write the same vtable pointer, and the tenth is a small
+  loop with no float work.
+
+**So the process is not in the `v0x3fc000`–`v0x3fe000` window**, or is not reached by a pointer
+stored at load time. The next thing to try is neither of the above: **find every function that loads
+`[reg + 0x18]` and then indexes that pointer inside a loop with float arithmetic**, across the whole
+`.text`, rather than guessing at a module boundary. `[state+0x18]` is where `v0x3fcd50` stores the
+307 KB buffer, so the process must do exactly that.
 
 ⚠️ Worth doing, and worth doing before more of the mix is tuned: **71,781 of 129,696 instrument
 placements (55%) send to reverb.** Until it is done, `src/audio/effects.ts` carries a Schroeder
