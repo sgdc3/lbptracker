@@ -319,7 +319,7 @@ export class Reverb {
    */
   private readonly normaliseCombs: boolean;
 
-  constructor(sampleRate: number, preset: readonly number[], normaliseCombs = false) {
+  constructor(sampleRate: number, preset: readonly number[], normaliseCombs = true) {
     this.normaliseCombs = normaliseCombs;
     const ms = (v: number) => Math.max(1, Math.round((v / 1000) * sampleRate));
     const row = preset[PRESET_SLOT.tapSet];
@@ -402,7 +402,18 @@ export class Reverb {
       // the preset's own wet level -- the part that is measured -- stops meaning
       // anything. Scaling each comb's *contribution* makes it unity at DC and
       // leaves its decay untouched, unlike scaling the recirculation.
-      wet += (this.normaliseCombs ? 1 - comb.gain : 1) * comb.y;
+      // ⚠️ OURS, and the last invented number in the reverb. A feedback comb has
+      // DC gain `1/(1 - gain)`; normalising by `1 - gain` makes it unity in
+      // **amplitude**, and by `sqrt(1 - gain)` unity in **power**. For a bank of
+      // decaying resonators summing incoherently, power is the apt one -- and it
+      // is what lands the wet level inside the range a listener brackets by ear:
+      // amplitude normalisation gives 8.0% of the dry mix and none at all gives
+      // 57.9%, reported as too little and too much respectively.
+      //
+      // The engine's own scaling is still unfound: the PRX never reads the three
+      // level fields at `[state+0x48]`, `[+0x4c]`, `[+0x50]`, so the eboot mixes
+      // the wet in somewhere this project has not located.
+      wet += (this.normaliseCombs ? Math.sqrt(1 - comb.gain) : 1) * comb.y;
     }
     // WARNING: there is no `/ sqrt(N)` here any more, and its removal is the
     // reverb's level.

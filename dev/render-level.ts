@@ -83,7 +83,7 @@ const noKeyTrack = process.env.LBP_NO_KEYTRACK === '1';
  * `1 - gain` scaling on each comb's contribution -- about 18 dB on the presets
  * these levels use. See `Reverb`'s `normaliseCombs`.
  */
-const reverbNorm = process.env.LBP_REVERB_NORM === 'on';
+const reverbNorm = process.env.LBP_REVERB_NORM !== 'off';
 /**
  * How many voices the pool holds. `LBP_VOICES=off` (or 0) removes the cap.
  *
