@@ -323,7 +323,21 @@ read(state, in, out, frames, inch, outch):
 **What is left is `sub_0x11a0` alone**, at file `0x11a0 + 0x780`. Everything around it is now known:
 its input format (four de-interleaved channel buffers of 256 floats), its output contract (added to
 the dry), and its parameters (the 256-byte state, whose fields `v0x3fcd50` fills and this file
-decodes above).
+decodes above). It is 609 instructions across nine loops, holds only two float constants of its own
+(`0.5` and `1`), and delegates its coefficient setup to `sub_0x7f0`.
+
+**Two coefficients are now measured rather than inferred**, out of `sub_0x7f0`:
+
+```
+0x09e2   gain = 10 ^ (delay * -0.003 / (slot5 * 0.1))     ; = 10^(-3t/RT60)
+0x082a   [r15+0x18] = state[+0x2c] ;  [r15+0x14] = 1 - state[+0x2c]
+```
+
+So **`RT60 = slot5 × 0.1` seconds**, 0.6–5.0 s across the presets — exactly what
+`src/audio/effects.ts` had guessed, now confirmed — and the damping is a one-pole
+`y = a·x + (1−a)·y` with `a` from slot 10, which is also where that file had put it. What remains
+genuinely unknown is only the **topology**: how the ten taps feed one another, and where the damping
+sits in that chain.
 
 ⚠️ Worth doing, and worth doing before more of the mix is tuned: **71,781 of 129,696 instrument
 placements (55%) send to reverb.** Until it is done, `src/audio/effects.ts` carries a Schroeder

@@ -138,12 +138,25 @@ export function millibelToLinear(value: number): number {
  * in samples. That geometry is most of what makes a room sound like itself, and
  * it is why this is not a Freeverb any more.
  *
- * ⚠️ **What is still ours: the topology.** How the taps feed back into each
- * other, how  becomes a feedback gain, and where the damping sits were
- * not read out of the process loop — that loop had not been found when this was
- * written. The reading used below is an RT60: each tap's feedback is set so the
- * tail falls 60 dB over  seconds, which puts the presets at 0.6–5.0 s.
- * Sensible, and not measured. See steering/open-questions.md.
+ * **The decay law is MEASURED**, out of `fmodsmsreverb.prx`'s `sub_0x7f0` at
+ * `0x9e2`-`0x9f5`:
+ *
+ * ```
+ * gain = 10 ^ (delay * -0.003 / (slot5 * 0.1))
+ * ```
+ *
+ * which is `10^(-3t / RT60)` with **`RT60 = slot5 * 0.1` seconds** -- 0.6-5.0 s
+ * across the presets. That is exactly the reading this file had guessed, so the
+ * feedback gains below are the engine's rather than a plausible stand-in.
+ *
+ * The **damping** is confirmed as a one-pole too: `0x82a` writes `state[+0x2c]`
+ * and `1 - state[+0x2c]` into an adjacent pair, the `a` / `1-a` of
+ * `y = a*x + (1-a)*y`, with `a` from preset slot 10.
+ *
+ * ⚠️ **What is still ours: the topology** -- how the ten taps feed one another
+ * and where the damping sits between them. That lives in the kernel at
+ * `sub_0x11a0`, 609 instructions over nine loops, opened but not transcribed.
+ * See steering/open-questions.md.
  */
 export class Reverb {
   private readonly pre: Float32Array;
