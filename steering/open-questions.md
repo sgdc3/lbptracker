@@ -145,16 +145,48 @@ call v0x3fcd50(state, preset, 1, buffer)  ; configure -- the same entry
 Two state objects, a 307 KB delay buffer and a preset struct, all allocated and initialised by the
 eboot. Nothing is handed to FMOD.
 
+**The preset fields are decoded.** `v0x3fcd50` converts the eleven slots into the reverb's state,
+and the conversions name them:
+
+```
+level(v) = (v*10 > -8000) ? powf(10, v*10 * 0.0005) : 0      ; = 10^(v/200), so v is dB x 10
+                                                             ; -- MILLIBELS, with a -80 dB floor
+[state+0x4c] = level(slot 0)
+[state+0x48] = level(slot 1)
+[state+0x50] = level(slot 2) / 100
+[state+0x30] = (int)  slot 3
+[state+0x34] = (int)  slot 4
+[state+0x38] = (float)slot 5
+[state+0x3c] = (int)  slot 6
+[state+0x20] = (bool) slot 7
+       xmm0  = (float)slot 8 / 48000                         ; SAMPLES -> seconds
+[state+0x24] = (bool) slot 9
+[state+0x2c] = (double)slot 10 scaled                        ; the 3000..12000 Hz one
+[state+0x10] = 48000.0f     [state+0x40] = 2     [state+0x44] = 1.0f
+[state+0x18] = the 307 KB buffer
+```
+
+⚠️ **Slot 0 is never set from the table.** `applyReverbPreset` writes parameters 1–10, i.e. slots
+1–10; the constructor stores **−800** into slot 0 of its private copy, so the sequencer's reverb runs
+that level fixed at −8 dB regardless of preset.
+
 **The anchors to finish it:**
 
 | what | where |
 |---|---|
-| init | `v0x3fcc00` |
-| configure from a preset | `v0x3fcd50` |
-| per-parameter setter (the switch that stores into `[state + 0x1c/0x20/0x24/0x28]`) | `v0x3fd3d0` |
+| init | `v0x3fcc00` — 223 insns, 73 SIMD; sets up the delay structure |
+| configure from a preset | `v0x3fcd50` — decoded above |
+| per-parameter setter | `v0x3fd3d0` |
 | apply a preset by `ReverbSetting` | `v0x3fd4c0` |
-| construction, as above | `v0x3fd0d2` |
-| likely the process callback | `v0x3fd260` — takes `[rdi+8]`, then `[rbx+0xe0]` and `[rbx+0xf0]`, which are the buffer and the state |
+| construction | `v0x3fd0d2` |
+| a second constructor | `v0x3fd6c0` — allocates and zeroes the 256-byte state |
+| release | `v0x3fd260` — ⚠️ **not** the process callback, as this file said before: it frees the buffer and both states |
+
+**What is still missing is the process loop.** `v0x3fd260`, `v0x3fd3d0`, `v0x3fd4c0`, `v0x3fcfe0`
+and `v0x3fd6c0` all have zero direct callers, which is how a registered callback looks; the two
+float engines nearby are `v0x3fc8c0` (417 insns, 124 SIMD, 10 callers) and `v0x3fded0` (403 insns,
+374 SIMD, 17 callers). Start there: whichever consumes `[state+0x18]` and the coefficients above is
+the reverb itself.
 
 ⚠️ Worth doing, and worth doing before more of the mix is tuned: **71,781 of 129,696 instrument
 placements (55%) send to reverb.** Until it is done, `src/audio/effects.ts` carries a Schroeder
