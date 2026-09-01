@@ -1215,7 +1215,7 @@ depth had been swapped, that pattern would invert.
 
 | param | role | what the corpus shows |
 |---|---|---|
-| `Params[24]` | **output level** | **never zero**, and **61 distinct values across 68 instruments**. Enters the gain chain with `sqrt(1/Numstack)` — the equal-power correction for stacking — and a factor of 2. Loudest `triangle_wave` 0.67, quietest `ray_gun` 0.07: the trim that balances the set. |
+| `Params[24]` | **output level** | **never zero**, and **61 distinct values across 68 instruments**. Enters the gain chain with `sqrt(1/Numstack)` — the equal-power correction for stacking — and a factor of 2. Loudest `triangle_wave` 0.67, quietest `ray_gun` 0.07: the trim that balances the set. Applying it in the bench **does** balance them — six instruments across the range (`piano`, `glockenspiel`, `choir`, `saw_wave`, `e_guitar_power`, `marimba`) peak within 0.23–0.40 of each other instead of spreading out, which is what a level trim is for. |
 | `Params[25]` | **send** into the DSP's second stereo pair | zero on 33 of 68, never above 0.23. `space_piano` 0.23, `e_guitar_clean_muted` 0.18, `harp` 0.18, `ukulele` 0.16. |
 | `Params[26]` | **drive** into the filter | zero on **64** of 68. The four: `e_guitar_power` 0.73, `e_guitar_distorted` 0.57/0.70, `space_piano` 0.51, `electric_harpsichord` 0.39. |
 
