@@ -167,3 +167,47 @@ test('the param indices are the ones the renderer reads', () => {
     envAmount: 6,
   });
 });
+
+// ------------------------------------------------- the two paths, kept apart
+
+test('the resonance follows the key tracking, not the filter envelope', () => {
+  // Read out of fmodextinput.prx at 0x2a90: `vmulps xmm1, xmm4, xmm1`, where
+  // xmm4 is the keytrack built at 0x2a28 and xmm1 the interpolated Params[4].
+  // The cutoff at 0x2a72 takes both keytrack and envFactor; the resonance takes
+  // only keytrack, and this file asserted `resonance * envFactor` until the two
+  // were read side by side.
+  const settings = { cutoff: 0.89, resonance: 0.9, keyTrack: 0.6, envAmount: 0.63 };
+  const rate = 2 ** ((25 - 48) / 12); // synth/ghost.rinst at its lowest note
+  const keytrack = 1 + (rate - 1) * settings.keyTrack;
+
+  // The filter envelope moves the cutoff...
+  const open = filterAt(settings, 1, rate);
+  const shut = filterAt(settings, 0, rate);
+  assert.ok(open.freq > shut.freq, 'envelope B opens the cutoff');
+
+  // ...and leaves the resonance alone.
+  assert.equal(open.res, shut.res, 'envelope B must not touch the resonance');
+  assert.ok(Math.abs(open.res - settings.resonance * keytrack) < 1e-12);
+
+  // The size of the old error, on the patch that exposed it: ghost's amplitude
+  // decay is 0.85s against a 1.04s filter attack, so envelope B never gets past
+  // 0.194 and envFactor stays between 0.37 at the note's onset and 0.49 at the
+  // envelope's peak. The wrong reading therefore delivered 0.33 where the right
+  // one delivers 0.50 -- a factor of 1.51 at the attack, still 1.14 at the peak,
+  // and it is the attack that a 0.85s note is mostly made of.
+  const atOnset = 1 + settings.envAmount * (0 - 1);
+  const atPeak = 1 + settings.envAmount * (0.194 - 1);
+  assert.ok(
+    keytrack / atOnset > 1.5 && keytrack / atPeak > 1.1,
+    `keytrack ${keytrack.toFixed(3)} against envFactor ${atOnset.toFixed(3)}..${atPeak.toFixed(3)}`,
+  );
+});
+
+test('a note far above the base note drives the cutoff to its ceiling', () => {
+  // keytrack multiplies rather than offsets, so a high note can push
+  // cutoff² * keytrack past 1. The clamp is ours -- the ladder diverges above
+  // it -- and this pins the behaviour rather than leaving it to chance.
+  const settings = { cutoff: 0.89, resonance: 0.9, keyTrack: 1, envAmount: 0 };
+  assert.equal(filterAt(settings, 1, 4).freq, 1);
+  assert.ok(filterAt(settings, 1, 4).res <= 1, 'resonance is clamped too');
+});

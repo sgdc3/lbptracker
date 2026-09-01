@@ -45,8 +45,13 @@ export const LFO_RATE_SCALE = [100, 100, 50] as const;
 export class Lfo {
   private phase: number;
 
-  constructor(random: () => number = Math.random) {
-    this.phase = random() * 2 * Math.PI;
+  /**
+   * @param offset radians added to the randomised start phase. This is how a
+   *   stacked voice fans its layers around the cycle: `Params[17|20|23]` times
+   *   `2 * PI / Numstack` per layer.
+   */
+  constructor(random: () => number = Math.random, offset = 0) {
+    this.phase = random() * 2 * Math.PI + offset;
   }
 
   /** Advance by `dt` seconds at `rate`, already scaled. */

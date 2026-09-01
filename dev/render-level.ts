@@ -23,7 +23,7 @@ import { buildMipChain } from '../src/audio/mipmap.ts';
 import { FILTER_PARAMS } from '../src/audio/moog.ts';
 import { ADSR_PARAMS, ADSR_PARAMS_B, evaluateAdsr } from '../src/core/envelope.ts';
 import { resolveSlot } from '../src/core/instrument.ts';
-import { LFO_PARAMS, OUTPUT_PARAMS } from '../src/core/params.ts';
+import { LFO_PARAMS, OUTPUT_PARAMS, STACK_PARAMS } from '../src/core/params.ts';
 import { importLevel, schedule, type DumpRow } from '../src/core/project.ts';
 import { readInstrument, usedSlots, type RInstrument } from '../src/core/rinstrument.ts';
 import { quantise } from '../src/core/scale.ts';
@@ -95,6 +95,17 @@ async function loadInstrument(guid: number) {
 }
 
 const started = process.hrtime.bigint();
+// The stack randomises detune, pan and start offset per layer. A fixed seed
+// keeps a render reproducible, which matters when the point of a render is to
+// compare it against the last one.
+let seed = 0x2545f491;
+const rand = () => {
+  seed ^= seed << 13;
+  seed ^= seed >>> 17;
+  seed ^= seed << 5;
+  return ((seed >>> 0) % 0x100000) / 0x100000;
+};
+
 const framesPerStep = samplesPerStep(RATE, seq.tempo);
 // End to end means the last step plus whatever tail the effects still have
 // to give: a reverb cut off at the final note is not the whole render.
@@ -144,10 +155,19 @@ for (const event of events) {
     gain: base.volume > 0 ? p.volume / base.volume : 1,
   }));
 
+  // The unison stack. `Numstack` layers of the same sample, each with its own
+  // random detune, pan offset and start point, at `sqrt(1 / Numstack)` gain --
+  // all four measured and all four previously unused, which is why a
+  // three-layer patch like `synth/ghost.rinst` came out as one thin copy.
+  const layers = Math.max(1, loaded.inst.numStack);
+  const stackGain = Math.sqrt(1 / layers);
+  const sampleFrames = slot.wav.channels[0].length;
+  const bipolar = () => rand() * 2 - 1;
+
   const spec: VoiceSpec = {
     sample: slot.wav,
     playbackRate: pitchRatio(definition, note, seq.tempo) * (slot.wav.sampleRate / RATE),
-    gain: velocityGain(event.volume) * track.level * 2 * p[OUTPUT_PARAMS.level].x,
+    gain: velocityGain(event.volume) * track.level * 2 * p[OUTPUT_PARAMS.level].x * stackGain,
     pan: track.pan,
     startFrame: Math.round(event.step * framesPerStep),
     endFrame: Math.round((event.step + event.durationSteps) * framesPerStep),
@@ -166,7 +186,18 @@ for (const event of events) {
     echoSend: track.echoSend,
     reverbSend: track.reverbSend,
   };
-  mixer.play(spec);
+  const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+  for (let layer = 0; layer < layers; layer += 1) {
+    mixer.play({
+      ...spec,
+      playbackRate: spec.playbackRate * (1 + 0.05 * p[STACK_PARAMS.detune].x * bipolar()),
+      pan: clamp01(spec.pan + 0.5 * p[STACK_PARAMS.spread].x * bipolar()),
+      startPosition: p[STACK_PARAMS.startOffset].x * sampleFrames * rand(),
+      lfoPhaseOffset: [0, 1, 2].map(
+        (n) => p[LFO_PARAMS[n].spread].x * ((2 * Math.PI) / layers) * layer,
+      ) as unknown as readonly [number, number, number],
+    });
+  }
   played += 1;
 }
 

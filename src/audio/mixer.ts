@@ -153,6 +153,21 @@ export interface VoiceSpec {
   readonly reverbSend?: number;
   /** Injected so an offline render can be deterministic. */
   readonly random?: () => number;
+  /**
+   * Sample frame to begin at, rather than 0.
+   *
+   * `Params[2]` gives each layer of a stacked voice its own random start,
+   * `startOffset * sampleLength * U(0, 1)` frames in, which is what stops the
+   * layers from being one louder copy of each other.
+   */
+  readonly startPosition?: number;
+  /**
+   * Radians added to each LFO's randomised start phase, one per LFO.
+   *
+   * `Params[17|20|23]` times `2 * PI / Numstack` per layer, so a stacked
+   * voice's layers sit at different points of the same cycle.
+   */
+  readonly lfoPhaseOffset?: readonly [number, number, number];
 }
 
 class Voice {
@@ -195,7 +210,13 @@ class Voice {
       ? Math.pow(10, -Math.abs(spec.decayDbPerSecond) / 20 / outputRate)
       : 1;
     this.mipLevel = mipLevelFor(spec.playbackRate);
-    this.lfo = [new Lfo(spec.random), new Lfo(spec.random), new Lfo(spec.random)];
+    const phase = spec.lfoPhaseOffset;
+    this.lfo = [
+      new Lfo(spec.random, phase?.[0] ?? 0),
+      new Lfo(spec.random, phase?.[1] ?? 0),
+      new Lfo(spec.random, phase?.[2] ?? 0),
+    ];
+    this.position = spec.startPosition ?? 0;
     this.secondsPerFrame = 1 / outputRate;
     const gains = panGains(spec.pan);
     this.left = gains.left * spec.gain;

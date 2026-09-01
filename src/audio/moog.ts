@@ -114,11 +114,34 @@ export interface FilterSettings {
  * keytrack  = 1 + (pitchRatio - 1) * keyTrack
  * envFactor = 1 + envAmount * (envelopeB - 1)
  * freq = clamp(cutoff² * keytrack * envFactor, 0, 1)
- * res  = clamp(resonance      * envFactor, 0, 1)
+ * res  = clamp(resonance      * keytrack,         0, 1)
  * ```
  *
- * ⚠️ The resonance taking `envFactor` too is the least certain line recovered
- * from the renderer; the cutoff path is unambiguous.
+ * **Both lines are now read out of `fmodextinput.prx`**, in the block at
+ * `0x2a02`-`0x2a90`. Every parameter arrives through the same shape --
+ * `vsubss; vmulss xmm7; vaddss; vpshufd 0` is `x + mod * (y - x)` broadcast to
+ * four lanes -- which makes the arithmetic between them readable:
+ *
+ * ```
+ * 0x2a28   xmm4 = (1 - keyTrack) + pitchRatio * keyTrack   ; keytrack
+ * 0x2a3f   xmm6 = cutoff * cutoff                          ; cutoff²
+ * 0x2a6a   xmm1 = 1 + envAmount * (envB - 1)               ; envFactor
+ * 0x2a6e   xmm1 = cutoff² * envFactor
+ * 0x2a72   xmm9 = keytrack * xmm1                          ; freq
+ * 0x2a90   xmm1 = xmm4 * resonance                         ; res
+ * ```
+ *
+ * ⚠️ **The resonance takes the key tracking, not the envelope.** This file
+ * said `resonance * envFactor` and flagged it as the least certain line
+ * recovered; it was wrong. The two are not interchangeable on a patch whose
+ * envelopes disagree: `synth/ghost.rinst` has an amplitude decay of 0.85 s
+ * against a filter attack of 1.04 s, so envelope B never gets past 0.194 and
+ * `envFactor` stays in 0.37-0.49 for the whole audible life of the note. Its
+ * authored resonance of 0.90 arrived at the ladder as 0.33; with the key
+ * tracking it arrives as 0.50, and the ladder's `q` goes from 0.90 to 1.36.
+ *
+ * ⚠️ The clamps are ours. Nothing in that block bounds either value, but the
+ * ladder diverges for `freq > 1`.
  */
 export function filterAt(
   settings: FilterSettings,
@@ -130,7 +153,7 @@ export function filterAt(
   const clamp = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
   return {
     freq: clamp(settings.cutoff * settings.cutoff * keytrack * envFactor),
-    res: clamp(settings.resonance * envFactor),
+    res: clamp(settings.resonance * keytrack),
   };
 }
 

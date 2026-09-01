@@ -515,6 +515,60 @@ tempo-locked, since the same project at half the tempo would echo off the beat.
 4 s buffer ceiling (the old 1 s ceiling rested on an unmeasured claim about the engine's buffer, and
 would silently fold a four-beat echo at a slow tempo down to one beat).
 
+## 6b. The filter's resonance path — CORRECTED, 2026-09-01
+
+`filterAt` applied the filter envelope to the resonance as well as the cutoff, and said so as its
+own least-certain line. **It was wrong**, and `fmodextinput.prx` settles it. Every parameter reaches
+the block at `0x2a02`–`0x2a90` through the same shape — `vsubss; vmulss xmm7; vaddss; vpshufd 0`
+is `x + mod * (y - x)` broadcast to four lanes — which makes the arithmetic between them readable:
+
+```
+0x2a28   xmm4 = (1 - keyTrack) + pitchRatio * keyTrack   ; keytrack
+0x2a3f   xmm6 = cutoff * cutoff                          ; cutoff²
+0x2a6a   xmm1 = 1 + envAmount * (envB - 1)               ; envFactor
+0x2a6e   xmm1 = cutoff² * envFactor
+0x2a72   xmm9 = keytrack * xmm1                          ; freq
+0x2a90   xmm1 = xmm4 * resonance                         ; res  <-- keytrack, NOT envFactor
+```
+
+The cutoff formula was already right. `xmm4` is untouched between `0x2a28` and `0x2a90`, so the
+resonance takes the key tracking and nothing else. The ladder consumes both from voice state
+`[r14+0xc0]` (res) and `[r14+0xc8]` (freq), broadcast at `0x2eb6`/`0x2ed0`, and the ladder's own
+coefficients at `0x3164`–`0x31bc` match `ladderCoefficients` instruction for instruction — `freq`
+is normalised to Nyquist there, with no conversion to Hz anywhere.
+
+**Why it mattered and how it surfaced.** A listener reported `synth/ghost.rinst` as thin and
+unresonant. That patch is the worst case for the error: its amplitude decay is 0.85 s against a
+**filter attack of 1.04 s**, so the note is gone before envelope B opens — B peaks at 0.194, and
+`envFactor` sits between 0.37 at the attack and 0.49 at its own peak. An authored resonance of 0.90
+arrived at the ladder as **0.33** instead of **0.50**, and the ladder's `q` as 0.90 instead of 1.36.
+
+⚠️ The clamps in `filterAt` are still ours. Nothing in that block bounds either value; the
+ladder diverges for `freq > 1`.
+
+## 6c. The unison stack — measured, documented, and NOT WIRED UP until now
+
+`STACK_PARAMS` carried all three fields with their formulas, `OUTPUT_PARAMS.level` documented the
+`sqrt(1 / Numstack)` beside it, and `LFO_PARAMS` documented the `× 2π / Numstack` layer fan.
+**Nothing read any of them.** The renderer played one voice per note regardless of `Numstack`, so a
+stacked patch came out as a single thin copy at the wrong level.
+
+That is the other half of the same report. `ghost` has `Numstack` **3**, `spread` 0.15,
+`startOffset` 0.06 and — the part that gives it its name — **LFO 3 spread 1.0 with depth 0.27**,
+an auto-pan fanned a third of a cycle apart across the three layers. One layer cannot produce that
+at all.
+
+Now wired: `Numstack` layers per note, each with `1 + 0.05 * detune * U(-1,1)`, pan offset
+`0.5 * spread * U(-1,1)`, start `startOffset * sampleLength * U(0,1)` frames in, gain
+`sqrt(1 / Numstack)`, and LFO phases offset by `spread * 2π/Numstack * layer`. `VoiceSpec` gained
+`startPosition` and `lfoPhaseOffset` for it; the renderer seeds a fixed PRNG so a render stays
+comparable with the last one.
+
+⚠️ **Check the other 67 instruments against this.** `numStack` equals the used-slot count in only
+14 of them, and most 8-slot drum kits have `numStack` 1, so the corpus-wide effect of wiring it up
+has not been measured — only that the peak of the rendered mix fell from 1.749 to 1.491, which is
+the `sqrt(1/N)` correction arriving.
+
 ## 7. FMOD's pan law — the resampler half is ANSWERED
 
 **RESOLVED, 2026-09-01: the sampler interpolates linearly and mipmaps by octave.** It is not
