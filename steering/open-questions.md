@@ -118,7 +118,16 @@ Recovered as names, sizes and defaults only:
 - `Numstack` (default 1) — looks like a per-instrument voice-stacking count.
 - `Loops` on `PInstrument` — **1 in all 105,785 instruments of the corpus**, so whatever it
   does, no creator has used it. Safe to treat as 1 and revisit only if the editor exposes it.
-- `Params` — **27** entries of two f32 each. 27 is an odd number; it is not 8 slots, not 9 splits.
+- `Params` — **27** entries of two f32 each, all in 0..1, and **the likeliest home of the
+  envelope**. A listener's first complaint about the instrument bench was that sustain was wrong;
+  the sample loop points fixed the gross symptom, but the release shape is still ours rather than
+  the game's. Sampled values, piano / harp / glockenspiel / bass_guitar:
+  index 3 `1.0 / 1.0 / 0.565 / 0.400`, index 12 `0.527 / 0.650 / 0.741 / 1.0`,
+  index 14 `0.154 / 0.440 / 0.600 / 0.033`, index 15 and 18 often exactly `0.5`.
+  Pairs are frequently identical and sometimes not, which suggests (value, second value) rather
+  than a single number — a range, a key-tracking pair, or a modulation depth. **Do not guess an
+  index and call it attack.** The way in is the tweak UI: `gamedata/scripts/tweakinstrument.ff`
+  (GUID 122184) is the script that edits these, and its labels name them.
 - `Arpeggio` — **32** bytes, default `0xf`, with `Arpeggiate` as the on/off bool.
 - `Behavior`, `TriggerPlayer`, `PreviewThing` on `PSequencer` — three fields our serialiser walk
   missed entirely; widen the window at `v0xd37d10`.

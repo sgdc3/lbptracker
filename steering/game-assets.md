@@ -128,6 +128,37 @@ resampler. It was neither our resampler nor our decoder: it was the wrong source
 whose `SampleGuids` are `122697, 122696, 122695, 122694, 122693` — exactly `piano_c6` down to
 `piano_c2` — paired with `baseNote` values `84, 72, 60, 48, 36`. Nothing points at an FSB index.
 
+### The samples carry their own loop points — and you must honour them
+
+Every `.smp` is a RIFF with the sound designer's DAW metadata still attached.
+Most of it is debris (`CDif` from Cool Edit, `bext`, `acid`, `JUNK`), but two chunks matter:
+
+- **`smpl` — the sustain loop.** 79 of the 215 samples have one, including every pitched
+  multisample. The piano's, measured:
+
+  | sample | frames | loop |
+  |---|---|---|
+  | `piano_c2` | 50367 | 24168 → 50365 |
+  | `piano_c3` | 36546 | 17558 → 36544 |
+  | `piano_c4` | 36563 | 20251 → 36561 |
+  | `piano_c5` | 30933 | 22361 → 30931 |
+  | `piano_c6` | 9966 | 7793 → 9953 |
+
+  All type 0 (forward), count 0 (infinite). ⚠️ **The loop end is INCLUSIVE**; the mixer wants it
+  exclusive, so pass `end + 1`.
+
+  ⚠️ **Skipping this produces a specific, diagnosable symptom**: a note's length becomes the
+  sample's length divided by the playback rate, so notes below a slot's base note ring far too long
+  and notes above it cut off early. That is exactly what the first instrument bench did, and it is
+  what a listener notices before anything else. A looping voice never ends on its own, so it needs
+  an explicit release — see `VoiceSpec.release`.
+
+- **`inst`** — key range and unity note. Present on a handful of samples.
+
+⚠️ **`smpl`'s `unityNote` is not authoritative.** It reads **60 on every piano sample**, C2 through
+C6, which is simply the DAW's default. `RInstrument`'s `baseNote` (84/72/60/48/36) is the real
+pitch reference.
+
 **Scale of the library.** 216 entries under `gamedata/audio/music/samples/`, organised by family:
 `keys/`, `guitar/`, `orchestra/`, `percussion/`, `synths/`, `sfx/`. Instrument definitions sit
 under `gamedata/audio/music/instruments/` as `.rinst` files, one per stock instrument.

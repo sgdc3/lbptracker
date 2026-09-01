@@ -116,6 +116,9 @@
         <option value="linear">linear</option>
         <option value="nearest">nearest</option>
       </select>
+      <label for="length">note length</label>
+      <input type="range" id="length" min="10" max="400" value="120">
+      <span id="lengthLabel">1.20s</span>
       <label for="gain">master</label>
       <input type="range" id="gain" min="0" max="100" value="50">
       <span id="gainLabel">0.50</span>
@@ -131,7 +134,11 @@
       sample at ratio exactly 1.0 — they should sound like one instrument, and a
       timbre step between them means the splits or the pitch formula are wrong.
       The coloured bar under each key shows which slot it resolves to, so the
-      key-split zones are visible while you play them.
+      key-split zones are visible while you play them. Every pitched sample
+      carries a loop point in its <code>smpl</code> chunk and the mixer honours
+      it, so a note's length follows the <em>note</em>, not the sample divided by
+      the playback rate — drag <em>note length</em> and every pitch should
+      sustain for the same time.
     </p>
     <p class="note">
       <strong>The control.</strong> Switching <em>engine</em> to “browser

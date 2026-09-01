@@ -10,10 +10,38 @@
 
 const HEADER_SIZE = 44;
 
+export interface WavLoop {
+  /** First frame of the loop. */
+  readonly start: number;
+  /**
+   * Last frame of the loop, INCLUSIVE, as the `smpl` chunk defines it. The
+   * mixer wants an exclusive end, so it uses `end + 1`.
+   */
+  readonly end: number;
+  /** 0 = forward, 1 = alternating, 2 = backward. Only 0 is seen in LBP. */
+  readonly type: number;
+}
+
 export interface WavData {
   readonly channels: Float32Array[];
   readonly sampleRate: number;
   readonly bitsPerSample: number;
+  /**
+   * Loop points from the `smpl` chunk, if the file has one.
+   *
+   * ⚠️ **These matter, they are not DAW leftovers.** Every pitched sequencer
+   * sample carries one, and without honouring it a note's length follows the
+   * sample's length divided by the playback rate: notes below the slot's base
+   * note ring far too long, notes above it cut off early. That is exactly the
+   * symptom the instrument bench produced before this was read.
+   */
+  readonly loop?: WavLoop;
+  /**
+   * `smpl`'s MIDI unity note. ⚠️ **Not authoritative** — it reads 60 on every
+   * piano sample regardless of the note actually recorded, so it is the DAW's
+   * default. `RInstrument`'s `baseNote` is the real pitch reference.
+   */
+  readonly unityNote?: number;
 }
 
 export class WavFormatError extends Error {}
@@ -42,6 +70,8 @@ export function readWav(bytes: Uint8Array): WavData {
   let sampleRate = 0;
   let bitsPerSample = 0;
   let data: Uint8Array | undefined;
+  let loop: WavLoop | undefined;
+  let unityNote: number | undefined;
 
   let at = 12;
   while (at + 8 <= bytes.length) {
@@ -55,6 +85,16 @@ export function readWav(bytes: Uint8Array): WavData {
       bitsPerSample = view.getUint16(body + 14, true);
     } else if (id === 'data') {
       data = bytes.subarray(body, Math.min(body + size, bytes.length));
+    } else if (id === 'smpl' && size >= 36) {
+      unityNote = view.getUint32(body + 12, true);
+      const loops = view.getUint32(body + 28, true);
+      if (loops > 0 && size >= 36 + 24) {
+        loop = {
+          type: view.getUint32(body + 36 + 4, true),
+          start: view.getUint32(body + 36 + 8, true),
+          end: view.getUint32(body + 36 + 12, true),
+        };
+      }
     }
     at = body + size + (size & 1); // chunks are word-aligned
   }
@@ -76,7 +116,10 @@ export function readWav(bytes: Uint8Array): WavData {
     }
     out.push(buf);
   }
-  return { channels: out, sampleRate, bitsPerSample };
+  // A loop that runs past the data is authoring debris, not a loop.
+  if (loop && (loop.end >= frames || loop.start >= loop.end)) loop = undefined;
+
+  return { channels: out, sampleRate, bitsPerSample, loop, unityNote };
 }
 
 export function writeWav(

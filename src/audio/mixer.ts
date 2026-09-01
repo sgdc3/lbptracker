@@ -29,6 +29,18 @@ export interface VoiceSpec {
   readonly startFrame?: number;
   /** Output frame at which it stops, or undefined to run to the end of the sample. */
   readonly endFrame?: number;
+  /**
+   * Frames of linear fade before `endFrame`.
+   *
+   * Needed for looping samples: they never run out on their own, so a voice
+   * that is simply cut at `endFrame` leaves a step in the waveform and clicks.
+   *
+   * ⚠️ A linear fade is a stand-in for the game's own release. The instruments
+   * carry 27 pairs of synth parameters that almost certainly hold an envelope
+   * -- see steering/open-questions.md -- and none of those indices are
+   * identified yet, so this is our shape, not the game's.
+   */
+  readonly release?: number;
 }
 
 class Voice {
@@ -38,6 +50,8 @@ class Voice {
   delay: number;
   /** Output frames remaining before it is cut, or Infinity. */
   life: number;
+  /** Frames of linear fade at the end of that life. */
+  readonly release: number;
   private readonly left: number;
   private readonly right: number;
 
@@ -48,6 +62,7 @@ class Voice {
     this.spec = spec;
     this.delay = delay;
     this.life = life;
+    this.release = Number.isFinite(life) ? Math.min(spec.release ?? 0, life) : 0;
     const gains = panGains(spec.pan);
     this.left = gains.left * spec.gain;
     this.right = gains.right * spec.gain;
@@ -88,10 +103,14 @@ class Voice {
       }
       if (!loop && this.position >= srcL.length) return;
 
+      // Linear release ramp over the last `release` frames of the voice's life.
+      const fade =
+        this.release > 0 && this.life < this.release ? this.life / this.release : 1;
+
       const l = interpolate(srcL, this.position);
       const r = mono ? l : interpolate(srcR, this.position);
-      outLeft[i] += l * this.left;
-      outRight[i] += r * this.right;
+      outLeft[i] += l * this.left * fade;
+      outRight[i] += r * this.right * fade;
 
       this.position += playbackRate;
       this.life -= 1;

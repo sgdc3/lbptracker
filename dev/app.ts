@@ -121,7 +121,15 @@ async function loadInstrument(row: ManifestRow): Promise<void> {
   slots.forEach((s, i) => {
     worklet.port.postMessage({
       type: 'load',
-      sample: { id: `slot${i}`, channels: s.wav.channels, sampleRate: s.wav.sampleRate },
+      sample: {
+        id: `slot${i}`,
+        channels: s.wav.channels,
+        sampleRate: s.wav.sampleRate,
+        // `smpl` gives an inclusive last frame; the mixer wants it exclusive.
+        loop: s.wav.loop
+          ? { start: s.wav.loop.start, end: s.wav.loop.end + 1 }
+          : undefined,
+      },
     });
   });
 
@@ -132,7 +140,8 @@ async function loadInstrument(row: ManifestRow): Promise<void> {
   for (const s of slots) {
     log(
       `   ${s.name} — base ${noteName(s.baseNote)} (${s.baseNote}), ` +
-        `${s.wav.sampleRate} Hz, ${s.wav.channels[0].length} frames`,
+        `${s.wav.sampleRate} Hz, ${s.wav.channels[0].length} frames` +
+        (s.wav.loop ? `, loop ${s.wav.loop.start}..${s.wav.loop.end}` : ', no loop'),
     );
   }
   $('splits').textContent =
@@ -153,17 +162,32 @@ function voiceFor(note: number) {
   return { zone, s, ratio, playbackRate: ratio * (s.wav.sampleRate / context.sampleRate) };
 }
 
+/** Held-note length in seconds, from the slider. */
+function noteSeconds(): number {
+  return Number(($('length') as HTMLInputElement).value) / 100;
+}
+
 function playNote(note: number, atSeconds = 0): void {
   const v = voiceFor(note);
   if (!v || !node || !context) return;
+  const held = noteSeconds();
   if (engine === 'browser') {
     const buffer = context.createBuffer(1, v.s.wav.channels[0].length, v.s.wav.sampleRate);
     buffer.copyToChannel(v.s.wav.channels[0], 0);
+    if (v.s.wav.loop) {
+      buffer.loop = true;
+      buffer.loopStart = v.s.wav.loop.start / v.s.wav.sampleRate;
+      buffer.loopEnd = (v.s.wav.loop.end + 1) / v.s.wav.sampleRate;
+    }
     const source = new AudioBufferSourceNode(context, { buffer, playbackRate: v.ratio });
     const gain = new GainNode(context, { gain: velocityGain(96) * Math.SQRT1_2 });
+    const at = context.currentTime + atSeconds;
+    gain.gain.setValueAtTime(velocityGain(96) * Math.SQRT1_2, at + held);
+    gain.gain.linearRampToValueAtTime(0, at + held + 0.12);
     source.connect(gain);
     gain.connect(master!);
-    source.start(context.currentTime + atSeconds);
+    source.start(at);
+    source.stop(at + held + 0.15);
     return;
   }
   node.port.postMessage({
@@ -174,6 +198,11 @@ function playNote(note: number, atSeconds = 0): void {
       gain: velocityGain(96),
       pan: 0.5,
       startFrame: Math.round(atSeconds * context.sampleRate),
+      // The samples loop, so a voice never ends on its own -- it has to be
+      // released. Without this, low notes ring on and high notes cut off with
+      // the sample rather than with the note.
+      endFrame: Math.round((atSeconds + held + 0.12) * context.sampleRate),
+      release: Math.round(0.12 * context.sampleRate),
     },
   });
 }
@@ -277,6 +306,13 @@ async function init(): Promise<void> {
     node?.port.postMessage({ type: 'interpolator', name });
     log(`interpolator: ${name}`);
   });
+  const length = $<HTMLInputElement>('length');
+  const showLength = () => {
+    $('lengthLabel').textContent = `${(Number(length.value) / 100).toFixed(2)}s`;
+  };
+  length.addEventListener('input', showLength);
+  showLength();
+
   const gain = $<HTMLInputElement>('gain');
   gain.addEventListener('input', () => {
     const value = Number(gain.value) / 100;

@@ -8,7 +8,7 @@ import test from 'node:test';
 
 import { findSample, readBank, sampleData } from '../src/core/fsb.ts';
 import { decodeIma, toFloatChannels } from '../src/core/ima.ts';
-import { writeWav } from '../src/core/wav.ts';
+import { readWav, writeWav } from '../src/core/wav.ts';
 
 /**
  * The bank is the user's own copy of a copyrighted game asset and is never
@@ -209,5 +209,87 @@ test('GOLDEN: the TypeScript decoder is byte-identical to tools/fsb.py', async (
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('readWav parses the smpl chunk that carries the sustain loop', () => {
+  // A minimal RIFF with fmt, data and smpl: one forward loop over frames 2..5.
+  const frames = 8;
+  const buf = new ArrayBuffer(12 + 8 + 16 + 8 + frames * 2 + 8 + 36 + 24);
+  const u8 = new Uint8Array(buf);
+  const dv = new DataView(buf);
+  const ascii = (at: number, s: string) => {
+    for (let i = 0; i < s.length; i += 1) u8[at + i] = s.charCodeAt(i);
+  };
+  ascii(0, 'RIFF'); dv.setUint32(4, buf.byteLength - 8, true); ascii(8, 'WAVE');
+  ascii(12, 'fmt '); dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, 48000, true); dv.setUint32(28, 96000, true);
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  ascii(36, 'data'); dv.setUint32(40, frames * 2, true);
+  const smpl = 44 + frames * 2;
+  ascii(smpl, 'smpl'); dv.setUint32(smpl + 4, 36 + 24, true);
+  dv.setUint32(smpl + 8 + 12, 60, true);   // MIDI unity note
+  dv.setUint32(smpl + 8 + 28, 1, true);    // one loop
+  dv.setUint32(smpl + 8 + 36 + 4, 0, true);   // type: forward
+  dv.setUint32(smpl + 8 + 36 + 8, 2, true);   // start
+  dv.setUint32(smpl + 8 + 36 + 12, 5, true);  // end, inclusive
+
+  const wav = readWav(u8);
+  assert.equal(wav.sampleRate, 48000);
+  assert.equal(wav.unityNote, 60);
+  assert.deepEqual(wav.loop, { type: 0, start: 2, end: 5 });
+});
+
+test('a loop that runs past the data is discarded rather than trusted', () => {
+  const frames = 4;
+  const buf = new ArrayBuffer(12 + 8 + 16 + 8 + frames * 2 + 8 + 36 + 24);
+  const u8 = new Uint8Array(buf);
+  const dv = new DataView(buf);
+  const ascii = (at: number, s: string) => {
+    for (let i = 0; i < s.length; i += 1) u8[at + i] = s.charCodeAt(i);
+  };
+  ascii(0, 'RIFF'); dv.setUint32(4, buf.byteLength - 8, true); ascii(8, 'WAVE');
+  ascii(12, 'fmt '); dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, 48000, true); dv.setUint32(28, 96000, true);
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  ascii(36, 'data'); dv.setUint32(40, frames * 2, true);
+  const smpl = 44 + frames * 2;
+  ascii(smpl, 'smpl'); dv.setUint32(smpl + 4, 36 + 24, true);
+  dv.setUint32(smpl + 8 + 28, 1, true);
+  dv.setUint32(smpl + 8 + 36 + 8, 2, true);
+  dv.setUint32(smpl + 8 + 36 + 12, 99, true);  // past the end
+  assert.equal(readWav(u8).loop, undefined);
+});
+
+test('every pitched sequencer sample carries a sustain loop', async (t) => {
+  const dir = process.env.LBP_SMP ?? 'fixtures/smp';
+  if (!existsSync(dir)) {
+    t.skip(`no ${dir} (extract with tools/ExtractGuid.java)`);
+    return;
+  }
+  const { readdir } = await import('node:fs/promises');
+  const files = (await readdir(dir)).filter((f) => f.endsWith('.smp'));
+  if (files.length === 0) {
+    t.skip(`no .smp files in ${dir}`);
+    return;
+  }
+  let looped = 0;
+  for (const name of files) {
+    const wav = readWav(new Uint8Array(readFileSync(path.join(dir, name))));
+    if (wav.loop) looped += 1;
+  }
+  // Not every sample loops -- a drum hit should not -- but the pitched
+  // multisamples do, and that is what makes note length independent of pitch.
+  console.log(`    ${looped}/${files.length} samples carry a loop`);
+  assert.ok(looped > files.length * 0.3, 'a substantial share of samples loop');
+
+  for (const name of ['piano_c2.smp', 'piano_c3.smp', 'piano_c4.smp', 'piano_c5.smp', 'piano_c6.smp']) {
+    if (!existsSync(path.join(dir, name))) continue;
+    const wav = readWav(new Uint8Array(readFileSync(path.join(dir, name))));
+    assert.ok(wav.loop, `${name} must loop, or its notes ring for the wrong time`);
+    assert.ok(wav.loop.start < wav.loop.end, `${name} loop is ordered`);
+    assert.ok(wav.loop.end < wav.channels[0].length, `${name} loop is inside the data`);
   }
 });
