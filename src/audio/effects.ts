@@ -115,8 +115,14 @@ export const PRESET_SLOT = {
   /** An integer the configure copies raw; role unknown. */
   unknown6: 6,
   flag7: 7,
-  /** A delay in **samples at 48 kHz** — the pre-delay. */
-  preDelay: 8,
+  /**
+   * The **notch frequency in hertz** — not a pre-delay, which is what this said.
+   * `v0x3fce8e` divides it by 48,000 and clamps to `[0.0004, 0.49]`, and
+   * `v0x3fcefb`-`v0x3fcf9f` turns that into a two-pole resonator whose output is
+   * subtracted from the signal. The presets use 20, 100 and 400 — highpass
+   * corners, which is what a reverb puts there.
+   */
+  notchHz: 8,
   flag9: 9,
   /** Hertz, 3000–12000. Read here as the damping corner. */
   hf: 10,
@@ -193,17 +199,18 @@ export const REVERB_ALLPASS_RATIOS: readonly number[] = [0.93, 1.06];
  *   count float, minus two. A ten-tap row gives **8**.
  *
  * The loop bounded by `0x510` builds the **combs** from lengths `idx3..idx(n)`.
- * The two loops bounded by `0x514` build the **allpasses**: one from `idx1` and
- * `idx2` straight, one from `0.93 * idx1` and `1.06 * idx2`
- * (`REVERB_ALLPASS_RATIOS`). That is **8 combs and 4 allpasses**, and the
- * eboot's memory sizer `v0x3fc8c0` agrees exactly -- it allocates eight buffers
- * at `[+0x54..+0x70]` plus `idx1`, `idx2`, `0.93*idx1`, `1.06*idx2` at
- * `[+0x74]`, `[+0x78]`, `[+0x7c]`, `[+0x80]`.
+ *
+ * ⚠️ **What the `0x514` loops build is NOT an allpass cascade.** This file said
+ * so for several revisions and it was wrong at every level: there is no
+ * Schroeder allpass in the reverb, no cascade, and therefore no allpass
+ * coefficient. The kernel those stages run (`0x1850`) computes a two-pole
+ * resonator and **subtracts** it from the signal, which is a notch — see the
+ * `notch` field. `REVERB_ALLPASS_RATIOS` keeps its measured values because the
+ * eboot's sizer really does allocate `0.93 * idx1` and `1.06 * idx2`, but what
+ * those buffers are for is no longer claimed.
  *
  * Combs run in parallel and sum -- `dampedComb` carries `acc[i] += x[i]`, and a
- * series chain has nothing to accumulate. The allpasses run in series: the
- * stage walk at `0x1460`-`0x14f9` ping-pongs between two scratch buffers so each
- * output becomes the next one's input, which is what a cascade needs.
+ * series chain has nothing to accumulate.
  *
  * ## The coefficients, read from the code that writes them
  *
@@ -242,11 +249,6 @@ export const REVERB_ALLPASS_RATIOS: readonly number[] = [0.93, 1.06];
  * engine's: `REVERB_EARLY_SETS` (`v0xe1d920`, slot 4), the levels through
  * `millibelToLinear`, and the pre-delay in samples from slot 8.
  */
-/**
- * WARNING: OURS. See the note where the allpasses are built.
- */
-const ALLPASS_GAIN = 0.5;
-
 export class Reverb {
   private readonly pre: Float32Array;
   private readonly preDelay: number;
@@ -258,8 +260,35 @@ export class Reverb {
     y: number;
     gain: number;
   }[] = [];
-  /** The series cascade the bank feeds: four allpasses, in build order. */
-  private readonly allpasses: { buffer: Float32Array; index: number; gain: number }[] = [];
+  /**
+   * The two-pole notch the comb bank feeds.
+   *
+   * **This replaced an invented Schroeder allpass cascade that had no basis in
+   * the code.** The kernel is `fmodsmsreverb.prx` `0x1850`:
+   *
+   * ```
+   * y      = a*prev + b*x + c*older
+   * buf[i] = x - y                     ; in place
+   * ```
+   *
+   * with the coefficients read from `[rec+0x30]`, `[rec+0x34]`, `[rec+0x38]` at
+   * `0x1828`-`0x1832` and the state at `+0x20`/`+0x24`. The eboot builds all
+   * three from one number at `v0x3fcefb`-`v0x3fcf9f`:
+   *
+   * ```
+   * r = exp(-10*PI*f)
+   * a = 2 * r * cos(2*PI*f)     ; -> +0x34, the `prev` coefficient
+   * c = -r*r                    ; -> +0x38, via a sign-flip mask
+   * b = r*r + 1 - a             ; -> +0x30, the input coefficient
+   * ```
+   *
+   * `a = 2r cos(w)` with `c = -r²` is a resonator, and subtracting a resonator
+   * from the signal is a **notch**. At the presets' 20 Hz that is a rumble
+   * filter; the preset that uses 400 Hz gets an audible highpass.
+   */
+  private readonly notch: { a: number; b: number; c: number };
+  private notchPrev = 0;
+  private notchOlder = 0;
   private readonly early: { delay: number; gain: number }[] = [];
   /** `b` of the shared one-pole; `a` is `1 - b`. */
   private readonly damp: number;
@@ -299,10 +328,17 @@ export class Reverb {
     const early = REVERB_EARLY_SETS[preset[PRESET_SLOT.earlySet]] ?? REVERB_EARLY_SETS[0];
 
     const longest = Math.max(...early.slice(0, 3));
-    this.pre = new Float32Array(
-      Math.max(1, (preset[PRESET_SLOT.preDelay] | 0) + ms(longest) + 1),
-    );
-    this.preDelay = Math.max(0, preset[PRESET_SLOT.preDelay] | 0);
+    this.pre = new Float32Array(Math.max(1, ms(longest) + 1));
+    // WARNING: there is no pre-delay. Slot 8 was read as one, in samples, and
+    // it is the notch frequency in hertz. Nothing measured takes its place, so
+    // the late field starts from the input rather than after a delay.
+    this.preDelay = 0;
+
+    const f = Math.min(0.49, Math.max(0.0004, preset[PRESET_SLOT.notchHz] / 48000));
+    const r = Math.exp(-10 * Math.PI * f);
+    const rr = Math.exp(-20 * Math.PI * f);
+    const a = 2 * r * Math.cos(2 * Math.PI * f);
+    this.notch = { a, b: rr + 1 - a, c: -rr };
 
     // WARNING: the early row's middle three floats run -80..+100 and are NOT
     // levels -- reading them as decibels gives a gain of 100,000. The last
@@ -332,27 +368,7 @@ export class Reverb {
 
     // The allpasses: idx1 and idx2 straight, then the same two scaled. Build
     // order is the loop order -- both `0x514` loops run 0 then 1.
-    const bases = [taps[0], taps[1]];
-    const lengths = [...bases, ...bases.map((b, i) => b * REVERB_ALLPASS_RATIOS[i])];
-    for (const length of lengths) {
-      this.allpasses.push({
-        buffer: new Float32Array(ms(length)),
-        index: 0,
-        // WARNING: 0.5 is OURS, and it is a stand-in for a measurement, not a
-        // measurement. Both readings that follow from the record layout are
-        // provably wrong against the ear and the tests:
-        //
-        //  - the RT60 gain in a true allpass rings 2.48x the nominal RT60;
-        //  - the RT60 gain feed-forward is not an allpass at all -- `z^-L - g`
-        //    with g near 0.93 ripples about 29 dB, a comb filter, and it was
-        //    reported as the reverb sounding far too bright and metallic.
-        //
-        // Schroeder's conventional 0.5 in a true allpass is flat in magnitude
-        // and does not stretch the tail. It is a placeholder until the wiring
-        // of the four kernels is read rather than inferred. See open question 6.
-        gain: ALLPASS_GAIN,
-      });
-    }
+    // The allpass cascade that used to be built here is gone: see `notch`.
 
     this.wet1 = millibelToLinear(preset[PRESET_SLOT.level1]);
     this.wet2 = millibelToLinear(preset[PRESET_SLOT.level2]);
@@ -402,25 +418,12 @@ export class Reverb {
     // Two invented factors were stacked here and the fix was to remove one, not
     // to add a third.
 
-    // The series cascade, and it does **not** recirculate. Loop C modifies its
-    // buffer in place (`buf[i] -= y`) and the stage walk ping-pongs between two
-    // scratch buffers, so a stage reads one block and writes another -- there is
-    // no path back into the same delay line. Written with feedback instead
-    // (Schroeder's form) the measured gains, which run 0.92-0.95 on these short
-    // delays, stretched setting 2's tail to 4.95s against a 2.0s RT60. As a
-    // feed-forward diffuser it smears the tail without lengthening it.
-    // Each one's `g` is its own RT60 gain, not a constant.
-    for (const ap of this.allpasses) {
-      const delayed = ap.buffer[ap.index];
-      // A **true** allpass: the feedback term is what makes it flat in
-      // magnitude. WARNING: this was feed-forward only for a while, which is
-      // not an allpass at all -- `z^-L - g` with the measured `g` near 0.93
-      // ripples about 29 dB, a comb filter, and a listener heard it straight
-      // away as the reverb being far too bright and metallic.
-      ap.buffer[ap.index] = wet + ap.gain * delayed;
-      ap.index = (ap.index + 1) % ap.buffer.length;
-      wet = delayed - ap.gain * wet;
-    }
+    // The notch, `out = x - resonator(x)`, exactly as at 0x1850.
+    const { a, b, c } = this.notch;
+    const y = a * this.notchPrev + b * wet + c * this.notchOlder;
+    this.notchOlder = this.notchPrev;
+    this.notchPrev = y;
+    wet -= y;
 
     return out + wet * this.wet2;
   }

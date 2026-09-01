@@ -498,3 +498,46 @@ decay was touched — only the gain that had been standing in for a wrong send.
 ⚠️ **One invented number is left in the reverb**: the allpass coefficient, 0.5. Everything else —
 tap sets, early sets, the level law, the RT60 gain, the damping pole, the sends — is measured.
 
+## 6f. The allpass coefficient — SETTLED: there is no allpass
+
+Asked to find the reverb's last invented number. The answer is that the number does not exist,
+because neither does the filter it belonged to.
+
+The kernel those stages run is `fmodsmsreverb.prx` `0x1850`:
+
+```
+y      = a*prev + b*x + c*older
+buf[i] = x - y                     ; in place
+```
+
+with the coefficients read from `[rec+0x30]`, `[rec+0x34]`, `[rec+0x38]` (`0x1828`-`0x1832`) and the
+state at `+0x20`/`+0x24`. The eboot builds all three from **one** number at `v0x3fcefb`-`v0x3fcf9f`:
+
+```
+r = exp(-10*PI*f)
+a = 2 * r * cos(2*PI*f)     ; [+0x94] -> the record's +0x34
+c = -r*r                    ; [+0x98] -> +0x38, applied through a sign-flip mask
+b = r*r + 1 - a             ; [+0x9c] -> +0x30
+```
+
+`a = 2r cos(w)` with `c = -r²` is a **two-pole resonator**, and subtracting a resonator from the
+signal is a **notch**. At DC the resonator's gain is `b / (1 - a - c) = 1` exactly, so the notch is
+perfect there.
+
+### And slot 8 is not a pre-delay
+
+`f` comes from `v0x3fce8e`: **slot 8 divided by 48,000**, clamped to `[0.0004, 0.49]`. The presets use
+20, 100 and 400, which map to 20 Hz, 100 Hz and 400 Hz — highpass corners, which is what a reverb
+puts there. `PRESET_SLOT` called it `preDelay`, "a delay in samples at 48 kHz", and used it as one.
+There is now **no measured pre-delay at all**, and the code says so rather than inventing one.
+
+### Why the engine can afford an un-normalised comb bank
+
+Eight feedback combs at `g ≈ 0.87` have a DC gain near **62**, and a reverb that piles up DC is what
+made a `1 - gain` normalisation look necessary. The notch is the engine's answer: it removes exactly
+that. The two belong together, and this project had neither.
+
+⚠️ **The RMS-against-dry number is no longer comparable across this change.** It fell from 42.4% to
+3.0% on the same window, and most of that drop is inaudible sub-20 Hz energy the notch removes.
+Judging the wet level by that ratio was measuring rumble as much as reverb.
+
