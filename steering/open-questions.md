@@ -583,6 +583,42 @@ comparable with the last one.
 has not been measured — only that the peak of the rendered mix fell from 1.749 to 1.491, which is
 the `sqrt(1/N)` correction arriving.
 
+## 6e. `Params[5]` and `Params[6]` were swapped — CORRECTED, 2026-09-01
+
+`FILTER_PARAMS` had `keyTrack: 5, envAmount: 6`. It is the other way round, and the array base is
+pinned rather than assumed. `fmodextinput.prx` loads the four filter controls as consecutive `(x,y)`
+pairs from `rcx` at `0x2985`-`0x29bd` and uses them at `0x2a02`-`0x2a90`:
+
+```
+[rcx+0x500]/[0x504]  lerped at 0x2a2c, then SQUARED at 0x2a3f    -> cutoff      Params[3]
+[rcx+0x508]/[0x50c]  lerped at 0x2a76, times keytrack at 0x2a90  -> resonance   Params[4]
+[rcx+0x510]/[0x514]  lerped at 0x2a43, into 1 + p*(envB - 1)     -> envAmount   Params[5]
+[rcx+0x518]/[0x51c]  lerped at 0x2a02, into 1 + (rate - 1)*p     -> keyTrack    Params[6]
+```
+
+The same function reads `[rcx+0x540..0x55c]` as the amplitude ADSR (`Params[11..14]`),
+`[rcx+0x560..0x5a4]` as the LFO triples and `[rcx+0x5a8]` as the output level. That places
+`Params[0]` at `rcx+0x4e8` and leaves no freedom in the four above.
+
+**How it surfaced, and why it only surfaced now.** A listener reported a strange detune on the music
+box in one level's intro, immediately after per-note modulation was wired up. `musicbox.rinst` has
+`Params[5] = 1` and `Params[6] = 0`, and its filter pair sweeps with the modulation: cutoff 1.0 to
+0.1375, resonance 0.0 to 0.8562. Read the old way its key tracking was **1**, so
+`resonance * keytrack` doubled at the octave, clamped at 1, and drove the ladder's `q` past 3 into
+self-oscillation — a resonant peak that climbed with the note, which is exactly what a detune
+sounds like. Read correctly its key tracking is **0** and the filter is identical at every pitch.
+
+The error was invisible until modulation was connected because both instruments' `x` endpoints
+happened not to expose it: at modulation 0 the music box's resonance is exactly **0**, a plain
+lowpass wide open, which is what the listener expected the timbre knob to give.
+
+⚠️ **`q` still reaches 3.13 on the music box at full modulation.** The Stilson/Smith
+approximation's resonance compensation grows as the cutoff falls, so a 0.856 resonance at
+`freq = 0.019` is a very strong peak at 454 Hz. It is now pitch-independent, so it reads as a
+timbre rather than a detune, but whether the engine's ladder is that fierce there is unverified —
+the coefficient formula matches instruction for instruction, the *saturation* that bounds it has
+only been read as `b4 -= b4³/6`.
+
 ## 6d. Per-note modulation — WIRED UP 2026-09-01
 
 The note word's bits 24..27 are the note's own modulation, `× 1/15` (`v0x4550`), and it is the

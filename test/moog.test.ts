@@ -160,11 +160,17 @@ test('the envelope only moves the filter when the amount is set', () => {
 });
 
 test('the param indices are the ones the renderer reads', () => {
+  // ⚠️ 5 and 6 are envelope amount and key tracking, in that order, and this
+  // test asserted the reverse. `fmodextinput.prx` loads the four as consecutive
+  // (x,y) pairs at 0x2985-0x29bd and uses them at 0x2a02-0x2a90: 0x510 goes
+  // into `1 + p*(envB - 1)` and 0x518 into `1 + (rate - 1)*p`. The array base is
+  // pinned independently by Params[11..14] landing on the amplitude ADSR and
+  // Params[24] on the output level.
   assert.deepEqual({ ...FILTER_PARAMS }, {
     cutoff: 3,
     resonance: 4,
-    keyTrack: 5,
-    envAmount: 6,
+    envAmount: 5,
+    keyTrack: 6,
   });
 });
 

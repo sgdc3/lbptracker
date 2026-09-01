@@ -100,9 +100,9 @@ export interface FilterSettings {
   readonly cutoff: number;
   /** `Params[4]`, 0..1. Zero in 60 of the game's 68 instruments. */
   readonly resonance: number;
-  /** `Params[5]`, 0..1: how far the cutoff follows the note. */
+  /** `Params[6]`, 0..1: how far the cutoff follows the note. */
   readonly keyTrack: number;
-  /** `Params[6]`, 0..1: how far envelope B moves the cutoff. */
+  /** `Params[5]`, 0..1: how far envelope B moves the cutoff. */
   readonly envAmount: number;
 }
 
@@ -158,9 +158,35 @@ export function filterAt(
 }
 
 /** `Params` indices, so the mapping lives next to the code that uses it. */
+/**
+ * Which `Params` index is which filter control.
+ *
+ * ⚠️ **5 and 6 were the wrong way round here**, and the swap is measurable
+ * rather than arguable. `fmodextinput.prx` loads the four as consecutive `(x,y)`
+ * pairs from `rcx`, at `0x2985`-`0x29bd`:
+ *
+ * ```
+ * [rcx+0x500]/[0x504]  -> lerped at 0x2a2c, then SQUARED at 0x2a3f   -> cutoff
+ * [rcx+0x508]/[0x50c]  -> lerped at 0x2a76, times keytrack at 0x2a90 -> resonance
+ * [rcx+0x510]/[0x514]  -> lerped at 0x2a43, into 1 + p*(envB - 1)    -> envAmount
+ * [rcx+0x518]/[0x51c]  -> lerped at 0x2a02, into 1 + (rate - 1)*p    -> keyTrack
+ * ```
+ *
+ * The base is not assumed: the same function reads `[rcx+0x540..0x55c]` as the
+ * amplitude ADSR (`Params[11..14]`), `[rcx+0x560..0x5a4]` as the LFO triples
+ * and `[rcx+0x5a8]` as the output level, which pins `Params[0]` at `rcx+0x4e8`
+ * and leaves no freedom in the four above.
+ *
+ * The swap is audible, not cosmetic. `move_pack/musicbox.rinst` has
+ * `Params[6] = 0` and `Params[5] = 1`: read the old way its key tracking was 1,
+ * so `resonance * keytrack` doubled at the octave, clamped at 1, and drove the
+ * ladder's `q` past 3 into self-oscillation -- a resonant peak that climbed
+ * with the note, which is what a listener reported as a detune. Read correctly
+ * its key tracking is 0 and the resonance does not move with pitch at all.
+ */
 export const FILTER_PARAMS = {
   cutoff: 3,
   resonance: 4,
-  keyTrack: 5,
-  envAmount: 6,
+  envAmount: 5,
+  keyTrack: 6,
 } as const;
