@@ -449,8 +449,11 @@ compares them. See [open-questions.md](open-questions.md).
 | → part lookup wrapper | `v0x9629d0` — reads `[thing+0x50] + 0x128` |
 | → `PSequencer::BeginPlayback` | `v0x1c4f00` |
 | the whole sequencer module | `v0x1c3000` … `v0x1c7000` |
+| `RSample` load inside the worker | `v0x1c38aa` — `mov eax, 0x31` / `mov ecx, 0x80000031`, the only such site in the binary |
 | "stop every other music sequencer" walk | `v0x1c5670` |
-| sample preload job (`StartSamplePreload` string at `v0x1c3ce8`) | worker `v0x1c37f0` |
+| sample-preload job spawner | `v0x1c3c80` |
+| its worker | `v0x1c37f0` |
+| `"StartSamplePreload"` string | `v0xe61158` (referenced at `v0x1c3ce5`) |
 
 Other useful script bindings: `StopSequencerPlayback__Q5Thingi`, `TriggerSequencerMusic__Q5Thing`,
 `GetElemPSequencer__Q5Thingi`, `GetSizePSequencer__Q5Thing`, `GetTimeLengthOnSequencer__Q5Thing`,

@@ -153,9 +153,19 @@ Recovered as names, sizes and defaults only:
      at `+0x1e8`/`+0x1ec`: 70 functions, and 42 of those also touch `+0x48`, `+0xc8` or `+0xe8`.
      Those offsets are far too common to discriminate; this did not converge.
 
-  **What is left to try:** find the RInstrument consumer from the *object* rather than the offsets —
-  whatever the sample-preload path (`v0x1c37f0`) hands its loaded instrument to. Or accept the
-  envelope as ours and mark it as such, which is what `VoiceSpec.release` already does.
+  5. **Following the object.** Walked the preload path properly: `PSequencer::BeginPlayback`
+     (`v0x1c4f00`) builds a container at `[obj+0x80]`, calls the spawner `v0x1c3c80` at `v0x1c530a`,
+     which starts worker `v0x1c37f0` under the name `"StartSamplePreload"`, and the worker loads
+     resource type `0x31` = `RSample` at `v0x1c38aa`. That is the whole asset chain confirmed from
+     the code side — but **`BeginPlayback` never touches `+0xc8`, `+0xe8` or `+0x1e8`**. It handles
+     note data (`+0x68`) and the `MusicSequencer` flag (`+0x56`) and nothing from the sampler patch.
+
+  **What that means, and what is left.** The preload path only resolves *which samples to load*.
+  The envelope is therefore applied at **note-trigger** time, not at playback start, so the
+  function to find is the one that starts a voice — not anything reachable from the preload. That is
+  the next anchor to attack, and it has not been attacked yet.
+
+  Until then the envelope is ours and is marked as such: see `VoiceSpec.release`.
 - `Arpeggio` — **32** bytes, default `0xf`, with `Arpeggiate` as the on/off bool.
 - `Behavior`, `TriggerPlayer`, `PreviewThing` on `PSequencer` — three fields our serialiser walk
   missed entirely; widen the window at `v0xd37d10`.
