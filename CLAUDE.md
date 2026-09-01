@@ -51,8 +51,16 @@ they are the ground truth the JavaScript has to reproduce:
   corpus statistics in `sequencer-data-model.md` reproducible. Build/run notes in its header.
 - `GuidLookup.java` — resolve a GUID (or a path substring) against the game's FileDB
   `output/orbisguids.map`. This is how you find where any resource actually lives.
-- `ExtractGuid.java` — GUID → FileDB → SHA1 → FARC → bytes. This is how the sequencer's real
-  samples and `.rinst` instrument definitions come out of the game.
+- `ExtractGuid.java` — GUID → FileDB → SHA1 → FARC → bytes, plus a `manifest.json` the browser can
+  use to resolve GUIDs without the 11 MB FileDB. This is how the sequencer's real samples and
+  `.rinst` instrument definitions come out of the game:
+
+  ```
+  java -cp "$JAR;out" ExtractGuid <orbisguids.map> <gamedir> fixtures/rinst .rinst
+  java -cp "$JAR;out" ExtractGuid <orbisguids.map> <gamedir> fixtures/smp  audio/music/samples
+  ```
+
+  Then `node dev/serve.mjs` and open http://127.0.0.1:8173/ to play them.
 - `lbpdis.py`, `callgraph.py`, `fmodapi.py` — eboot RE helpers (see `eboot-re.md`).
 
 Python on this machine: `C:\Users\sgdc3\AppData\Local\Programs\Python\Python314\python.exe`

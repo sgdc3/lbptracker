@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>lbptracker — piano listening test</title>
+<title>lbptracker — instrument bench</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -82,25 +82,27 @@
 </head>
 <body>
 <main>
-  <h1>piano_C2..C6 listening test</h1>
+  <h1>instrument bench</h1>
   <p class="sub">
-    The first thing in this project that can be judged by ear. Everything runs in
-    this tab — the bank is read from your disk and never uploaded.
+    The game's own sequencer instruments, played through this project's reader,
+    key splits, pitch formula and mixer. Assets come from <code>fixtures/</code>,
+    extracted from your own install; nothing leaves this machine.
   </p>
 
-  <div id="drop">
-    <strong>Drop <code>sfxbank_compressed.fsb</code> here</strong>
-    <span>or click to pick it — it is in <code>gamedata/audio/</code> of your own install</span>
+  <div class="row">
+    <label for="instrument">instrument</label>
+    <select id="instrument">
+      <option value="" selected disabled>pick one…</option>
+    </select>
   </div>
-  <input type="file" id="file" accept=".fsb">
 
   <div id="status"></div>
 
   <div id="controls" hidden>
     <div class="row">
-      <button id="octaves">Play the five base notes</button>
+      <button id="octaves">Play every slot at its base note</button>
       <button id="scale">C major, five octaves</button>
-      <button id="chromatic">Chromatic C2→C7</button>
+      <button id="chromatic">Chromatic C1→C7</button>
       <button id="stop">Stop</button>
       <label for="engine">engine</label>
       <select id="engine">
@@ -119,36 +121,25 @@
       <span id="gainLabel">0.50</span>
     </div>
 
+    <div id="splits"></div>
     <div id="meter"></div>
     <div id="detail"></div>
     <div id="keys"></div>
 
     <p class="note">
-      <strong>The control that matters.</strong> Switch <em>engine</em> to
-      “browser resampler”. That plays the identical decoded sample at the
-      identical pitch through the browser's own resampler instead of ours. If it
-      sounds clean and ours does not, the fault is ours and this page just found
-      it. If both sound the same, the character is in the asset — these are
-      4-bit IMA ADPCM at 22050 Hz, which is not transparent — and no
-      interpolator will remove it.
+      <strong>What to listen for.</strong> “Every slot at its base note” plays each
+      sample at ratio exactly 1.0 — they should sound like one instrument, and a
+      timbre step between them means the splits or the pitch formula are wrong.
+      The coloured bar under each key shows which slot it resolves to, so the
+      key-split zones are visible while you play them.
     </p>
     <p class="note">
-      <strong>What else to listen for.</strong> The five base notes should sound
-      like one instrument: each plays its own sample at ratio exactly 1.0, so any
-      timbre step between them means the key splits are wrong. Across the
-      chromatic run, listen at the octave boundaries — a jump in brightness there
-      is the splits; a note that sounds flat or sharp is the pitch formula, and
-      would mean <code>finetune</code> is in semitones rather than cents.
-      The interpolator selector is an A/B for open question 7.
-    </p>
-    <p class="note">
-      ⚠️ <strong>And a caveat about the comparison itself.</strong> Nothing has
-      yet proved the sequencer plays <em>these</em> samples. We know
-      <code>piano_C2..C6</code> exist in <code>sfxbank_compressed.fsb</code> and
-      are the right shape; the link from an instrument's
-      <code>SampleGuids</code> to actual audio is open question 1. If the
-      in-game piano sounds different in kind rather than in cleanliness, that is
-      the likelier explanation.
+      <strong>The control.</strong> Switching <em>engine</em> to “browser
+      resampler” plays the identical sample at the identical pitch through the
+      browser's own resampler. Clean there and dirty here means the fault is
+      ours. That control is what proved the earlier distortion was the wrong
+      source material — the 4-bit SFX-bank copies — rather than anything in this
+      pipeline.
     </p>
   </div>
 

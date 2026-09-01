@@ -146,7 +146,9 @@ Follow the pattern for anything else platform-shaped.
 | `src/audio/interpolate.ts`, `mixer.ts` | build order step 2: voices, resampling, panning, looping. Done; default is `sinc8` after the first listening test found `linear` audibly broken (open question 7) |
 | `src/audio/mixer-worklet.ts` | the AudioWorklet shell around `Mixer`. **Verified in Chrome**: 441 Hz in, 441 Hz out at the expected amplitude |
 | `src/platform/node.ts`, `web.ts` | inflate adapters. Done |
-| `dev/serve.mjs`, `dev/index.html`, `dev/app.ts` | the piano_C2..C6 listening test. Runs |
+| `src/core/rinstrument.ts` | the `INSb` sampler patch. Parses all 68 instruments exactly |
+| `src/core/wav.ts` | 16-bit PCM RIFF read + write — the sequencer's own sample format |
+| `dev/serve.mjs`, `dev/index.html`, `dev/app.ts` | the instrument bench: picks any of the game's 68 instruments, loads its real samples, plays them across its key splits |
 | the Thing-graph walk | **not started** — this is the next real piece |
 | echo, reverb, UI | not started (build order steps 5–6) |
 

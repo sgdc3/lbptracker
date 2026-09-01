@@ -90,11 +90,25 @@ public class ExtractGuid {
                 String name = row.getPath().replaceAll(".*[/\\\\]", "");
                 Path out = outDir.toPath().resolve(name);
                 Files.write(out, data);
+                manifest.add(String.format(
+                    "  {\"guid\": %s, \"file\": \"%s\", \"path\": \"%s\", \"size\": %d}",
+                    row.getGUID().toString().replaceAll("[^0-9]", ""), name,
+                    row.getPath().replace("\\", "/"), data.length));
                 System.out.printf("g%-10s %-64s %7d bytes from %-20s magic %s%n",
                     row.getGUID(), row.getPath(), data.length, from, magic(data));
             }
         }
+
+        // A manifest so a browser can resolve a GUID without the FileDB, which
+        // is 11 MB and needs the FARC reader anyway. Written next to the files.
+        if (!manifest.isEmpty()) {
+            Path out = outDir.toPath().resolve("manifest.json");
+            Files.writeString(out, "[\n" + String.join(",\n", manifest) + "\n]\n");
+            System.out.printf("%nwrote %s (%d entries)%n", out, manifest.size());
+        }
     }
+
+    private static final List<String> manifest = new ArrayList<>();
 
     /** First four bytes as printable characters, then as hex -- enough to spot a format. */
     private static String magic(byte[] data) {
