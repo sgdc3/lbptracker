@@ -118,24 +118,47 @@ pointers; **what fills them is not known**, and it decides how our high notes so
 worker `v0x1c37f0` — look for a pass that allocates roughly 1.75× a sample's size (1 + ½ + ¼) and
 writes three pointers 40 bytes apart into a 152-byte slot.
 
-## 6. `ReverbSetting` → which reverb — **half answered**
+## 6. `ReverbSetting` → which reverb — **it is the GAME's own reverb, and it can be read**
+
+The question was "which FMOD DSP?". The answer is none of them: **the reverb is game code**, so it
+can be transcribed the way the sequencer's synth was, rather than approximated.
 
 **The preset table is dumped** (see question 2 and `src/audio/effects.ts`): 12 presets of 44 bytes
-at `v0x1062620`, an 8-entry remap at `v0x1062830`, and ten fields per preset pushed into DSP
-parameters 1–10.
+at `v0x1062620`, an 8-entry remap at `v0x1062830`, ten fields per preset pushed into parameters
+1–10. The fields never did fit `FMOD_DSP_SFXREVERB` — two of the ten are booleans, which SFXREVERB
+has none of, the first two read as millibels and the last as a reference frequency in Hz.
 
-**But the fields do not look like `FMOD_DSP_SFXREVERB`.** Two of the ten are booleans, which
-SFXREVERB has none of; the first two fields are negative in the hundreds, which reads as millibels;
-the last is 3000–12000, which reads as a reference frequency in Hz. That pattern fits an
-I3DL2-style or Sony reverb far better than FMOD's.
+**The construction, at `v0x3fd0d2`–`v0x3fd246`, settles it:**
 
-So the remaining question is narrower and more answerable than it was: **find what consumes DSP
-parameters 1–10 here** — start from the callers of `v0x3fd4c0` and from the `aSfxDsp` plugin call at
-`v0xab51b0`. Until then the reverb in `src/audio/effects.ts` is a Schroeder network of ours that
-responds to the send levels and reproduces nothing, and it says so.
+```
+alloc 0x4b000 = 307,200 bytes          ; 76,800 floats -- the delay memory
+alloc 0x2c    =      44 bytes          ; a private copy of one preset
+copy presetTable + 0x58 into it        ; 0x58 / 0x2c = preset 2, the default
+[copy + 0] = 0xfffffce0 = -800         ; slot 0, the one the setter skips
+memset([obj + 0xf0], 0, 0x100)         ; a 256-byte state
+memset([obj + 0xf8], 0, 0x580)         ; a 1,408-byte state
+call v0x3fcc00(state)                  ; init
+call v0x3fcd50(state, preset, 1, buffer)  ; configure -- the same entry
+                                          ; applyReverbPreset tail-calls
+```
 
-⚠️ This matters more than its position here suggests: **71,781 of 129,696 instrument placements
-(55%) send to reverb.** A dry render is missing more than it keeps.
+Two state objects, a 307 KB delay buffer and a preset struct, all allocated and initialised by the
+eboot. Nothing is handed to FMOD.
+
+**The anchors to finish it:**
+
+| what | where |
+|---|---|
+| init | `v0x3fcc00` |
+| configure from a preset | `v0x3fcd50` |
+| per-parameter setter (the switch that stores into `[state + 0x1c/0x20/0x24/0x28]`) | `v0x3fd3d0` |
+| apply a preset by `ReverbSetting` | `v0x3fd4c0` |
+| construction, as above | `v0x3fd0d2` |
+| likely the process callback | `v0x3fd260` — takes `[rdi+8]`, then `[rbx+0xe0]` and `[rbx+0xf0]`, which are the buffer and the state |
+
+⚠️ Worth doing, and worth doing before more of the mix is tuned: **71,781 of 129,696 instrument
+placements (55%) send to reverb.** Until it is done, `src/audio/effects.ts` carries a Schroeder
+network of ours that responds to the send levels and reproduces nothing — and says so.
 
 ## 7. FMOD's pan law — the resampler half is ANSWERED
 
