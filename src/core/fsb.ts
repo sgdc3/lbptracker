@@ -146,7 +146,16 @@ export function sampleData(bank: FsbBank, sample: FsbSample): Uint8Array {
 }
 
 /**
- * Find a sample by exact name, then by case-insensitive substring.
+ * Find a sample by name, most specific match first.
+ *
+ * ⚠️ **Substring matching is a trap here and it has already bitten.** The bank
+ * stores names with their `.wav` suffix, so looking up "piano_C4" misses the
+ * exact match and falls through to a substring search -- where
+ * **"epiano_C4.wav" contains "piano_C4"** and comes first in bank order. That
+ * silently loaded the electric piano into the acoustic piano's key zone.
+ *
+ * Hence the order: exact, exact + ".wav", prefix, and only then substring.
+ * A prefix match distinguishes piano from epiano; a substring match cannot.
  *
  * Names are truncated to 30 characters in the header, so a long name will not
  * match in full -- that is a property of the format, not a bug here.
@@ -157,7 +166,14 @@ export function findSample(
 ): FsbSample | undefined {
   const exact = bank.samples.find((s) => s.name === query);
   if (exact) return exact;
+
+  const withWav = bank.samples.find((s) => s.name === `${query}.wav`);
+  if (withWav) return withWav;
+
   const needle = query.toLowerCase();
+  const prefix = bank.samples.find((s) => s.name.toLowerCase().startsWith(needle));
+  if (prefix) return prefix;
+
   return bank.samples.find((s) => s.name.toLowerCase().includes(needle));
 }
 

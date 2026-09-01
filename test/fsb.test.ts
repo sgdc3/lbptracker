@@ -87,6 +87,44 @@ test('the IMA block geometry holds for every ADPCM sample in the bank', async (t
   assert.equal(checked, 1048);
 });
 
+test('findSample prefers a prefix over a substring: piano_C4 is not epiano_C4', async (t) => {
+  if (!existsSync(BANK)) {
+    t.skip(`no bank at ${BANK} (set LBP_FSB)`);
+    return;
+  }
+  const bank = await loadBank();
+  // The real bug this guards: "epiano_C4.wav" contains "piano_C4", and comes
+  // first in bank order, so a substring search loads the wrong instrument.
+  for (const octave of [2, 3, 4, 5, 6]) {
+    const found = findSample(bank, `piano_C${octave}`);
+    assert.ok(found, `piano_C${octave} exists`);
+    assert.equal(
+      found.name,
+      `piano_C${octave}.wav`,
+      `piano_C${octave} must not resolve to ${found.name}`,
+    );
+  }
+  // And the electric piano is still reachable under its own name.
+  const epiano = findSample(bank, 'epiano_C4');
+  assert.equal(epiano?.name, 'epiano_C4.wav');
+});
+
+test('the five piano samples form a coherent multisample', async (t) => {
+  if (!existsSync(BANK)) {
+    t.skip(`no bank at ${BANK} (set LBP_FSB)`);
+    return;
+  }
+  const bank = await loadBank();
+  const found = [2, 3, 4, 5, 6].map((o) => findSample(bank, `piano_C${o}`)!);
+  for (const s of found) {
+    assert.equal(s.channels, 1, `${s.name} is mono`);
+    assert.equal(s.codec, 'ima_adpcm', `${s.name} is ADPCM`);
+  }
+  console.log(
+    `    ${found.map((s) => `${s.name} ${s.freq}Hz ${s.lengthSamples}f`).join(', ')}`,
+  );
+});
+
 test('piano_C3 decodes to the frames, rate and level steering records', async (t) => {
   if (!existsSync(BANK)) {
     t.skip(`no bank at ${BANK} (set LBP_FSB)`);

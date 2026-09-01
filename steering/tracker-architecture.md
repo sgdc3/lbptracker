@@ -18,7 +18,15 @@ stereo frames. That gives us:
 - an interpolator we control and can match to `fmod_dsp_resampler.cpp`,
 - sample-accurate note scheduling instead of `setTimeout` drift,
 - deterministic output — the same project renders identically on every browser and every run,
-- offline rendering for export by running the same processor under `OfflineAudioContext`.
+- offline rendering for export by reusing the same `Mixer`.
+
+⚠️ **Offline export must drive `Mixer` directly, not the worklet.** Measured in Chrome: samples and
+voices posted to an `AudioWorkletNode` port *before* `OfflineAudioContext.startRendering()` never
+reach the processor, and the render comes out silent — the identical sequence in a realtime
+`AudioContext` produces the expected tone (441 Hz at the expected amplitude). Port messages are not
+part of the offline render's ordering guarantees. Since `Mixer` is plain TypeScript with no Web
+Audio, calling it in a loop for export is both simpler and exactly the same code path, so this
+costs nothing. Do not "fix" it by adding delays before `startRendering`.
 
 The cost is that we write our own voice allocation and mixing. That is a few hundred lines, and it
 is the part of the project that has to be right anyway.
@@ -136,15 +144,25 @@ Follow the pattern for anything else platform-shaped.
 | `src/core/fsb.ts`, `ima.ts`, `wav.ts` | build order step 1. Done, **byte-identical to `tools/fsb.py`** |
 | `src/core/instrument.ts`, `voice.ts` | slots, key splits, pitch/gain/pan math. Done |
 | `src/audio/interpolate.ts`, `mixer.ts` | build order step 2: voices, resampling, panning, looping. Done |
-| `src/audio/mixer-worklet.ts` | the AudioWorklet shell around `Mixer`. Written, **not yet run in a browser** |
+| `src/audio/mixer-worklet.ts` | the AudioWorklet shell around `Mixer`. **Verified in Chrome**: 441 Hz in, 441 Hz out at the expected amplitude |
 | `src/platform/node.ts`, `web.ts` | inflate adapters. Done |
+| `dev/serve.mjs`, `dev/index.html`, `dev/app.ts` | the piano_C2..C6 listening test. Runs |
 | the Thing-graph walk | **not started** — this is the next real piece |
 | echo, reverb, UI | not started (build order steps 5–6) |
 
-⚠️ Nothing here has made a sound yet. The mixer is verified against synthetic
-buffers and the decoder against the Python oracle, but no browser has played a
-note — the first listening test is still ahead and is where a wrong assumption
-about pan law, interpolation or `finetune` units will finally be audible.
+## The dev server, and why there is no bundler
+
+`node dev/serve.mjs` serves the repository over `127.0.0.1:8173` and strips TypeScript types on the
+fly with `module.stripTypeScriptTypes`, which is built into Node. The browser then imports
+`/src/core/fsb.ts` as an ES module directly. No build step, no `node_modules`, and the source the
+browser runs is the same source `node --test` runs.
+
+AudioWorklet module scripts loaded this way **do** support static imports, so
+`audioWorklet.addModule('/src/audio/mixer-worklet.ts')` pulls in `mixer.ts` and `interpolate.ts`
+without bundling. That was the risky part of the design and it works.
+
+The server serves only files inside the repository. Game assets never pass through it — the page
+reads the user's bank through a file picker, in the tab, as the licensing story requires.
 
 ⚠️ **The Thing walk is the big one.** Reaching a `PInstrument` means deserialising every Thing and
 every part that precedes it in the stream, because parts are variable-length and cannot be skipped

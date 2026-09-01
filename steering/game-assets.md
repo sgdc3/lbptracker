@@ -117,6 +117,24 @@ plus unpitched percussion named plainly: `eDrums_kick_01`, `eDrums_HHHO_01`,
    `stem_NOTE.wav` convention; the rest are named plainly. The authoritative pitch reference is
    `RInstrument`'s `basenote` field, never the filename. Build the mapping from the resource, and
    use names only for display.
+
+   ⚠️ **And never look one up by substring.** Bank names carry their `.wav` suffix, so a search for
+   `piano_C4` misses the exact match and falls through — where **`epiano_C4.wav` contains
+   `piano_C4`** and comes first in bank order. That silently loaded the electric piano into the
+   acoustic piano's key zone in the first listening test, and nothing about it looks wrong until
+   you hear it. `findSample` in `src/core/fsb.ts` tries exact, then exact + `.wav`, then prefix,
+   and only then substring; a prefix match separates `piano` from `epiano`, a substring cannot.
+
+   The real acoustic piano multisample, for reference — note that C6 is recorded at a different
+   rate, which is why the playback rate has to fold in `sample.freq / outputRate` per slot:
+
+   | sample | rate | frames |
+   |---|---|---|
+   | `piano_C2.wav` | 22050 | 66112 |
+   | `piano_C3.wav` | 22050 | 66112 |
+   | `piano_C4.wav` | 22050 | 66112 |
+   | `piano_C5.wav` | 22050 | 65984 |
+   | `piano_C6.wav` | **32000** | 95808 |
 2. **We have not yet proved these are the samples the sequencer loads.** We have proved they exist
    and are the right shape. The link `RInstrument.SampleGuids[i]` → actual audio is still
    unresolved — see [open-questions.md](open-questions.md), question 2. The alternative is that
