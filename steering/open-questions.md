@@ -589,6 +589,31 @@ the name.
 without once checking what values the game's own instruments carry. Reading the corpus first — one
 query — would have shown 1.000 against `Numstack` 1 and stopped the change.
 
+## 14d. Is there code evidence for the comb normalisation? No — and testing that is what proved it
+
+Asked directly whether the game's code supports the chosen normalisation. It does not: neither
+`1 - gain` nor `sqrt(1 - gain)` appears anywhere. The kernel sums the combs with **no per-comb
+scaling at all** (`dampedComb` is `out[i] = g*(y + send[i])` and `acc[i] += x[i]`).
+
+So the fully measured configuration was tried — no comb normalisation, **and** slot 2's level divided
+by 100 as `v0x3fce41` does — and it **falsifies the reverb**:
+
+- the wet lands at 5.2% of the dry mix, which is close to what a listener picks by ear;
+- but two tests fail, and one of them is decisive: **a longer decay parameter no longer gives a
+  longer tail.** With the late field 100x down, the early reflections are the entire wet signal and
+  the decay control does nothing audible.
+
+**That is evidence, in the negative, and it is worth more than the level agreement.** The `/100` is
+real, but it scales the **per-stage** gains inside the 2x2 output matrix (`0x1368`-`0x13ab`, applied
+at six sites from `0x1f91` to `0x2078`), and those are of order 100. It cannot be moved onto a single
+collapsed wet level, and the test says so rather than an argument.
+
+**Where that leaves the normalisation.** It is a stand-in for the missing path count, chosen by ear,
+and it should be labelled that way rather than defended. `1 - gain` (amplitude) puts the wet at 7.8%
+and was preferred over `sqrt(1 - gain)` (18.5%). Both are ours. The measured configuration is
+unreachable until the output matrix is modelled, and **modelling it is the only change that can
+retire this number** — no further tuning will.
+
 ## 14c. Why the reverb's level keeps missing — the output stage is a MATRIX, not a gain
 
 A listener kept bracketing the wet level differently from what the code seemed to say, across four

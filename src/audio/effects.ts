@@ -373,6 +373,22 @@ export class Reverb {
     // The allpass cascade that used to be built here is gone: see `notch`.
 
     this.wet1 = millibelToLinear(preset[PRESET_SLOT.level1]);
+    // ⚠️ **Slot 2's level is divided by 100 in the engine and NOT here**, and
+    // the reason is a measurement, not an oversight.
+    //
+    // `v0x3fce41` really does divide it (`vdivss` against a constant 100), and
+    // `fmodsmsreverb.prx` multiplies the result into the output stage's gains at
+    // `0x1f91`, `0x1faf`, `0x1ffd`, `0x201b`, `0x205a` and `0x2078` -- six
+    // sites. But those are **per-stage** gains inside a 2x2 pan matrix over
+    // several taps (`0x1368`-`0x13ab`), and this class collapses all of that
+    // into one multiply on a mono wet signal.
+    //
+    // Applying the divide to the collapsed model was tried and **falsifies the
+    // reverb**: the tail drops 100x, the early reflections become the whole
+    // wet signal, and `test/reverb.test.ts` fails on *a longer decay parameter
+    // gives a longer tail* -- the decay control stops doing anything audible.
+    // The divide is real and belongs with the stage gains it scales, which are
+    // of order 100; it cannot be moved onto a single wet level.
     this.wet2 = millibelToLinear(preset[PRESET_SLOT.level2]);
   }
 
@@ -425,7 +441,7 @@ export class Reverb {
       // The engine's own scaling is still unfound: the PRX never reads the three
       // level fields at `[state+0x48]`, `[+0x4c]`, `[+0x50]`, so the eboot mixes
       // the wet in somewhere this project has not located.
-      wet += (this.normaliseCombs ? Math.sqrt(1 - comb.gain) : 1) * comb.y;
+      wet += (this.normaliseCombs ? 1 - comb.gain : 1) * comb.y;
     }
     // WARNING: there is no `/ sqrt(N)` here any more, and its removal is the
     // reverb's level.
