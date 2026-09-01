@@ -89,27 +89,24 @@ rather than assuming "infinite polyphony" and having to unpick it later.
 Each step is chosen so that it either produces something audible or removes a real unknown. Do not
 reorder 1 and 2 — you want the asset pipeline proven before anything depends on it.
 
-1. **Port `fsb.py` to TypeScript and play `piano_C3` in a browser.** No unknowns; the reference
-   implementation and a verified expected output already exist. Half a day. Test by rendering the
-   decoded PCM offline and comparing it byte-for-byte against `tools/fsb.py`'s WAV.
-2. **The voice engine**: worklet, interpolation, the pitch formula, key splits. Play a scale from
-   `piano_C2..C6` and check the splits land where `Splitnotes` says.
-3. **Level import**: read `PSequencer` + `PMicrochip` + `PInstrument` + the note chains out of a
-   real `.plan`/level. The record layout is written down (from ennuo's toolkit) but unconfirmed —
-   build the reader, then confirm it with the in-game diff of open question 2. Reading a real
-   composition and playing it back *is* the confirmation.
-4. **`RInstrument` reading** — needs `SampleGuids` resolved (open question 1). Until then,
-   hand-write instrument definitions matching what the banks contain.
-5. **Echo and reverb** with the real parameters.
+1. ~~**Port `fsb.py` to TypeScript**~~ — **done**, and byte-identical to the Python oracle. Note
+   this turned out to serve the game's *SFX*, not the sequencer; see step 4.
+2. ~~**The voice engine**~~ — **done**: worklet, interpolators, pitch formula, key splits.
+3. ~~**`RInstrument` reading**~~ — **done**. `SampleGuids` resolve through the FileDB
+   (`output/orbisguids.map`) to plain RIFF/WAV `.smp` files in the FARC archives, at 48 kHz 16-bit.
+   All 68 of the game's instruments parse exactly, and `dev/` plays them.
+4. **Level import**: read `PSequencer` + `PMicrochip` + `PInstrument` + the note chains out of a
+   real `.plan`/level. The note format is confirmed against 1.6 million real notes; what is missing
+   is the Thing-graph walk in TypeScript, which needs a serialiser per part type and is the largest
+   remaining piece. `tools/RawDump.java` is the golden reference while it is written.
+5. **Echo and reverb** with the real parameters — do open question 1 (the DSP indices) first.
 6. **UI**.
-7. **Round-trip export** back into a game-loadable resource. This is the feature that makes the
-   project matter to the LBP community, and it depends on step 3 being *confirmed*, not merely
-   plausible — we are writing into people's levels.
+7. **Round-trip export** back into a game-loadable resource. The feature that makes the project
+   matter to the LBP community, and it depends on step 4.
 
-Steps 1, 2, 5 and 6 have no blocking unknowns and can proceed immediately. Step 3 is now mostly a
-matter of writing the parser, since the format is documented; step 4 is still gated on RE, and
-step 7 on confirming step 3. See [open-questions.md](open-questions.md) and
-[lbp-modding-toolchain.md](lbp-modding-toolchain.md).
+Steps 1–3 are done. Step 4 is unblocked but large; steps 5–7 follow it. See
+[open-questions.md](open-questions.md) — none of what remains blocks the build, it only affects
+fidelity.
 
 ## The toolchain, and why it has no dependencies
 
