@@ -23,3 +23,15 @@ __pycache__/
 node_modules/
 dist/
 .vite/
+
+# locally generated test fixtures -- see steering/tracker-architecture.md.
+# Never commit these: they are derived from copyrighted game assets and from
+# other people's levels.
+fixtures/
+
+# IntelliJ / JetBrains
+.idea/
+*.iml
+*.ipr
+*.iws
+out/

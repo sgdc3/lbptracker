@@ -103,6 +103,46 @@ matter of writing the parser, since the format is documented; step 4 is still ga
 step 7 on confirming step 3. See [open-questions.md](open-questions.md) and
 [lbp-modding-toolchain.md](lbp-modding-toolchain.md).
 
+## The toolchain, and why it has no dependencies
+
+Node 22.6+ strips TypeScript types at load, so `node src/whatever.ts` just runs. Node also ships a
+test runner (`node --test`, auto-discovering `*.test.ts`) and zlib. Between them the whole `core/`
+layer builds, runs and tests with **zero installed packages** — `node_modules` does not exist and
+`npm install` has never been run.
+
+That is worth protecting. Every dependency added later has to justify itself against a baseline
+where `git clone && node --test` works on a machine with nothing but Node. A bundler will be needed
+eventually for the browser build; `core/` should still run without one.
+
+**Platform APIs are injected, never imported into `core/`.** `loadResource(bytes, inflate)` takes
+its inflater as an argument: `src/platform/node.ts` passes `zlib.inflateSync`,
+`src/platform/web.ts` passes a `DecompressionStream` wrapper. That is what keeps the same parser
+running under `node --test` against the corpus and in the browser against a file the user picked.
+Follow the pattern for anything else platform-shaped.
+
+## What exists so far
+
+| module | state |
+|---|---|
+| `src/core/stream.ts` | big-endian reader + `Revision` with the gate helpers. Done |
+| `src/core/resource.ts` | the `LVLb`/`PLNb` container. Done; 22 real levels parse |
+| `src/core/notes.ts` | note records, chaining, duration, automation flags. Done |
+| `src/platform/node.ts`, `web.ts` | inflate adapters. Done |
+| the Thing-graph walk | **not started** — this is the next real piece |
+
+⚠️ **The Thing walk is the big one.** Reaching a `PInstrument` means deserialising every Thing and
+every part that precedes it in the stream, because parts are variable-length and cannot be skipped
+without being understood. `tools/RawDump.java` sidesteps this by borrowing the toolkit's ~55 part
+serialisers. Doing it in TypeScript is a real port, not an afternoon — budget for it, and use
+`RawDump`'s JSONL output as the golden reference while it is being written.
+
+## Testing against the corpus
+
+`test/resource.test.ts` reads real levels from `LBP_LEVELS` (defaulting to the local toolkit
+checkout) and **skips** when they are absent, so the suite passes on a machine without the game.
+Never commit a fixture derived from game assets or from someone's level; `fixtures/` is ignored for
+locally generated ones.
+
 ## Things worth deciding early
 
 - **Our own project format is JSON, not an LBP resource.** Import/export to the game's format is a
