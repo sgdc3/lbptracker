@@ -831,6 +831,35 @@ Recovered as names, sizes and defaults only:
 None are blocking: an instrument with `Arpeggiate` off and one stack behaves correctly without any
 of this.
 
+### Hunting `header + 0x04`: what was eliminated, 2026-09-02
+
+A pass went looking for the writer and did not find it. The eliminations are worth more than the
+search was, because each was a plausible candidate:
+
+| candidate | why it looked right | why it is not |
+|---|---|---|
+| `v0x1c74b0` | the **only** function in the sequencer module with a stack frame ≥ 4 KB — `sub rsp, 0x1bb8`, 7,096 bytes, enough to hold a copy of the 6,992-byte audio state | 411 instructions to its first `ret` and **not one** touches `+0x1ad0`, `+0x1ad8`, `+0x1af0`, `+0x1af8`, `+0x1b00` or a `*16` index. Steering's standing "do not re-examine" holds, and now for a measured reason rather than its constants |
+| `v0x521d5f` | a real `mov dword ptr [rsi + 0x1af0], ebx` — a write to what the data model calls the block count | its neighbours write `[r14+0x1b28] = 0xb`, `[r14+0x1b38] = 0x4b00000005` and so on. A different structure that happens to have a field at the same offset |
+| `imul ..., 0x98` anywhere in the eboot | the slot-record stride | **zero** sites. The builder at `v0x2a1190` writes slot fields at fixed unrolled offsets (`0x84`, `0x11c`, `0x1b4`, …), so nothing indexes them |
+
+**What was learned on the way**, and is new:
+
+- A note block is reached through a **handle**, not a pointer: `{+0x50: block index, +0x54:
+  generation}`, and every accessor re-validates `[+0x50] < [state+0x1ac8]` and `[+0x54]` against a
+  module global before indexing. So **`[state+0x1ac8]` is the block count** — the data model's
+  `+0x1af0` is something else, or there are two.
+- Nine such accessors sit at `v0x160930`-`v0x1610e6`, all of the same shape: call `v0x3fff20` for the
+  state, validate the handle, `imul index, 0x470`, add `[state+0x1ad0]` or `[state+0x1ad8]` for the
+  A/B copy, tail-call the worker. `v0x1609a0` packs a 7-bit value into bits 8..14 of `[state+0x1b34]`,
+  which is a note being written — so this family is the **editor's** API over note blocks.
+
+⚠️ **A refinement to the method note, learned by being fooled.** Byte-scanning for a displacement
+and validating by decoding backwards produces **false positives**: `[rsp + 0x1af8]`, `[rsp + 0x1ac8]`
+and friends appeared repeatedly at `v0x1c59xx`-`v0x1c5cxx` and looked like a state copy on the stack,
+but no function there has a frame big enough to hold one. The displacement bytes happen to end a
+valid instruction. **Validate a hit by decoding forward from a confirmed function start until it
+reaches the address, not by decoding backwards into it.**
+
 ## 9. Board row → mixer channel — the routing is MEASURED; one link is still inferred
 
 The old note here guessed "a row is very likely a mixer channel" as a direct index. **The corpus
