@@ -357,3 +357,42 @@ test('the corpus behaves the way the naming says it should', async (t) => {
       `drive ${zeros(OUTPUT_PARAMS.drive)} of ${all.length}`,
   );
 });
+
+test('a single-layer voice starts at the beginning of its sample', async () => {
+  const { Mixer } = await import('../src/audio/mixer.ts');
+  const rate = 48000;
+  const mixer = new Mixer(rate);
+  // A ramp, so where playback started is readable from the first output frame.
+  const ramp = new Float32Array(1000);
+  for (let i = 0; i < ramp.length; i += 1) ramp[i] = i / ramp.length;
+  mixer.play({
+    sample: { channels: [ramp], sampleRate: rate },
+    playbackRate: 1,
+    gain: 1,
+    pan: 0.5,
+    endFrame: 1000,
+  });
+  const left = new Float32Array(16);
+  mixer.render(left, new Float32Array(16));
+  assert.ok(left[0] < 0.01, `started ${(left[0] * 2 * ramp.length) | 0} frames in, not 0`);
+
+  // ⚠️ The regression this guards. `Params[2]` is a per-layer random start, and
+  // applying it to every voice destroyed every instrument with Numstack 1:
+  // a_kit_1 sets it to 1.000, so each drum hit began at a uniformly random
+  // point in its own sample -- on average half a kick, no transient, and a
+  // click at the discontinuity. Isolated, the kit rendered at RMS 0.0186 and
+  // peak 0.211; with the offset confined to layers after the first, 0.0711 and
+  // 0.646 -- 11.6 dB of a drum kit.
+  const withOffset = new Mixer(rate);
+  withOffset.play({
+    sample: { channels: [ramp], sampleRate: rate },
+    playbackRate: 1,
+    gain: 1,
+    pan: 0.5,
+    endFrame: 1000,
+    startPosition: 500,
+  });
+  const shifted = new Float32Array(16);
+  withOffset.render(shifted, new Float32Array(16));
+  assert.ok(shifted[0] > 0.2, 'an explicit startPosition is still honoured');
+});

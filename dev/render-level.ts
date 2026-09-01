@@ -272,7 +272,20 @@ for (const event of events) {
       ...spec,
       playbackRate: spec.playbackRate * (1 + 0.05 * P(STACK_PARAMS.detune) * bipolar()),
       pan: clamp01(spec.pan + 0.5 * P(STACK_PARAMS.spread) * bipolar()),
-      startPosition: P(STACK_PARAMS.startOffset) * sampleFrames * rand(),
+      // ⚠️ Layers after the first only. Applied to every voice, this destroys
+      // any instrument whose `Numstack` is 1: `a_kit_1` sets `Params[2]` to
+      // **1.000**, so every drum hit started at a uniformly random point
+      // anywhere in its sample -- on average half a kick, with no transient and
+      // a click where the waveform jumps. Six of the game's kits do the same
+      // (`8bit_kit_1`, `a_kit_1`, `bb_kit_1`, `bb_kit_2`, `e_kit_1`,
+      // `e_perc_1`), all with `Numstack` 1.
+      //
+      // A per-layer randomisation exists to decorrelate stacked layers, and a
+      // single layer has nothing to decorrelate, so skipping it there is the
+      // conservative reading. ⚠️ It does not explain why those kits set the
+      // value at all -- see open question 12.
+      startPosition:
+        layer === 0 ? 0 : P(STACK_PARAMS.startOffset) * sampleFrames * rand(),
       lfoPhaseOffset: [0, 1, 2].map(
         (n) => P(LFO_PARAMS[n].spread) * ((2 * Math.PI) / layers) * layer,
       ) as unknown as readonly [number, number, number],

@@ -666,6 +666,45 @@ volume are interpolated between points; modulation is not, because it feeds thin
 the voice starts — the envelope times, the filter settings, the unison stack. Whether the engine
 re-reads it mid-note is unmeasured.
 
+## 12. `Params[2]` — it is NOT simply a per-voice random start
+
+Reported by ear: "the acoustic kit's kick is broken, as if the start of the sample were skipped and
+only the cut tail played, with a click at the front." That is exactly what it was, and the cause was
+this project's own code.
+
+`STACK_PARAMS.startOffset` is documented as "per-layer random start,
+`r · sampleLength · U(0, 1)` frames in", and wiring the unison stack applied it to **every** voice.
+**`a_kit_1` sets `Params[2]` to 1.000 with `Numstack` 1**, so every drum hit began at a uniformly
+random point anywhere in its own sample — on average half a kick, with no transient and a click at
+the discontinuity. Six of the game's kits do the same: `8bit_kit_1`, `a_kit_1`, `bb_kit_1`,
+`bb_kit_2`, `e_kit_1`, `e_perc_1`, all at 1.000 and all with `Numstack` 1. Of the 27 instruments with
+a non-zero `Params[2]`, **18 have `Numstack` ≤ 1**.
+
+The measured cost, `a_kit_1` isolated over one 25-second window:
+
+| | RMS | peak |
+|---|---|---|
+| offset on every voice | 0.0186 | 0.211 |
+| offset on layers after the first | **0.0711** | **0.646** |
+
+**11.6 dB of drum kit.** It also resolves the puzzle that had been chased for several rounds: the
+kit rendered 13 dB below `baiyon_drums_1` with a similar note count, and afterwards sits 1.5 dB
+below it — which is exactly their `Params[24]` difference (0.344 against 0.419, 1.7 dB).
+
+The code now applies the offset only to layers after the first, on the reasoning that a per-layer
+randomisation exists to decorrelate stacked layers and one layer has nothing to decorrelate.
+
+⚠️ **That is a repair, not an explanation.** It does not say why six kits set the value at all,
+and a parameter that is meaningless on 18 of the 27 instruments that set it is probably not the
+parameter this project thinks it is. The values cluster suggestively: exactly **1.000** on every
+acoustic kit, small numbers (0.01–0.09) on textures like `record_static`, `mosquito` and
+`ghost`, and ranges on `noise` and `ray_gun`. Worth re-deriving from the engine rather than trusting
+the name.
+
+⚠️ **The method failure is the lesson.** `Params[2]` was measured, documented, and wired up
+without once checking what values the game's own instruments carry. Reading the corpus first — one
+query — would have shown 1.000 against `Numstack` 1 and stopped the change.
+
 ## 10. One-shots — percussion is not gated by its note, and the reason is inferred
 
 A listener reported the drums as far too quiet, and the ride cymbal at 5:17 of one level as barely
