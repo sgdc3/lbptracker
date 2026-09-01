@@ -533,7 +533,46 @@ tempo-locked, since the same project at half the tempo would echo off the beat.
 4 s buffer ceiling (the old 1 s ceiling rested on an unmeasured claim about the engine's buffer, and
 would silently fold a four-beat echo at a slow tempo down to one beat).
 
-## 12. `Params[2]` — it is NOT simply a per-voice random start
+## 12. `Params[2]` — the formula is now READ, and it contradicts our repair
+
+The per-layer init is at `fmodextinput.prx` `0x1ae7`-`0x1bd5`, inside the stack loop
+(`cmp [r15+0x4e4], 0` is `Numstack`, and the layer index starts at **0**):
+
+```
+0x1ae7  p    = Params[2].x + mod * (y - x)     ; mod is voice+0x28
+0x1b11  p   *= (int)[slot + 0x78]              ; a length
+0x1b21  rand()
+0x1b47  [voice + layer*8 + 0x40] = p * rand01  ; the layer's start position, a double
+
+0x1b4e  d    = Params[0].x + mod * (y - x)
+0x1b8d  r    = rand01 * 2d - d                 ; U(-d, +d)
+0x1b99  r   *= 0.05
+0x1ba1  [voice + layer*4 + 0x68] = 1 + r       ; the layer's pitch factor
+```
+
+`Params[0]`'s formula is **exactly** what this project implements. `Params[2]`'s is too --
+`offset * length * U(0,1)`.
+
+⚠️ **But both run from layer 0**, so the engine applies them to a single-layer voice, and this
+project no longer does. The repair that confined them to later layers was made because a listener
+reported `a_kit_1`'s kick as "the start of the sample skipped, only the cut tail, with a click" --
+which is precisely what `Params[2] = 1.000` with `Numstack` 1 produces, and six of the game's kits
+set exactly that. The repair is worth **11.6 dB** of drum kit and is not in doubt as a description of
+what sounds right; it is in doubt as a description of the engine.
+
+**The reconciliation has to be `[slot + 0x78]`.** If that field is the *loop* length rather than the
+sample length, it is zero for the loopless percussion samples and the offset vanishes for exactly the
+instruments that would otherwise break -- and the code and the ear agree again. What is known: the
+slot record is `0x98` bytes and starts at `+0x78`, twelve bytes before the `+0x84` that the eboot's
+builder at `v0x2a1190` fills from the `RInstrument`; so `+0x78` is **not** copied from the
+instrument, it is written by whatever loads the sample. Against that, `0x3086` compares the playback
+position with the same field and stops the voice when it is past and `[slot+0x80]` is zero, which
+reads more like a sample end than a loop end.
+
+**Next step:** find what writes `[slot + 0x78]`. It is in the block the eboot hands the DSP, so the
+writer is on the eboot side, near whatever resolves a sample GUID to its decoded frames.
+
+## 12b. The old note on `Params[2]`
 
 Reported by ear: "the acoustic kit's kick is broken, as if the start of the sample were skipped and
 only the cut tail played, with a click at the front." That is exactly what it was, and the cause was
