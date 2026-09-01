@@ -72,6 +72,21 @@ const skipGuids = (process.env.LBP_SKIP ?? '').split(',').filter(Boolean).map(Nu
  * dragged down to 0.50 by a ride playing an octave low.
  */
 const noKeyTrack = process.env.LBP_NO_KEYTRACK === '1';
+/**
+ * ⚠️ A/B switch: instrument GUIDs whose slots play at their own rate instead of
+ * being transposed by `note - baseNote`.
+ *
+ * Per-instrument on purpose. An earlier version of this applied to every
+ * loopless sample at once, which is a bad experiment: `a_kit_1` is transposed
+ * *down* on every hit (its base notes 87..21 all sit above the notes used,
+ * 12..68, giving rates 0.50-0.94), while `baiyon_drums_1` is transposed *up*
+ * (notes 44 and 46 against a base of 36, rates 1.59 and 1.78). Forcing both to
+ * 1.0 improves one and ruins the other, so the comparison says nothing.
+ */
+const unpitchedGuids = (process.env.LBP_UNPITCHED ?? '')
+  .split(',')
+  .filter(Boolean)
+  .map(Number);
 
 const manifest = async (dir: string) =>
   new Map<number, { file: string }>(
@@ -221,7 +236,8 @@ for (const event of events) {
   const spec: VoiceSpec = {
     sample: slot.wav,
     playbackRate:
-      (unpitchedPercussion && slot.wav.loop === undefined
+      ((unpitchedPercussion && slot.wav.loop === undefined) ||
+      unpitchedGuids.includes(event.guid)
         ? 1
         : pitchRatio(definition, note, seq.tempo)) *
       (slot.wav.sampleRate / RATE),
@@ -314,7 +330,7 @@ for (let i = 0; i < frames; i += 1) {
   pcm[i * 2] = Math.max(-32768, Math.min(32767, Math.round(left[i] * norm * 32767)));
   pcm[i * 2 + 1] = Math.max(-32768, Math.min(32767, Math.round(right[i] * norm * 32767)));
 }
-const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? '-only' : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
+const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? '-only' : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
 await writeFile(out, writeWav(pcm, 2, RATE));
 const elapsed = Number(process.hrtime.bigint() - started) / 1e9;
 console.log(
