@@ -115,9 +115,18 @@ test runner (`node --test`, auto-discovering `*.test.ts`) and zlib. Between them
 layer builds, runs and tests with **zero installed packages** — `node_modules` does not exist and
 `npm install` has never been run.
 
-That is worth protecting. Every dependency added later has to justify itself against a baseline
-where `git clone && node --test` works on a machine with nothing but Node. A bundler will be needed
-eventually for the browser build; `core/` should still run without one.
+That is worth protecting, and the line to hold is **runtime and tests**, not tooling: `git clone &&
+node --test` still works on a machine with nothing but Node, and nothing under `src/` imports a
+package. TypeScript and `@types/node` are now in `devDependencies` for `tsc --noEmit`, which is
+opt-in and earns its place — see below. A bundler will be needed eventually for the browser build;
+`core/` should still run without one.
+
+⚠️ **Typechecking is not optional-in-practice — it found a real bug the tests could not.**
+`loop`, `loopStart` and `loopEnd` belong to `AudioBufferSourceNode`, **not** to `AudioBuffer`.
+Setting them on the buffer is silently ignored, and that left the page's "browser resampler"
+control not looping at all while our own mixer did. `tsconfig.json` also sets
+`erasableSyntaxOnly`, which enforces Node's strip-only restriction at compile time instead of
+leaving it to memory.
 
 ⚠️ **Strip-only type removal bans any TypeScript syntax that emits code.** Node deletes types, it
 does not compile them, so **parameter properties** (`constructor(readonly x: T)`), `enum`,

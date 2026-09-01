@@ -173,14 +173,29 @@ function playNote(note: number, atSeconds = 0): void {
   const held = noteSeconds();
   if (engine === 'browser') {
     const buffer = context.createBuffer(1, v.s.wav.channels[0].length, v.s.wav.sampleRate);
-    buffer.copyToChannel(v.s.wav.channels[0], 0);
+    buffer.copyToChannel(new Float32Array(v.s.wav.channels[0]), 0);
+    const opts: AudioBufferSourceOptions = { buffer, playbackRate: v.ratio };
     if (v.s.wav.loop) {
       const region = loopRegion(v.s.wav.loop, v.s.wav.channels[0].length);
-      buffer.loop = true;
-      buffer.loopStart = region.start / v.s.wav.sampleRate;
-      buffer.loopEnd = region.end / v.s.wav.sampleRate;
+      opts.loop = true;
+      opts.loopStart = region.start / v.s.wav.sampleRate;
+      opts.loopEnd = region.end / v.s.wav.sampleRate;
     }
-    const source = new AudioBufferSourceNode(context, { buffer, playbackRate: v.ratio });
+    const source = new AudioBufferSourceNode(context, opts);
+
+    // ⚠️ The control is only worth having if it is actually equivalent. `loop`,
+    // `loopStart` and `loopEnd` belong to AudioBufferSourceNode, NOT to
+    // AudioBuffer -- setting them on the buffer is silently ignored, which left
+    // this path not looping at all for three commits while our own mixer did.
+    // A control that quietly differs is worse than no control, so say so loudly.
+    if (Boolean(v.s.wav.loop) !== source.loop) {
+      log(
+        `control mismatch: sample ${v.s.name} ${v.s.wav.loop ? 'has' : 'has no'} loop ` +
+          `but the browser source has loop=${source.loop} — the A/B is not comparing like with like`,
+        'bad',
+      );
+    }
+
     const gain = new GainNode(context, { gain: velocityGain(96) * Math.SQRT1_2 });
     const at = context.currentTime + atSeconds;
     gain.gain.setValueAtTime(velocityGain(96) * Math.SQRT1_2, at + held);
