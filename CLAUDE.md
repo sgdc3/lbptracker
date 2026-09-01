@@ -39,7 +39,9 @@ Steering files (read on demand, per the hints):
   and the anchors already found in the sequencer module.
 - [steering/open-questions.md](steering/open-questions.md) — **read before planning a work
   session**: everything still unknown, ranked, each with the concrete anchor to attack it from.
-  The top item blocks importing real levels.
+- [steering/answered-questions.md](steering/answered-questions.md) — **read before re-deriving
+  anything**: the questions that are settled and implemented, with their addresses, corpus counts
+  and — more useful — the wrong turns taken on the way to each.
 
 `tools/` holds the reference implementations. They are Python, deliberately dependency-light, and
 they are the ground truth the JavaScript has to reproduce:
