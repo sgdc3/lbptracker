@@ -46,6 +46,9 @@ they are the ground truth the JavaScript has to reproduce:
 - `fsb.py` — FSB4 bank reader + IMA ADPCM decoder + WAV writer. **Verified working.**
 - `lbpres.py` — LBP serialised-resource container reader (`LVLb`/`PLNb`: revision, branch, zlib
   chunk table). **Verified working** on 18 real levels.
+- `RawDump.java` — the exception to the Python rule: walks a level's Thing graph via the external
+  toolkit jar and dumps every music sequencer's note records as raw bytes. It is what makes the
+  corpus statistics in `sequencer-data-model.md` reproducible. Build/run notes in its header.
 - `lbpdis.py`, `callgraph.py`, `fmodapi.py` — eboot RE helpers (see `eboot-re.md`).
 
 Python on this machine: `C:\Users\sgdc3\AppData\Local\Programs\Python\Python314\python.exe`

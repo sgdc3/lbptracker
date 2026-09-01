@@ -139,7 +139,8 @@ measurement.
 |---|---|---|---|---|
 | 1 | Grid placement | `floor(x / 52.5)` | `floor(2x/105 − 0.5)` | measured at `v0x1c4ad0`; the game applies a half-cell bias |
 | 2 | `Note.volume` / `.timbre` on read | signed Java byte | unsigned | their writer masks `& 0xff`, their reader does not |
-| 3 | Note duration / `end` | records chain into one held note | **unresolved — do not assume either** | the chain reading yields a non-musical duration distribution; see open question 2 |
+| 3 | Note duration | duration follows from the record chain, with an extra point pushed at `step+1` | duration is `x_last − x_first + 1`; records are control points, not a filled span | measured: 93.6% of 1.6M real notes land on a power-of-two duration under this reading |
+| 3b | Out-of-order points | sorts a note's points, with a "sometimes this isn't correct" comment | same — sort by `x` | confirmed real: ~81 notes in 1.6M have a last record whose `x` precedes the first |
 | 4 | Triplet timing | `group*96 + pos*32`, overruns the quarter on the 4th slot | not yet decided | their own arithmetic is internally inconsistent |
 | 5 | Mixer | ignored entirely; tracks grouped by row + instrument | must model `NumChannels` and `Volume[0..5]` | the fields exist and are audible |
 

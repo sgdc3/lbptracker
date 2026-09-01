@@ -212,8 +212,8 @@ offsets matter.
 
 ## The note record — 4 bytes
 
-**Field roles confirmed against 18 real levels** (see "How the note record was confirmed" below).
-The `end` bit's exact meaning is the one part that is not settled.
+**Confirmed against real levels** — field roles against 18, then the chain-and-duration model
+against 1.6 million notes from 22. See "How the note record was confirmed" and "Duration" below.
 
 | byte | bits | field |
 |---|---|---|
@@ -257,20 +257,78 @@ histogram, no structure — found **0 conforming arrays out of 80,810 candidates
 Decoded arrays read as unmistakable music: an ostinato alternating A4 with G♯4 then F♯4 then C♯4 at
 a constant volume of 59, a C♯1 bassline at volume 96 with `timbre` sweeping 64→79 across each note.
 
-⚠️ **What is *not* confirmed: `end`, and how duration is encoded.** Two results argue against the
-naive reading:
+### Duration: the records are control points, not a filled span
 
-- Note lengths under the chain model come out as **14,774 one-step, 5,026 two-step, and only 74
-  longer than that**. Real music does not have that distribution — quarter and half notes should be
-  common and they are essentially absent.
-- Requiring "every run has strictly consecutive `x`" was used as an acceptance filter, which made
-  the earlier result circular. Re-measured without it: only **80%** of multi-record runs have
-  consecutive `x`, and only 71% of otherwise-conforming arrays have all runs clean.
+⚠️ **This is the thing to get right, and it is easy to get wrong.** A note's duration is **not** its
+number of records. It is the span between its first and last record:
 
-Some of that is contamination — the scanner pattern-matches at every 4-byte offset instead of
-walking the Thing graph, so an unknown fraction of the 737 are coincidences. But it is not safe to
-assume that explains all of it. **Resolve this by parsing the level structurally**, so note arrays
-come from known offsets, before building anything on the chain model.
+```
+duration_in_steps = x_of_last_record - x_of_first_record + 1
+```
+
+A one-record note lasts one step. A two-record note has a start point and an end point and can last
+*any* length — 2, 4, 8, 16, 32 steps — with nothing in between. Counting records instead of
+measuring the span makes every note look 1 or 2 steps long and the format look broken.
+
+**Measured** over **1,626,983 notes** from 105,785 instruments in 22 levels, walked structurally
+(see below), the duration distribution is:
+
+| steps | 1 | 2 | 3 | 4 | 6 | 8 | 16 | 32 |
+|---|---|---|---|---|---|---|---|---|
+| share | 44.4% | 38.0% | 2.3% | 6.0% | 1.1% | 2.6% | 1.4% | 1.3% |
+
+**93.6% of all notes land on a power-of-two duration**, with clear troughs between the peaks. That
+is a sixteenth/eighth/quarter/half/whole distribution — exactly what real music looks like, and
+conclusive that the span reading is the right one.
+
+Control points beyond the first and last are automation breakpoints, and they need **not** be at
+adjacent steps. Of 905,453 multi-point notes: 698,649 carry no automation (just start and end),
+106,797 vary `y` (pitch glide), 92,216 vary `volume`, 62,153 vary `timbre`.
+
+Two facts a parser needs:
+
+- **`end` really does terminate.** Across all 105,785 instruments, **zero** arrays had records left
+  over after the last `end`-flagged one.
+- ⚠️ **Points are occasionally out of order.** About 81 notes in 1.6 million have a last record
+  whose `x` is *smaller* than the first, giving a negative span. Sort a note's points by `x` before
+  using them. (`sequencerdump`'s MIDI writer carries a "sometimes this isn't correct" comment at
+  exactly this spot — it is a real property of the data, not a bug in the reader.)
+
+### What the corpus says about the rest of the model
+
+Same 105,785 instruments. These are distributions over real creator behaviour, not engine limits —
+but several of them settle arguments.
+
+| field | measured |
+|---|---|
+| clip length (highest `x` used) | **31 dominates** (60,318 clips), then 63. Never above 63 |
+| `PInstrument.Loops` | **1 in every single instrument** — the field is unused in practice |
+| `PInstrument.Scale` | 0 in 105,680 of 105,785 |
+| `PInstrument.Key` | 0 in 101,536; the rest scattered (12, 15, 14, 16, 23…) |
+| `PSequencer.Swing` | **0.0 in 103,538** — swing is barely used, so it is a poor thing to tune by ear |
+| `PSequencer.Tempo` | 240 most common, then 125, 180, 130, 140, 120 |
+| pitch (`y`) | spans 0–95 across the corpus |
+
+A clip topping out at 31 steps, with 63 as the only other common ceiling, says the editor's grid is
+**32 steps wide** and a clip may be doubled to 64 — consistent with a 52.5-unit cell holding 16
+steps and instruments spanning one or two cells.
+
+`Key` and `Scale` being zero in ~96% of instruments while pitches span 0–95 is evidence that `y` is
+an **absolute** pitch and that `Key`/`Scale` only constrain what the editor lets you place. It is
+not proof — `Key = 0` may simply mean C — but it is the way to bet until open question 5 is closed.
+
+Most-used instrument GUIDs in the corpus, which is a reasonable priority order for building the
+instrument palette: `129085` (Square Wave), `129081` (Ray Gun), `148321` (Baiyon Kit), `129031`
+(Acustic Kit), `129084` (Sine Wave), `129089` (Triangle Wave), `129083` (Saw Wave), `186897` (Music
+Box), `132205` (Electric Guitar), `129080` (Pulse Wave).
+
+### How the arrays were obtained
+
+`tools/RawDump.java` walks the real Thing graph — `RLevel` → `PWorld.things` → Things carrying both
+`PMicrochip` and a `PSequencer` with `MusicSequencer` set → circuit-board components → `PInstrument`
+— and emits the note records as raw bytes, one JSON line per instrument. It uses only the
+extraction half of the toolkit and none of its musical interpretation, so the statistics above are
+independent of any prior reading of the format. 22 levels, zero load or walk failures.
 
 We searched the sequencer module (`v0x1c3000`–`v0x1c8000`) and the CWLib audio layer
 (`v0x3dd000`–`v0x3fe000`) for the unpacking idiom — `and`/`test`/`shr` against `0x7f`, `0x80` and 7,
