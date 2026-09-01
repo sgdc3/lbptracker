@@ -182,11 +182,31 @@ that level fixed at −8 dB regardless of preset.
 | a second constructor | `v0x3fd6c0` — allocates and zeroes the 256-byte state |
 | release | `v0x3fd260` — ⚠️ **not** the process callback, as this file said before: it frees the buffer and both states |
 
-**What is still missing is the process loop.** `v0x3fd260`, `v0x3fd3d0`, `v0x3fd4c0`, `v0x3fcfe0`
-and `v0x3fd6c0` all have zero direct callers, which is how a registered callback looks; the two
-float engines nearby are `v0x3fc8c0` (417 insns, 124 SIMD, 10 callers) and `v0x3fded0` (403 insns,
-374 SIMD, 17 callers). Start there: whichever consumes `[state+0x18]` and the coefficients above is
-the reverb itself.
+**The geometry is recovered.** `v0x3fc8c0` indexes two more tables with preset slots 3 and 4, which
+turns out to mean those slots are **indices, not values**:
+
+| table | at | rows | contents |
+|---|---|---|---|
+| tap sets | `v0xe1d5d0` | 19 × 44 B | a count, then up to **10 delay lengths in ms** (3–94 ms) |
+| early sets | `v0xe1d920` | 7 × 36 B | 3 delays in ms, 3 values in −80…+100, 3 gains in 0…1 |
+
+Both are transcribed into `src/audio/effects.ts`, and the reverb there is now built on them rather
+than on a generic Freeverb. Its impulse response runs 0.03–3.31 s across the five settings the
+corpus uses.
+
+⚠️ **The middle three floats of an early row are not levels.** Reading them as decibels gives a gain
+of 100,000 and an impulse peak of 15,864 — which is how it was caught. They run −80…+100 and are
+more likely pan or angle; the last three, 0…1, behave like gains and are what the code uses.
+
+⚠️ **What is still missing is the process loop**, and with it the topology: how the taps feed back
+into one another, where the damping sits, and how slot 5 becomes a feedback gain (read here as an
+RT60 over `slot5 / 10` seconds, which puts the presets at 0.6–5.0 s). Also unexplained: `v0x3fcd50`
+divides slot 2's level by 100, and slot 2's raw values are 0–18, which do not read as millibels the
+way slots 0 and 1 do.
+
+The remaining candidates are `v0x3fc8c0` (417 insns, 124 SIMD, 10 callers — it is the *configure*,
+since it reads every coefficient once) and `v0x3fded0` (403 insns, 374 SIMD, 17 callers). The
+process is whichever walks `[state+0x18]` per sample.
 
 ⚠️ Worth doing, and worth doing before more of the mix is tuned: **71,781 of 129,696 instrument
 placements (55%) send to reverb.** Until it is done, `src/audio/effects.ts` carries a Schroeder

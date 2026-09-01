@@ -170,9 +170,7 @@ mixer.render(left, right, { echo: [echoL, echoR], reverb: [reverbL, reverbR] });
 // parts are the game's and which are ours.
 const echo = new Echo(RATE, seq.echoTime, seq.echoFeedback, seq.echoMix);
 const preset = reverbPreset(seq.reverb);
-// Preset slot 3 is a small integer that tracks how large the space sounds, and
-// slot 10 a frequency in Hz; both are used here only to vary the placeholder.
-const reverb = new Reverb(RATE, 0.7 + Math.min(preset[2], 18) / 60, 0.55 - preset[9] / 40000);
+const reverb = new Reverb(RATE, preset);
 const wetGain = 0.35;
 for (let i = 0; i < frames; i += 1) {
   const e = echo.process(echoL[i], echoR[i]);
