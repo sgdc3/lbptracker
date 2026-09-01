@@ -291,6 +291,40 @@ transcribed the way the sequencer's synth was" was right about the conclusion an
 place: it is not in the eboot, it is in a PRX — which is *more* like the synth than claimed, and
 readable by exactly the method that worked there.
 
+### Inside `fmodsmsreverb.prx` — the process is mapped, the kernel is not yet read
+
+Its program headers give `PT_LOAD 0` at `off 0x4000 vaddr 0`, but the **SELF** segment table is what
+addresses the file: entry `[1]`, `off 0x780`, `filesz 0x2a98`, so **`file = vaddr + 0x780`**. The
+`PT_DYNAMIC` payload lands at file `0x3728` and the symbol table at `0x3470`, 13 symbols — the same
+parse that worked on the synth.
+
+**The export `iO5jJEuFaSo` is at vaddr `0x1f70`**, and it is a thin wrapper of exactly the shape
+`fmodextinput.prx`'s is:
+
+```
+read(state, in, out, frames, inch, outch):
+    if inch != 4 || outch != 4: trap
+    for blocks of 0x100 = 256 frames:
+        sub_0x1cb0(state, in, out, 256, 4)
+        in += 0x1000; out += 0x1000        ; 256 x 16 B = 4 channels of f32
+```
+
+`sub_0x1cb0`, the core, does three things:
+
+1. **copies 0x100 = 256 bytes of state** from `[dsp_state + 8]` into a static buffer at vaddr
+   `0x4100` — the same trick the synth uses with its 6,992-byte block, and the reason `[state+0x18]`
+   never appeared in an eboot search;
+2. **de-interleaves** the four input channels into stack buffers (loop at `0x1dc0`, stride 4);
+3. calls **`sub_0x11a0`** — 799 instructions, 12 loops, the reverb itself;
+4. **re-interleaves and adds to the input** (loop at `0x1ec0`: `vaddps` of the processed channels
+   onto the original, then `vmovaps` to the output). So the DSP is an insert that mixes its wet
+   signal onto the dry rather than replacing it.
+
+**What is left is `sub_0x11a0` alone**, at file `0x11a0 + 0x780`. Everything around it is now known:
+its input format (four de-interleaved channel buffers of 256 floats), its output contract (added to
+the dry), and its parameters (the 256-byte state, whose fields `v0x3fcd50` fills and this file
+decodes above).
+
 ⚠️ Worth doing, and worth doing before more of the mix is tuned: **71,781 of 129,696 instrument
 placements (55%) send to reverb.** Until it is done, `src/audio/effects.ts` carries a Schroeder
 network of ours that responds to the send levels and reproduces nothing — and says so.
