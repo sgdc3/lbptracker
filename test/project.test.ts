@@ -189,3 +189,43 @@ test('the corpus’s tempos and grid cells are in sane ranges', async (t) => {
   assert.ok(minCell >= 0, `gridX went negative: ${minCell}`);
   assert.ok(minTempo > 0, 'tempos are positive');
 });
+
+// ------------------------------------------------------- resource descriptors
+
+test('an instrument reference is a descriptor, not a number', async () => {
+  const { parseResourceGuid } = await import('../src/core/project.ts');
+  // ⚠️ This is the whole bug that made a first import play nothing: every real
+  // value is `g` + digits, `Number('g129085')` is NaN, and NaN became 0, so
+  // every instrument looked missing and 1,642 notes were silently skipped.
+  assert.equal(parseResourceGuid('g129085'), 129085);
+  assert.equal(parseResourceGuid(' g122737 '), 122737);
+  assert.equal(parseResourceGuid(''), 0);
+  // A bare SHA1 means the level carries its own instrument -- a real case, and
+  // not resolvable against the game's FileDB, so 0 rather than a guess.
+  assert.equal(parseResourceGuid('5aa779456cf3407f2ed16251f461eb2dd5970f3f'), 0);
+  assert.equal(parseResourceGuid('129085'), 0, 'a bare number is not a descriptor');
+});
+
+test('the corpus resolves to real instrument GUIDs', async (t) => {
+  if (!existsSync(DUMP)) {
+    t.skip(`no ${DUMP}`);
+    return;
+  }
+  const text = await readFile(DUMP, 'latin1');
+  const rows: DumpRow[] = [];
+  for (const line of text.split('\n')) if (line.startsWith('{')) rows.push(JSON.parse(line));
+  const levels = importLevel(rows);
+  let resolved = 0;
+  let unresolved = 0;
+  const guids = new Set<number>();
+  for (const level of levels) {
+    for (const seq of level.sequencers) {
+      for (const track of seq.tracks) {
+        if (track.guid > 0) { resolved += 1; guids.add(track.guid); } else unresolved += 1;
+      }
+    }
+  }
+  console.log(`    ${resolved} tracks resolve to ${guids.size} distinct instrument GUIDs, ${unresolved} do not`);
+  // If this ever drops to zero again, the descriptor format has changed.
+  assert.ok(resolved > rows.length * 0.9, `only ${resolved} of ${rows.length} resolved`);
+});

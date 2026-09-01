@@ -52,7 +52,13 @@ export interface DumpRow {
   /** Position on the microchip's circuit board, in world units. */
   readonly boardX: number;
   readonly boardY: number;
-  /** The `RInstrument` GUID, as a string; empty when the slot has none. */
+  /**
+   * The `RInstrument` reference as the toolkit prints a `ResourceDescriptor`:
+   * **`g` followed by the GUID** (`"g129085"`), or a 40-character SHA1 for a
+   * resource carried inside the level, or empty for none. Parse it with
+   * `parseResourceGuid`, not with `Number` -- which returns `NaN` for every
+   * real value and silently imports a level with no instruments at all.
+   */
   readonly instRes: string;
   readonly instName: string;
   readonly level: number;
@@ -158,6 +164,19 @@ export interface LevelProject {
   readonly sequencers: readonly Sequencer[];
 }
 
+/**
+ * The GUID out of a `ResourceDescriptor` string, or 0 when there is not one.
+ *
+ * A descriptor is `g<guid>` when the resource lives in the game's own FileDB
+ * and a bare SHA1 when it is embedded in the level. Only the first kind can be
+ * resolved against `fixtures/rinst`; a hash means the level ships its own
+ * instrument, which is a real case and is reported as 0 rather than guessed at.
+ */
+export function parseResourceGuid(descriptor: string): number {
+  const match = /^g(\d+)$/.exec(descriptor.trim());
+  return match ? Number(match[1]) : 0;
+}
+
 function hexToBytes(hex: string): Uint8Array {
   const n = hex.length >> 1;
   const out = new Uint8Array(n);
@@ -170,7 +189,7 @@ export function trackFrom(row: DumpRow): Track {
   const { gridX, gridY } = boardToGrid(row.boardX, row.boardY);
   const grouped = groupNotes(decodeRecords(hexToBytes(row.notes)));
   return {
-    guid: row.instRes === '' ? 0 : Number(row.instRes),
+    guid: parseResourceGuid(row.instRes),
     name: row.instName,
     gridX,
     gridY,
