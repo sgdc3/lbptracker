@@ -149,6 +149,34 @@ Everything above is the **in-memory** layout, read out of the serialiser functio
 file actually contains is a different thing, and three properties of it will bite a parser that
 assumes otherwise.
 
+### The container — measured, and implemented in `tools/lbpres.py`
+
+Derived from the bytes of real level resources, not from any third-party source. All integers are
+big-endian:
+
+```
+0x00  char[4]  magic        "LVLb" level, "PLNb" plan, ...
+0x04  u32      revision     0x3ee etc. A non-zero high half is a branch id:
+                            0x021303f9 = branch 0x0213, revision 0x03f9 (LBP3)
+0x08  u32      depsOffset   start of the dependency table = end of chunk data
+0x0c  u32      (zero in every file seen)
+0x10  u32      (0x07010001 in every file seen — flags, not yet split out)
+0x14  u16      numChunks
+0x16           chunk table: numChunks x (u16 compressedSize, u16 rawSize)
+...            chunk payloads back to back, each a complete zlib stream
+```
+
+Chunks are `0x8000` bytes raw except the last, which is short.
+
+⚠️ **The zlib header is `0x68 0xNN`, not `0x78 0xNN`** — CINFO 6, a 16 KiB window. Grepping a
+resource for the familiar `78 9c` / `78 da` finds nothing and looks like proof the payload is not
+zlib. It is.
+
+**How this was checked:** on 18 real levels spanning revisions `0x3b8`–`0x3f9`, every chunk
+inflates, every inflated length matches its declared `rawSize`, and the offset just past the last
+chunk lands **exactly** on `depsOffset` in all 18. That offset is never used by the parser, so 18
+independent hits on it is not a coincidence.
+
 **1. The stream is big-endian**, including in the PS4 build. Measured: the array serialiser at
 `v0xcc0f20` reads four bytes out of the stream and byte-swaps them with `movbe` before storing
 (`v0xcc0f9d`, `v0xcc1025`). ennuo's toolkit agrees — its `MemoryInputStream` defaults
@@ -184,7 +212,8 @@ offsets matter.
 
 ## The note record — 4 bytes
 
-⚠️ **Hypothesis, from ennuo's toolkit (`structs/instrument/Note.java`), not yet measured by us.**
+**Field roles confirmed against 18 real levels** (see "How the note record was confirmed" below).
+The `end` bit's exact meaning is the one part that is not settled.
 
 | byte | bits | field |
 |---|---|---|
@@ -204,6 +233,44 @@ chain carries its own `y`, `volume` and `timbre`, so a held note can **glide in 
 volume and timbre step by step** — the format has per-step automation built in, and a tracker that
 models a note as (pitch, start, length, velocity) cannot represent what the game can. Model the
 chain.
+
+### How the note record was confirmed
+
+18 real LBP2/LBP3 levels (revisions `0x3b8`–`0x3f9`) were decompressed with `tools/lbpres.py` and
+scanned for arrays shaped like `Notes`: a big-endian `u32` count followed by `count` 4-byte records.
+Every predicate below is a *falsifiable consequence* of the layout above, and each was measured, not
+assumed:
+
+| prediction | measured |
+|---|---|
+| bytes 2 and 3 are 7-bit | **0** records out of ~20,000 with either byte > 127 |
+| byte 2's default is `0x60` | the modal value in 578 of 737 arrays is exactly **96** |
+| byte 3's default is `0x40` | the modal value in 625 of 737 arrays is exactly **64** |
+| byte 0 low 7 is a step index | non-decreasing across every accepted array; **never exceeds 63** |
+| byte 1 low 7 is a pitch | spans **12–95**, i.e. C0–B6: a musical range, not a full 0–127 spread |
+| byte 0 bit 7 is a rare flag | set in only 12 of 737 arrays |
+
+**The control.** The identical scan over a byte-shuffled copy of each level — same length, same byte
+histogram, no structure — found **0 conforming arrays out of 80,810 candidates**, against 737 out of
+111,050 in the real data. The predicates are strict enough that chance does not pass them.
+
+Decoded arrays read as unmistakable music: an ostinato alternating A4 with G♯4 then F♯4 then C♯4 at
+a constant volume of 59, a C♯1 bassline at volume 96 with `timbre` sweeping 64→79 across each note.
+
+⚠️ **What is *not* confirmed: `end`, and how duration is encoded.** Two results argue against the
+naive reading:
+
+- Note lengths under the chain model come out as **14,774 one-step, 5,026 two-step, and only 74
+  longer than that**. Real music does not have that distribution — quarter and half notes should be
+  common and they are essentially absent.
+- Requiring "every run has strictly consecutive `x`" was used as an acceptance filter, which made
+  the earlier result circular. Re-measured without it: only **80%** of multi-record runs have
+  consecutive `x`, and only 71% of otherwise-conforming arrays have all runs clean.
+
+Some of that is contamination — the scanner pattern-matches at every 4-byte offset instead of
+walking the Thing graph, so an unknown fraction of the 737 are coincidences. But it is not safe to
+assume that explains all of it. **Resolve this by parsing the level structurally**, so note arrays
+come from known offsets, before building anything on the chain model.
 
 We searched the sequencer module (`v0x1c3000`–`v0x1c8000`) and the CWLib audio layer
 (`v0x3dd000`–`v0x3fe000`) for the unpacking idiom — `and`/`test`/`shr` against `0x7f`, `0x80` and 7,

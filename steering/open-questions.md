@@ -35,27 +35,37 @@ was a dead end once already and the toolkit covers it.
 
 ---
 
-## 2. Confirm the 4-byte note record
+## 2. `end`, and how a note's duration is encoded
 
-**State.** The layout is written down in [sequencer-data-model.md](sequencer-data-model.md), taken
-from ennuo's toolkit: `x`+`triplet` in byte 0, `y`+`end` in byte 1, `volume`, `timbre`. It is
-coherent, it is what a working MIDI exporter relies on, and we have no reason to doubt it — but it
-is not ours and nothing in this workspace has verified it.
+**What is settled.** The four field *roles* in the note record are confirmed against 18 real levels
+— see "How the note record was confirmed" in [sequencer-data-model.md](sequencer-data-model.md).
+Bytes 2 and 3 are 7-bit with modes exactly `0x60` and `0x40`, byte 0 low 7 is a non-decreasing step
+index, byte 1 low 7 is a pitch in a musical range, and the same scan over shuffled bytes conforms
+zero times out of 80,810. Decoded arrays read as recognisable melodies and basslines.
 
-**Why it still matters.** This is the format we will *write back* into people's levels. Being 90%
-sure is not enough for a round trip.
+**What is not.** Under the chain reading — records accumulate into one held note until `end` is set
+— real note lengths come out as 14,774 one-step, 5,026 two-step and only 74 longer. That is not
+what music looks like; quarter and half notes should be everywhere and are absent. And only 80% of
+multi-record runs have strictly consecutive `x`. Either `end` means something other than "the note
+stops here", or duration is not encoded by chain length at all.
 
-**How to confirm it, cheaply and decisively.** Build a level in-game with exactly one note, save,
-and diff the resource against a version with the note moved one step right, then one semitone up,
-then lengthened, then made louder. Four diffs pin all four fields *and* the `end`-chain model at
-once. This needs someone in Create Mode; it is the fastest path and it does not depend on finding
-the decoder in the binary.
+**Why it matters.** Duration is not a detail — it is half of what a note is, and we intend to write
+these records back into people's levels.
 
-**Static, if the diff is not available.** A byte-scan of the sequencer module and the audio layer
-for the 7-bit mask idiom found nothing (recorded in the data-model file), so the consumer is
-elsewhere. `v0x1c49e0` and `v0x1c4720` turn out to be the *placement* path, not the note path —
-they compute grid indices from board positions. Look instead at what `PSequencer::BeginPlayback`
-(`v0x1c4f00`) reaches that touches `[instrument+0x68]`.
+**How to attack it.** The scan that produced those statistics pattern-matches at every 4-byte
+offset instead of walking the Thing graph, so an unknown fraction of its 737 hits are coincidences
+that pollute the distribution. **Parse a level structurally first** — reach genuine `PInstrument`
+parts by their real offsets — and re-measure. If the distribution is still bimodal at 1 and 2 steps
+with real arrays only, the chain model is wrong and needs replacing, not refining.
+
+The in-game diff test remains the tiebreaker if it stays ambiguous: place one note, save, then
+lengthen it and diff. That single pair of files answers it outright.
+
+**Static, if needed.** A byte-scan of the sequencer module and the audio layer for the 7-bit mask
+idiom found nothing (recorded in the data-model file), so the consumer is elsewhere. `v0x1c49e0`
+and `v0x1c4720` turn out to be the *placement* path, not the note path — they compute grid indices
+from board positions. Look instead at what `PSequencer::BeginPlayback` (`v0x1c4f00`) reaches that
+touches `[instrument+0x68]`.
 
 ---
 

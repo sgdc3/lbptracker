@@ -79,6 +79,25 @@ Their MIDI converter is a converter, not an emulator. Three places where it know
 3. **Note volume and timbre are read as signed Java bytes** (`volume = struct[0x2]`) while the
    write path masks with `& 0xff`. Values above 0x7f would come back negative. Read them as u8.
 
+## The level corpus — our regression suite
+
+There is a local checkout at `C:\Users\sgdc3\Desktop\LBP\toolkit\`, and its
+`tools\sequencerdump\data*\` directories hold **18 real LBP2/LBP3 level resources**, SHA1-named,
+revisions `0x3b8`–`0x3f9`, one of them on the LBP3 branch `0x0213`. Two of the `data*` folders are
+PS3 save-game directories (`BCES00850…`, `BCES01663…`) rather than loose resources.
+
+This is the most valuable thing in the checkout. It is a corpus of real compositions by real
+creators, and it is what turned the note record from a hypothesis into a measurement without anyone
+having to open Create Mode. Use it as the regression suite for every parser we write:
+`tools/lbpres.py` already reads all 18.
+
+⚠️ **Never commit any of it.** These are other people's levels. `.gitignore` does not cover
+SHA1-named extensionless files — keep them where they are and reference them by path.
+
+⚠️ The sibling `out*\` directories hold that tool's MIDI output. **Ignore them.** They are one
+converter's interpretation of the data, several steps removed from the game, and treating them as
+ground truth would launder an assumption into a fact. Go to the `data*` resources.
+
 ## How to work with it from here
 
 Do not clone it into this repo. Fetch the specific file you need over `raw.githubusercontent.com`

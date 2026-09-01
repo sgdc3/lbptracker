@@ -44,6 +44,8 @@ Steering files (read on demand, per the hints):
 `tools/` holds the reference implementations. They are Python, deliberately dependency-light, and
 they are the ground truth the JavaScript has to reproduce:
 - `fsb.py` — FSB4 bank reader + IMA ADPCM decoder + WAV writer. **Verified working.**
+- `lbpres.py` — LBP serialised-resource container reader (`LVLb`/`PLNb`: revision, branch, zlib
+  chunk table). **Verified working** on 18 real levels.
 - `lbpdis.py`, `callgraph.py`, `fmodapi.py` — eboot RE helpers (see `eboot-re.md`).
 
 Python on this machine: `C:\Users\sgdc3\AppData\Local\Programs\Python\Python314\python.exe`
