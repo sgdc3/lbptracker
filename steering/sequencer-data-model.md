@@ -525,6 +525,41 @@ than FMOD's, which is the case [project-brief.md](project-brief.md) flags as "cl
 identical". The numbers above are enough to reproduce the *preset choice*; matching the algorithm
 is a separate question.
 
+## The sequencer mixes itself — it is not a set of FMOD voices
+
+Searched the CWLib audio layer for the voice start. Did not find the synthesis
+function, but found something that changes the shape of the search and validates
+the architecture we chose.
+
+The sequencer's audio state is a slice, `+0x1a28`–`+0x1b38`, of a global audio-manager block at
+**`v0x132bb10`**, reached through the accessor `v0x3fbf20` (`lea rax, [rip+…]; ret`). Eighteen call
+sites use it. The ones that matter:
+
+| function | what it does |
+|---|---|
+| `v0x3e6c10` | **init**: allocates **`0xbb800` = 768,000 bytes**, 0x80-aligned, stores it at `[state+0x1b18]`, zeroes it, and sets `+0x1a44`=0, `+0x1a48`=1, `+0x1a58`=−1 |
+| `v0x3e6e00` | enable/pause, writing its bool argument to `+0x1a44`, under a mutex with a 2-second timeout |
+| `v0x3e7060` | **teardown**: releases a **DSP** (`fmod_dspi` `v0xa23680`, `v0xa234d0`), locks the system, pauses a channel group |
+| `v0x160930`–`v0x1610c0` | nine near-identical accessors over `+0x1ac8`/`+0x1ad0`/`+0x1ad8` |
+
+**So the sequencer owns a 768 KB audio buffer and a custom FMOD DSP.** It renders its own audio and
+feeds FMOD through that DSP rather than allocating an FMOD voice per note — which is why
+`tools/fmodapi.py` shows the game barely touching the Channel and Sound APIs, and it is the same
+decision [tracker-architecture.md](tracker-architecture.md) argues for on fidelity grounds. 768,000
+bytes is 96,000 stereo float frames, two seconds at 48 kHz, or twice that mono; which it is has not
+been checked.
+
+⚠️ **This explains why six attempts to find the voice start all dead-ended.** The synthesis lives in
+the **DSP read callback**, and a callback is *registered* as a function pointer in an
+`FMOD_DSP_DESCRIPTION`, never called directly. No call-graph walk can reach it — not from the
+preload path, not from `BeginPlayback`, not backwards from FMOD's pitch conversion. All three
+failures now have one explanation.
+
+**The way in is the descriptor.** Find the `System::createDSP` call in the DSP-creation range
+(`v0x3e6700`–`v0x3e72c0`), read the `FMOD_DSP_DESCRIPTION` it passes, and take the `read` callback
+pointer out of it. That callback is the note decoder, the envelope and the `Params` consumer, all
+in one place. It is the single highest-value target left in the binary.
+
 ## Runtime entry points (for further RE, not for the tracker)
 
 | what | address |
