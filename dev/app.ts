@@ -11,7 +11,8 @@
  * server only serves the repository, so nothing leaves this machine.
  */
 
-import { ADSR_PARAMS, evaluateAdsr } from '../src/core/envelope.ts';
+import { ADSR_PARAMS, ADSR_PARAMS_B, evaluateAdsr } from '../src/core/envelope.ts';
+import { FILTER_PARAMS } from '../src/audio/moog.ts';
 import { resolveSlot } from '../src/core/instrument.ts';
 import { readInstrument, usedSlots, type RInstrument } from '../src/core/rinstrument.ts';
 import { loadResource } from '../src/core/resource.ts';
@@ -170,6 +171,14 @@ async function loadInstrument(row: ManifestRow): Promise<void> {
         `sustain ${a.sustain.toFixed(3)}, release ${a.release.toFixed(3)}s ` +
         `(Params[11..14])`,
     );
+    const p = instrument.params;
+    const b = evaluateAdsr(p, ADSR_PARAMS_B, 0);
+    log(
+      `   filter — cutoff ${p[3].x.toFixed(2)}, resonance ${p[4].x.toFixed(2)}, ` +
+        `keytrack ${p[5].x.toFixed(2)}, env amount ${p[6].x.toFixed(2)}; ` +
+        `its ADSR ${b.attack.toFixed(2)}/${b.decay.toFixed(2)}/` +
+        `${b.sustain.toFixed(2)}/${b.release.toFixed(2)} (Params[3..10])`,
+    );
   }
   $('splits').textContent =
     `splitNotes ${instrument.splitNotes.slice(0, slots.length + 1).join(', ')}`;
@@ -213,11 +222,34 @@ function currentAdsr() {
   return evaluateAdsr(instrument.params, ADSR_PARAMS, 0);
 }
 
+/**
+ * The instrument's Moog ladder, or undefined when it is switched off.
+ *
+ * Left open (cutoff 1, no resonance, no envelope) the filter still colours the
+ * sound -- this approximation loses a little even wide open -- so the checkbox
+ * bypasses it entirely rather than setting it flat.
+ */
+function currentFilter() {
+  if (!instrument) return undefined;
+  if (!($('useFilter') as HTMLInputElement).checked) return undefined;
+  const p = instrument.params;
+  return {
+    settings: {
+      cutoff: p[FILTER_PARAMS.cutoff].x,
+      resonance: p[FILTER_PARAMS.resonance].x,
+      keyTrack: p[FILTER_PARAMS.keyTrack].x,
+      envAmount: p[FILTER_PARAMS.envAmount].x,
+    },
+    envelope: evaluateAdsr(p, ADSR_PARAMS_B, 0),
+  };
+}
+
 function playNote(note: number, atSeconds = 0): void {
   const v = voiceFor(note);
   if (!v || !node || !context) return;
   const held = noteSeconds();
   const adsr = currentAdsr();
+  const filter = currentFilter();
   if (engine === 'browser') {
     const buffer = context.createBuffer(1, v.s.wav.channels[0].length, v.s.wav.sampleRate);
     buffer.copyToChannel(new Float32Array(v.s.wav.channels[0]), 0);
@@ -273,6 +305,7 @@ function playNote(note: number, atSeconds = 0): void {
       release: adsr ? 0 : Math.round(0.12 * context.sampleRate),
       decayDbPerSecond: adsr ? 0 : Number(($('decay') as HTMLInputElement).value),
       envelope: adsr,
+      filter,
     },
   });
 }

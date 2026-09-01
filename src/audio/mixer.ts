@@ -12,6 +12,8 @@ import type { Adsr } from '../core/envelope.ts';
 import { Envelope } from '../core/envelope.ts';
 import type { Interpolator } from './interpolate.ts';
 import { INTERPOLATORS, DEFAULT_INTERPOLATOR } from './interpolate.ts';
+import type { FilterSettings } from './moog.ts';
+import { MoogLadder, filterAt, ladderCoefficients } from './moog.ts';
 import type { MipChain } from './mipmap.ts';
 import { mipLevelFor, readMipped } from './mipmap.ts';
 
@@ -79,6 +81,19 @@ export interface VoiceSpec {
    * on from there, which is what stops a held note ending in a step.
    */
   readonly envelope?: Adsr;
+  /**
+   * The instrument's low-pass, from `Params[3..10]`.
+   *
+   * `settings` are the static knobs and `envelope` is the **second** ADSR,
+   * which exists to sweep the cutoff. Most acoustic instruments leave the
+   * filter wide open and can omit this entirely; it is what makes the synth
+   * patches -- `saw_wave`, `robot`, `e_guitar_distorted`, the drum kits --
+   * sound like themselves rather than like their raw samples.
+   */
+  readonly filter?: {
+    readonly settings: FilterSettings;
+    readonly envelope: Adsr;
+  };
 }
 
 class Voice {
@@ -95,6 +110,11 @@ class Voice {
   /** Which mip this voice reads, fixed by its rate. Unused without `mips`. */
   private readonly mipLevel: number;
   private readonly env = new Envelope();
+  // The filter envelope and one ladder per channel -- the engine keeps two,
+  // which is what its ten per-voice state floats are.
+  private readonly filterEnv = new Envelope();
+  private readonly ladderL = new MoogLadder();
+  private readonly ladderR = new MoogLadder();
   private readonly secondsPerFrame: number;
   private decayGain = 1;
   private readonly left: number;
@@ -141,6 +161,7 @@ class Voice {
     const srcR = mono ? chans[0] : chans[1];
     const loop = sample.loop;
     const envelope = this.spec.envelope;
+    const filter = this.spec.filter;
     // With the engine sampler off the voice falls back to `interpolate` over
     // the full-rate channels, which is the A/B path: it is how a different
     // interpolator can be heard against the game's own.
@@ -187,7 +208,7 @@ class Voice {
       // Before that the taps behind `loop.start` are the attack and are
       // correct as they stand; wrapping them would corrupt the note's onset.
       const region = loop && this.position >= loop.start ? loop : undefined;
-      const l = mips
+      let l = mips
         ? readMipped(mips[0], this.position, this.mipLevel, region)
         : interpolate(srcL, this.position, region);
       let r = l;
@@ -196,6 +217,16 @@ class Voice {
           ? readMipped(mips[1] ?? mips[0], this.position, this.mipLevel, region)
           : interpolate(srcR, this.position, region);
       }
+      // Filter, then amplitude: the ladder is inside the voice, ahead of the
+      // gain and the pan.
+      if (filter) {
+        const level = this.filterEnv.advance(this.secondsPerFrame, held, filter.envelope);
+        const { freq, res } = filterAt(filter.settings, level, playbackRate);
+        const coefficients = ladderCoefficients(freq, res);
+        l = this.ladderL.process(l, coefficients);
+        r = mono ? l : this.ladderR.process(r, coefficients);
+      }
+
       outLeft[i] += l * this.left * fade;
       outRight[i] += r * this.right * fade;
 

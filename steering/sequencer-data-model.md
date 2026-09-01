@@ -997,6 +997,87 @@ Envelope B's destination is **not** established. Its params sit next to the four
 into the SIMD path alongside `Params[3..6]`, and its two results are broadcast into that same path,
 so a filter envelope is the obvious guess — but it is a guess.
 
+## Envelope B is a filter envelope, and the filter is a Moog ladder
+
+The second ADSR drives the cutoff of a **4-pole Moog ladder low-pass**, one per voice, and the
+filter is not a lookalike — it is the Stilson/Smith approximation published on musicdsp.org as "Moog
+VCF, variation 1", reproduced constant for constant.
+
+### The filter, identified
+
+`0x3070`–`0x30d0` computes the coefficients, and the vector constants are exactly `1.0`, `0.8`,
+`0.5`, `5.6` and `-1.0`:
+
+```
+q = 1 - freq
+p = freq + 0.8 * freq * q
+f = p + p - 1
+q = res * (1 + 0.5 * q * (1 - q + 5.6 * q * q))
+```
+
+and `0x3181`–`0x3259` is the ladder itself — four stages of `(prev + t) * p - b * f`, then the
+cubic saturation `b4 - b4³/6` with `v0x45?? = 0.166667`:
+
+```
+in -= q * b4
+t1 = b1;  b1 = (in + b0) * p - b1 * f
+t2 = b2;  b2 = (b1 + t1) * p - b2 * f
+t1 = b3;  b3 = (b2 + t2) * p - b3 * f
+          b4 = (b3 + t1) * p - b4 * f
+b4 = b4 - b4 * b4 * b4 * (1/6)
+b0 = in
+```
+
+**The `1/6` cube appears twice in that same block, and so does the whole recursion: two independent
+ladders run interleaved.** Five states each — `b0..b4` — which is exactly the **ten floats at voice
+`+0xa4` … `+0xc8`** that the renderer broadcasts at the top of a block and writes back at the end.
+That is what those were.
+
+### What drives it
+
+`0x2a0e`–`0x2b1a`, all in SIMD, evaluated **twice per block** — at the block's start and end — so the
+renderer can ramp the coefficients across it, exactly as it does for volume, pitch and pan. The
+per-sample ramp is the slow path at `0x332b`; when start and end are equal (`vcmpeqps` at `0x304d`
+and `0x3052`) it takes a constant-coefficient fast path.
+
+```
+keytrack  = 1 + (pitchRatio - 1) * Params[5]
+envFactor = 1 + Params[6] * (envelopeB - 1)
+freq = clamp(Params[3]² * keytrack * envFactor, 0, 1)
+res  = clamp(Params[4]      * envFactor, 0, 1)
+```
+
+`pitchRatio` is the voice's own playback rate, cached at `[rbp-0xac0]` from the `exp2f` result — so
+`Params[5]` is **key tracking**: the cutoff follows the note.
+
+| param | role | how the corpus behaves |
+|---|---|---|
+| `Params[3]` | **cutoff**, squared | mean 0.813, wide open (1.0) in 38/68 — the acoustic multisamples. `choir` 0.34, `clarinet` 0.46, `strings_ensemble` 0.42. |
+| `Params[4]` | **resonance** | **zero in 60/68**. Non-zero only on `ghost` 0.90, `saw_wave` 0.76, `space_piano` 0.65, `noise` 0.58 — the synth patches. |
+| `Params[5]` | **key tracking** | 1.0 in 41/68, 0.0 in 17/68 — near-binary. The piano tracks fully; `choir` and `clarinet` not at all. |
+| `Params[6]` | **envelope amount** | zero in 51/68, and ≈0.98 on `square_wave`, `pulse_wave`, `e_guitar_distorted`, `robot`, `electric_piano`, `noise`. |
+| `Params[7..10]` | **the filter ADSR** | inert (A=0 D=0 S=1) in 33/68. |
+
+### Why this is the right reading
+
+Two checks beyond the disassembly:
+
+**The instruments that use it are the right ones.** Of the 35 whose envelope B is not inert, almost
+all are synthetic or electric — `pulse_wave`, `saw_wave`, `sine_wave`, `ray_gun`, `robot`,
+`mosquito`, `e_guitar_distorted`, `e_guitar_power`, `electric_piano`, `space_piano`, the drum kits
+and the `baiyon` patches. A sampled acoustic instrument already has its timbral evolution in the
+recording; a static synth waveform is exactly what needs a cutoff sweep.
+
+**The two ways of switching it off agree.** An inert envelope B sits at level 1.0 forever, so
+`envFactor` is 1; an amount of zero gives `envFactor` = 1 too. They are redundant, and the corpus
+shows the redundancy: **27 of the 28 instruments with `Params[6]` = 0 also have an inert envelope
+B**. The seven that disagree disagree in the harmless direction — one control neutralised while the
+other is left set.
+
+⚠️ The resonance picking up `envFactor` as well as the cutoff is read off `0x2aee`, where the same
+register carrying `envFactor` is multiplied by the evaluated `Params[4]`. It is the least certain
+line in this section; the cutoff path is unambiguous.
+
 ## The note word — 4 bytes, decoded
 
 `sub_0x38e0` pulls it apart with `bextr`, so the field boundaries are literal immediates rather than

@@ -11,9 +11,10 @@ level walk and the asset chain are all measured — import and playback can both
 
 What remains below is fidelity work, ranked by how audible a mistake would be. **The envelope, which
 was the top item for four sessions, is resolved**: `Params[11..14]` is an ADSR. So is the scale
-quantiser found alongside it — five scales, table at module vaddr `0x8090`. Both are in
-[sequencer-data-model.md](sequencer-data-model.md). The most audible thing still open is the **pan
-law** (question 7), followed by envelope B's destination and the other 19 `Params`.
+quantiser found alongside it — five scales, table at module vaddr `0x8090`. So is the **second**
+envelope: it sweeps the cutoff of a 4-pole Moog ladder low-pass, which `Params[3..6]` configure. All
+three are in [sequencer-data-model.md](sequencer-data-model.md). **Twelve of the 27 `Params` are now
+named** (3..14). The most audible thing still open is the **pan law** (question 7).
 
 Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then the envelope out of it. That
 work closed question 5, half of question 7 and the envelope half of question 8, opened 5b, and
@@ -148,11 +149,20 @@ Recovered as names, sizes and defaults only:
 - `Numstack` (default 1) — looks like a per-instrument voice-stacking count.
 - `Loops` on `PInstrument` — **1 in all 105,785 instruments of the corpus**, so whatever it
   does, no creator has used it. Safe to treat as 1 and revisit only if the editor exposes it.
-- `Params` — **27** pairs of f32, all in 0..1. **RESOLVED for the envelope, 2026-09-01: it is
-  `Params[11..14]` = Attack, Decay, Sustain, Release**, with a second ADSR at `Params[7..10]`. Each
-  pair is a *range* that the note's own 4-bit modulation field picks a point inside. The evidence
-  and the formulas are in [sequencer-data-model.md](sequencer-data-model.md); what remains open here
-  is the other 19 indices and envelope B's destination.
+- `Params` — **27** pairs of f32, all in 0..1, each a *range* that the note's own 4-bit modulation
+  field picks a point inside. **Twelve are now named, 2026-09-01:**
+
+  | indices | what |
+  |---|---|
+  | `Params[3..6]` | the low-pass: **cutoff** (squared), **resonance**, **key tracking**, **envelope amount** |
+  | `Params[7..10]` | the **filter** ADSR — envelope B |
+  | `Params[11..14]` | the **amplitude** ADSR — envelope A |
+
+  The evidence and the formulas are in [sequencer-data-model.md](sequencer-data-model.md). **Fifteen
+  indices remain unnamed** — 0, 1, 2 and 15..26. Indices 0, 1 and 2 are read in the same stretch of
+  the renderer as the filter block (`0x1aaa`–`0x1b6d`), so they are the obvious next ones to attack,
+  and the method that worked twice now is the one to reuse: label the instruments by how they
+  behave, then score every index against the labels.
 
   ⚠️ **Read the failure record below with this in mind: the shape analysis had already seen the
   answer and mis-read it.** It filed index 13 under "near-boolean — 6 distinct values, 1.0 ×69 and
