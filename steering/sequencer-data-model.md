@@ -1237,11 +1237,48 @@ being its top two users is the whole argument; there is no label in the game to 
 The block is a small subtractive synth: stack, filter, two envelopes, three LFOs, output. Named in
 `src/core/params.ts`.
 
-⚠️ **What the LFOs modulate is only partly established.** LFO 2's result multiplies the per-layer
-gain, which is measured. LFO 1 is combined with the per-layer detune in a region carrying the same
-`0.05` constant the detune itself uses, so pitch is the natural reading — natural, not proven. LFO
-3's target was not traced. **The oscillator itself is now identified** (below), which removes one
-reason the targets were unclear; what is left is following each LFO's result to its destination.
+### Where each LFO goes
+
+The renderer's per-layer loop fills **three stack arrays**, one entry per layer, each holding the
+value at the start of the block and the step to walk it to the end. The sampler loop at `0x2bb0`
+then reads all three per layer, and that is what names them:
+
+| array | at | per layer | written by | read as |
+|---|---|---|---|---|
+| A | `rbp-0x1c0` | 2 × f64 | LFO 1 (`0x27eb`) | the **playback rate** passed to `sub_0x3740` |
+| B | `rbp-0x170` | 2 × xmm | LFO 3 (`0x2641`, `0x272a`) | reaches the stereo split at `0x2dc5` |
+| C | `rbp-0xd0` | 2 × xmm | LFO 2 (`0x24e3`, `0x257c`) | the layer's **gain** |
+
+**LFO 1 → pitch. Measured, no longer inferred.** At `0x2770`–`0x27eb`:
+
+```
+rate = pitchRatio * (detune[i] + 0.05 * eval(Params[16]) * osc(phase1))
+```
+
+`pitchRatio` is the `exp2f` result cached at `[rbp-0xac0]`, `detune[i]` is `Params[0]`'s per-layer
+value — itself `1 + 0.05·U(−r,+r)` — and the result is converted to a **double** and written where
+the sampler reads its rate. Vibrato and unison detune share the same `0.05` scale and the same
+multiplier, which is why the earlier reading of that constant pointed the right way.
+
+**LFO 2 → amplitude.** `gain = baseGain × (1 + eval(Params[19]) · osc(phase2))`, broadcast into
+array C. Tremolo.
+
+**LFO 3 → pan.** Its output is folded to `[0, 1]` rather than used raw (`0x25fc`–`0x2634`):
+
+```
+v = |osc(phase3) * eval(Params[22]) + voice[+0x18] + spread[i]|
+v = frac(v * 0.5) * 2 ;  if (v > 1) v = 2 - v        ; a triangle in [0,1]
+```
+
+`spread[i]` is `Params[1]`'s per-layer offset, and `voice[+0x18]` comes from the note block's own
+per-layer float. The value lands in array B, and array B feeds the point where the voice's
+interleaved L/R buffer is written with **two different factors for the two channels** (`0x2dc1` and
+`0x2dda`). A per-layer `0..1` quantity arriving at a two-channel split is pan.
+
+⚠️ **LFO 3's target is the one still short of proof.** The fold to `[0,1]`, the per-layer spread
+offset, and the two-channel split all point one way, but the last hop — array B into the specific
+factors at `0x2dc1`/`0x2dda` — was followed through register moves rather than read end to end.
+Treat pitch and amplitude as measured and pan as the strong reading.
 
 ## The oscillator at stub `0x130` — libc's sine/cosine
 

@@ -12,6 +12,8 @@ import type { Adsr } from '../core/envelope.ts';
 import { Envelope } from '../core/envelope.ts';
 import type { Interpolator } from './interpolate.ts';
 import { INTERPOLATORS, DEFAULT_INTERPOLATOR } from './interpolate.ts';
+import type { LfoSettings } from './lfo.ts';
+import { LFO_RATE_SCALE, Lfo, gainFactor, panFold, pitchFactor } from './lfo.ts';
 import type { FilterSettings } from './moog.ts';
 import { MoogLadder, filterAt, ladderCoefficients } from './moog.ts';
 import type { MipChain } from './mipmap.ts';
@@ -94,6 +96,17 @@ export interface VoiceSpec {
     readonly settings: FilterSettings;
     readonly envelope: Adsr;
   };
+  /**
+   * The instrument's three LFOs, `Params[15..23]`, in engine order: **pitch,
+   * gain, pan**. A depth of zero leaves its destination untouched, which is
+   * what 62 or more of the game's 68 instruments choose for each.
+   *
+   * Their phases are randomised per voice, so two notes of the same instrument
+   * modulate differently -- pass `random` to make a render reproducible.
+   */
+  readonly lfos?: readonly [LfoSettings, LfoSettings, LfoSettings];
+  /** Injected so an offline render can be deterministic. */
+  readonly random?: () => number;
 }
 
 class Voice {
@@ -110,6 +123,7 @@ class Voice {
   /** Which mip this voice reads, fixed by its rate. Unused without `mips`. */
   private readonly mipLevel: number;
   private readonly env = new Envelope();
+  private readonly lfo: readonly [Lfo, Lfo, Lfo];
   // The filter envelope and one ladder per channel -- the engine keeps two,
   // which is what its ten per-voice state floats are.
   private readonly filterEnv = new Envelope();
@@ -132,6 +146,7 @@ class Voice {
       ? Math.pow(10, -Math.abs(spec.decayDbPerSecond) / 20 / outputRate)
       : 1;
     this.mipLevel = mipLevelFor(spec.playbackRate);
+    this.lfo = [new Lfo(spec.random), new Lfo(spec.random), new Lfo(spec.random)];
     this.secondsPerFrame = 1 / outputRate;
     const gains = panGains(spec.pan);
     this.left = gains.left * spec.gain;
@@ -162,6 +177,7 @@ class Voice {
     const loop = sample.loop;
     const envelope = this.spec.envelope;
     const filter = this.spec.filter;
+    const lfos = this.spec.lfos;
     // With the engine sampler off the voice falls back to `interpolate` over
     // the full-rate channels, which is the A/B path: it is how a different
     // interpolator can be heard against the game's own.
@@ -217,6 +233,22 @@ class Voice {
           ? readMipped(mips[1] ?? mips[0], this.position, this.mipLevel, region)
           : interpolate(srcR, this.position, region);
       }
+      let panLeft = this.left;
+      let panRight = this.right;
+      let rate = playbackRate;
+      if (lfos) {
+        for (let n = 0; n < 3; n += 1) {
+          this.lfo[n].advance(this.secondsPerFrame, lfos[n].rate * LFO_RATE_SCALE[n]);
+        }
+        if (lfos[0].depth !== 0) rate *= pitchFactor(this.lfo[0].value, lfos[0].depth);
+        if (lfos[1].depth !== 0) fade *= gainFactor(this.lfo[1].value, lfos[1].depth);
+        if (lfos[2].depth !== 0) {
+          const gains = panGains(panFold(this.lfo[2].value, lfos[2].depth, this.spec.pan * 2));
+          panLeft = gains.left * this.spec.gain;
+          panRight = gains.right * this.spec.gain;
+        }
+      }
+
       // Filter, then amplitude: the ladder is inside the voice, ahead of the
       // gain and the pan.
       if (filter) {
@@ -227,10 +259,10 @@ class Voice {
         r = mono ? l : this.ladderR.process(r, coefficients);
       }
 
-      outLeft[i] += l * this.left * fade;
-      outRight[i] += r * this.right * fade;
+      outLeft[i] += l * panLeft * fade;
+      outRight[i] += r * panRight * fade;
 
-      this.position += playbackRate;
+      this.position += rate;
       this.life -= 1;
     }
   }

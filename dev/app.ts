@@ -256,12 +256,26 @@ function currentFilter() {
   };
 }
 
+/** The instrument's three LFOs, evaluated at modulation 0, or undefined when off. */
+function currentLfos() {
+  if (!instrument) return undefined;
+  if (!($('useLfos') as HTMLInputElement).checked) return undefined;
+  const p = instrument.params;
+  const one = (l: (typeof LFO_PARAMS)[number]) => ({
+    rate: p[l.rate].x,
+    depth: p[l.depth].x,
+    spread: p[l.spread].x,
+  });
+  return [one(LFO_PARAMS[0]), one(LFO_PARAMS[1]), one(LFO_PARAMS[2])] as const;
+}
+
 function playNote(note: number, atSeconds = 0): void {
   const v = voiceFor(note);
   if (!v || !node || !context) return;
   const held = noteSeconds();
   const adsr = currentAdsr();
   const filter = currentFilter();
+  const lfos = currentLfos();
   if (engine === 'browser') {
     const buffer = context.createBuffer(1, v.s.wav.channels[0].length, v.s.wav.sampleRate);
     buffer.copyToChannel(new Float32Array(v.s.wav.channels[0]), 0);
@@ -323,6 +337,7 @@ function playNote(note: number, atSeconds = 0): void {
       decayDbPerSecond: adsr ? 0 : Number(($('decay') as HTMLInputElement).value),
       envelope: adsr,
       filter,
+      lfos,
     },
   });
 }
