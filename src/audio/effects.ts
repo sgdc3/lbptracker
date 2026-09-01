@@ -374,9 +374,19 @@ export class Reverb {
       // leaves its decay untouched, unlike scaling the recirculation.
       wet += (this.normaliseCombs ? 1 - comb.gain : 1) * comb.y;
     }
-    // Summing N combs that each rang at unit amplitude would be N times too
-    // loud; the taps are mutually incoherent, so they add in power.
-    wet /= Math.sqrt(this.combs.length);
+    // WARNING: there is no `/ sqrt(N)` here any more, and its removal is the
+    // reverb's level.
+    //
+    // It was here on the assumption that mutually incoherent taps add in power.
+    // That is a reasonable thing to believe and it was never measured, and with
+    // each comb already normalised to unity at DC it made the bank 2.83x rather
+    // than 8x -- which put the wet signal at 22% of the dry, reported as far too
+    // little. Dropping it leaves the one normalisation that has a stated reason
+    // (`1 - gain`, so a comb is unity at DC) and lands the wet level inside the
+    // range a listener bracketed by ear.
+    //
+    // Two invented factors were stacked here and the fix was to remove one, not
+    // to add a third.
 
     // The series cascade, and it does **not** recirculate. Loop C modifies its
     // buffer in place (`buf[i] -= y`) and the stage walk ping-pongs between two

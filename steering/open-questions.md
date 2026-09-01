@@ -806,7 +806,55 @@ instruments in play. Adding it would make the reverb *quieter*, not louder, so i
 the report; and where `PInstrument.reverbSend` is applied on the engine side has not been found.
 Both belong in the same investigation.
 
-### The wet level hangs on `1 - gain`, which is ours
+### The wet level, settled by ear against a bracket — and by REMOVING a factor
+
+Two invented factors were stacked in the comb bank: `1 - gain` on each contribution (so a comb is
+unity at DC, which has a stated reason) and `/ sqrt(N)` on the sum (on the assumption that mutually
+incoherent taps add in power, which never had one). Together they put the wet signal at **22% of the
+dry**, reported as far too little; with both off it reached **216%**, which is indefensible whatever
+the topology turns out to be.
+
+Dropping only `/ sqrt(N)` lands it at **60.1%**, inside the range a listener bracketed by ear and
+close to the 69% they picked as right for amount. **The fix was to remove one invention, not to add
+a third** — with the combs already unity at DC, summing them is the simpler reading.
+
+### The allpasses were not allpasses, and that was the "too bright"
+
+Reported as the reverb being clearly too bright and metallic, and it was this project's doing. The
+allpasses had been made **feed-forward only**, to stop a tail that ran 2.48x the nominal RT60. But
+`z^-L - g` is not an allpass: with the RT60 gain near 0.93 it ripples about **29 dB** — a comb
+filter. Restoring the feedback term made them flat in magnitude and the metallic character went
+away, confirmed by ear.
+
+⚠️ **The allpass gain is still ours.** Both readings that follow from the record layout are provably
+wrong: the RT60 gain in a true allpass rings 2.48x nominal, and feed-forward is the comb above.
+Schroeder's conventional **0.5** stands in — flat, no tail stretch — until the wiring of the four
+kernels is read rather than inferred.
+
+### What was confirmed on the re-check, and one lead that died
+
+`v0x3fcd50` converts the preset into the DSP state, and two of this project's formulas came back
+exactly right:
+
+- the level law is `powf(10, slot/200)` with the `-8000` floor (`0x3fcd92`-`0x3fcdd5`), which is
+  `millibelToLinear` unchanged;
+- the damping is `state[+0x2c] = slot10 * -6.283185307 / 48000` (`0x3fce67`-`0x3fce80`) — literally
+  `-2*pi*hf/48000`, the formula already in use. **The damping was never missing**; the brightness was
+  the allpass.
+
+The state map is pinned with it: `[state+0x30 + 4k]` is slot `3+k`, which is why the PRX reads the
+tap row at `[rsi+0x30]` and RT60 as `[rsi+0x38] * 0.1`.
+
+⚠️ **Do not chase the `0.5` at `v0x2744`.** It looks like an allpass coefficient and is not: its loop
+is `out[i] = (a[i] + b[i]) * 0.5`, a downmix.
+
+⚠️ **The PRX never reads `[state+0x48]`, `[+0x4c]` or `[+0x50]`** — the three fields `v0x3fcd50`
+fills from slots 0, 1 and 2 through the level law. So the wet levels are applied **outside** the DSP,
+by the eboot, and where `Reverb` applies them internally is a guess about placement even though the
+values are right. Slot 2's is additionally divided by 100 at `0x3fce41`, which nothing here accounts
+for.
+
+### The old note on the level, kept for the reasoning
 
 The comb bank's one unmeasured factor. A feedback comb has DC gain `1/(1 - gain)`, so eight summed
 are about nine times unity, and each contribution is scaled by `1 - gain` to bring it back. On the
