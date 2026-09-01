@@ -29,8 +29,10 @@ is the part of the project that has to be right anyway.
 core/           pure, no DOM, no Web Audio — unit-testable, shared with the Node CLI
   fsb.ts          FSB4 parser  (port of tools/fsb.py)
   ima.ts          IMA ADPCM decoder → Float32Array
+  stream.ts       big-endian reader/writer + the revision gate — every LBP struct needs both
   instrument.ts   RInstrument → { slots[8], splitnotes[9], arpeggio, … }
-  sequence.ts     PSequencer + PInstrument → the tracker's own project model
+  sequence.ts     PSequencer + PMicrochip components + PInstrument note chains
+                  → the tracker's own project model
   voice.ts        note → { slot, playbackRate, gain, pan } using the formula in
                   steering/sequencer-data-model.md
 audio/
@@ -58,10 +60,17 @@ edge of the worklet:
 samplesPerStep = outputRate * 60 / (Tempo * stepsPerBeat)
 ```
 
-`stepsPerBeat` is not yet known (open question 5). Swing offsets alternate steps; the exact
-convention — whether `Swing` is a ratio, a percentage, or a fraction of a step — also needs
-measuring. Until both are pinned, put them behind named constants in one place rather than
-sprinkling magic numbers through the scheduler.
+`stepsPerBeat` is very likely 4 — a grid cell is 52.5 world units wide (measured) and holds 16
+steps (ennuo's toolkit), i.e. one bar of 16ths. Not confirmed; see open question 4. Swing offsets
+alternate steps; the exact convention — whether `Swing` is a ratio, a percentage, or a fraction of
+a step — is still unknown. Until both are pinned, put them behind named constants in one place
+rather than sprinkling magic numbers through the scheduler.
+
+A note is **not** `(pitch, start, length, velocity)`. It is a chain of per-step records carrying
+their own pitch, volume and timbre, terminated by an `end` flag — so pitch glide and per-step
+volume/timbre automation are native to the format. Model the chain from the start; retrofitting
+automation onto a flat note struct means rewriting the scheduler and the editor together. See
+[sequencer-data-model.md](sequencer-data-model.md).
 
 Voice allocation: `Numstack` in `RInstrument` suggests a per-instrument voice-stacking limit, and
 `Loops` on `PInstrument` controls repetition. Neither is fully understood; model them explicitly
@@ -77,17 +86,22 @@ reorder 1 and 2 — you want the asset pipeline proven before anything depends o
    decoded PCM offline and comparing it byte-for-byte against `tools/fsb.py`'s WAV.
 2. **The voice engine**: worklet, interpolation, the pitch formula, key splits. Play a scale from
    `piano_C2..C6` and check the splits land where `Splitnotes` says.
-3. **Decode the 4-byte note record** ← open question 1. This gates everything about real levels.
-   Until it is done, work against a hand-authored project in our own JSON format.
-4. **`RInstrument` reading** — needs the FARC story resolved (open question 2). Until then,
+3. **Level import**: read `PSequencer` + `PMicrochip` + `PInstrument` + the note chains out of a
+   real `.plan`/level. The record layout is written down (from ennuo's toolkit) but unconfirmed —
+   build the reader, then confirm it with the in-game diff of open question 2. Reading a real
+   composition and playing it back *is* the confirmation.
+4. **`RInstrument` reading** — needs `SampleGuids` resolved (open question 1). Until then,
    hand-write instrument definitions matching what the banks contain.
 5. **Echo and reverb** with the real parameters.
 6. **UI**.
 7. **Round-trip export** back into a game-loadable resource. This is the feature that makes the
-   project matter to the LBP community, and it depends entirely on step 3.
+   project matter to the LBP community, and it depends on step 3 being *confirmed*, not merely
+   plausible — we are writing into people's levels.
 
-Steps 1, 2, 5 and 6 have no blocking unknowns and can proceed immediately. Steps 3, 4 and 7 are
-gated on RE work described in [open-questions.md](open-questions.md).
+Steps 1, 2, 5 and 6 have no blocking unknowns and can proceed immediately. Step 3 is now mostly a
+matter of writing the parser, since the format is documented; step 4 is still gated on RE, and
+step 7 on confirming step 3. See [open-questions.md](open-questions.md) and
+[lbp-modding-toolchain.md](lbp-modding-toolchain.md).
 
 ## Things worth deciding early
 

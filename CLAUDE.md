@@ -21,7 +21,11 @@ Steering files (read on demand, per the hints):
   what "faithful" means concretely, the fidelity budget, scope and non-goals.
 - [steering/sequencer-data-model.md](steering/sequencer-data-model.md) — **read before writing any
   parser or playback code**: the recovered `PSequencer` / `PInstrument` / `RInstrument` schemas
-  with field names and struct offsets, and the sampler formulas that follow from them.
+  with field names and struct offsets, the on-disk save format (endianness, stream order, revision
+  gates, the note record, the circuit-board timeline), and the sampler formulas that follow.
+- [steering/lbp-modding-toolchain.md](steering/lbp-modding-toolchain.md) — **read before writing a
+  parser for any LBP resource or archive**: what ennuo's toolkit already solves, what it does not,
+  and the rule for turning its readings into facts of ours.
 - [steering/game-assets.md](steering/game-assets.md) — read before touching audio data: where the
   banks are on disk, the FSB4 layout, the codecs (measured), and the asset-licensing stance.
 - [steering/lbp-audio-engine.md](steering/lbp-audio-engine.md) — read when you need to know what
