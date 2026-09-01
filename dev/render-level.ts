@@ -161,9 +161,15 @@ async function loadInstrument(guid: number) {
 }
 
 const started = process.hrtime.bigint();
-// The stack randomises detune, pan and start offset per layer. A fixed seed
-// keeps a render reproducible, which matters when the point of a render is to
-// compare it against the last one.
+// The stack randomises detune, pan and start offset per layer, and every voice
+// randomises its three LFO start phases. A fixed seed keeps a render
+// reproducible, which matters when the point of a render is to compare it
+// against the last one.
+//
+// ⚠️ That claim used to be false: `VoiceSpec.random` was never set, so the LFO
+// phases came from `Math.random` and two runs of the same build produced
+// different files. It surfaced when a hash was used to check that an
+// optimisation had not changed the output -- the hash changed on every run.
 let seed = 0x2545f491;
 const rand = () => {
   seed ^= seed << 13;
@@ -319,6 +325,8 @@ for (const [eventIndex, event] of events.entries()) {
     automation,
     echoSend: track.echoSend,
     reverbSend: track.reverbSend,
+    // Seeded, so the LFO phases are reproducible along with everything else.
+    random: rand,
   };
   const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
   for (let layer = 0; layer < layers; layer += 1) {

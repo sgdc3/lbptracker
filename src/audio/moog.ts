@@ -63,13 +63,21 @@ export interface LadderCoefficients {
 export const FILTER_BYPASS_CUTOFF = 0.99;
 
 export function ladderCoefficients(freq: number, res: number): LadderCoefficients {
+  return ladderCoefficientsInto(freq, res, { p: 0, f: 0, q: 0 });
+}
+
+/** `ladderCoefficients` writing into a caller-owned object. Same arithmetic. */
+export function ladderCoefficientsInto(
+  freq: number,
+  res: number,
+  out: { p: number; f: number; q: number },
+): LadderCoefficients {
   const t = 1 - freq;
   const p = freq + 0.8 * freq * t;
-  return {
-    p,
-    f: p + p - 1,
-    q: res * (1 + 0.5 * t * (1 - t + 5.6 * t * t)),
-  };
+  out.p = p;
+  out.f = p + p - 1;
+  out.q = res * (1 + 0.5 * t * (1 - t + 5.6 * t * t));
+  return out;
 }
 
 /**
@@ -168,13 +176,30 @@ export function filterAt(
   envelopeB: number,
   pitchRatio: number,
 ): { freq: number; res: number } {
+  return filterAtInto(settings, envelopeB, pitchRatio, { freq: 0, res: 0 });
+}
+
+/**
+ * `filterAt` writing into a caller-owned object instead of allocating one.
+ *
+ * The voice loop calls this once per frame per voice, and an object per call
+ * there is a measurable share of the render: allocation plus the garbage it
+ * makes. The arithmetic is identical -- this is the same function with the
+ * result written rather than returned.
+ */
+export function filterAtInto(
+  settings: FilterSettings,
+  envelopeB: number,
+  pitchRatio: number,
+  out: { freq: number; res: number },
+): { freq: number; res: number } {
   const keytrack = 1 + (pitchRatio - 1) * settings.keyTrack;
   const envFactor = 1 + settings.envAmount * (envelopeB - 1);
-  const clamp = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
-  return {
-    freq: clamp(settings.cutoff * settings.cutoff * keytrack * envFactor),
-    res: clamp(settings.resonance * envFactor),
-  };
+  const freq = settings.cutoff * settings.cutoff * keytrack * envFactor;
+  const res = settings.resonance * envFactor;
+  out.freq = freq < 0 ? 0 : freq > 1 ? 1 : freq;
+  out.res = res < 0 ? 0 : res > 1 ? 1 : res;
+  return out;
 }
 
 /** `Params` indices, so the mapping lives next to the code that uses it. */

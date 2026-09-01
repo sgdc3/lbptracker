@@ -6,7 +6,9 @@ import {
   FILTER_PARAMS,
   MoogLadder,
   filterAt,
+  filterAtInto,
   ladderCoefficients,
+  ladderCoefficientsInto,
 } from '../src/audio/moog.ts';
 
 const SR = 48000;
@@ -246,4 +248,24 @@ test('piano bypasses at and above its base note, and tracks below it', () => {
   assert.equal(low.freq, 0.25, 'an octave and a half down tracks the cutoff down with it');
   assert.equal(low.res, 0, 'and with no resonance it is a plain lowpass');
   assert.ok(low.freq < FILTER_BYPASS_CUTOFF, 'so the ladder does run there');
+});
+
+test('the allocation-free variants compute exactly the same numbers', () => {
+  // The hot loop uses `*Into` to avoid an object per frame per voice. If these
+  // ever diverge from the allocating originals the optimisation stops being
+  // free, and a rendered file would change without anyone meaning it to.
+  const settings = { cutoff: 0.7, resonance: 0.4, keyTrack: 0.6, envAmount: 0.3 };
+  const scratch = { freq: 0, res: 0 };
+  const coeff = { p: 0, f: 0, q: 0 };
+  for (const env of [0, 0.25, 0.5, 1]) {
+    for (const rate of [0.25, 0.5, 1, 2, 4]) {
+      const a = filterAt(settings, env, rate);
+      const b = filterAtInto(settings, env, rate, scratch);
+      assert.equal(a.freq, b.freq);
+      assert.equal(a.res, b.res);
+      const c = ladderCoefficients(a.freq, a.res);
+      const d = ladderCoefficientsInto(a.freq, a.res, coeff);
+      assert.deepEqual({ p: c.p, f: c.f, q: c.q }, { p: d.p, f: d.f, q: d.q });
+    }
+  }
 });

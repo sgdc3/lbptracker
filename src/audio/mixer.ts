@@ -7,7 +7,7 @@
  * the same project must render identically on every browser and every run.
  */
 
-import { panGains } from '../core/voice.ts';
+import { panGains, panGainsInto } from '../core/voice.ts';
 import type { Adsr } from '../core/envelope.ts';
 import { Envelope } from '../core/envelope.ts';
 import type { Interpolator } from './interpolate.ts';
@@ -19,7 +19,9 @@ import {
   FILTER_BYPASS_CUTOFF,
   MoogLadder,
   filterAt,
+  filterAtInto,
   ladderCoefficients,
+  ladderCoefficientsInto,
 } from './moog.ts';
 import type { MipChain } from './mipmap.ts';
 import { mipLevelFor, readMipped } from './mipmap.ts';
@@ -248,6 +250,19 @@ class Voice {
     return this.spec.sample.loop === undefined;
   }
 
+  /**
+   * Scratch for the inner loop.
+   *
+   * `filterAt`, `ladderCoefficients` and `panGains` each returned a fresh
+   * object, and the loop calls all three once per frame per voice. Reusing
+   * three objects per voice is the same arithmetic with the allocation
+   * removed -- the rendered output is byte-identical, which is asserted by
+   * hashing a render before and after.
+   */
+  private readonly filterScratch = { freq: 0, res: 0 };
+  private readonly ladderScratch = { p: 0, f: 0, q: 0 };
+  private readonly panScratch = { left: 0, right: 0 };
+
   get finished(): boolean {
     const source = this.spec.sample.channels[0];
     // A one-shot ends when the sample does, and only then.
@@ -289,6 +304,25 @@ class Voice {
     // the full-rate channels, which is the A/B path: it is how a different
     // interpolator can be heard against the game's own.
     const mips = engineSampler ? sample.mips : undefined;
+    // Per-voice constants, tested once instead of once per frame.
+    const lfo0 = lfos !== undefined && lfos[0].depth !== 0;
+    const lfo1 = lfos !== undefined && lfos[1].depth !== 0;
+    const lfo2 = lfos !== undefined && lfos[2].depth !== 0;
+
+    // `envFactor` is `1 + envAmount * (envB - 1)`, so at `envAmount === 0` it is
+    // 1 whatever the envelope does -- the cutoff and resonance are then fixed
+    // for the whole voice, and both the filter envelope and the coefficient
+    // solve can leave the loop. Most instruments are in this case at modulation
+    // 0: `piano`, `musicbox`, `a_kit_1`, `ray_gun` and `baiyon_drums_1` all have
+    // `Params[6].x` of exactly zero.
+    const filterFixed = filter !== undefined && filter.settings.envAmount === 0;
+    let fixedBypass = false;
+    if (filter && filterFixed) {
+      // The envelope level is unused here, so any value gives the same answer.
+      const fixed = filterAtInto(filter.settings, 0, playbackRate, this.filterScratch);
+      fixedBypass = fixed.freq > FILTER_BYPASS_CUTOFF;
+      if (!fixedBypass) ladderCoefficientsInto(fixed.freq, fixed.res, this.ladderScratch);
+    }
 
     // Skip the start delay by arithmetic. Counting it down a frame at a time
     // made every voice walk the whole block before its first sample, so a note
@@ -381,13 +415,22 @@ class Voice {
       }
       this.elapsed += 1;
       if (lfos) {
-        for (let n = 0; n < 3; n += 1) {
-          this.lfo[n].advance(this.secondsPerFrame, lfos[n].rate * LFO_RATE_SCALE[n]);
+        // An LFO at zero depth is never read, so advancing its phase is pure
+        // cost. 62 to 65 of the game's 68 instruments leave all three at zero.
+        if (lfo0) {
+          this.lfo[0].advance(this.secondsPerFrame, lfos[0].rate * LFO_RATE_SCALE[0]);
+          rate *= pitchFactor(this.lfo[0].value, lfos[0].depth);
         }
-        if (lfos[0].depth !== 0) rate *= pitchFactor(this.lfo[0].value, lfos[0].depth);
-        if (lfos[1].depth !== 0) fade *= gainFactor(this.lfo[1].value, lfos[1].depth);
-        if (lfos[2].depth !== 0) {
-          const gains = panGains(panFold(this.lfo[2].value, lfos[2].depth, this.spec.pan * 2));
+        if (lfo1) {
+          this.lfo[1].advance(this.secondsPerFrame, lfos[1].rate * LFO_RATE_SCALE[1]);
+          fade *= gainFactor(this.lfo[1].value, lfos[1].depth);
+        }
+        if (lfo2) {
+          this.lfo[2].advance(this.secondsPerFrame, lfos[2].rate * LFO_RATE_SCALE[2]);
+          const gains = panGainsInto(
+            panFold(this.lfo[2].value, lfos[2].depth, this.spec.pan * 2),
+            this.panScratch,
+          );
           panLeft = gains.left * this.spec.gain;
           panRight = gains.right * this.spec.gain;
         }
@@ -395,15 +438,25 @@ class Voice {
 
       // Filter, then amplitude: the ladder is inside the voice, ahead of the
       // gain and the pan.
-      if (filter) {
+      // A wide-open lowpass is skipped, not computed: the engine branches on
+      // `cutoff > 0.99` at 0x2ee9 into a loop carrying none of the ladder's
+      // constants. Running it anyway is not free -- this ladder passes a unit
+      // impulse at 0.833 and rings -- and piano sits at exactly 1.0.
+      if (filterFixed) {
+        if (!fixedBypass) {
+          l = this.ladderL.process(l, this.ladderScratch);
+          r = mono ? l : this.ladderR.process(r, this.ladderScratch);
+        }
+      } else if (filter) {
         const level = this.filterEnv.advance(this.secondsPerFrame, held, filter.envelope);
-        const { freq, res } = filterAt(filter.settings, level, playbackRate);
-        // A wide-open lowpass is skipped, not computed: the engine branches on
-        // `cutoff > 0.99` at 0x2ee9 into a loop carrying none of the ladder's
-        // constants. Running it anyway is not free -- this ladder passes a unit
-        // impulse at 0.833 and rings -- and piano sits at exactly 1.0.
+        const { freq, res } = filterAtInto(
+          filter.settings,
+          level,
+          playbackRate,
+          this.filterScratch,
+        );
         if (freq <= FILTER_BYPASS_CUTOFF) {
-          const coefficients = ladderCoefficients(freq, res);
+          const coefficients = ladderCoefficientsInto(freq, res, this.ladderScratch);
           l = this.ladderL.process(l, coefficients);
           r = mono ? l : this.ladderR.process(r, coefficients);
         }

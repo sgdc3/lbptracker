@@ -142,8 +142,18 @@ export function voiceFor(request: VoiceRequest): VoiceParams {
  * does not belong in a faithful tracker.
  */
 export function panGains(pan: number): { left: number; right: number } {
-  const p = Math.max(0, Math.min(1, pan));
-  return { left: 1 - p, right: p };
+  return panGainsInto(pan, { left: 0, right: 0 });
+}
+
+/** `panGains` writing into a caller-owned object. Same arithmetic. */
+export function panGainsInto(
+  pan: number,
+  out: { left: number; right: number },
+): { left: number; right: number } {
+  const p = pan < 0 ? 0 : pan > 1 ? 1 : pan;
+  out.left = 1 - p;
+  out.right = p;
+  return out;
 }
 
 /** Output frames per sequencer step. */
