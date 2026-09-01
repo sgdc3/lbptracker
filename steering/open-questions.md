@@ -346,10 +346,38 @@ three long-span loops are the outer iteration that runs the short ones once per 
 | C | `0x13b0` | `prev = y; y = a·prev + b·buf[i] + c·older; buf[i] -= y` — an allpass section; the subtraction is what makes it one |
 | D/E/F | `0x1500`… | `acc[i] += x[i]; y = a·y + b·x[i]; out[i] = g·(y + send[i])` — a damped comb with an injected send |
 
-⚠️ **What remains genuinely unknown is only the topology**: which buffer feeds which kernel, in what
-order, and where the damping sits between the taps. The pieces are now in the codebase; wiring them
-by ear would give a reverb that sounds fine and is not the game's, which is the exact failure this
-project has caught in its own past work three times this session.
+### The topology: a SERIES chain of stages, not a parallel bank
+
+The routing is in the code between the loops, at `0x1460`–`0x14f9`. The reverb holds an **array of
+stages of `0x50` = 80 bytes** — `rbx = index * 5 * 16` — and each stage is a delay line with its own
+damped one-pole:
+
+| offset | type | what |
+|---|---|---|
+| `+0x08` | i32 | the stage's delay length |
+| `+0x30` | ptr | its buffer |
+| `+0x38` | ptr | the read pointer |
+| `+0x40` | f32 | the one-pole's running `y`, carried across blocks |
+| `+0x44` | f32 | `b` |
+| `+0x48` | f32 | `a` |
+| `+0x4c` | f32 | the stage's gain |
+
+The write pointer is `[stage+0x30] + [stage+0x08] + 0x80` — the buffer advanced by the stage's own
+length past an 0x80 header.
+
+**And the stages are chained in series.** At `0x1466` an index is flipped with `xor ebx, 1`, and
+`0x1477` loads a pointer from `[rbp + ebx*8 - 0x40]` — a **ping-pong pair of scratch buffers** —
+which `0x1487` then stores into **`[next_stage + 0x30]`**, the *following* stage's input. Each
+stage's output becomes the next one's input, alternating between two buffers.
+
+⚠️ **That means `src/audio/effects.ts` has the wrong topology.** It runs the taps as a *parallel*
+comb bank and sums them, which is a Freeverb's shape and not this one. The tap lengths, the early
+reflections, the millibel levels, the RT60 law and the damping are all the engine's; the arrangement
+is not, and a series chain of damped delays sounds substantially different from a parallel bank of
+them.
+
+What is still unread is the smaller half: how many stages there are, which of the four kernels each
+one runs, and where the allpass sections (loop C) sit relative to the combs.
 
 ⚠️ Worth doing, and worth doing before more of the mix is tuned: **71,781 of 129,696 instrument
 placements (55%) send to reverb.** Until it is done, `src/audio/effects.ts` carries a Schroeder

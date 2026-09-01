@@ -153,10 +153,19 @@ export function millibelToLinear(value: number): number {
  * and `1 - state[+0x2c]` into an adjacent pair, the `a` / `1-a` of
  * `y = a*x + (1-a)*y`, with `a` from preset slot 10.
  *
- * ⚠️ **What is still ours: the topology** -- how the ten taps feed one another
- * and where the damping sits between them. That lives in the kernel at
- * `sub_0x11a0`, 609 instructions over nine loops, opened but not transcribed.
- * See steering/open-questions.md.
+ * ⚠️ **The topology below is WRONG, and knowingly so.** This class runs the taps
+ * as a parallel comb bank and sums them -- a Freeverb's shape. The engine runs
+ * them as a **series chain**: `0x1460`-`0x14f9` walks an array of 80-byte
+ * stages, ping-ponging between two scratch buffers (`xor ebx, 1`) so that each
+ * stage's output is stored into the *next* stage's input pointer at
+ * `[stage+0x30]`. A series chain of damped delays does not sound like a
+ * parallel bank of them.
+ *
+ * Everything else here is the engine's -- tap lengths, early reflections,
+ * millibel levels, the RT60 law, the damping one-pole. Rewiring this into a
+ * series chain is the next change, and it needs the stage count and the
+ * per-stage kernel assignment, which are still unread. See
+ * steering/open-questions.md.
  */
 export class Reverb {
   private readonly pre: Float32Array;
