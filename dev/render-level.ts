@@ -340,13 +340,23 @@ for (const [eventIndex, event] of events.entries()) {
     },
     lfos: [lfo(0), lfo(1), lfo(2)],
     automation,
-    // The send is the PRODUCT of the placement's field and the instrument's
-    // `Params[25]`, clamped to 1 -- `fmodextinput.prx` 0x3cca-0x3d50, where the
-    // note block carries five floats per placement at `+0x420 + 20i`
-    // (level, pan, echoSend, reverbSend, instrument index) and the voice's own
-    // send at `+0x1c` is `Params[25]`.
-    echoSend: Math.min(1, track.echoSend * P(OUTPUT_PARAMS.send)),
-    reverbSend: Math.min(1, track.reverbSend * P(OUTPUT_PARAMS.send)),
+    // `fmodextinput.prx` 0x3cca-0x3d50. The note block carries five floats per
+    // placement at `+0x420 + 20i` -- level, pan, echoSend, reverbSend, instrument
+    // index -- and the two sends are treated differently:
+    //
+    //   voice+0x1c = min(Params[25] + echoSend * (1 - Params[25]), 1)
+    //   voice+0x24 = min(reverbSend, 1)
+    //
+    // ⚠️ The reverb send is `reverbSend` **alone**. A previous reading made it
+    // the product with `Params[25]`, taken from the `vmulss` at 0x3ce3 -- but
+    // `jbe` at 0x3ce1 sends every non-negative `echoSend` past it, so that
+    // multiply is the rare negative branch and never runs on real data. The
+    // product is 47.8x smaller than the truth and left the reverb inaudible.
+    echoSend: Math.min(
+      1,
+      P(OUTPUT_PARAMS.send) + track.echoSend * (1 - P(OUTPUT_PARAMS.send)),
+    ),
+    reverbSend: Math.min(1, track.reverbSend),
     // Seeded, so the LFO phases are reproducible along with everything else.
     random: rand,
   };

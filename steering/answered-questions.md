@@ -475,8 +475,23 @@ and the two sends are combined with the voice's own:
 0x3d50  [voice + 0x24] = min(., 1)       ; the reverb send, clamped
 ```
 
-**The send is the product, clamped to 1.** This project was sending `PInstrument.reverbSend` alone,
-which on seq 737099 is **47.8x too much** on average (mean 0.4444 against 0.0093).
+⚠️ **CORRECTED, and the correction matters more than the original.** The two sends are *not* the
+same shape, and neither is a product:
+
+```
+voice+0x1c = min(Params[25] + echoSend * (1 - Params[25]), 1)   ; the echo send, a BLEND
+voice+0x24 = min(reverbSend, 1)                                 ; the reverb send, DIRECT
+```
+
+The `vmulss` at `0x3ce3` that suggested a product is the **`echoSend < 0` branch**: `jbe` at
+`0x3ce1` sends every non-negative send straight past it to `0x3cf1`, so on real data it never runs.
+Reading a fragment without resolving the jump made the rare path look like the main one, and the
+resulting send was **47.8x too small** — it left the reverb inaudible and the echo silent.
+
+**The echo's blend is the interesting half.** Because the send is `Params[25]` *plus* the
+placement's share of what is left, **every instrument sends at least `Params[25]` to the echo** even
+when its own `echoSend` is zero. This project sent `echoSend` alone, which is zero on 1,682 of seq
+737099's 1,690 tracks — so the echo was silent where the game has it at a few per cent.
 
 ### What that unlocked
 
