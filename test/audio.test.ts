@@ -1,0 +1,289 @@
+import { strict as assert } from 'node:assert';
+import test from 'node:test';
+
+import { cubic, linear, nearest } from '../src/audio/interpolate.ts';
+import { Mixer, type SampleBuffer } from '../src/audio/mixer.ts';
+import {
+  DEFAULT_SLOT,
+  resolveSlot,
+  type Instrument,
+  type SampleSlot,
+} from '../src/core/instrument.ts';
+import {
+  panGains,
+  pitchRatio,
+  samplesPerStep,
+  velocityGain,
+  voiceFor,
+} from '../src/core/voice.ts';
+
+const slot = (over: Partial<SampleSlot> = {}): SampleSlot => ({
+  ...DEFAULT_SLOT,
+  ...over,
+});
+
+const instrument = (over: Partial<Instrument> = {}): Instrument => ({
+  slots: [slot()],
+  splitNotes: [0, 127, 0, 0, 0, 0, 0, 0, 0],
+  numStack: 1,
+  arpeggiate: false,
+  arpeggio: [],
+  ...over,
+});
+
+// ---------------------------------------------------------------- interpolation
+
+test('linear interpolation hits the midpoint of a ramp', () => {
+  const data = Float32Array.from([0, 1, 2, 3]);
+  assert.equal(linear(data, 0), 0);
+  assert.equal(linear(data, 1.5), 1.5);
+  assert.equal(linear(data, 2.25), 2.25);
+});
+
+test('every interpolator is exact on integer positions', () => {
+  const data = Float32Array.from([0.5, -0.25, 0.75, -1]);
+  for (const interp of [nearest, linear, cubic]) {
+    for (let i = 0; i < data.length; i += 1) {
+      assert.ok(
+        Math.abs(interp(data, i) - data[i]) < 1e-6,
+        `${interp.name} at ${i}`,
+      );
+    }
+  }
+});
+
+test('interpolators read silence outside the buffer instead of crashing', () => {
+  const data = Float32Array.from([1, 1, 1]);
+  for (const interp of [nearest, linear, cubic]) {
+    assert.equal(interp(data, -5), 0, `${interp.name} before the start`);
+    assert.equal(interp(data, 99), 0, `${interp.name} past the end`);
+  }
+});
+
+test('cubic reproduces a straight line exactly', () => {
+  // Catmull-Rom is interpolating and linear-exact; if it is not, the
+  // coefficients are wrong.
+  const data = Float32Array.from([0, 1, 2, 3, 4, 5]);
+  for (const p of [2.0, 2.25, 2.5, 2.75, 3.0]) {
+    assert.ok(Math.abs(cubic(data, p) - p) < 1e-5, `cubic at ${p}`);
+  }
+});
+
+// ------------------------------------------------------------------ pitch math
+
+test('a note at the slot base note plays at rate 1', () => {
+  assert.equal(pitchRatio(slot({ baseNote: 48 }), 48, 120), 1);
+});
+
+test('an octave up doubles the rate, an octave down halves it', () => {
+  const s = slot({ baseNote: 48 });
+  assert.ok(Math.abs(pitchRatio(s, 60, 120) - 2) < 1e-9);
+  assert.ok(Math.abs(pitchRatio(s, 36, 120) - 0.5) < 1e-9);
+});
+
+test('a semitone is the twelfth root of two', () => {
+  const s = slot({ baseNote: 48 });
+  assert.ok(Math.abs(pitchRatio(s, 49, 120) - 2 ** (1 / 12)) < 1e-12);
+});
+
+test('fineTune of 100 (assumed cents) equals one semitone', () => {
+  const tuned = pitchRatio(slot({ baseNote: 48, fineTune: 100 }), 48, 120);
+  const semitone = pitchRatio(slot({ baseNote: 48 }), 49, 120);
+  assert.ok(Math.abs(tuned - semitone) < 1e-12);
+});
+
+test('an unpitched slot ignores the note entirely', () => {
+  const drum = slot({ baseNote: 48, pitched: false });
+  assert.equal(pitchRatio(drum, 24, 120), 1);
+  assert.equal(pitchRatio(drum, 96, 120), 1);
+});
+
+test('fitBpm scales the rate by tempo over the sample tempo', () => {
+  const loop = slot({ baseNote: 48, pitched: false, fitBpm: true, baseBpm: 120 });
+  assert.ok(Math.abs(pitchRatio(loop, 48, 180) - 1.5) < 1e-9);
+});
+
+test('playbackRate folds in the sample-rate conversion', () => {
+  // A 22050 Hz sample played at its base note on a 44100 Hz device advances
+  // half a frame per output frame.
+  const v = voiceFor({
+    note: 48,
+    volume: 127,
+    instrument: instrument(),
+    level: 1,
+    pan: 0.5,
+    sampleRate: 22050,
+    outputRate: 44100,
+    tempo: 120,
+  });
+  assert.ok(Math.abs(v.playbackRate - 0.5) < 1e-12);
+  assert.equal(v.slot, 0);
+  assert.ok(Math.abs(v.gain - 1) < 1e-12);
+});
+
+test('gain multiplies note volume by the instrument level', () => {
+  assert.equal(velocityGain(127), 1);
+  assert.equal(velocityGain(0), 0);
+  const v = voiceFor({
+    note: 48,
+    volume: 96, // the record default, 0x60
+    instrument: instrument(),
+    level: 0.5,
+    pan: 0.5,
+    sampleRate: 44100,
+    outputRate: 44100,
+    tempo: 120,
+  });
+  assert.ok(Math.abs(v.gain - (96 / 127) * 0.5) < 1e-12);
+});
+
+test('pan is 0..1 centred at 0.5 and equal-power', () => {
+  const centre = panGains(0.5);
+  assert.ok(Math.abs(centre.left - centre.right) < 1e-12, 'centre is balanced');
+  assert.ok(
+    Math.abs(centre.left ** 2 + centre.right ** 2 - 1) < 1e-12,
+    'constant power',
+  );
+  assert.ok(panGains(0).left > 0.999, 'pan 0 is hard left');
+  assert.ok(panGains(1).right > 0.999, 'pan 1 is hard right');
+});
+
+test('samplesPerStep converts tempo to frames', () => {
+  // 120 BPM, 4 steps per beat, 48 kHz -> half a second per beat, 6000 per step.
+  assert.equal(samplesPerStep(48000, 120, 4), 6000);
+  assert.throws(() => samplesPerStep(48000, 0), RangeError);
+});
+
+// --------------------------------------------------------------------- splits
+
+test('a single-stack instrument always uses slot 0', () => {
+  const inst = instrument({ numStack: 1 });
+  for (const note of [0, 40, 60, 127]) {
+    assert.equal(resolveSlot(inst, note), 0);
+  }
+});
+
+test('key splits select by zone and clamp outside them', () => {
+  const inst = instrument({
+    slots: [slot(), slot(), slot()],
+    numStack: 3,
+    splitNotes: [36, 48, 60, 72, 0, 0, 0, 0, 0],
+  });
+  assert.equal(resolveSlot(inst, 36), 0);
+  assert.equal(resolveSlot(inst, 47), 0);
+  assert.equal(resolveSlot(inst, 48), 1);
+  assert.equal(resolveSlot(inst, 59), 1);
+  assert.equal(resolveSlot(inst, 60), 2);
+  assert.equal(resolveSlot(inst, 0), 0, 'below every zone clamps to the first');
+  assert.equal(resolveSlot(inst, 127), 2, 'above every zone clamps to the last');
+});
+
+// --------------------------------------------------------------------- mixing
+
+function ramp(n: number): SampleBuffer {
+  const data = new Float32Array(n);
+  for (let i = 0; i < n; i += 1) data[i] = i / n;
+  return { channels: [data], sampleRate: 44100 };
+}
+
+test('rate 1 reproduces the sample exactly', () => {
+  const mixer = new Mixer(44100);
+  const sample = ramp(16);
+  mixer.play({ sample, playbackRate: 1, gain: 1, pan: 0 });
+  const left = new Float32Array(16);
+  const right = new Float32Array(16);
+  mixer.render(left, right);
+  for (let i = 0; i < 16; i += 1) {
+    assert.ok(Math.abs(left[i] - sample.channels[0][i]) < 1e-6, `frame ${i}`);
+  }
+});
+
+test('rate 2 takes every other frame', () => {
+  const mixer = new Mixer(44100);
+  const sample = ramp(16);
+  mixer.play({ sample, playbackRate: 2, gain: 1, pan: 0 });
+  const left = new Float32Array(8);
+  const right = new Float32Array(8);
+  mixer.render(left, right);
+  for (let i = 0; i < 8; i += 1) {
+    assert.ok(Math.abs(left[i] - sample.channels[0][i * 2]) < 1e-6, `frame ${i}`);
+  }
+});
+
+test('rate 0.5 lands on the midpoints', () => {
+  const mixer = new Mixer(44100);
+  const sample = ramp(8);
+  mixer.play({ sample, playbackRate: 0.5, gain: 1, pan: 0 });
+  const left = new Float32Array(8);
+  const right = new Float32Array(8);
+  mixer.render(left, right);
+  const src = sample.channels[0];
+  assert.ok(Math.abs(left[1] - (src[0] + src[1]) / 2) < 1e-6);
+  assert.ok(Math.abs(left[3] - (src[1] + src[2]) / 2) < 1e-6);
+});
+
+test('startFrame delays a voice sample-accurately', () => {
+  const mixer = new Mixer(44100);
+  mixer.play({ sample: ramp(8), playbackRate: 1, gain: 1, pan: 0, startFrame: 4 });
+  const left = new Float32Array(8);
+  const right = new Float32Array(8);
+  mixer.render(left, right);
+  for (let i = 0; i < 4; i += 1) assert.equal(left[i], 0, `silent before ${i}`);
+  assert.ok(left[5] > 0, 'sounding after the start frame');
+});
+
+test('a finished voice is dropped and leaves silence', () => {
+  const mixer = new Mixer(44100);
+  mixer.play({ sample: ramp(4), playbackRate: 1, gain: 1, pan: 0.5 });
+  const left = new Float32Array(8);
+  const right = new Float32Array(8);
+  mixer.render(left, right);
+  assert.equal(mixer.voiceCount, 0, 'voice retired');
+  for (let i = 4; i < 8; i += 1) assert.equal(left[i], 0, `silence at ${i}`);
+
+  mixer.render(left, right);
+  assert.ok(left.every((v) => v === 0), 'buffers are cleared each block');
+});
+
+test('voices sum, and panning splits them between the channels', () => {
+  const mixer = new Mixer(44100);
+  const flat: SampleBuffer = {
+    channels: [Float32Array.from([1, 1, 1, 1])],
+    sampleRate: 44100,
+  };
+  mixer.play({ sample: flat, playbackRate: 1, gain: 0.5, pan: 0 }); // hard left
+  mixer.play({ sample: flat, playbackRate: 1, gain: 0.5, pan: 1 }); // hard right
+  const left = new Float32Array(4);
+  const right = new Float32Array(4);
+  mixer.render(left, right);
+  assert.ok(Math.abs(left[0] - 0.5) < 1e-6, 'left carries the left voice only');
+  assert.ok(Math.abs(right[0] - 0.5) < 1e-6, 'right carries the right voice only');
+});
+
+test('a looping sample keeps sounding past its end', () => {
+  const mixer = new Mixer(44100);
+  const sample: SampleBuffer = {
+    channels: [Float32Array.from([1, 1, 1, 1])],
+    sampleRate: 44100,
+    loop: { start: 0, end: 4 },
+  };
+  mixer.play({ sample, playbackRate: 1, gain: 1, pan: 0, endFrame: 16 });
+  const left = new Float32Array(16);
+  const right = new Float32Array(16);
+  mixer.render(left, right);
+  for (let i = 0; i < 16; i += 1) {
+    assert.ok(Math.abs(left[i] - 1) < 1e-6, `frame ${i} still sounding`);
+  }
+});
+
+test('rendering is deterministic across runs', () => {
+  const render = () => {
+    const mixer = new Mixer(44100);
+    mixer.play({ sample: ramp(64), playbackRate: 1.37, gain: 0.8, pan: 0.25 });
+    const left = new Float32Array(48);
+    const right = new Float32Array(48);
+    mixer.render(left, right);
+    return [...left, ...right];
+  };
+  assert.deepEqual(render(), render());
+});

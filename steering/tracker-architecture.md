@@ -114,6 +114,12 @@ That is worth protecting. Every dependency added later has to justify itself aga
 where `git clone && node --test` works on a machine with nothing but Node. A bundler will be needed
 eventually for the browser build; `core/` should still run without one.
 
+⚠️ **Strip-only type removal bans any TypeScript syntax that emits code.** Node deletes types, it
+does not compile them, so **parameter properties** (`constructor(readonly x: T)`), `enum`,
+`namespace` and decorators all fail at load with `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`. Declare
+fields longhand and use `const` objects with `as const` instead of enums. This is a syntax
+restriction, not a typing one — interfaces, generics and `type` are all fine.
+
 **Platform APIs are injected, never imported into `core/`.** `loadResource(bytes, inflate)` takes
 its inflater as an argument: `src/platform/node.ts` passes `zlib.inflateSync`,
 `src/platform/web.ts` passes a `DecompressionStream` wrapper. That is what keeps the same parser
@@ -127,8 +133,18 @@ Follow the pattern for anything else platform-shaped.
 | `src/core/stream.ts` | big-endian reader + `Revision` with the gate helpers. Done |
 | `src/core/resource.ts` | the `LVLb`/`PLNb` container. Done; 22 real levels parse |
 | `src/core/notes.ts` | note records, chaining, duration, automation flags. Done |
+| `src/core/fsb.ts`, `ima.ts`, `wav.ts` | build order step 1. Done, **byte-identical to `tools/fsb.py`** |
+| `src/core/instrument.ts`, `voice.ts` | slots, key splits, pitch/gain/pan math. Done |
+| `src/audio/interpolate.ts`, `mixer.ts` | build order step 2: voices, resampling, panning, looping. Done |
+| `src/audio/mixer-worklet.ts` | the AudioWorklet shell around `Mixer`. Written, **not yet run in a browser** |
 | `src/platform/node.ts`, `web.ts` | inflate adapters. Done |
 | the Thing-graph walk | **not started** — this is the next real piece |
+| echo, reverb, UI | not started (build order steps 5–6) |
+
+⚠️ Nothing here has made a sound yet. The mixer is verified against synthetic
+buffers and the decoder against the Python oracle, but no browser has played a
+note — the first listening test is still ahead and is where a wrong assumption
+about pan law, interpolation or `finetune` units will finally be audible.
 
 ⚠️ **The Thing walk is the big one.** Reaching a `PInstrument` means deserialising every Thing and
 every part that precedes it in the stream, because parts are variable-length and cannot be skipped
