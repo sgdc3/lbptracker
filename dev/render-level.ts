@@ -35,6 +35,11 @@ import {
   schedule,
   type DumpRow,
 } from '../src/core/project.ts';
+import {
+  VOICES_UNLIMITED,
+  VOICE_POOL_SIZE,
+  allocateVoices,
+} from '../src/core/polyphony.ts';
 import { readInstrument, usedSlots, type RInstrument } from '../src/core/rinstrument.ts';
 import { quantise } from '../src/core/scale.ts';
 import { loadResourceFile } from '../src/platform/node.ts';
@@ -72,6 +77,15 @@ const skipGuids = (process.env.LBP_SKIP ?? '').split(',').filter(Boolean).map(Nu
  * dragged down to 0.50 by a ride playing an octave low.
  */
 const noKeyTrack = process.env.LBP_NO_KEYTRACK === '1';
+/**
+ * How many voices the pool holds. `LBP_VOICES=off` (or 0) removes the cap.
+ *
+ * 📝 To be exposed in the UI -- see `VOICES_UNLIMITED` in `src/core/polyphony.ts`.
+ */
+const voiceLimit =
+  process.env.LBP_VOICES === 'off' || process.env.LBP_VOICES === '0'
+    ? VOICES_UNLIMITED
+    : Number(process.env.LBP_VOICES ?? VOICE_POOL_SIZE);
 /**
  * ⚠️ A/B switch: instrument GUIDs whose slots play at their own rate instead of
  * being transposed by `note - baseNote`.
@@ -180,9 +194,49 @@ const events = schedule(seq)
   .filter((e) => (e.step + e.durationSteps) * framesPerStep > 0)
   .filter((e) => (onlyGuids.length === 0 || onlyGuids.includes(e.guid)))
   .filter((e) => !skipGuids.includes(e.guid));
+
+// The engine has 32 voices and steals the quietest when they run out. Without
+// that cap a dense passage plays every note and is louder than the game's --
+// which is exactly where a listener hears it. Peak simultaneous notes in this
+// sequencer is 88.
+const pooled = allocateVoices(
+  events.map((e) => {
+    const track = seq.tracks[e.track];
+    return {
+      start: e.step,
+      end: e.step + e.durationSteps,
+      // voice[+0x04] * voice[+0x0c]: channel volume times note volume. The
+      // instrument's own level and its envelope are not in the engine's score.
+      score: channelVolume(seq, track) * velocityGain(e.volume),
+    };
+  }),
+  voiceLimit,
+);
+const realEnd = new Map(pooled.map((p) => [p.index, p.end]));
+let stolen = 0;
+const stolenBy = new Map<number, number>();
+for (const [i, e] of events.entries()) {
+  if (realEnd.get(i)! < e.step + e.durationSteps) {
+    stolen += 1;
+    stolenBy.set(e.guid, (stolenBy.get(e.guid) ?? 0) + 1);
+  }
+}
+if (stolen > 0) {
+  const worst = [...stolenBy]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([g, n]) => `${rinstIndex.get(g)?.file.replace(/\.\w+$/, '') ?? g}:${n}`)
+    .join('  ');
+  console.log(`  most affected: ${worst}`);
+}
+console.log(
+  Number.isFinite(voiceLimit)
+    ? `${voiceLimit}-voice pool: ${stolen} of ${events.length} notes cut short by voice stealing`
+    : `voice limit off: all ${events.length} notes run to their written end`,
+);
 let played = 0;
 let skipped = 0;
-for (const event of events) {
+for (const [eventIndex, event] of events.entries()) {
   const loaded = await loadInstrument(event.guid);
   if (!loaded || loaded.slots.length === 0) {
     skipped += 1;
@@ -250,7 +304,7 @@ for (const event of events) {
       stackGain,
     pan: track.pan,
     startFrame: Math.round(event.step * framesPerStep),
-    endFrame: Math.round((event.step + event.durationSteps) * framesPerStep),
+    endFrame: Math.round((realEnd.get(eventIndex) ?? event.step + event.durationSteps) * framesPerStep),
     envelope: evaluateAdsr(p, ADSR_PARAMS, mod),
     filter: {
       settings: {
@@ -352,7 +406,7 @@ for (let i = 0; i < frames; i += 1) {
   pcm[i * 2] = Math.max(-32768, Math.min(32767, Math.round(left[i] * norm * 32767)));
   pcm[i * 2 + 1] = Math.max(-32768, Math.min(32767, Math.round(right[i] * norm * 32767)));
 }
-const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
+const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
 await writeFile(out, writeWav(pcm, 2, RATE));
 const elapsed = Number(process.hrtime.bigint() - started) / 1e9;
 console.log(
