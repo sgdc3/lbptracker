@@ -578,6 +578,38 @@ envelope amount and the resonance takes the envelope, not the pitch.
 sounded better or worse afterwards. The only thing that settled the question was tracing two stack
 slots back to their writers, which cost less than either wrong turn did.
 
+### The ladder's saturation and its bypass — both measured
+
+**The saturation is `b4 -= b4³/6`, exactly**, and it applies to the last pole's output only:
+
+```
+0x32a1  xmm2 = b4 * b4
+0x32a5  xmm2 = b4 * xmm2          ; b4³
+0x32b9  xmm2 = xmm2 * 0.166667    ; v0x46a0, four lanes
+0x32bd  b4   = b4 - xmm2
+```
+
+repeated identically in the second ladder site at `0x3320`-`0x332c`. So that part of the model was
+already right.
+
+**The clamps are the engine's too**, which this file and `moog.ts` both called ours. `0x2ae9`-`0x2b32`
+clamps all four block values — the start and end of the cutoff ramp and of the resonance ramp —
+with `vminps` against 1.0 and `vmaxps` against zero.
+
+**And there is a bypass nobody had modelled.** `0x2ee9` compares the clamped cutoff against **0.99**
+and `0x2f17` branches on it. The fall-through is a self-contained loop at `0x2f40`-`0x2fdb` (back
+edge `jl 0x2f40`) that touches **none** of the ladder's constants — no `0.8`, no `5.6`, no `1/6` —
+so it is the unfiltered path, taken when the cutoff is above the threshold. The compared value is
+identified rather than inferred: `xmm9` receives `freq` at `0x2a72` and is not written again before
+`0x2ae9` clamps it into the slot the comparison reads.
+
+⚠️ **This is audible, because our ladder is not transparent at `freq = 1`**: a unit impulse
+comes out at 0.833 and it is still ringing after half a second. `keys/piano.rinst` is cutoff 1.0 at
+both ends with full key tracking, so at and above its base note it sits on the bypass side — every
+one of those notes was being coloured by a filter the engine never runs. Below the base note its
+cutoff genuinely tracks down (`freq` is just the playback rate) and the ladder does run, at
+resonance zero, as a plain 4-pole lowpass. `FILTER_BYPASS_CUTOFF` in `moog.ts`.
+
 ⚠️ **Still open: whether `q` should reach 3.** With the correct reading, `musicbox` at full
 modulation has resonance 0.856 at `freq ≈ 0.019`, and the Stilson/Smith compensation grows as the
 cutoff falls, so `q ≈ 3.1`. The coefficient formula matches the engine instruction for instruction,

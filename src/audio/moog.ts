@@ -41,6 +41,27 @@ export interface LadderCoefficients {
  * approximation gives at that number and at the output sample rate, which is
  * part of why the filter has to be reproduced rather than substituted.
  */
+/**
+ * The cutoff above which the engine does not run the ladder at all.
+ *
+ * `0x2ee9` compares the clamped cutoff against **0.99** and `0x2f17` branches on
+ * it. The fall-through path is a self-contained loop at `0x2f40`-`0x2fdb` that
+ * touches **none** of the ladder's constants -- no `0.8`, no `5.6`, no `1/6` --
+ * so it is the unfiltered path, and it is the one taken when the cutoff is
+ * above the threshold. A wide-open lowpass is skipped rather than computed.
+ *
+ * That the compared value is the cutoff is not inferred from the shape: `xmm9`
+ * receives `freq` at `0x2a72` and is not written again before `0x2ae9` clamps it
+ * into the slot the comparison reads.
+ *
+ * ⚠️ **This is not a micro-optimisation, it is audible.** This ladder at
+ * `freq = 1` is not transparent: a unit impulse comes out at 0.833 and it still
+ * rings after half a second. `keys/piano.rinst` has a cutoff of exactly 1.0 at
+ * both ends of its range, so every one of its notes was being coloured by a
+ * filter the engine never runs.
+ */
+export const FILTER_BYPASS_CUTOFF = 0.99;
+
 export function ladderCoefficients(freq: number, res: number): LadderCoefficients {
   const t = 1 - freq;
   const p = freq + 0.8 * freq * t;
@@ -138,8 +159,9 @@ export interface FilterSettings {
  * is the pitch; `[rbp-0xb70]` is the return of the envelope evaluator called at
  * `0x222d` with `Params[7..10]`, so it is envelope B. See `FILTER_PARAMS`.
  *
- * ⚠️ The clamps are ours. Nothing in that block bounds either value; the ladder
- * diverges for `freq > 1`.
+ * **The clamps are the engine's**, not ours as this said. `0x2ae9`-`0x2b32`
+ * clamps all four block values -- the start and end of both the cutoff and the
+ * resonance ramp -- with `vminps` against 1.0 and `vmaxps` against zero.
  */
 export function filterAt(
   settings: FilterSettings,

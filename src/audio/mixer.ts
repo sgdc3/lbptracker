@@ -15,7 +15,12 @@ import { INTERPOLATORS, DEFAULT_INTERPOLATOR } from './interpolate.ts';
 import type { LfoSettings } from './lfo.ts';
 import { LFO_RATE_SCALE, Lfo, gainFactor, panFold, pitchFactor } from './lfo.ts';
 import type { FilterSettings } from './moog.ts';
-import { MoogLadder, filterAt, ladderCoefficients } from './moog.ts';
+import {
+  FILTER_BYPASS_CUTOFF,
+  MoogLadder,
+  filterAt,
+  ladderCoefficients,
+} from './moog.ts';
 import type { MipChain } from './mipmap.ts';
 import { mipLevelFor, readMipped } from './mipmap.ts';
 
@@ -368,9 +373,15 @@ class Voice {
       if (filter) {
         const level = this.filterEnv.advance(this.secondsPerFrame, held, filter.envelope);
         const { freq, res } = filterAt(filter.settings, level, playbackRate);
-        const coefficients = ladderCoefficients(freq, res);
-        l = this.ladderL.process(l, coefficients);
-        r = mono ? l : this.ladderR.process(r, coefficients);
+        // A wide-open lowpass is skipped, not computed: the engine branches on
+        // `cutoff > 0.99` at 0x2ee9 into a loop carrying none of the ladder's
+        // constants. Running it anyway is not free -- this ladder passes a unit
+        // impulse at 0.833 and rings -- and piano sits at exactly 1.0.
+        if (freq <= FILTER_BYPASS_CUTOFF) {
+          const coefficients = ladderCoefficients(freq, res);
+          l = this.ladderL.process(l, coefficients);
+          r = mono ? l : this.ladderR.process(r, coefficients);
+        }
       }
 
       outLeft[i] += l * panLeft * fade;

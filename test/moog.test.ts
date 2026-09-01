@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
 import {
+  FILTER_BYPASS_CUTOFF,
   FILTER_PARAMS,
   MoogLadder,
   filterAt,
@@ -205,4 +206,44 @@ test('a note far above the base note drives the cutoff to its ceiling', () => {
   const settings = { cutoff: 0.89, resonance: 0.9, keyTrack: 1, envAmount: 0 };
   assert.equal(filterAt(settings, 1, 4).freq, 1);
   assert.ok(filterAt(settings, 1, 4).res <= 1, 'resonance is clamped too');
+});
+
+test('a wide-open lowpass is skipped, and this ladder is not transparent', () => {
+  // The bypass matters only because the ladder is NOT a no-op at freq = 1: it
+  // passes a unit impulse at 0.833 and keeps ringing. If it were transparent
+  // there, skipping it would be a pure optimisation instead of a fidelity fix.
+  const coefficients = ladderCoefficients(1, 0);
+  const ladder = new MoogLadder();
+  let peak = 0;
+  let late = 0;
+  for (let i = 0; i < 48000; i += 1) {
+    const y = Math.abs(ladder.process(i === 0 ? 1 : 0, coefficients));
+    if (y > peak) peak = y;
+    if (i > 24000 && y > late) late = y;
+  }
+  assert.ok(peak < 0.9, `a unit impulse comes out at ${peak.toFixed(3)}, not 1`);
+  assert.ok(late > 1e-3, 'and it is still ringing after half a second');
+  // The threshold itself, from the comparison at 0x2ee9.
+  assert.equal(FILTER_BYPASS_CUTOFF, 0.99);
+});
+
+test('piano bypasses at and above its base note, and tracks below it', () => {
+  // keys/piano.rinst is cutoff 1.0 at both ends of its range with no envelope
+  // amount and full key tracking, so `freq` is just the playback rate. At and
+  // above the base note it is pinned at the clamp and the filter is skipped;
+  // below it the cutoff genuinely follows the pitch down, and the ladder runs
+  // as a plain 4-pole lowpass because the resonance is zero.
+  const settings = { cutoff: 1, resonance: 0, keyTrack: 1, envAmount: 0 };
+  for (const rate of [1, 2, 4]) {
+    for (const env of [0, 0.5, 1]) {
+      assert.ok(
+        filterAt(settings, env, rate).freq > FILTER_BYPASS_CUTOFF,
+        `rate ${rate} should bypass`,
+      );
+    }
+  }
+  const low = filterAt(settings, 1, 0.25);
+  assert.equal(low.freq, 0.25, 'an octave and a half down tracks the cutoff down with it');
+  assert.equal(low.res, 0, 'and with no resonance it is a plain lowpass');
+  assert.ok(low.freq < FILTER_BYPASS_CUTOFF, 'so the ladder does run there');
 });
