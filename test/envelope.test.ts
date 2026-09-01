@@ -260,3 +260,75 @@ test('without an envelope the old stand-ins still apply', async () => {
   assert.ok(left[99] !== 0, 'sounding up to the end frame');
   assert.equal(left[150], 0, 'and hard-stopped after it, as before');
 });
+
+// --------------------------------------------------------- the whole block
+
+test('all 27 Params are named, once each, and the sections agree', async () => {
+  const { LFO_PARAMS, OUTPUT_PARAMS, PARAM_NAMES, STACK_PARAMS } = await import(
+    '../src/core/params.ts'
+  );
+  const { FILTER_PARAMS } = await import('../src/audio/moog.ts');
+  const { ADSR_PARAMS_B } = await import('../src/core/envelope.ts');
+
+  assert.equal(PARAM_NAMES.length, 27, 'the block is 27 pairs');
+
+  // Every index claimed exactly once, by exactly one section.
+  const claimed = [
+    ...Object.values(STACK_PARAMS),
+    ...Object.values(FILTER_PARAMS),
+    ...Object.values(ADSR_PARAMS_B),
+    ...Object.values(ADSR_PARAMS),
+    ...LFO_PARAMS.flatMap((l) => [l.rate, l.depth, l.spread]),
+    ...Object.values(OUTPUT_PARAMS),
+  ].sort((a, b) => a - b);
+  assert.deepEqual(claimed, [...Array(27).keys()], 'no gaps and no index twice');
+
+  // The LFO triples are contiguous and in (rate, depth, spread) order -- the
+  // stride-3 layout is what made them recognisable in the first place.
+  LFO_PARAMS.forEach((lfo, i) => {
+    assert.equal(lfo.rate, 15 + i * 3);
+    assert.equal(lfo.depth, 16 + i * 3);
+    assert.equal(lfo.spread, 17 + i * 3);
+  });
+  assert.deepEqual(LFO_PARAMS.map((l) => l.rateScale), [100, 100, 50]);
+});
+
+test('the corpus behaves the way the naming says it should', async (t) => {
+  if (!existsSync(RINST)) {
+    t.skip(`no ${RINST}`);
+    return;
+  }
+  const files = (await readdir(RINST)).filter((f) => f.endsWith('.rinst'));
+  if (files.length === 0) {
+    t.skip(`no .rinst files in ${RINST}`);
+    return;
+  }
+  const { LFO_PARAMS, OUTPUT_PARAMS } = await import('../src/core/params.ts');
+  const all: ReturnType<typeof readInstrument>[] = [];
+  for (const name of files) {
+    all.push(readInstrument((await loadResourceFile(path.join(RINST, name))).data));
+  }
+  const zeros = (i: number) => all.filter((p) => p.params[i].x === 0).length;
+
+  // A depth of zero switches an LFO off, so most instruments must sit at zero
+  // -- while the rates are set regardless. If these ever invert, the rate and
+  // depth of a triple have been swapped.
+  for (const lfo of LFO_PARAMS) {
+    assert.ok(zeros(lfo.depth) > all.length * 0.8, `LFO depth ${lfo.depth} should mostly be off`);
+    assert.ok(zeros(lfo.rate) < all.length * 0.2, `LFO rate ${lfo.rate} should mostly be set`);
+    assert.ok(zeros(lfo.spread) > all.length * 0.8, `spread ${lfo.spread} is for stacked voices`);
+  }
+
+  // A level is the one parameter every instrument must set, and set differently.
+  assert.equal(zeros(OUTPUT_PARAMS.level), 0, 'every instrument sets its level');
+  const distinct = new Set(all.map((p) => p.params[OUTPUT_PARAMS.level].x)).size;
+  assert.ok(distinct > all.length * 0.8, `only ${distinct} distinct levels across ${all.length}`);
+
+  // Drive is a guitar pedal: almost nothing uses it, and what does is electric.
+  assert.ok(zeros(OUTPUT_PARAMS.drive) > all.length * 0.9, 'drive is rare');
+  console.log(
+    `    zeros — LFO depths ${LFO_PARAMS.map((l) => zeros(l.depth)).join('/')}, ` +
+      `level ${zeros(OUTPUT_PARAMS.level)}, send ${zeros(OUTPUT_PARAMS.send)}, ` +
+      `drive ${zeros(OUTPUT_PARAMS.drive)} of ${all.length}`,
+  );
+});

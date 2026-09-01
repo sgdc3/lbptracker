@@ -1166,6 +1166,88 @@ NID strings run from file `0x5543` at 16-byte spacing, and the string table's le
 `0x54ce` — what is missing is the `Elf64_Sym` array that joins them, which resisted a search by
 guessed base address. Parse the SCE dynamic tags properly rather than guessing.
 
+## `Params[15..26]` — three LFOs and an output stage. The block is complete
+
+### The stride-3 tell
+
+Seven of the last twelve are read in one tight run at `0x21e5`–`0x22ea`, and the first three of them
+are added to the three LFO phases at `+0x98`, `+0x9c` and `+0xa0`:
+
+```
+0x226b   [rbp-0xb00] = eval(Params[15]) * dt * 100     ->  += voice.phase[0]   (+0x98)
+0x225f   [rbp-0xae0] = eval(Params[18]) * dt * 100     ->  += voice.phase[1]   (+0x9c)
+0x227b   [rbp-0xae8] = eval(Params[21]) * dt *  50     ->  += voice.phase[2]   (+0xa0)
+```
+
+**15, 18, 21 with stride 3** — which says the block is triples, and the other two members of each
+follow. The depths, one per LFO, are each multiplied by the oscillator and used as a factor around
+1 (`0x2467`, `0x2597`, `0x273f`):
+
+```
+osc = oscillator(phase)          ; the import at stub 0x130, called twice per LFO
+                                 ; per block, for the start and end values
+gain *= 1 + eval(Params[16|19|22]) * osc
+```
+
+and the third member is scaled by `2π / Numstack` at `0x2306`–`0x2346`:
+
+```
+layerPhaseOffset = eval(Params[17|20|23]) * 2*pi / Numstack
+```
+
+which fans a stacked voice's layers around the cycle — five layers each at a different point of the
+same LFO. It is what `Params[1]`'s per-layer spread and `Params[0]`'s per-layer detune are *for*:
+they are added into the phases at `0x2588` and `0x2730` before the oscillator is called.
+
+| LFO | phase | rate | scale | depth | layer spread |
+|---|---|---|---|---|---|
+| 1 | `+0x98` | `Params[15]` | ×100 | `Params[16]` | `Params[17]` |
+| 2 | `+0x9c` | `Params[18]` | ×100 | `Params[19]` | `Params[20]` |
+| 3 | `+0xa0` | `Params[21]` | ×50 | `Params[22]` | `Params[23]` |
+
+**The corpus confirms which member is which.** A depth of zero switches an LFO off; a rate of zero
+does not, it just makes it slow. So the depths should be zero nearly everywhere and the rates should
+not — and they are: depths zero in **62, 65 and 62** of 68, rates zero in **1, 0 and 0**. The
+spreads, which mean nothing on an unstacked voice, are zero in 67, 67 and 63. If a triple's rate and
+depth had been swapped, that pattern would invert.
+
+### The output stage
+
+| param | role | what the corpus shows |
+|---|---|---|
+| `Params[24]` | **output level** | **never zero**, and **61 distinct values across 68 instruments**. Enters the gain chain with `sqrt(1/Numstack)` — the equal-power correction for stacking — and a factor of 2. Loudest `triangle_wave` 0.67, quietest `ray_gun` 0.07: the trim that balances the set. |
+| `Params[25]` | **send** into the DSP's second stereo pair | zero on 33 of 68, never above 0.23. `space_piano` 0.23, `e_guitar_clean_muted` 0.18, `harp` 0.18, `ukulele` 0.16. |
+| `Params[26]` | **drive** into the filter | zero on **64** of 68. The four: `e_guitar_power` 0.73, `e_guitar_distorted` 0.57/0.70, `space_piano` 0.51, `electric_harpsichord` 0.39. |
+
+`Params[25]` is measurably a send: the renderer accumulates every voice into **two** output pairs
+(`0x2fa5`–`0x2fe7`), the DSP being 4-in/4-out, and this scales the one at voice `+0x1c` while the
+other is scaled by a value the note block supplies directly.
+
+⚠️ **"Drive" is an inference from its four users and from where the value lands** — a gain multiplied
+in ahead of the ladder. Pushing level into a filter whose saturation is a cube *is* distortion, and
+the ladder's `[-1, +1]` domain is why the parameter is clamped to `0..1`. Two distorted guitars
+being its top two users is the whole argument; there is no label in the game to check it against.
+
+### All 27, in order
+
+| indices | section |
+|---|---|
+| 0..2 | unison stack — detune, spread, random start |
+| 3..6 | Moog ladder — cutoff, resonance, key tracking, envelope amount |
+| 7..10 | envelope B — the filter ADSR |
+| 11..14 | envelope A — the amplitude ADSR |
+| 15..23 | three LFOs — (rate, depth, layer spread) each |
+| 24..26 | output — level, send, drive |
+
+The block is a small subtractive synth: stack, filter, two envelopes, three LFOs, output. Named in
+`src/core/params.ts`.
+
+⚠️ **What the LFOs modulate is only partly established.** LFO 2's result multiplies the per-layer
+gain, which is measured. LFO 1 is combined with the per-layer detune in a region carrying the same
+`0.05` constant the detune itself uses, so pitch is the natural reading — natural, not proven. LFO
+3's target was not traced. **`sub_0x130`, the oscillator, is still unidentified** — see the anchor
+recorded under `Params[0..2]`; naming it would settle all three targets at once.
+
 ## The note word — 4 bytes, decoded
 
 `sub_0x38e0` pulls it apart with `bextr`, so the field boundaries are literal immediates rather than

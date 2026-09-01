@@ -13,6 +13,7 @@
 
 import { ADSR_PARAMS, ADSR_PARAMS_B, evaluateAdsr } from '../src/core/envelope.ts';
 import { FILTER_PARAMS } from '../src/audio/moog.ts';
+import { LFO_PARAMS, OUTPUT_PARAMS } from '../src/core/params.ts';
 import { resolveSlot } from '../src/core/instrument.ts';
 import { readInstrument, usedSlots, type RInstrument } from '../src/core/rinstrument.ts';
 import { loadResource } from '../src/core/resource.ts';
@@ -173,6 +174,17 @@ async function loadInstrument(row: ManifestRow): Promise<void> {
     );
     const p = instrument.params;
     const b = evaluateAdsr(p, ADSR_PARAMS_B, 0);
+    const lfos = LFO_PARAMS.map((l, n) =>
+      p[l.depth].x > 0 || p[l.depth].y > 0
+        ? `LFO${n + 1} rate ${p[l.rate].x.toFixed(2)} depth ${p[l.depth].x.toFixed(2)}`
+        : null,
+    ).filter(Boolean);
+    log(
+      `   output — level ${p[OUTPUT_PARAMS.level].x.toFixed(3)}, ` +
+        `send ${p[OUTPUT_PARAMS.send].x.toFixed(3)}, ` +
+        `drive ${p[OUTPUT_PARAMS.drive].x.toFixed(3)}; ` +
+        (lfos.length ? lfos.join(', ') : 'no LFO'),
+    );
     log(
       `   filter — cutoff ${p[3].x.toFixed(2)}, resonance ${p[4].x.toFixed(2)}, ` +
         `keytrack ${p[5].x.toFixed(2)}, env amount ${p[6].x.toFixed(2)}; ` +
@@ -290,7 +302,12 @@ function playNote(note: number, atSeconds = 0): void {
     sampleId: `slot${v.zone}`,
     voice: {
       playbackRate: v.playbackRate,
-      gain: velocityGain(96),
+      // The instrument's own level, Params[24]. ⚠️ The engine also folds in
+      // sqrt(1/Numstack) here, the equal-power correction for stacking -- left
+      // out deliberately, because this bench plays one layer and applying the
+      // correction without the layers would just make stacked instruments
+      // quiet by exactly the factor the missing layers would restore.
+      gain: velocityGain(96) * 2 * (instrument?.params[OUTPUT_PARAMS.level].x ?? 0.5),
       pan: 0.5,
       startFrame: Math.round(atSeconds * context.sampleRate),
       // The samples loop, so a voice never ends on its own -- it has to be
