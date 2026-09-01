@@ -782,6 +782,48 @@ Recovered with `git show <commit>^:steering/open-questions.md`.
 **Write to a temporary file and move it into place, or write the text with the Write tool.** Never
 open a steering file for writing with a payload that has not already been built.
 
+## 14. The reverb send is `Params[25]`, and the wet level rests on one invented factor
+
+Reported: the reverb seems missing on many tracks, or imperceptible.
+
+**The per-voice send is measured**, at `fmodextinput.prx` `0x3b8f`-`0x3bb0`, in the same block that
+writes the channel volume:
+
+```
+xmm0 = [rbx + 0x28]        ; the note's modulation
+xmm1 = [rcx + 0x5b0]       ; Params[25].x      (0x5b0 - 0x4e8) / 8 = 25
+xmm2 = [rcx + 0x5b4]       ; Params[25].y
+[rbx + 0x1c] = x + mod * (y - x)
+```
+
+So the voice's send into the DSP's second stereo pair is **`Params[25]` evaluated at the note's own
+modulation**, and nothing else. `+0x1c` then scales that pair in the render loop (`0x2fab`,
+`0x338c`, `0x368b`).
+
+⚠️ **The renderer does not apply `Params[25]` at all** -- it sends `PInstrument.reverbSend`, which on
+seq 737099 is 0.6 or 1.0 on 958 of 1,690 tracks, where `Params[25]` runs **0.03 to 0.18** on the
+instruments in play. Adding it would make the reverb *quieter*, not louder, so it does not explain
+the report; and where `PInstrument.reverbSend` is applied on the engine side has not been found.
+Both belong in the same investigation.
+
+### The wet level hangs on `1 - gain`, which is ours
+
+The comb bank's one unmeasured factor. A feedback comb has DC gain `1/(1 - gain)`, so eight summed
+are about nine times unity, and each contribution is scaled by `1 - gain` to bring it back. On the
+presets these levels use the gains sit near **0.87**, so that factor is about **0.13** -- an **18 dB
+attenuation invented to solve a problem the engine solves some other way.**
+
+Measured on the 1:25-1:40 window, reverb against the dry mix:
+
+| | |
+|---|---|
+| with the normalisation | **9.0%** |
+| without it | **69.1%** |
+
+Freeverb solves the same problem with a fixed input gain (0.015) rather than per-comb scaling, and
+that is the shape worth looking for. `Reverb` takes a `normaliseCombs` flag and the renderer reads
+`LBP_REVERB_NORM=off`, so the two ends can be compared while the real scaling is still unknown.
+
 ## 10. One-shots — percussion is not gated by its note, and the reason is inferred
 
 A listener reported the drums as far too quiet, and the ride cymbal at 5:17 of one level as barely

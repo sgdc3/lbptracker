@@ -254,7 +254,25 @@ export class Reverb {
   private readonly wet1: number;
   private readonly wet2: number;
 
-  constructor(sampleRate: number, preset: readonly number[]) {
+  /**
+   * Whether each comb's contribution is scaled by `1 - gain`.
+   *
+   * WARNING: this factor is OURS and it is the only unmeasured thing left in
+   * the reverb. A feedback comb has DC gain `1/(1 - gain)`, so eight of them
+   * summed are about nine times unity; scaling each contribution makes it
+   * unity at DC. But on the presets in use the gains run near 0.87, so
+   * `1 - gain` is about **0.13** -- an 18 dB attenuation invented to solve a
+   * problem the engine solves some other way. A listener reported the reverb
+   * as imperceptible, and this is the one place a whole reverb could go.
+   *
+   * Left on by default because turning it off made the reverb 90% of the dry
+   * mix when it was last tried, and off is not obviously better than wrong.
+   * Settle it by finding what the engine actually scales by.
+   */
+  private readonly normaliseCombs: boolean;
+
+  constructor(sampleRate: number, preset: readonly number[], normaliseCombs = true) {
+    this.normaliseCombs = normaliseCombs;
     const ms = (v: number) => Math.max(1, Math.round((v / 1000) * sampleRate));
     const row = preset[PRESET_SLOT.tapSet];
     const taps = REVERB_TAP_SETS[row] ?? REVERB_TAP_SETS[0];
@@ -337,7 +355,7 @@ export class Reverb {
       // the preset's own wet level -- the part that is measured -- stops meaning
       // anything. Scaling each comb's *contribution* makes it unity at DC and
       // leaves its decay untouched, unlike scaling the recirculation.
-      wet += (1 - comb.gain) * comb.y;
+      wet += (this.normaliseCombs ? 1 - comb.gain : 1) * comb.y;
     }
     // Summing N combs that each rang at unit amplitude would be N times too
     // loud; the taps are mutually incoherent, so they add in power.
