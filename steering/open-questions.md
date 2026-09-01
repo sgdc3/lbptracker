@@ -198,11 +198,15 @@ corpus uses.
 of 100,000 and an impulse peak of 15,864 — which is how it was caught. They run −80…+100 and are
 more likely pan or angle; the last three, 0…1, behave like gains and are what the code uses.
 
-⚠️ **What is still missing is the process loop**, and with it the topology: how the taps feed back
-into one another, where the damping sits, and how slot 5 becomes a feedback gain (read here as an
-RT60 over `slot5 / 10` seconds, which puts the presets at 0.6–5.0 s). Also unexplained: `v0x3fcd50`
-divides slot 2's level by 100, and slot 2's raw values are 0–18, which do not read as millibels the
-way slots 0 and 1 do.
+✔ **The process loop and the topology were both found afterwards**, in `fmodsmsreverb.prx` — see
+*The stage count, and how the two halves fit together* below. Slot 5 becomes a feedback gain through
+`10^(-3t/RT60)` with `RT60 = slot5 / 10` seconds, which puts the presets at 0.6–5.0 s.
+
+⚠️ Still unexplained: `v0x3fcd50` divides slot 2's level by 100, and slot 2's raw values are 0–18,
+which do not read as millibels the way slots 0 and 1 do. Note that the levels are **tenths of a dB**
+rather than millibels — `millibelToLinear` is `10^(v/200)`, and that is what makes the constructor's
+−800 read as the −80 dB floor. The function keeps its misleading name because the eboot's own
+naming is unknown.
 
 ### Finding the process loop: what has been ruled out
 
@@ -346,7 +350,7 @@ three long-span loops are the outer iteration that runs the short ones once per 
 | C | `0x13b0` | `prev = y; y = a·prev + b·buf[i] + c·older; buf[i] -= y` — an allpass section; the subtraction is what makes it one |
 | D/E/F | `0x1500`… | `acc[i] += x[i]; y = a·y + b·x[i]; out[i] = g·(y + send[i])` — a damped comb with an injected send |
 
-### The topology: a SERIES chain of stages, not a parallel bank
+### The stage array, and the series chain at `0x1460`
 
 The routing is in the code between the loops, at `0x1460`–`0x14f9`. The reverb holds an **array of
 stages of `0x50` = 80 bytes** — `rbx = index * 5 * 16` — and each stage is a delay line with its own
@@ -370,18 +374,71 @@ length past an 0x80 header.
 which `0x1487` then stores into **`[next_stage + 0x30]`**, the *following* stage's input. Each
 stage's output becomes the next one's input, alternating between two buffers.
 
-⚠️ **That means `src/audio/effects.ts` has the wrong topology.** It runs the taps as a *parallel*
-comb bank and sums them, which is a Freeverb's shape and not this one. The tap lengths, the early
-reflections, the millibel levels, the RT60 law and the damping are all the engine's; the arrangement
-is not, and a series chain of damped delays sounds substantially different from a parallel bank of
-them.
+### The stage count, and how the two halves fit together — RESOLVED, 2026-09-01
 
-What is still unread is the smaller half: how many stages there are, which of the four kernels each
-one runs, and where the allpass sections (loop C) sit relative to the combs.
+**The stage count is runtime data, not a constant.** `sub_0x11a0` reads it twice: at `0x1411`
+`mov eax, [r12 + 0x510]` gates the whole loop (`je 0x15ac` when it is zero), and at `0x1589` it is
+re-read as the back-edge bound (`cmp ecx, eax; jb 0x1460`). `r12` is `[rbp-0xa0]`, loaded at
+`0x1d12` from `lea [rip + 0x2503]` → vaddr `0x4200`, which is past the data segment's `filesz`
+(`0xb8`) and therefore **BSS**: the count is filled in at init. `v0x3fcc00` calls the per-stage
+configure `v0x3fc8c0` **ten times**, which matches the ten tap lengths of a table A row, so there is
+one stage per tap.
 
-⚠️ Worth doing, and worth doing before more of the mix is tuned: **71,781 of 129,696 instrument
-placements (55%) send to reverb.** Until it is done, `src/audio/effects.ts` carries a Schroeder
-network of ours that responds to the send levels and reproduces nothing — and says so.
+**And the two halves are Schroeder's, not one chain.** The four kernels say which is which:
+
+- **`dampedComb` (D/E/F) carries an accumulator**, `acc[i] += x[i]`. Accumulating across stages is
+  what a *parallel* bank does — a series chain has nothing to accumulate, it hands the signal on.
+- **`allpassSection` (C) is what the ping-pong at `0x1460`–`0x14f9` walks.** Alternating between two
+  scratch buffers so each stage's output lands in the next one's `[stage+0x30]` is what a *cascade*
+  needs and a parallel bank does not.
+
+So the series chain found at `0x1460` is the **allpass cascade**, and the combs are the parallel
+bank feeding it: a parallel bank of damped feedback combs, summed, into a series chain of allpasses.
+`src/audio/effects.ts` now runs that.
+
+**Three things forced this rather than being chosen**, and they are worth recording because each was
+found by a failure:
+
+1. **The combs must recirculate.** A chain with no feedback is an FIR: it rings for exactly the sum
+   of the delays and stops, and the decay parameter changes the tail's shape but never its length.
+   The measured law `10^(-3t/RT60)` uses the *single* tap's `t`, which is the standard gain for one
+   recirculating comb to fall 60 dB in RT60 — it is only meaningful with feedback.
+2. **The combs cannot be in series.** A feedback comb has DC gain `1/(1-g)`; ten in series multiply
+   to `(1/(1-g))^10`, which diverges within a second at the long-decay presets. Normalising the
+   forward path by `1-g` stabilises it and kills the tail in 30 ms. A structure that can only be
+   stabilised by destroying it is the wrong structure.
+3. **Allpasses cascade safely** because they pass every frequency at equal magnitude, which is why
+   the cascade is the half that ping-pongs.
+
+**What is ours, and flagged at its line in `effects.ts`:** which taps are combs and which are
+allpasses (the shortest two are taken as allpasses), the allpass coefficient (0.5 — the engine's is
+`[stage+0x44]`, set somewhere in the undisassembled `v0x3fc8c0`), and the `1 - gain` normalisation
+on each comb's contribution, without which the bank is ~9x unity at DC and the preset's own wet
+level stops meaning anything. Also still unread: whether the DSP finally emits the accumulator or
+the last stage's output.
+
+### What the rewiring measured
+
+| preset | nominal RT60 | measured T60 | ratio |
+|---|---|---|---|
+| setting 2 | 2.0 s | 1.00 s | 0.50 |
+| setting 3 | 1.2 s | 0.70 s | 0.58 |
+| setting 4 | 5.0 s | 3.05 s | 0.61 |
+| setting 5 | 3.0 s | 1.20 s | 0.40 |
+
+The measured T60 is consistently **short** of nominal because the damping one-pole sits inside the
+feedback loop and removes energy on every pass, which the RT60 gain law does not account for.
+`test/reverb.test.ts` asserts the ratio stays in 0.25–1.0 rather than asserting an absolute level.
+
+⚠️ **Setting 1 has no late field at all, and that is correct.** Its preset is
+`[-800, -100, -700, ...]`, and `millibelToLinear` is `10^(v/200)` — the values are **tenths of a
+dB**, not millibels, which is what makes the constructor's `-800` floor read as −80 dB. So its late
+level is −70 dB against early reflections at −10 dB: that preset is early reflections and nothing
+else. Two successive test assertions were written that assumed every preset rings, and both were
+wrong rather than the code.
+
+On the real corpus render the reverb now sits at **10.6% of the dry mix** (it was 90.2% before the
+comb bank was normalised, with the mix clipping at peak 1.9).
 
 ## 7. FMOD's pan law — the resampler half is ANSWERED
 

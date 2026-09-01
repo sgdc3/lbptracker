@@ -51,23 +51,64 @@ test('every ReverbSetting the corpus uses selects a real preset', () => {
 test('the reverb is stable and decays, at every setting', () => {
   // ⚠️ This caught a real blow-up: reading the early rows' middle three floats
   // as decibels gave a gain of 100,000 and an impulse peak of 15,864.
+  //
+  // The tail is measured **relative to the reverb's own peak**, not against an
+  // absolute threshold. An absolute one only tests how loud the wet bus happens
+  // to be: normalising the comb bank moved every level by 9x and a 1e-4
+  // threshold called that a broken decay. T60 from peak is the decay law
+  // itself.
   for (let setting = 1; setting <= 5; setting += 1) {
-    const reverb = new Reverb(RATE, reverbPreset(setting));
-    let peak = 0;
-    let lastAudible = 0;
-    for (let i = 0; i < RATE * 4; i += 1) {
+    const preset = reverbPreset(setting);
+    const rt60 = Math.max(0.05, preset[PRESET_SLOT.decay] / 10);
+    const window = 2400;
+    const frames = Math.round(RATE * (rt60 * 3 + 1));
+    const reverb = new Reverb(RATE, preset);
+
+    const envelope: number[] = [];
+    let block = 0;
+    for (let i = 0; i < frames; i += 1) {
       const out = reverb.process(i === 0 ? 1 : 0);
       assert.ok(Number.isFinite(out), `setting ${setting} went non-finite at ${i}`);
-      const magnitude = Math.abs(out);
-      if (magnitude > peak) peak = magnitude;
-      if (magnitude > 1e-4) lastAudible = i;
+      block = Math.max(block, Math.abs(out));
+      if (i % window === window - 1) {
+        envelope.push(block);
+        block = 0;
+      }
     }
-    assert.ok(peak < 1, `setting ${setting} peaked at ${peak.toFixed(3)} from a unit impulse`);
+
+    const peak = Math.max(...envelope);
     assert.ok(peak > 0, `setting ${setting} is silent`);
+    assert.ok(peak < 1, `setting ${setting} peaked at ${peak.toFixed(3)} from a unit impulse`);
+
+    let last = 0;
+    for (let k = 0; k < envelope.length; k += 1) {
+      if (envelope[k] > peak / 1000) last = k + 1;
+    }
+    const t60 = (last * window) / RATE;
     assert.ok(
-      lastAudible < RATE * 4 - 1,
-      `setting ${setting} never decays -- the feedback is at or above unity`,
+      t60 < frames / RATE,
+      `setting ${setting} still rings at ${(frames / RATE).toFixed(1)}s, past three ` +
+        `times its ${rt60.toFixed(1)}s RT60 -- the feedback is at or above unity`,
     );
+
+    // ⚠️ Only where the preset asks for a late field at all. Setting 1's is
+    // `[-800, -100, -700, ...]`: `millibelToLinear` reads tenths of a dB, so its
+    // late level is **-70 dB** against early reflections at -10 dB. That preset
+    // is early reflections and nothing else, and its tail is supposed to vanish
+    // at once -- asserting one there tests a wish rather than the game.
+    if (millibelToLinear(preset[PRESET_SLOT.level2]) > 1e-3) {
+      // The measured T60 lands at 0.40-0.61 of nominal across settings 2-5. It
+      // is always *short* of nominal because the damping one-pole sits inside
+      // the feedback loop and takes energy out on every pass, which the RT60
+      // gain law does not account for. The band is wide enough for that and
+      // narrow enough to catch a decay that has stopped following the law.
+      const ratio = t60 / rt60;
+      assert.ok(
+        ratio > 0.25 && ratio <= 1,
+        `setting ${setting} decayed in ${t60.toFixed(2)}s against a nominal ` +
+          `${rt60.toFixed(1)}s RT60 (ratio ${ratio.toFixed(2)})`,
+      );
+    }
   }
 });
 
