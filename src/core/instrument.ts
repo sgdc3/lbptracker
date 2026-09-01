@@ -86,6 +86,18 @@ export const DEFAULT_SLOT: SampleSlot = {
  *   13` over bases `84, 72, 60, 48, 36, 24, 13, 12` puts every base note inside
  *   its own zone, eight for eight.
  *
+ * ⚠️ **The boundary convention is NOT settled, and it is worth 22% of the
+ * corpus.** `<` and `<=` place a note differently whenever it sits exactly on a
+ * bound, and **215,449 of 968,829 corpus notes on multi-slot instruments do**,
+ * across 47 of the 68 instruments. The synth PRX cannot settle it: it never
+ * reads `Splitnotes` at all -- the only field it touches below the parameter
+ * block is `+0x4e4`, `Numstack` -- so the selection is eboot-side and has not
+ * been found. Two engine-independent checks were run and neither is decisive:
+ * once the zone count is right, both conventions leave the same single
+ * unreachable zone; and `<` reaches more distinct samples than `<=` on 5,657
+ * corpus tracks against 3,900, a lean rather than a verdict. `<` stays because
+ * it is what was here, not because it was proved.
+ *
  * ⚠️ **Do not test this rule by asking whether a zone contains its own base
  * note.** That measures the sound designer, not the engine, and it cost a whole
  * session once. `piano` sets its bounds `87, 66, 54, 40, 30` against bases
@@ -98,13 +110,47 @@ export const DEFAULT_SLOT: SampleSlot = {
  * @param slotCount how many slots actually hold a sample. NOT `numStack` --
  *        see the note on that field.
  */
+/**
+ * How many key zones an instrument actually has.
+ *
+ * **The zone count comes from `Splitnotes`, not from how many slots hold a
+ * sample.** The bounds run downward and the array is zero-filled past the last
+ * one, so the count is the number of leading non-zero entries.
+ *
+ * On **62 of the game's 68 instruments** that equals the number of slots with a
+ * sample, which is why the difference went unnoticed. The six that disagree
+ * disagree for two different reasons:
+ *
+ * - `conga`, `djembe`, `dumbek` and `ukulele` carry **spare slots**: six bounds
+ *   (`87,60,48,36,24,12`) against seven samples, the seventh with a base note
+ *   out of sequence with the rest.
+ * - `mime_artist` has **one** bound and four samples, with `Numstack` 5 -- its
+ *   slots are stack layers rather than zones.
+ *
+ * Counting slots instead of bounds invents zones below the last bound. They are
+ * unreachable, so nothing played differently -- **zero of the corpus's
+ * 2,027,633 notes change slot** -- but they showed up as eight phantom
+ * "unreachable slots" and made this rule look broken when it was not. Counting
+ * bounds leaves exactly one, `ukulele`, whose bounds are `87,60,40,40,16,12`:
+ * a genuinely empty zone in the game's own data.
+ */
+export function zoneCount(instrument: Instrument): number {
+  const splits = instrument.splitNotes;
+  let n = 0;
+  while (n < splits.length && splits[n] !== 0) n += 1;
+  return Math.max(1, n);
+}
+
 export function resolveSlot(
   instrument: Instrument,
   note: number,
   slotCount = instrument.slots.length,
 ): number {
   const splits = instrument.splitNotes;
-  const usable = Math.max(1, Math.min(slotCount, splits.length));
+  const usable = Math.max(
+    1,
+    Math.min(slotCount, splits.length, zoneCount(instrument)),
+  );
 
   // Strictly less-than: the bound belongs to the zone ABOVE it. Measured --
   // guildford's slot 6 has base note 13 and `splitNotes[7]` is also 13, so

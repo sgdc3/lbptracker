@@ -703,6 +703,58 @@ already recorded ("one bound per slot: 62/68"). Whether the engine pitches a kit
 whether `Splitnotes` is being read half a zone out, is open question 4's territory and was not
 touched here.
 
+## 11. `Splitnotes` — the zone COUNT was wrong; the boundary convention still is not settled
+
+Looked at after the drum work turned up `a_kit_1`'s ride sitting in a zone its own base note is
+outside. That part is a red herring and this file already says why (the base-in-zone test measures
+the sound designer, not the engine). Two other things came out of it.
+
+### The zone count comes from the bounds, not the samples — FIXED
+
+`resolveSlot` was being handed the number of slots that hold a sample. The zone count is the number
+of **leading non-zero entries in `Splitnotes`**. On **62 of 68** instruments those are the same
+number, which is why it went unnoticed; the six that differ do so for two distinct reasons:
+
+- `conga`, `djembe`, `dumbek`, `ukulele` carry **spare slots** — six bounds
+  (`87,60,48,36,24,12`) against seven samples, the seventh's base note out of sequence with the rest.
+- `mime_artist` has **one** bound and four samples, with `Numstack` **5**: its slots are stack
+  layers, not zones.
+
+⚠️ **Nothing sounds different.** The invented zones sit below the last bound, so they were
+already unreachable: **zero of the corpus's 2,027,633 notes change slot.** What they did was show up
+as eight phantom "unreachable slots" and make the rule look broken when it was not. Counting bounds
+leaves exactly one — `ukulele`, whose bounds are `87,60,40,40,16,12`, a genuinely empty zone in the
+game's own data.
+
+⚠️ `mime_artist` is also a warning about the unison stack as implemented: it layers **one**
+sample `Numstack` times, and this instrument has four distinct samples with `Numstack` 5. Whether a
+stack's layers can be different samples is unmeasured, and if they can, `dev/render-level.ts` is
+wrong for it.
+
+### `<` versus `<=` — UNSETTLED, and it is worth 22% of the corpus
+
+The two differ exactly when a note sits on a bound, and **215,449 of 968,829 corpus notes on
+multi-slot instruments do** — across 47 of the 68 instruments. This is not a detail.
+
+**The synth PRX cannot settle it**: `fmodextinput.prx` never reads `Splitnotes`. A scan of every
+structure offset it touches below the parameter block at `+0x4e8` finds exactly one field, `+0x4e4`
+= `Numstack` (the stack loop's bound at `0x1c0d`). So the slot is chosen eboot-side, in code that
+has not been located.
+
+Two engine-independent checks were run and **neither is decisive**:
+
+| check | `<` | `<=` |
+|---|---|---|
+| unreachable zones, with the zone count fixed | 1 (ukulele) | 1 (ukulele) |
+| corpus tracks reaching more distinct samples | 5,657 | 3,900 |
+
+The second leans toward `<` and that is all it does. `<` stays because it is what was already
+there — **not because it was proved**, and the earlier justification for it in `instrument.ts` was
+a base-in-zone argument, which is the reasoning that same file warns against.
+
+**To settle it:** find the eboot's slot walk. The lead is whatever builds the block the PRX
+receives, since that block has `Numstack` at `+0x4e4` and the 27 parameters at `+0x4e8`.
+
 ## 7. FMOD's pan law — the resampler half is ANSWERED
 
 **RESOLVED, 2026-09-01: the sampler interpolates linearly and mipmaps by octave.** It is not
