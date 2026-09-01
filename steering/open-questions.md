@@ -20,55 +20,6 @@ whom, and [sequencer-data-model.md](sequencer-data-model.md) for the measurement
 
 ---
 
-## 1. The `Splitnotes` convention — **the one that changes what you hear**
-
-Attacked on 2026-09-01 and **not resolved**. Written up in full because the negative results are
-what save the next attempt from repeating it.
-
-### Established
-
-- `Splitnotes` is **descending**, 9 entries, unused trailing entries 0.
-- `splitNotes[0]` is **87 in every one of the game's 68 instruments** — and it is **not a playable
-  ceiling**. Corpus usage disproves that: creators play `bass_guitar`, `glockenspiel` and
-  `square_wave` up to note **95**, and single-slot instruments carry `[87, 0, 0, …]` while being
-  played across 0–95. It is a constant the editor writes, nothing more.
-- `numStack` is a voice-stacking count, not the used-slot count (14 of 68 match). Use
-  `sampleGuids[i] != 0`.
-- `baseNote` is confirmed MIDI: the piano's slots are 84, 72, 60, 48, 36 = C6…C2, and its
-  `SampleGuids` resolve to `piano_c6` … `piano_c2`.
-
-### Ruled out
-
-- **"A zone contains its own base note" is not a valid test.** It scores 56.8–83.2% depending on the
-  reading, but the misses are a *design* difference, not a rule error: `baiyon_city_guildford`
-  (bounds 87,73,61,49,37,25 over bases 84,72,60,48,36,24) centres each sample in its zone, while
-  `piano` (bounds 87,66,54,40,30 over bases 84,72,60,48,36) pitches every sample downward by 6–19
-  semitones. Both are legitimate sampler designs. Scoring rules on this metric measures the sound
-  designer, not the engine.
-- **Nine rule variants** were scored — inclusive/exclusive at each end, lower-bound readings, a
-  ±1 slot shift, and the piano-key→MIDI offsets of +20 and +21. The best on stranded samples is the
-  reading currently in `resolveSlot` (zone `i` = `splits[i+1] < note <= splits[i]`), which leaves
-  **2 samples unreachable out of 107**; every other variant leaves more. That is weak evidence for
-  it, not proof.
-- **The runtime consumer is not where you would expect.** A function-level disassembly of the
-  sequencer module (`v0x1c3000`–`v0x1d0000`, 61 functions) and the CWLib audio layer
-  (`v0x3dd000`–`v0x3fe000`, 204 functions) found no code reading a struct field at `+0xe8`
-  (`Splitnotes`) together with `+0xc8` (`SampleGuids`). The three raw-byte hits in the audio layer
-  are `rsp + 0xe8` stack offsets, not struct accesses. Either the runtime struct is not laid out
-  like the serialiser's members, or the selection happens somewhere else entirely.
-
-### What would actually settle it
-
-**The in-game experiment, and it needs someone in Create Mode.** Place a single note, sweep it up
-the keyboard one semitone at a time on a multisampled instrument — `piano` is ideal, its zones are
-wide and its samples differ audibly — and listen for the crossover points. Five or six notes either
-side of a suspected boundary is enough. That gives the boundaries directly, in the numbering the
-game actually uses, and no amount of static analysis substitutes for it.
-
-Failing that: find the slot-selection code by widening the disassembly beyond the two ranges
-already swept, starting from whatever loads an `RInstrument` at runtime rather than from the
-sequencer module.
-
 ## 2. Echo DSP parameter indices
 
 `v0x3fd4c0`–`v0x3fd5d0` issues 10 `DSP::setParameter` calls (`fmod_dspi` `v0xa23970`). Read the

@@ -86,6 +86,62 @@ test('piano.rinst decodes to the multisample the FileDB describes', async (t) =>
   }
 });
 
+test('Splitnotes pairs one bound per slot, and every slot is reachable', async (t) => {
+  if (!existsSync(RINST)) {
+    t.skip(`no ${RINST} (extract with tools/ExtractGuid.java, or set LBP_RINST)`);
+    return;
+  }
+  const { resolveSlot } = await import('../src/core/instrument.ts');
+  const files = (await readdir(RINST)).filter((f) => f.endsWith('.rinst'));
+  if (files.length === 0) {
+    t.skip(`no .rinst files in ${RINST}`);
+    return;
+  }
+
+  let fencepost = 0;
+  let reachable = 0;
+  for (const name of files) {
+    const inst = readInstrument((await loadResourceFile(path.join(RINST, name))).data);
+    const slots = usedSlots(inst).length;
+    if (inst.splitNotes.filter((v) => v > 0).length === slots) fencepost += 1;
+
+    const seen = new Set<number>();
+    for (let note = 0; note <= 127; note += 1) {
+      seen.add(resolveSlot(inst as never, note, slots));
+    }
+    if (seen.size === slots) reachable += 1;
+  }
+
+  console.log(
+    `    one bound per slot: ${fencepost}/${files.length}, ` +
+      `all slots reachable: ${reachable}/${files.length}`,
+  );
+  // A wrong slot<->zone pairing strands samples. These floors are what
+  // establishes the convention; see resolveSlot's docstring.
+  assert.ok(fencepost / files.length > 0.85, 'the fencepost holds for the great majority');
+  assert.ok(reachable / files.length > 0.9, 'nearly every slot is reachable');
+});
+
+test('baiyon_city_guildford puts every base note inside its own zone', async (t) => {
+  const file = path.join(RINST, 'baiyon_city_guildford.rinst');
+  if (!existsSync(file)) {
+    t.skip(`no ${file}`);
+    return;
+  }
+  const { resolveSlot } = await import('../src/core/instrument.ts');
+  const inst = readInstrument((await loadResourceFile(file)).data);
+  const used = usedSlots(inst);
+  // The cleanest multisample the game ships: eight slots, eight bounds, and
+  // each slot's base note lands in the zone that slot owns.
+  for (let i = 0; i < used.length; i += 1) {
+    assert.equal(
+      resolveSlot(inst as never, used[i].slot.baseNote, used.length),
+      i,
+      `base ${used[i].slot.baseNote} should resolve to its own slot ${i}`,
+    );
+  }
+});
+
 test('every instrument the game ships parses, consuming its payload exactly', async (t) => {
   if (!existsSync(RINST)) {
     t.skip(`no ${RINST} (extract with tools/ExtractGuid.java, or set LBP_RINST)`);

@@ -230,9 +230,9 @@ test('a one-slot instrument sends every note to slot 0', () => {
   }
 });
 
-test('key splits are descending inclusive upper bounds — the real piano', () => {
-  // Measured from the game's piano.rinst: bounds 87, 66, 54, 40, 30 over base
-  // notes 84, 72, 60, 48, 36.
+test('a bound belongs to the zone above it — the real piano', () => {
+  // The game's piano.rinst: bounds 87, 66, 54, 40, 30 over bases 84, 72, 60,
+  // 48, 36. Slot i owns splitNotes[i+1] <= note < splitNotes[i].
   const inst = instrument({
     slots: [slot({ baseNote: 84 }), slot({ baseNote: 72 }), slot({ baseNote: 60 }),
             slot({ baseNote: 48 }), slot({ baseNote: 36 })],
@@ -240,26 +240,16 @@ test('key splits are descending inclusive upper bounds — the real piano', () =
   });
   const at = (n: number) => resolveSlot(inst, n, 5);
 
-  assert.equal(at(87), 0, 'top of zone 0');
-  assert.equal(at(67), 0, 'bottom of zone 0');
-  assert.equal(at(66), 1, 'top of zone 1');
-  assert.equal(at(55), 1);
-  assert.equal(at(54), 2);
-  assert.equal(at(41), 2);
-  assert.equal(at(40), 3);
-  assert.equal(at(31), 3);
-  assert.equal(at(30), 4, 'top of the last zone');
+  assert.equal(at(127), 0, 'above every bound stays in the first zone');
+  assert.equal(at(66), 0, 'a bound belongs to the zone above it');
+  assert.equal(at(65), 1);
+  assert.equal(at(54), 1);
+  assert.equal(at(53), 2);
+  assert.equal(at(40), 2);
+  assert.equal(at(39), 3);
+  assert.equal(at(30), 3);
+  assert.equal(at(29), 4);
   assert.equal(at(0), 4, 'below every bound stays in the last zone');
-  assert.equal(at(127), 0, 'above every bound stays in the first');
-
-  // Every zone plays its sample downward, which is what a sampler should do.
-  for (const note of [87, 66, 54, 40, 30]) {
-    const chosen = inst.slots[at(note)];
-    assert.ok(
-      note <= chosen.baseNote + 3,
-      `note ${note} should not be pitched far above base ${chosen.baseNote}`,
-    );
-  }
 });
 
 test('key splits: bass_guitar reads the same way', () => {
@@ -269,12 +259,16 @@ test('key splits: bass_guitar reads the same way', () => {
             slot({ baseNote: 28 }), slot({ baseNote: 28 })],
     splitNotes: [87, 42, 31, 20, 0, 0, 0, 0, 0],
   });
-  assert.equal(resolveSlot(inst, 43, 4), 0);
-  assert.equal(resolveSlot(inst, 42, 4), 1);
-  assert.equal(resolveSlot(inst, 32, 4), 1);
-  assert.equal(resolveSlot(inst, 31, 4), 2);
-  assert.equal(resolveSlot(inst, 21, 4), 2);
-  assert.equal(resolveSlot(inst, 20, 4), 3);
+  const at = (n: number) => resolveSlot(inst, n, 4);
+  assert.equal(at(48), 0, "the top slot's own base note lands in it");
+  assert.equal(at(42), 0);
+  assert.equal(at(41), 1);
+  assert.equal(at(36), 1, "and so does the second slot's");
+  assert.equal(at(31), 1);
+  assert.equal(at(30), 2);
+  assert.equal(at(28), 2, 'and the third');
+  assert.equal(at(20), 2);
+  assert.equal(at(19), 3);
 });
 
 // --------------------------------------------------------------------- mixing

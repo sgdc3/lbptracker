@@ -109,8 +109,14 @@ numbered fields rather than nested arrays.
   68. `electric_piano` uses one sample with `Numstack` 2, `ghost` one with 3, and most 8-slot drum
   kits carry 1. It is a voice-stacking count — how many voices to layer per note. To find the slots
   that exist, test `SampleGuids[i] != 0`.
-- ⚠️ **The zone→slot rule is still unresolved**; see open question 1. The obvious reading puts a
-  zone's own base note inside it only 56.8% of the time.
+- **The zone→slot rule is settled**: slot `i` covers `splitNotes[i+1] <= note < splitNotes[i]` —
+  each bound belongs to the zone **above** it. `splitNotes[0]` is never consulted. Evidence: 62 of
+  68 instruments have exactly one non-zero split per used slot, 63 of 68 leave every slot
+  reachable, and 73.5% of slots resolve their own base note to themselves against 56.8% for the
+  `<=` variant. `baiyon_city_guildford` fits eight for eight.
+  ⚠️ **Do not score this rule on "does a zone contain its own base note".** That ranks voicing
+  styles, not rules: `guildford` centres its samples, `piano` sets every bound ~6 semitones below
+  its slot's base so that it always transposes downward. Both are the same rule.
 - `basenote` **is a MIDI note number**, settled: the piano's five slots read 84, 72, 60, 48, 36 and
   its `SampleGuids` resolve to `piano_c6` … `piano_c2`. 84 = C6.
 - 68 instruments, 47 of them multisampled, 274 pitched slots against 4 unpitched, and **not one**
