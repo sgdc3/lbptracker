@@ -49,6 +49,9 @@ they are the ground truth the JavaScript has to reproduce:
 - `RawDump.java` — the exception to the Python rule: walks a level's Thing graph via the external
   toolkit jar and dumps every music sequencer's note records as raw bytes. It is what makes the
   corpus statistics in `sequencer-data-model.md` reproducible. Build/run notes in its header.
+- `PartCensus.java` — which Thing parts a level corpus actually uses, overall and on the Things
+  carrying a `SEQUENCER` or an `INSTRUMENT`. This is what scoped the Thing-graph walk from
+  "34 part serialisers" down to eight; see `steering/tracker-architecture.md`.
 - `GuidLookup.java` — resolve a GUID (or a path substring) against the game's FileDB
   `output/orbisguids.map`. This is how you find where any resource actually lives.
 - `ExtractGuid.java` — GUID → FileDB → SHA1 → FARC → bytes, plus a `manifest.json` the browser can

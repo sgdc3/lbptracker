@@ -95,16 +95,36 @@ reorder 1 and 2 — you want the asset pipeline proven before anything depends o
 3. ~~**`RInstrument` reading**~~ — **done**. `SampleGuids` resolve through the FileDB
    (`output/orbisguids.map`) to plain RIFF/WAV `.smp` files in the FARC archives, at 48 kHz 16-bit.
    All 68 of the game's instruments parse exactly, and `dev/` plays them.
-4. **Level import**: read `PSequencer` + `PMicrochip` + `PInstrument` + the note chains out of a
-   real `.plan`/level. The note format is confirmed against 1.6 million real notes; what is missing
-   is the Thing-graph walk in TypeScript, which needs a serialiser per part type and is the largest
-   remaining piece. `tools/RawDump.java` is the golden reference while it is written.
+4. **Level import** — **the interpretation half is done, the in-browser extraction is not.**
+   `src/core/project.ts` turns a dump into sequencers, tracks and a scheduled event list, and it
+   imports the whole corpus: **19 files, 338 sequencers, 129,696 tracks, 2,027,633 notes, zero
+   records falling outside a note.** Tempos run 30–240, grid cells 0–334, rows 0–24. What still
+   comes from Java is only the extraction — `tools/RawDump.java` — and the boundary is one function.
+
+   **The Thing-graph walk, scoped by measurement rather than by feel** (`tools/PartCensus.java`):
+
+   - The stream is strictly sequential. References are inline ids and parts carry no lengths, so
+     nothing can be skipped: reading a `PSequencer` means parsing every part before it on that
+     Thing.
+   - Across the corpus: **34 distinct part types over 172,139 Things** — roughly 5,500 lines of
+     serialiser in cwlib's terms. That is the number that made this look like a month.
+   - But **only nine part types ever share a Thing with a `SEQUENCER`**, in **eight** combinations
+     across all 1,169 of them. In serialisation order: `RENDER_MESH`, `POS`, `TRIGGER`, `STICKERS`,
+     `DECORATIONS`, `SWITCH`, `GROUP`, `MICROCHIP`, `SEQUENCER`.
+   - And **128,666 of 129,696 instrument Things carry `INSTRUMENT` alone**; 1,030 add `POS` and/or
+     `RENDER_MESH`.
+
+   So the walk needs **eight** part readers, not thirty-four, and `PSwitch` (~500 lines) is the only
+   heavy one. That is a session or two, not a month. Do it against `tools/RawDump.java`'s output as
+   a golden fixture — 129,696 rows of it — so every part added is checked the moment it lands.
 5. **Echo and reverb** with the real parameters — do open question 1 (the DSP indices) first.
 6. **UI**.
 7. **Round-trip export** back into a game-loadable resource. The feature that makes the project
    matter to the LBP community, and it depends on step 4.
 
-Steps 1–3 are done. Step 4 is unblocked but large; steps 5–7 follow it. See
+Steps 1–3 are done, and step 4 now plays a real level end to end with Java doing the extraction.
+What remains of it is the eight part readers that move that step into the browser. Steps 5–7 follow.
+See
 [open-questions.md](open-questions.md) — none of what remains blocks the build, it only affects
 fidelity.
 
