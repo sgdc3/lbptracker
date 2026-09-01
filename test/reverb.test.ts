@@ -97,14 +97,20 @@ test('the reverb is stable and decays, at every setting', () => {
     // is early reflections and nothing else, and its tail is supposed to vanish
     // at once -- asserting one there tests a wish rather than the game.
     if (millibelToLinear(preset[PRESET_SLOT.level2]) > 1e-3) {
-      // The measured T60 lands at 0.40-0.61 of nominal across settings 2-5. It
-      // is always *short* of nominal because the damping one-pole sits inside
-      // the feedback loop and takes energy out on every pass, which the RT60
-      // gain law does not account for. The band is wide enough for that and
-      // narrow enough to catch a decay that has stopped following the law.
+      // The measured T60 lands at **0.80 to 1.17** of nominal across settings
+      // 2-5 (0.90, 1.17, 0.80, 0.82). Two effects pull opposite ways: the
+      // damping one-pole sits inside the feedback loop and takes energy out on
+      // every pass, shortening the tail, while the allpass cascade smears it
+      // and lengthens it.
+      //
+      // ⚠️ These numbers used to be 0.40-0.61, and the improvement is evidence
+      // rather than cosmetics: the comb bank carried an invented `1 - gain`
+      // normalisation, and with it gone the decay follows the RT60 law the
+      // preset actually asks for. A band that had to be 0.25-1.0 to fit is now
+      // comfortably centred on 1.
       const ratio = t60 / rt60;
       assert.ok(
-        ratio > 0.25 && ratio <= 1,
+        ratio > 0.5 && ratio < 1.5,
         `setting ${setting} decayed in ${t60.toFixed(2)}s against a nominal ` +
           `${rt60.toFixed(1)}s RT60 (ratio ${ratio.toFixed(2)})`,
       );

@@ -277,13 +277,20 @@ export class Reverb {
    * problem the engine solves some other way. A listener reported the reverb
    * as imperceptible, and this is the one place a whole reverb could go.
    *
-   * Left on by default because turning it off made the reverb 90% of the dry
-   * mix when it was last tried, and off is not obviously better than wrong.
-   * Settle it by finding what the engine actually scales by.
+   * **Off by default now**, and the reason is that the compensation it was
+   * compensating for turned out to be a bug of ours. The send reaching the
+   * reverb was `PInstrument.reverbSend` alone; the engine multiplies that by the
+   * instrument's `Params[25]` (`0x3d38`-`0x3d50`), which on this corpus makes
+   * the send **47.8x smaller** on average. With the send too large by that much,
+   * the wet path had to be held down, and this factor was doing it.
+   *
+   * With the send measured, turning this off lands the reverb at 42.4% of the
+   * dry mix -- inside the range a listener bracketed by ear -- and leaves the
+   * allpass coefficient as the only invented number in the reverb.
    */
   private readonly normaliseCombs: boolean;
 
-  constructor(sampleRate: number, preset: readonly number[], normaliseCombs = true) {
+  constructor(sampleRate: number, preset: readonly number[], normaliseCombs = false) {
     this.normaliseCombs = normaliseCombs;
     const ms = (v: number) => Math.max(1, Math.round((v / 1000) * sampleRate));
     const row = preset[PRESET_SLOT.tapSet];

@@ -83,7 +83,7 @@ const noKeyTrack = process.env.LBP_NO_KEYTRACK === '1';
  * `1 - gain` scaling on each comb's contribution -- about 18 dB on the presets
  * these levels use. See `Reverb`'s `normaliseCombs`.
  */
-const reverbNorm = process.env.LBP_REVERB_NORM !== 'off';
+const reverbNorm = process.env.LBP_REVERB_NORM === 'on';
 /**
  * How many voices the pool holds. `LBP_VOICES=off` (or 0) removes the cap.
  *
@@ -340,8 +340,13 @@ for (const [eventIndex, event] of events.entries()) {
     },
     lfos: [lfo(0), lfo(1), lfo(2)],
     automation,
-    echoSend: track.echoSend,
-    reverbSend: track.reverbSend,
+    // The send is the PRODUCT of the placement's field and the instrument's
+    // `Params[25]`, clamped to 1 -- `fmodextinput.prx` 0x3cca-0x3d50, where the
+    // note block carries five floats per placement at `+0x420 + 20i`
+    // (level, pan, echoSend, reverbSend, instrument index) and the voice's own
+    // send at `+0x1c` is `Params[25]`.
+    echoSend: Math.min(1, track.echoSend * P(OUTPUT_PARAMS.send)),
+    reverbSend: Math.min(1, track.reverbSend * P(OUTPUT_PARAMS.send)),
     // Seeded, so the LFO phases are reproducible along with everything else.
     random: rand,
   };
@@ -432,7 +437,7 @@ for (let i = 0; i < frames; i += 1) {
   pcm[i * 2] = Math.max(-32768, Math.min(32767, Math.round(left[i] * norm * 32767)));
   pcm[i * 2 + 1] = Math.max(-32768, Math.min(32767, Math.round(right[i] * norm * 32767)));
 }
-const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${reverbNorm ? '' : '-revloud'}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
+const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${reverbNorm ? '-revnorm' : ''}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
 await writeFile(out, writeWav(pcm, 2, RATE));
 const elapsed = Number(process.hrtime.bigint() - started) / 1e9;
 console.log(

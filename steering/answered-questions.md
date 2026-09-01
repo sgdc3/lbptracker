@@ -451,3 +451,50 @@ beyond this question: the stack loop at `0x1b11` scales `Params[2]` by the same 
 start offset is a fraction of *the largest sample the instrument has loaded*, not of the one being
 played. Question 12 was reasoning about it as a per-slot length; it is not.
 
+## 14b. Where `PInstrument.reverbSend` is applied — SETTLED: it multiplies `Params[25]`
+
+The note block carries **five floats per placement** at `+0x420 + 20i`, and they are `PInstrument`'s
+own fields in its own order:
+
+| offset | field | where it is used |
+|---|---|---|
+| `+0x420` | `level` | multiplied into the channel volume, `0x3b49` |
+| `+0x424` | `pan` | stored at `voice+0x18`, `0x3b69` |
+| `+0x428` | `echoSend` | `0x3cca` |
+| `+0x42c` | `reverbSend` | `0x3d38` |
+| `+0x430` | instrument index | `0x3b57`, stored as `voice+0x00` |
+
+and the two sends are combined with the voice's own:
+
+```
+0x3cca  xmm2 = [block + 20i + 0x428]     ; PInstrument.echoSend
+0x3cd4  xmm1 = [voice + 0x1c]            ; the voice's send = Params[25]
+0x3ce3  xmm0 = xmm2 * xmm1
+0x3d33  [voice + 0x20] = min(xmm0, 1)    ; the echo send, clamped
+0x3d38  xmm1 = [block + 20i + 0x42c]     ; PInstrument.reverbSend
+0x3d50  [voice + 0x24] = min(., 1)       ; the reverb send, clamped
+```
+
+**The send is the product, clamped to 1.** This project was sending `PInstrument.reverbSend` alone,
+which on seq 737099 is **47.8x too much** on average (mean 0.4444 against 0.0093).
+
+### What that unlocked
+
+The oversized send had been forcing a compensating error the other way. The comb bank carried an
+invented `1 - gain` normalisation — about **0.13** on these presets, −18 dB — and it was there to
+hold down a wet path fed 47.8x too hard. With the send measured, that factor comes out and the reverb
+lands at **42.4%** of the dry mix on the window a listener bracketed at 22%–216%.
+
+Two independent things improved at once, which is the sign that the change is real rather than
+tuned:
+
+| | with the invented normalisation | without it |
+|---|---|---|
+| T60 as a fraction of the preset's own RT60 | 0.40–0.61 | **0.80–1.17** |
+
+**The decay now follows the RT60 law the preset asks for.** It did not before, and nothing about the
+decay was touched — only the gain that had been standing in for a wrong send.
+
+⚠️ **One invented number is left in the reverb**: the allpass coefficient, 0.5. Everything else —
+tap sets, early sets, the level law, the RT60 gain, the damping pole, the sends — is measured.
+
