@@ -33,7 +33,8 @@ import { readWav, writeWav, loopRegion } from '../src/core/wav.ts';
 
 const RATE = 48000;
 const seqIndex = Number(process.argv[2] ?? 0);
-const seconds = Number(process.argv[3] ?? 20);
+// 0 (or no argument) renders the sequencer end to end.
+const secondsArg = Number(process.argv[3] ?? 0);
 
 const manifest = async (dir: string) =>
   new Map<number, { file: string }>(
@@ -93,8 +94,18 @@ async function loadInstrument(guid: number) {
   return loaded;
 }
 
+const started = process.hrtime.bigint();
 const framesPerStep = samplesPerStep(RATE, seq.tempo);
+// End to end means the last step plus whatever tail the effects still have
+// to give: a reverb cut off at the final note is not the whole render.
+const TAIL_SECONDS = 6;
+const fullSeconds = (seq.lengthSteps * framesPerStep) / RATE + TAIL_SECONDS;
+const seconds = secondsArg > 0 ? secondsArg : fullSeconds;
 const frames = Math.round(seconds * RATE);
+console.log(
+  `rendering ${seconds.toFixed(1)}s (${seq.lengthSteps} steps at ${framesPerStep.toFixed(0)} ` +
+    `frames/step` + (secondsArg > 0 ? ', truncated' : ` + ${TAIL_SECONDS}s tail`) + `)`,
+);
 const left = new Float32Array(frames);
 const right = new Float32Array(frames);
 const mixer = new Mixer(RATE);
@@ -168,7 +179,7 @@ mixer.render(left, right, { echo: [echoL, echoR], reverb: [reverbL, reverbR] });
 // The two sends, mixed back over the dry signal. ⚠️ The echo's topology and the
 // reverb itself are not measured -- see src/audio/effects.ts, which says which
 // parts are the game's and which are ours.
-const echo = new Echo(RATE, seq.echoTime, seq.echoFeedback, seq.echoMix);
+const echo = new Echo(RATE, seq.echoTime, seq.tempo, seq.echoFeedback, seq.echoMix);
 const preset = reverbPreset(seq.reverb);
 const reverb = new Reverb(RATE, preset);
 // No extra wet gain here: the preset's own millibel levels are the wet level,
@@ -190,7 +201,8 @@ for (let i = 0; i < frames; i += 1) {
 const rel = (x: number) => `${(100 * Math.sqrt(x / dryEnergy)).toFixed(1)}%`;
 console.log(`effect level against the dry mix — echo ${rel(echoEnergy)}, reverb ${rel(reverbEnergy)}`);
 console.log(
-  `echo ${seq.echoTime}/${seq.echoFeedback}/${seq.echoMix}, ` +
+  `echo ${seq.echoTime} beats = ${echo.seconds.toFixed(3)}s at ${seq.tempo} BPM, ` +
+    `feedback ${seq.echoFeedback}, mix ${seq.echoMix}; ` +
     `reverb setting ${seq.reverb} -> preset [${preset.join(', ')}]`,
 );
 
@@ -204,7 +216,12 @@ for (let i = 0; i < frames; i += 1) {
 }
 const out = `fixtures/level-seq${seq.uid}.wav`;
 await writeFile(out, writeWav(pcm, 2, RATE));
+const elapsed = Number(process.hrtime.bigint() - started) / 1e9;
 console.log(
   `${played} notes played, ${skipped} skipped (instrument not extracted), ` +
     `peak ${peak.toFixed(3)}${norm !== 1 ? ` (normalised by ${norm.toFixed(3)})` : ''} -> ${out}`,
+);
+console.log(
+  `render took ${elapsed.toFixed(2)}s for ${seconds.toFixed(1)}s of audio ` +
+    `(${(seconds / elapsed).toFixed(1)}x realtime)`,
 );

@@ -440,6 +440,81 @@ wrong rather than the code.
 On the real corpus render the reverb now sits at **10.6% of the dry mix** (it was 90.2% before the
 comb bank was normalised, with the mix clipping at peak 1.9).
 
+### The coefficients, read from the side that WRITES them — RESOLVED, 2026-09-01
+
+The earlier pass read the kernels, which only showed *which* fields a stage uses. The init code
+shows what goes **into** them, and it settles both counts and every coefficient.
+
+**The counts are not runtime-variable in any interesting way.**
+
+| what | where | value |
+|---|---|---|
+| allpass pairs | `fmodsmsreverb.prx` `0x0c39` | `[state+0x514] = 2`, a literal immediate |
+| combs | `0x0c52`–`0x0c5d` | `[state+0x510] = (int)tapRow[0] - 2` |
+
+So a ten-tap row gives **8 combs and 4 allpasses**. The eboot's memory sizer `v0x3fc8c0` agrees
+independently: it allocates eight buffers at `[+0x54..+0x70]` from lengths `idx3..idx(n)`, then
+`idx1`, `idx2`, `0.93 * idx1`, `1.06 * idx2` at `[+0x74]`, `[+0x78]`, `[+0x7c]`, `[+0x80]`. The two
+ratios are a two-entry table at `v0x2c08` in the PRX.
+
+⚠️ **Each table A row is ELEVEN floats, not ten.** The first is the count, read as
+`vcvttss2si` in both modules; the other ten are lengths in milliseconds. `REVERB_TAP_SETS` already
+held the ten, so it was right by luck — the counts are now exported separately as
+`REVERB_TAP_COUNTS`. Rows 1, 7, 15 and 16 use 8 or 9 of their ten, and the surplus lengths are dead.
+
+**Every stage record gets the same three fields**, comb and allpass alike. The kernels' `[base+0x44]`
+/ `[+0x48]` / `[+0x4c]` *are* these fields: comb records sit at `state+0x300` while the kernel's base
+is `state+0x2c0`, and `0x2c0 + 0x44 = 0x304`.
+
+| field | value | where |
+|---|---|---|
+| `+0x04` = `b` | `1 - a` | `0x0bd1` |
+| `+0x08` = `a` | `expf(state[+0x2c])`, derived from slot 10 | `0x0bbb` |
+| `+0x0c` = gain | `powf(10, -0.003 * ms / RT60)` | `0x0ffa`–`0x100f` |
+
+`b = 1 - a` is a one-pole with **unity DC gain**, which is the form the code uses. With damping off
+(`state[+0x24]` zero) `0x0bdd` stores `b = 1, a = 0` as a single qword. RT60 is confirmed from this
+side too: `0x0c9d` computes `[rsi+0x38] * 0.1`.
+
+⚠️ **There is no allpass coefficient to find.** The question this section was opened to answer
+turned out to be malformed. The allpass records take the identical gain law as the combs on their own
+delays, so an allpass of `0.93 * idx1` has `g = 10^(-0.003 * 0.93 * idx1 / RT60)`. Nothing in the
+module holds a constant allpass gain, and the Schroeder 0.5 that stood in for one is gone.
+
+**The allpasses do not recirculate**, which is what makes those near-unity gains safe. Loop C
+modifies its buffer in place (`buf[i] -= y`) and the stage walk ping-pongs between two scratch
+buffers, so a stage reads one block and writes the other — there is no path back into the same
+delay line. Implemented with feedback instead, the measured gains (0.92–0.95 at these delays)
+stretched setting 2's tail to **4.95 s against a 2.0 s RT60**; as a feed-forward diffuser it smears
+the tail without lengthening it, and the T60 ratios return to the 0.40–0.61 band.
+
+⚠️ **`v0x3fc8c0` is not a per-stage configure.** This file called it one. It is a memory sizer:
+it rounds every buffer up to 1 KB, keeps the running maximum against the existing allocation, sums
+them all and returns the total. It writes no coefficients.
+
+## 2b. The echo's unit — changed from one guess to a better one, still ours
+
+The engine side is a dead end and it is worth saying why, so nobody re-runs it: **the only
+`DSP::setParameter` caller in the whole audio layer other than the reverb applier is `v0x3e41d1`**
+(byte-scan for `E8` relocations targeting `v0xa23970` across `v0x3d0000`–`v0x410000`: two blocks,
+nine calls in `v0x3fd4c0` and one there). And that one is a generic dispatcher — a four-entry jump
+table at `v0x3e4220` that forwards parameter ids 6..20 to whatever DSP it was handed. Nothing on the
+code side names the echo's parameters.
+
+So the unit was settled from the corpus instead. `EchoTime` takes **2** (67,140 placements), **1**
+(48,374), **1.5** (12,955), **4** (750) and **3** (321), with a thin continuous tail (1.2, 1.7, 2.8).
+That is a slider whose detents sit on musical divisions. Read as seconds those are 1–4 s, past
+what an FMOD echo accepts and implausible as defaults; read as **beats** they are the obvious
+sixteenth/eighth/quarter set.
+
+`class Echo` now takes the tempo and uses `echoTime * 60 / tempo`. The previous reading was
+`echoTime * 0.5` seconds — tempo-independent, which cannot be right in a sequencer whose grid is
+tempo-locked, since the same project at half the tempo would echo off the beat.
+
+⚠️ Still ours, and both are flagged in `effects.ts`: the beat length the field counts, and the
+4 s buffer ceiling (the old 1 s ceiling rested on an unmeasured claim about the engine's buffer, and
+would silently fold a four-beat echo at a slow tempo down to one beat).
+
 ## 7. FMOD's pan law — the resampler half is ANSWERED
 
 **RESOLVED, 2026-09-01: the sampler interpolates linearly and mipmaps by octave.** It is not

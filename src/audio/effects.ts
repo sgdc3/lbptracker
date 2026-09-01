@@ -39,15 +39,40 @@ export class Echo {
   private readonly delay: number;
   readonly feedback: number;
   readonly mix: number;
+  /** The delay actually used, in seconds. Handy for reporting. */
+  readonly seconds: number;
 
   /**
-   * @param echoTime the sequencer's field, **not** the halved value the engine
-   *   stores — the halving happens here so the one place it matters is visible.
+   * @param echoTime the sequencer's field, read as **beats** (see below).
+   * @param tempo the sequencer's tempo in BPM, which is what makes it beats.
+   *
+   * WARNING: **the unit is ours, and it replaced a worse guess.** The field used
+   * to be read as `echoTime * 0.5` seconds, which is tempo-independent -- it
+   * cannot be right in a sequencer whose whole grid is tempo-locked, since the
+   * same project at half the tempo would echo off the beat.
+   *
+   * Beats is the reading the corpus supports: across 129,696 placements the
+   * field takes 2 (67,140), 1 (48,374), 1.5 (12,955), 4 (750) and 3 (321), with
+   * a thin continuous tail (1.2, 1.7, 2.8). That is a slider whose detents sit
+   * on musical divisions, not a time in seconds -- as seconds those values would
+   * be 1-4 s, far past the 10-5000 ms an FMOD echo accepts at its low end and
+   * implausible as defaults.
+   *
+   * What is *not* established is the beat length the field counts, and the
+   * engine side gives no help: the only `DSP::setParameter` caller outside the
+   * reverb applier is `v0x3e41d1`, a generic dispatcher behind a four-entry jump
+   * table at `v0x3e4220` that forwards ids 6..20 to whatever DSP it is handed.
+   * Nothing names the echo's parameters. See open question 2.
    */
-  constructor(sampleRate: number, echoTime: number, feedback: number, mix: number) {
-    // The engine's buffer is one second; anything longer would wrap onto itself.
-    const seconds = Math.min(Math.max(echoTime * 0.5, 0), 1);
-    const size = Math.max(1, Math.round(seconds * sampleRate));
+  constructor(sampleRate: number, echoTime: number, tempo: number, feedback: number, mix: number) {
+    const beats = Math.max(echoTime, 0);
+    const beatSeconds = tempo > 0 ? 60 / tempo : 0.5;
+    // WARNING: the ceiling is ours too. The old code clamped at one second on
+    // the strength of an unmeasured "the engine's buffer is one second"; at
+    // slow tempos four beats exceeds that, and silently folding a four-beat
+    // echo down to one beat would be a worse error than a longer buffer.
+    this.seconds = Math.min(beats * beatSeconds, 4);
+    const size = Math.max(1, Math.round(this.seconds * sampleRate));
     this.left = new Float32Array(size);
     this.right = new Float32Array(size);
     this.delay = size;
@@ -128,82 +153,112 @@ export function millibelToLinear(value: number): number {
 }
 
 /**
+ * How many of a tap row's ten lengths a preset actually uses.
+ *
+ * The table at `v0xe1d5d0` is **eleven** floats per row, not ten: the first is a
+ * count and the other ten are the lengths in milliseconds. `v0x3fc8c0` reads it
+ * as `vcvttss2si r9, [row]`, and `fmodsmsreverb.prx` `0x0c52` does the same
+ * against its own copy of the table at `v0x2750`.
+ */
+export const REVERB_TAP_COUNTS: readonly number[] = [
+  10, 8, 10, 10, 10, 10, 10, 9, 10, 10, 10, 10, 10, 10, 10, 9, 9, 10, 10,
+];
+
+/**
+ * The two delay ratios the allpass pair is built from, at `v0x2c08`.
+ *
+ * Exactly two floats. `fmodsmsreverb.prx` `0x10d6` indexes this table by the
+ * allpass index and multiplies the base delay by it, which is why the eboot's
+ * sizer allocates `idx1`, `idx2`, `0.93 * idx1` and `1.06 * idx2`.
+ */
+export const REVERB_ALLPASS_RATIOS: readonly number[] = [0.93, 1.06];
+
+/**
  * The game's reverb.
  *
- * **What is the engine's here**, all read out of the game rather than chosen:
+ * ## The topology, read from the code that builds it
  *
- * - the tap lengths (`REVERB_TAP_SETS`, `v0xe1d5d0`, selected by preset slot 3)
- *   and early reflections (`REVERB_EARLY_SETS`, `v0xe1d920`, slot 4);
- * - the millibel levels and their -80 dB floor, from `v0x3fcd50`;
- * - the pre-delay in samples, slot 8;
- * - **the decay law**, from `fmodsmsreverb.prx` `0x9e2`:
- *   `gain = 10^(delay * -0.003 / (slot5 * 0.1))`, i.e. `10^(-3t/RT60)` with
- *   `RT60 = slot5 * 0.1` seconds. `t` is the *single* tap's length, which is the
- *   standard gain for one **recirculating** comb to fall 60 dB in RT60 -- the
- *   law is only meaningful if each tap feeds back into itself;
- * - **the damping**, a one-pole `y = a*y + (1-a)*x` whose `a` is `state[+0x2c]`,
- *   derived from slot 10 (`0x82a`).
+ * `fmodsmsreverb.prx` builds stage arrays of `0x50` = 80 bytes each, and the
+ * counts are not guesses:
  *
- * ## The topology
+ * - **`[state+0x514] = 2`**, a literal immediate at `0x0c39`.
+ * - **`[state+0x510] = (int)tapRow[0] - 2`** at `0x0c52`-`0x0c5d`: the row's
+ *   count float, minus two. A ten-tap row gives **8**.
  *
- * Schroeder's: a **parallel bank of damped feedback combs**, summed, into a
- * **series chain of allpass sections**. Both halves are visible in
- * `sub_0x11a0`'s nine loops:
+ * The loop bounded by `0x510` builds the **combs** from lengths `idx3..idx(n)`.
+ * The two loops bounded by `0x514` build the **allpasses**: one from `idx1` and
+ * `idx2` straight, one from `0.93 * idx1` and `1.06 * idx2`
+ * (`REVERB_ALLPASS_RATIOS`). That is **8 combs and 4 allpasses**, and the
+ * eboot's memory sizer `v0x3fc8c0` agrees exactly -- it allocates eight buffers
+ * at `[+0x54..+0x70]` plus `idx1`, `idx2`, `0.93*idx1`, `1.06*idx2` at
+ * `[+0x74]`, `[+0x78]`, `[+0x7c]`, `[+0x80]`.
  *
- * - `dampedComb` (loops D/E/F) carries an accumulator, `acc[i] += x[i]`. An
- *   accumulator across stages is what a **parallel** bank does; a series chain
- *   has nothing to accumulate, it just hands the signal on.
- * - `allpassSection` (loop C) is walked by the stage loop at `0x1460`-`0x14f9`,
- *   which **ping-pongs between two scratch buffers** (`xor ebx, 1`) so each
- *   stage's output becomes the next one's input. That is a **series** chain, and
- *   ping-ponging is what a cascade of allpasses needs and a parallel bank does
- *   not.
+ * Combs run in parallel and sum -- `dampedComb` carries `acc[i] += x[i]`, and a
+ * series chain has nothing to accumulate. The allpasses run in series: the
+ * stage walk at `0x1460`-`0x14f9` ping-pongs between two scratch buffers so each
+ * output becomes the next one's input, which is what a cascade needs.
  *
- * So the series chain found at `0x1460` is the allpass cascade, not the combs.
- * The stage count is runtime data at `[r12+0x510]`; `v0x3fcc00` calls the
- * per-stage configure `v0x3fc8c0` **ten times**, which matches the ten tap
- * lengths of a table A row, so there is one stage per tap.
+ * ## The coefficients, read from the code that writes them
  *
- * Two things below are **ours, not measured**, and both are flagged at their
- * line: which taps are combs and which are allpasses, and the allpass
- * coefficient. See open question 6.
+ * Every stage record -- comb and allpass alike -- gets the same three fields,
+ * and the kernel's `[base+0x44]`/`[+0x48]`/`[+0x4c]` are those fields (the comb
+ * records sit at `state+0x300` and the kernel's base is `state+0x2c0`, so
+ * `0x2c0+0x44 = 0x304`, the record's `+0x04`):
  *
- * ⚠️ A previous revision ran all ten taps as a *series* of feedback combs. It
- * is recorded here because the failure is instructive: combs in series multiply
- * their DC gains (`1/(1-g)` each), so ten of them diverge; and normalising the
- * forward path by `1-g` to fix that killed the tail in 30 ms. A structure that
- * can only be stabilised by destroying it is the wrong structure.
+ * | field | value | where |
+ * |---|---|---|
+ * | `+0x04` = `b` | `1 - a` | `0x0bd1` |
+ * | `+0x08` = `a` | `expf(state[+0x2c])`, derived from slot 10 | `0x0bbb` |
+ * | `+0x0c` = gain | `powf(10, -0.003 * ms / RT60)` | `0x0ffa`-`0x100f` |
+ *
+ * With damping disabled (`state[+0x24]` zero) `0x0bdd` stores `b = 1, a = 0` as
+ * one qword. `b = 1 - a` is a one-pole with **unity DC gain**, which is the form
+ * used here.
+ *
+ * WARNING: **there is no separate allpass coefficient.** A previous revision
+ * used Schroeder's conventional 0.5. The allpass records get the identical gain
+ * law as the combs, on their own delays -- so an allpass whose delay is
+ * `0.93 * idx1` has `g = 10^(-0.003 * 0.93 * idx1 / RT60)`. Nothing in the
+ * module holds a constant allpass gain.
+ *
+ * RT60 is `slot5 * 0.1` seconds, confirmed from the writing side at `0x0c9d`
+ * (`[rsi+0x38] * 0.1`).
+ *
+ * ## What is still ours
+ *
+ * One thing, flagged at its line: the `1 - gain` normalisation on each comb's
+ * contribution. Without it the bank is about nine times unity at DC and the
+ * preset's own wet level stops meaning anything. Also unread: whether the DSP
+ * emits the accumulator or the last stage's output.
+ *
+ * The early reflections and the millibel levels are unchanged and are the
+ * engine's: `REVERB_EARLY_SETS` (`v0xe1d920`, slot 4), the levels through
+ * `millibelToLinear`, and the pre-delay in samples from slot 8.
  */
 export class Reverb {
   private readonly pre: Float32Array;
   private readonly preDelay: number;
   private preIndex = 0;
-  /** The parallel bank. Each is a damped feedback comb; their outputs sum. */
+  /** The parallel bank: `tapCount - 2` damped feedback combs whose outputs sum. */
   private readonly combs: {
     buffer: Float32Array;
     index: number;
     y: number;
     gain: number;
   }[] = [];
-  /** The series cascade the bank feeds, in order. */
-  private readonly allpasses: { buffer: Float32Array; index: number }[] = [];
+  /** The series cascade the bank feeds: four allpasses, in build order. */
+  private readonly allpasses: { buffer: Float32Array; index: number; gain: number }[] = [];
   private readonly early: { delay: number; gain: number }[] = [];
+  /** `b` of the shared one-pole; `a` is `1 - b`. */
   private readonly damp: number;
   private readonly wet1: number;
   private readonly wet2: number;
 
-  /**
-   * ⚠️ OURS. Schroeder's allpass coefficient. The engine's is `[stage+0x44]`,
-   * computed somewhere in `v0x3fc8c0`, which has not been disassembled.
-   */
-  private static readonly ALLPASS_GAIN = 0.5;
-
-  /** ⚠️ OURS: how many of a tap set's entries are allpasses rather than combs. */
-  private static readonly ALLPASS_TAPS = 2;
-
   constructor(sampleRate: number, preset: readonly number[]) {
     const ms = (v: number) => Math.max(1, Math.round((v / 1000) * sampleRate));
-    const taps = REVERB_TAP_SETS[preset[PRESET_SLOT.tapSet]] ?? REVERB_TAP_SETS[0];
+    const row = preset[PRESET_SLOT.tapSet];
+    const taps = REVERB_TAP_SETS[row] ?? REVERB_TAP_SETS[0];
+    const count = REVERB_TAP_COUNTS[row] ?? taps.length;
     const early = REVERB_EARLY_SETS[preset[PRESET_SLOT.earlySet]] ?? REVERB_EARLY_SETS[0];
 
     const longest = Math.max(...early.slice(0, 3));
@@ -212,9 +267,9 @@ export class Reverb {
     );
     this.preDelay = Math.max(0, preset[PRESET_SLOT.preDelay] | 0);
 
-    // ⚠️ The early row's middle three floats run -80..+100 and are NOT levels:
-    // reading them as decibels gives a gain of 100,000. The last three are
-    // 0..1 and behave like gains.
+    // WARNING: the early row's middle three floats run -80..+100 and are NOT
+    // levels -- reading them as decibels gives a gain of 100,000. The last
+    // three are 0..1 and behave like gains.
     for (let i = 0; i < 3; i += 1) {
       this.early.push({ delay: ms(early[i]), gain: early[6 + i] });
     }
@@ -222,24 +277,32 @@ export class Reverb {
     const hf = Math.min(Math.max(preset[PRESET_SLOT.hf], 500), sampleRate / 2 - 1);
     this.damp = 1 - Math.exp((-2 * Math.PI * hf) / sampleRate);
 
-    // RT60 = slot5 / 10 seconds, measured. The shortest taps become the
-    // allpasses -- ⚠️ OURS: the split is not measured, only the fact that both
-    // kinds of stage exist. Sorting keeps it deterministic across tap sets of
-    // 8, 9 and 10 entries.
+    // `powf(10, -0.003 * ms / RT60)`, with the delay in **milliseconds** and
+    // RT60 = slot5 / 10 seconds. Both halves read straight off the writing code.
     const rt60 = Math.max(0.05, preset[PRESET_SLOT.decay] / 10);
-    const ordered = [...taps].sort((a, b) => b - a);
-    const split = Math.max(1, ordered.length - Reverb.ALLPASS_TAPS);
-    for (const tap of ordered.slice(0, split)) {
-      const length = ms(tap);
+    const gainFor = (lengthMs: number) => 10 ** ((-0.003 * lengthMs) / rt60);
+
+    // The combs are lengths idx3..idx(count) -- indices 2..count-1 here, since
+    // these rows already have the count float stripped off the front.
+    for (let i = 2; i < Math.min(count, taps.length); i += 1) {
       this.combs.push({
-        buffer: new Float32Array(length),
+        buffer: new Float32Array(ms(taps[i])),
         index: 0,
         y: 0,
-        gain: 10 ** ((-3 * (length / sampleRate)) / rt60),
+        gain: gainFor(taps[i]),
       });
     }
-    for (const tap of ordered.slice(split)) {
-      this.allpasses.push({ buffer: new Float32Array(ms(tap)), index: 0 });
+
+    // The allpasses: idx1 and idx2 straight, then the same two scaled. Build
+    // order is the loop order -- both `0x514` loops run 0 then 1.
+    const bases = [taps[0], taps[1]];
+    const lengths = [...bases, ...bases.map((b, i) => b * REVERB_ALLPASS_RATIOS[i])];
+    for (const length of lengths) {
+      this.allpasses.push({
+        buffer: new Float32Array(ms(length)),
+        index: 0,
+        gain: gainFor(length),
+      });
     }
 
     this.wet1 = millibelToLinear(preset[PRESET_SLOT.level1]);
@@ -250,7 +313,9 @@ export class Reverb {
   process(input: number): number {
     this.pre[this.preIndex] = input;
     const tap = (back: number) =>
-      this.pre[(this.preIndex + this.pre.length - Math.min(back, this.pre.length - 1)) % this.pre.length];
+      this.pre[
+        (this.preIndex + this.pre.length - Math.min(back, this.pre.length - 1)) % this.pre.length
+      ];
 
     let out = 0;
     for (const e of this.early) out += tap(e.delay) * e.gain;
@@ -267,9 +332,9 @@ export class Reverb {
       comb.y = comb.y + this.damp * (delayed - comb.y);
       comb.buffer[comb.index] = signal + comb.gain * comb.y;
       comb.index = (comb.index + 1) % comb.buffer.length;
-      // ⚠️ `1 - gain` is OURS. A feedback comb has DC gain `1/(1 - gain)`, so
-      // eight of them summed are about nine times unity, and the preset's own
-      // wet level -- which is the thing that is measured -- stops meaning
+      // WARNING: `1 - gain` is OURS. A feedback comb has DC gain
+      // `1/(1 - gain)`, so eight of them summed are about nine times unity, and
+      // the preset's own wet level -- the part that is measured -- stops meaning
       // anything. Scaling each comb's *contribution* makes it unity at DC and
       // leaves its decay untouched, unlike scaling the recirculation.
       wet += (1 - comb.gain) * comb.y;
@@ -278,15 +343,19 @@ export class Reverb {
     // loud; the taps are mutually incoherent, so they add in power.
     wet /= Math.sqrt(this.combs.length);
 
-    // The series cascade. An allpass passes every frequency at equal magnitude
-    // and only smears phase, so it thickens the tail without changing its
-    // level -- which is why cascading them is stable where cascading combs is
-    // not.
+    // The series cascade, and it does **not** recirculate. Loop C modifies its
+    // buffer in place (`buf[i] -= y`) and the stage walk ping-pongs between two
+    // scratch buffers, so a stage reads one block and writes another -- there is
+    // no path back into the same delay line. Written with feedback instead
+    // (Schroeder's form) the measured gains, which run 0.92-0.95 on these short
+    // delays, stretched setting 2's tail to 4.95s against a 2.0s RT60. As a
+    // feed-forward diffuser it smears the tail without lengthening it.
+    // Each one's `g` is its own RT60 gain, not a constant.
     for (const ap of this.allpasses) {
       const delayed = ap.buffer[ap.index];
-      ap.buffer[ap.index] = wet + Reverb.ALLPASS_GAIN * delayed;
+      ap.buffer[ap.index] = wet;
       ap.index = (ap.index + 1) % ap.buffer.length;
-      wet = delayed - Reverb.ALLPASS_GAIN * wet;
+      wet = delayed - ap.gain * wet;
     }
 
     return out + wet * this.wet2;
