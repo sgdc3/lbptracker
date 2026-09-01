@@ -605,7 +605,55 @@ as `userdata`, and the `create` callback `v0x3e6580` does nothing but ask FMOD f
 cache it at `[dspstate+8]`. The `read` callback is the imported symbol — referenced exactly once,
 as the callback, and never called directly.
 
-⚠️ **The best-supported reading is that the synthesis is not in the eboot.** The library that
+### CONFIRMED: the synthesis is `fmodextinput.prx`
+
+The module that exports the read callback is
+**`D:\PS4Games\CUSA00063\gamedata_orbis\spumodextinput.prx`** — 23 KB, and it exports
+**exactly one symbol**, `wycAbBCjLI4`, which is the FMOD read callback.
+
+Getting inside it: it is an fSELF, so the ELF program headers' offsets are not file offsets. Parse
+the SELF segment table at `0x20` (32-byte records of `{flags, offset, filesz, memsz}`, with the ELF
+segment index in `flags >> 20`); that gives **`file = vaddr + 0x7a0`** for the code segment. The
+export's `Elf64_Sym` puts it at module vaddr **`0x170`**, 117 bytes.
+
+The callback itself is trivial:
+
+```
+if (inchannels != 4 || outchannels != 4) trap;      // matches channels = 4
+memset(out, 0, frames * 16);                        // 16 B/frame = 4ch x f32
+for (blocks of 256 frames)
+    sub_0xab0(out, 256, [dsp_state + 8]);           // +8 is where OUR create
+                                                    // callback cached userdata
+    out += 0x1000;                                  // 256 * 16 ✓
+```
+
+**`sub_0xab0` is the synthesiser**, and its first act settles everything:
+
+```
+memcpy(module_static, ctx, 0x1b50);        // 6992 bytes of the GAME's state block
+...
+vmovss xmm2, [local + 0x1a28]              // Tempo -- the offset the game writes
+vmovss xmm0, [local + 0x1a4c]
+mov    dword [local + 0x1a48], 1
+```
+
+It copies the game's whole sequencer state and renders from it. The offsets it reads are the ones
+`v0x1c6250` and `v0x1c5640` write, which is the cross-check that this is the same structure and not
+a coincidence.
+
+**So the note decoding, the envelope and the `Params` consumption are all in a 23 KB module** — not
+in the 18 MB eboot, where eight searches looked for them. And the state block is not just settings:
+if the PRX renders notes, the note data must reach it inside those 6992 bytes, which is why nothing
+in the eboot ever "writes the audio buffer" — the game writes *parameters*, and the PRX writes the
+audio.
+
+⚠️ This makes the envelope **recoverable after all**, and cheaply: a 23 KB module with one entry
+point, whose input structure we already have partly mapped. That is now the place to work.
+
+---
+
+⚠️ **The reading below was the working hypothesis before the PRX was found. Kept because its
+reasoning was sound and its conclusion was right.** The library that
 provides `read` (`#C#D`) imports **exactly one symbol**, the buffer pointer never leaves
 `[state+0x1b18]`, no eboot code fills it, and the DSP is handed the state block as its context. The
 consistent explanation is that the imported module owns the synthesis and treats part of that block
