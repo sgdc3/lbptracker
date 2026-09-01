@@ -225,7 +225,12 @@ export class Reverb {
       late += value * sign;
       sign = -sign;
     }
-    return out + (late / this.lines.length) * this.wet2;
+    // ⚠️ Normalised by sqrt(N), not N. Dividing a parallel comb bank by the
+    // number of lines buries the tail: the lines are decorrelated, so their sum
+    // grows like sqrt(N), and dividing by N attenuates by that factor again.
+    // With /N and the renderer's old extra 0.35 the reverb came out at about 2%
+    // of the dry signal and was inaudible -- which is what the user heard.
+    return out + (late / Math.sqrt(this.lines.length)) * this.wet2;
   }
 }
 

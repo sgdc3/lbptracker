@@ -171,14 +171,24 @@ mixer.render(left, right, { echo: [echoL, echoR], reverb: [reverbL, reverbR] });
 const echo = new Echo(RATE, seq.echoTime, seq.echoFeedback, seq.echoMix);
 const preset = reverbPreset(seq.reverb);
 const reverb = new Reverb(RATE, preset);
-const wetGain = 0.35;
+// No extra wet gain here: the preset's own millibel levels are the wet level,
+// and multiplying them by a taste factor is how the reverb went inaudible.
+// Measured rather than assumed: how much of the finished mix each effect is.
+let dryEnergy = 0;
+let echoEnergy = 0;
+let reverbEnergy = 0;
 for (let i = 0; i < frames; i += 1) {
+  dryEnergy += left[i] ** 2 + right[i] ** 2;
   const e = echo.process(echoL[i], echoR[i]);
-  left[i] += e.left;
-  right[i] += e.right;
-  left[i] += reverb.process(reverbL[i]) * wetGain;
-  right[i] += reverb.process(reverbR[i]) * wetGain;
+  echoEnergy += e.left ** 2 + e.right ** 2;
+  const rl = reverb.process(reverbL[i]);
+  const rr = reverb.process(reverbR[i]);
+  reverbEnergy += rl ** 2 + rr ** 2;
+  left[i] += e.left + rl;
+  right[i] += e.right + rr;
 }
+const rel = (x: number) => `${(100 * Math.sqrt(x / dryEnergy)).toFixed(1)}%`;
+console.log(`effect level against the dry mix — echo ${rel(echoEnergy)}, reverb ${rel(reverbEnergy)}`);
 console.log(
   `echo ${seq.echoTime}/${seq.echoFeedback}/${seq.echoMix}, ` +
     `reverb setting ${seq.reverb} -> preset [${preset.join(', ')}]`,
