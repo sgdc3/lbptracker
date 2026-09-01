@@ -34,14 +34,13 @@ echo**, or you will tune by ear against a moving target.
 The cell geometry is now **measured**: `gridX = floor(2*x/105 - 0.5)`, `gridY = floor(-y/105)` at
 `v0x1c4ad0`. What is still open:
 
-- **Steps per grid unit.** Clips in the corpus top out at step **31** overwhelmingly, with 63 as
-  the only other common ceiling — so the editor grid is 32 steps wide and a clip may span two
-  cells. With a 52.5-unit cell that gives 16 steps per cell, matching `sequencerdump`'s constant.
-  Consistent, but still inferred from creator behaviour rather than from the engine.
-- **`Swing` semantics.** Ratio, percentage, or fraction of a step? Still unknown, and the corpus
-  cannot help: `Swing` is **0.0 in 103,538 of 105,785 instruments**. Almost nobody uses it, so
-  there is no body of real examples to calibrate against and no tuning it by ear against the game.
-  This one has to come out of the sequencer module.
+- ~~**Steps per grid unit.**~~ **Settled from the engine**: `v0x1c5cda` computes a step count as
+  `trunc(x * 32 / 105)`, i.e. **32 steps per 105 world units, 16 per 52.5-unit cell**. Matches both
+  `sequencerdump`'s constant and the corpus's step-31 ceiling.
+- ~~**`Swing` semantics.**~~ **Settled from the engine**: `v0x1c5d0c` clamps it with `vminss`
+  against **0.99** before handing it to the audio state, so `Swing` is a **normalised 0..1 ratio**,
+  not a percentage and not a fraction of a step. What the engine *does* with that ratio is still
+  unmeasured.
 - **Triplet timing.** `sequencerdump` re-times a `triplet` note to 1/12 notes with
   `group = step/4, pos = step%4, tick = group*96 + pos*32`, which overruns the quarter on the
   fourth slot. Its author has disowned that layer; treat it as unmeasured.

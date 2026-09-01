@@ -441,6 +441,33 @@ Each `RInstrument` array is preceded in the stream by an explicit i32 count.
 comments cannot be right if the two are compared directly at playback, and our key-split logic
 compares them. See [open-questions.md](open-questions.md).
 
+## Playback start — `v0x1c5640`
+
+⚠️ **Steering used to label `v0x1c5670` as the "stop all other music sequencers" walk. That is
+wrong**: `v0x1c5670` is *inside* `v0x1c5640`, which is the sequencer's **playback start**. It:
+
+- fetches the audio-state block (`v0x3fbf20`, which is just `lea rax, [rip+…]` — a fixed global),
+- calls the generic play-sound `v0x3de390` with a constant `1.5`,
+- manages audio handles in the state block at `+0x1ad0`, `+0x1ad8`, `+0x1ae0`, `+0x1af0`, `+0x1af8`,
+- calls the grid-placement helper `v0x1c49e0`,
+- and finishes by pushing the same settings `v0x1c6250` does (below).
+
+**Steps per grid unit — measured.** At `v0x1c5cda`:
+
+```
+xmm0 = [PSequencer + 0x4c]
+xmm0 = (xmm0 + xmm0) * 16 / 105        i.e.  x * 32 / 105
+rax  = (int)xmm0                       truncated to a step count
+```
+
+**32 steps per 105 world units**, so **16 steps per 52.5-unit cell** — the figure that until now
+came only from `sequencerdump`'s constant, now confirmed against the engine.
+
+⚠️ It also means `+0x4c` is being used here as a **world-space length**, not as a playhead. Our
+`PSequencer` schema labels `+0x4c` `PlayHead`, and the volume loop in `v0x1c6250` reads eight floats
+through `+0x50`. Both point at the same suspicion: the schema is wrong somewhere between `+0x48`
+and `+0x50`. Do not trust `PlayHead`'s offset until this is checked.
+
 ## PSequencer → the audio engine — measured at `v0x1c6250`
 
 One small function pushes the whole sequencer part into a global audio-state block, and it settles
@@ -507,7 +534,7 @@ is a separate question.
 | → `PSequencer::BeginPlayback` | `v0x1c4f00` |
 | the whole sequencer module | `v0x1c3000` … `v0x1c7000` |
 | `RSample` load inside the worker | `v0x1c38aa` — `mov eax, 0x31` / `mov ecx, 0x80000031`, the only such site in the binary |
-| "stop every other music sequencer" walk | `v0x1c5670` |
+| **playback start** | `v0x1c5640` (⚠️ `v0x1c5670` is inside it, not a separate "stop others" walk) |
 | sample-preload job spawner | `v0x1c3c80` |
 | its worker | `v0x1c37f0` |
 | `"StartSamplePreload"` string | `v0xe61158` (referenced at `v0x1c3ce5`) |
