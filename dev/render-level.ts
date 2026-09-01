@@ -56,6 +56,22 @@ const fromArg = Number(process.env.LBP_FROM ?? 0);
  * down is exactly what a cymbal that sounds too quiet would be doing.
  */
 const unpitchedPercussion = process.env.LBP_UNPITCHED_PERCUSSION === '1';
+/** Comma-separated instrument GUIDs to keep (`LBP_ONLY`) or drop (`LBP_SKIP`). */
+const onlyGuids = (process.env.LBP_ONLY ?? '').split(',').filter(Boolean).map(Number);
+const skipGuids = (process.env.LBP_SKIP ?? '').split(',').filter(Boolean).map(Number);
+/**
+ * ⚠️ A/B switch. `LBP_NO_KEYTRACK=1` forces `Params[5]` to zero, which makes
+ * `keytrack = 1 + (rate - 1) * 0 = 1` -- exactly what happens if the value the
+ * engine feeds that term is the constant 1.0 rather than the playback rate.
+ *
+ * There is real evidence for it: the slot feeding the term starts at 1.0
+ * (`0x1e25`) and is only modified through a gate whose divisor is the slot
+ * record's `+4`, which the eboot's builder fills with `baseBpm` -- 149.5 on
+ * every shipped instrument, with `fitBpm` false on all of them. If that is the
+ * whole story the term is inert, and `a_kit_1`'s cutoff of 1.0 stops being
+ * dragged down to 0.50 by a ride playing an octave low.
+ */
+const noKeyTrack = process.env.LBP_NO_KEYTRACK === '1';
 
 const manifest = async (dir: string) =>
   new Map<number, { file: string }>(
@@ -146,7 +162,9 @@ const fromFrame = Math.round(fromArg * RATE);
 const events = schedule(seq)
   .filter((e) => e.step * framesPerStep < fromFrame + frames)
   .map((e) => ({ ...e, step: e.step - fromFrame / framesPerStep }))
-  .filter((e) => (e.step + e.durationSteps) * framesPerStep > 0);
+  .filter((e) => (e.step + e.durationSteps) * framesPerStep > 0)
+  .filter((e) => (onlyGuids.length === 0 || onlyGuids.includes(e.guid)))
+  .filter((e) => !skipGuids.includes(e.guid));
 let played = 0;
 let skipped = 0;
 for (const event of events) {
@@ -222,7 +240,7 @@ for (const event of events) {
       settings: {
         cutoff: P(FILTER_PARAMS.cutoff),
         resonance: P(FILTER_PARAMS.resonance),
-        keyTrack: P(FILTER_PARAMS.keyTrack),
+        keyTrack: noKeyTrack ? 0 : P(FILTER_PARAMS.keyTrack),
         envAmount: P(FILTER_PARAMS.envAmount),
       },
       envelope: evaluateAdsr(p, ADSR_PARAMS_B, mod),
@@ -284,14 +302,19 @@ console.log(
 );
 
 let peak = 0;
-for (let i = 0; i < frames; i += 1) peak = Math.max(peak, Math.abs(left[i]), Math.abs(right[i]));
+let energy = 0;
+for (let i = 0; i < frames; i += 1) {
+  peak = Math.max(peak, Math.abs(left[i]), Math.abs(right[i]));
+  energy += left[i] ** 2 + right[i] ** 2;
+}
+console.log(`pre-normalisation RMS ${Math.sqrt(energy / (2 * frames)).toFixed(5)}`);
 const norm = peak > 0.99 ? 0.99 / peak : 1;
 const pcm = new Int16Array(frames * 2);
 for (let i = 0; i < frames; i += 1) {
   pcm[i * 2] = Math.max(-32768, Math.min(32767, Math.round(left[i] * norm * 32767)));
   pcm[i * 2 + 1] = Math.max(-32768, Math.min(32767, Math.round(right[i] * norm * 32767)));
 }
-const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
+const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? '-only' : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
 await writeFile(out, writeWav(pcm, 2, RATE));
 const elapsed = Number(process.hrtime.bigint() - started) / 1e9;
 console.log(
