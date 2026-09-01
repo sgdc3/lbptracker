@@ -41,6 +41,19 @@ export interface VoiceSpec {
    * identified yet, so this is our shape, not the game's.
    */
   readonly release?: number;
+  /**
+   * Exponential decay in dB per second, applied from the voice's start.
+   *
+   * ⚠️ **NOT the game's envelope — ours, and a diagnostic.** The shipped loops
+   * carry their own amplitude contour (`piano_c6`'s spans 1.70 dB peak to
+   * trough), so repeating one modulates the output at the wrap rate whatever
+   * the join does: measured 5.75% at 14.8 Hz on F5, 43.7x above the background,
+   * which is audible as a flutter or click. A decay suppresses it — the same
+   * measurement drops to 1.4x — which is presumably how the game hides it.
+   * Leave this at 0 for faithful output until the real envelope is recovered
+   * from `RInstrument.Params`; see steering/open-questions.md.
+   */
+  readonly decayDbPerSecond?: number;
 }
 
 class Voice {
@@ -52,17 +65,23 @@ class Voice {
   life: number;
   /** Frames of linear fade at the end of that life. */
   readonly release: number;
+  /** Per-frame multiplier for the optional decay, or 1. */
+  readonly decayPerFrame: number;
+  private decayGain = 1;
   private readonly left: number;
   private readonly right: number;
 
   // Fields are declared and assigned longhand rather than with TypeScript
   // parameter properties: Node's strip-only type removal rejects any syntax
   // that emits runtime code. See steering/tracker-architecture.md.
-  constructor(spec: VoiceSpec, delay: number, life: number) {
+  constructor(spec: VoiceSpec, delay: number, life: number, outputRate: number) {
     this.spec = spec;
     this.delay = delay;
     this.life = life;
     this.release = Number.isFinite(life) ? Math.min(spec.release ?? 0, life) : 0;
+    this.decayPerFrame = spec.decayDbPerSecond
+      ? Math.pow(10, -Math.abs(spec.decayDbPerSecond) / 20 / outputRate)
+      : 1;
     const gains = panGains(spec.pan);
     this.left = gains.left * spec.gain;
     this.right = gains.right * spec.gain;
@@ -104,8 +123,12 @@ class Voice {
       if (!loop && this.position >= srcL.length) return;
 
       // Linear release ramp over the last `release` frames of the voice's life.
-      const fade =
+      let fade =
         this.release > 0 && this.life < this.release ? this.life / this.release : 1;
+      if (this.decayPerFrame !== 1) {
+        this.decayGain *= this.decayPerFrame;
+        fade *= this.decayGain;
+      }
 
       // Hand the loop to the interpolator only once the voice is inside it.
       // Before that the taps behind `loop.start` are the attack and are
@@ -148,7 +171,7 @@ export class Mixer {
     const delay = Math.max(0, spec.startFrame ?? 0);
     const life =
       spec.endFrame === undefined ? Infinity : Math.max(0, spec.endFrame - delay);
-    this.voices.push(new Voice(spec, delay, life));
+    this.voices.push(new Voice(spec, delay, life, this.outputRate));
   }
 
   stopAll(): void {

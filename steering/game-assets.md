@@ -166,8 +166,31 @@ Most of it is debris (`CDif` from Cool Edit, `bext`, `acid`, `JUNK`), but two ch
   ⚠️ The metric is meaningless for synthesised waveforms. `kenny_saw_a4` measures 108× because a
   sawtooth's vertical edge *is* its shape. Judge it on the acoustic multisamples.
 
+  ⚠️ **And after the join is perfect, a periodic artefact remains — it is the loop's own contour.**
+  Reported as a click on high notes like F5. Traced with the metric that matches the ear, which is
+  not "is there a big transient" but "is something repeating at the wrap rate":
+
+  | note | wrap rate | envelope modulation at that rate | background | ratio |
+  |---|---|---|---|---|
+  | **F5** (77) | 14.8 Hz | **5.75%** | 0.29% | **20×** |
+  | C6 (84) | 22.2 Hz | 5.29% | 0.19% | **28×** |
+  | C4 (60) | 5.6 Hz | 5.36% | 2.41% | 2.2× |
+
+  The cause is not the join. `piano_c6`'s loop region has a **1.70 dB peak-to-trough amplitude
+  contour of its own** (17.7%), so repeating it modulates the output at the wrap rate however
+  cleanly it is spliced. Applying an exponential decay drops the ratio from **43.7× to 1.4×** — the
+  artefact stops standing above the background — which is presumably how the game hides it.
+
+  ⚠️ Three metrics missed this before the right one was used: the adjacent-sample step at the wrap
+  is only 1.5× the median, high-frequency energy at the wrap is 0.98× the background, and
+  single-block rendering is bit-identical to 128-frame blocks. A 5% modulation is not a transient;
+  it is a flutter, and only a modulation measurement finds it.
+
+  `VoiceSpec.decayDbPerSecond` exists for this, defaults to **0**, and is labelled in the code as
+  ours rather than the game's. It is the visible cost of not having recovered the real envelope.
+
   Level continuity was never the problem — the loops sit within ±0.7 dB, so they do not pump. It
-  was always phase.
+  was always phase, and then contour.
 
 - **`inst`** — key range and unity note. Present on a handful of samples.
 

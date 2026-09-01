@@ -472,3 +472,27 @@ test('the attack is not wrapped into the loop', () => {
   assert.ok(Math.abs(left[150] + 1) < 1e-6, 'the loop region plays as recorded');
   assert.ok(Math.abs(left[350] + 1) < 1e-6, 'and keeps looping');
 });
+
+test('the optional decay is off by default and exact when set', () => {
+  const flat = { channels: [new Float32Array(48000).fill(1)], sampleRate: 48000 };
+
+  // Off by default: a voice must not fade on its own.
+  const plain = new Mixer(48000);
+  plain.play({ sample: flat, playbackRate: 1, gain: 1, pan: 0, endFrame: 48000 });
+  const l0 = new Float32Array(48000);
+  const r0 = new Float32Array(48000);
+  plain.render(l0, r0);
+  assert.ok(Math.abs(l0[0] - l0[47000]) < 1e-6, 'no decay unless asked for');
+
+  // 20 dB/s must be exactly 20 dB down after one second.
+  const decaying = new Mixer(48000);
+  decaying.play({
+    sample: flat, playbackRate: 1, gain: 1, pan: 0,
+    endFrame: 48000, decayDbPerSecond: 20,
+  });
+  const l1 = new Float32Array(48000);
+  const r1 = new Float32Array(48000);
+  decaying.render(l1, r1);
+  const dropDb = 20 * Math.log10(l1[47999] / l1[0]);
+  assert.ok(Math.abs(dropDb + 20) < 0.1, `expected -20 dB after a second, got ${dropDb.toFixed(2)}`);
+});

@@ -150,7 +150,12 @@ async function loadInstrument(row: ManifestRow): Promise<void> {
   buildKeyboard();
   $('status').textContent = `${row.path.replace(/^gamedata\/audio\/music\/instruments\//, '')}`;
   $('controls').hidden = false;
-  (window as unknown as { __lbp: unknown }).__lbp = { instrument, loadedSlots, context, node };
+  // Everything a console session needs to tap either engine. `master` matters:
+  // it is where the worklet path and the AudioBufferSource path converge, so it
+  // is the only place an A/B measurement can hear both.
+  (window as unknown as { __lbp: unknown }).__lbp = {
+    instrument, loadedSlots, context, node, master, analyser,
+  };
 }
 
 function voiceFor(note: number) {
@@ -219,6 +224,7 @@ function playNote(note: number, atSeconds = 0): void {
       // the sample rather than with the note.
       endFrame: Math.round((atSeconds + held + 0.12) * context.sampleRate),
       release: Math.round(0.12 * context.sampleRate),
+      decayDbPerSecond: Number(($('decay') as HTMLInputElement).value),
     },
   });
 }
@@ -322,6 +328,14 @@ async function init(): Promise<void> {
     node?.port.postMessage({ type: 'interpolator', name });
     log(`interpolator: ${name}`);
   });
+  const decay = $<HTMLInputElement>('decay');
+  const showDecay = () => {
+    const v = Number(decay.value);
+    $('decayLabel').textContent = v === 0 ? 'off (faithful)' : `${v} dB/s (ours)`;
+  };
+  decay.addEventListener('input', showDecay);
+  showDecay();
+
   const length = $<HTMLInputElement>('length');
   const showLength = () => {
     $('lengthLabel').textContent = `${(Number(length.value) / 100).toFixed(2)}s`;
