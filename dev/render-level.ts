@@ -270,8 +270,17 @@ for (const event of events) {
   for (let layer = 0; layer < layers; layer += 1) {
     mixer.play({
       ...spec,
-      playbackRate: spec.playbackRate * (1 + 0.05 * P(STACK_PARAMS.detune) * bipolar()),
-      pan: clamp01(spec.pan + 0.5 * P(STACK_PARAMS.spread) * bipolar()),
+      // ⚠️ All three of Params[0..2] are per-LAYER, and a voice with one layer
+      // has nothing to spread against itself. Applying them regardless is what
+      // broke the drums twice over: the random start turned every hit into half
+      // a sample, and the random detune -- ±0.15% on `a_kit_1` -- put a phaser
+      // over the kit, because this level plays every drum hit on TWO board
+      // components at once (140 of 140 (step, pitch) slots in the window, across
+      // 146 components) and two coherent copies a hair apart is a comb filter.
+      playbackRate:
+        spec.playbackRate *
+        (layer === 0 ? 1 : 1 + 0.05 * P(STACK_PARAMS.detune) * bipolar()),
+      pan: layer === 0 ? spec.pan : clamp01(spec.pan + 0.5 * P(STACK_PARAMS.spread) * bipolar()),
       // ⚠️ Layers after the first only. Applied to every voice, this destroys
       // any instrument whose `Numstack` is 1: `a_kit_1` sets `Params[2]` to
       // **1.000**, so every drum hit started at a uniformly random point

@@ -691,8 +691,18 @@ The measured cost, `a_kit_1` isolated over one 25-second window:
 kit rendered 13 dB below `baiyon_drums_1` with a similar note count, and afterwards sits 1.5 dB
 below it — which is exactly their `Params[24]` difference (0.344 against 0.419, 1.7 dB).
 
-The code now applies the offset only to layers after the first, on the reasoning that a per-layer
-randomisation exists to decorrelate stacked layers and one layer has nothing to decorrelate.
+The code now applies **all three** of `Params[0..2]` only to layers after the first, on the reasoning
+that a per-layer randomisation exists to decorrelate stacked layers and one layer has nothing to
+decorrelate.
+
+⚠️ **The detune had to follow, and the second symptom is the more instructive one.** Fixing only
+the start offset put an audible **phaser** over the same kit, because
+`a_kit_1`'s `Params[0]` is 0.030 and `1 + 0.05 * detune * U(-1,1)` gave every hit a random ±0.15%
+pitch. That is inaudible on one voice — but **this level plays every drum hit on two board
+components at once**: in the 25-second window, 140 of 140 distinct `(step, pitch)` slots are doubled,
+across 146 components carrying `a_kit_1`. Two coherent copies a hair apart in pitch is a comb filter,
+and it sweeps. The random start had been hiding it by making the copies incoherent; repairing one
+bug exposed the other.
 
 ⚠️ **That is a repair, not an explanation.** It does not say why six kits set the value at all,
 and a parameter that is meaningless on 18 of the 27 instruments that set it is probably not the
