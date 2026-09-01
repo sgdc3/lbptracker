@@ -78,10 +78,8 @@ The cell geometry is now **measured**: `gridX = floor(2*x/105 - 0.5)`, `gridY = 
 - ~~**Steps per grid unit.**~~ **Settled from the engine**: `v0x1c5cda` computes a step count as
   `trunc(x * 32 / 105)`, i.e. **32 steps per 105 world units, 16 per 52.5-unit cell**. Matches both
   `sequencerdump`'s constant and the corpus's step-31 ceiling.
-- ~~**`Swing` semantics.**~~ **Settled from the engine**: `v0x1c5d0c` clamps it with `vminss`
-  against **0.99** before handing it to the audio state, so `Swing` is a **normalised 0..1 ratio**,
-  not a percentage and not a fraction of a step. What the engine *does* with that ratio is still
-  unmeasured.
+- ~~**`Swing` semantics.**~~ **Fully settled** — the ratio *and* what the engine does with it. See
+  *3b. Swing* in [answered-questions.md](answered-questions.md).
 - ~~**Triplet timing.**~~ **Settled from the engine, and WIRED UP 2026-09-01.** The finding below
   sat in this file for a session without reaching the code: `decodeRecord` reduced the sub-step to a
   boolean `triplet`, and `schedule` never read even that. Every one of the 39,000 corpus notes that
@@ -510,29 +508,6 @@ the tail without lengthening it, and the T60 ratios return to the 0.40–0.61 ba
 it rounds every buffer up to 1 KB, keeps the running maximum against the existing allocation, sums
 them all and returns the total. It writes no coefficients.
 
-## 2b. The echo's unit — changed from one guess to a better one, still ours
-
-The engine side is a dead end and it is worth saying why, so nobody re-runs it: **the only
-`DSP::setParameter` caller in the whole audio layer other than the reverb applier is `v0x3e41d1`**
-(byte-scan for `E8` relocations targeting `v0xa23970` across `v0x3d0000`–`v0x410000`: two blocks,
-nine calls in `v0x3fd4c0` and one there). And that one is a generic dispatcher — a four-entry jump
-table at `v0x3e4220` that forwards parameter ids 6..20 to whatever DSP it was handed. Nothing on the
-code side names the echo's parameters.
-
-So the unit was settled from the corpus instead. `EchoTime` takes **2** (67,140 placements), **1**
-(48,374), **1.5** (12,955), **4** (750) and **3** (321), with a thin continuous tail (1.2, 1.7, 2.8).
-That is a slider whose detents sit on musical divisions. Read as seconds those are 1–4 s, past
-what an FMOD echo accepts and implausible as defaults; read as **beats** they are the obvious
-sixteenth/eighth/quarter set.
-
-`class Echo` now takes the tempo and uses `echoTime * 60 / tempo`. The previous reading was
-`echoTime * 0.5` seconds — tempo-independent, which cannot be right in a sequencer whose grid is
-tempo-locked, since the same project at half the tempo would echo off the beat.
-
-⚠️ Still ours, and both are flagged in `effects.ts`: the beat length the field counts, and the
-4 s buffer ceiling (the old 1 s ceiling rested on an unmeasured claim about the engine's buffer, and
-would silently fold a four-beat echo at a slow tempo down to one beat).
-
 ## 12. `Params[2]` — the formula is now READ, and it contradicts our repair
 
 The per-layer init is at `fmodextinput.prx` `0x1ae7`-`0x1bd5`, inside the stack loop
@@ -903,3 +878,20 @@ before too, since the volumes were not applied at all.
 `NumChannels = 1` with all six volumes at 1.0, so every row lands on the same 0.75. The 30 that do
 use it carry descending ramps like `1.00, 0.70, 0.50, 0.20` — which reads like an intensity
 layering, not a per-instrument mixer.
+
+### A method note: linear disassembly of the eboot desynchronises
+
+Three separate searches this session returned **zero hits** on questions that later turned out to
+have obvious answers — the block-header writer, the indexed stores in the sequencer module, the
+`DSP::setParameter` callers — because a linear sweep of the eboot's `.text` from an arbitrary offset
+drifts out of instruction alignment and silently disassembles nonsense.
+
+What works instead, in order of preference:
+
+1. **Byte-scan for the encoding**, then validate each hit by disassembling backwards a few bytes
+   (this is how the `E8` relocations to `v0xa23970` were found).
+2. **Disassemble from a known function start**, never from a round address.
+3. In a PRX, **include indexed forms in the pattern**: the `Splitnotes` walk was declared absent
+   because the scan only matched `[reg + disp]` and the walk is `[rdx + rax*4 + 0x4c4]`.
+
+⚠️ A negative result from a pattern scan is only as strong as the pattern.

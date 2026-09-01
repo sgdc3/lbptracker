@@ -367,3 +367,52 @@ default on the reasoning that it added least of its own character while the ques
 went and read the sampler. Clean was never the goal — matching the game is, and the game is linear.
 The table is now a statement about *how much* the mipmapping has to do, since without it linear
 would sit at 19 dB on exactly the notes that need it most.
+
+## 2b. `EchoTime`'s unit — SETTLED: eight steps per unit
+
+`v0x1c5d2d`-`v0x1c5d3a` stores `EchoTime * 0.5` into the audio state at `[state+0x1a30]`, and
+`fmodextinput.prx` `0x0faa` turns that into a delay:
+
+```
+eax = (int)(stored * 16 + 0.5)       ; round to a whole number of steps
+ecx = (int)(720000 / tempo)          ; frames in one step
+ecx = ecx * eax
+ecx = ecx & ~0xf                     ; aligned down to 16 frames
+```
+
+`stored * 16` is `EchoTime * 8`, so the delay is **`round(EchoTime * 8)` steps** — eight steps, two
+beats, per unit of the field.
+
+The corpus is the check and it is a clean one: `EchoTime` is **2.00 on 189 of 338 sequencers**,
+which is 16 steps — **a whole bar** — 1.00 on 95 (half a bar) and 1.50 on 47. Bar-relative delays are
+what a musician sets, and no other reading produces them.
+
+⚠️ **Two wrong readings preceded this.** First `EchoTime * 0.5` seconds, which is
+tempo-independent and cannot be right in a tempo-locked sequencer. Then **beats**, argued from the
+corpus's musical detents — right that it was musical, wrong by a factor of four. The corpus said
+*which family* of answers was plausible; only the engine said which member.
+
+## 3b. Swing — SETTLED: alternate steps stretch and squeeze by `swing/2`
+
+`fmodextinput.prx` `0x0be3`-`0x0c2e`, with `[state+0x1a2c]` holding `Swing` (clamped to 0.99 on the
+way in at `v0x1c5d0c`) and `[state+0x1a4c]` the running step position:
+
+```
+L  = 720000 / tempo                        ; the step's nominal length
+L += L * swing * 0.5 * table[floor(position) & 1]
+```
+
+The table at `v0x4530` is **`[1, -1]`**, so an even step stretches to `L * (1 + swing/2)` and the odd
+step after it squeezes to `L * (1 - swing/2)`. **The pair still lasts `2L`**, so swing moves the
+off-beat without ever drifting against the bar. At `swing = 1` the ratio is 3:1, and the field is
+clamped just below 1 rather than at it.
+
+13 of 338 corpus sequencers use it, up to 0.75. `src/core/swing.ts` implements it and every note
+position, duration and automation point in the renderer goes through `swungFrame`.
+
+### And a constant that was being assumed
+
+`720000 / tempo` is the step length in frames. At the engine's own default tempo of 125 that is
+**5,760**, and `48000 * 60 / (125 * 4)` is 5,760 too — so **four steps to the beat** is measured now,
+not assumed, and it is measured at a 48 kHz output rate.
+
