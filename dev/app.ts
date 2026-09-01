@@ -46,6 +46,24 @@ let instrument: RInstrument | undefined;
 let loadedSlots: { guid: number; wav: WavData; name: string; baseNote: number }[] = [];
 let engine: 'ours' | 'browser' = 'ours';
 
+/**
+ * Computer-keyboard layout, the one every tracker and DAW uses: the home row is
+ * one octave with its sharps on the row above, and QWERTY is the octave above
+ * that. The arrow keys shift octave.
+ */
+const KEY_MAP: Record<string, number> = {
+  KeyZ: 0, KeyS: 1, KeyX: 2, KeyD: 3, KeyC: 4, KeyV: 5, KeyG: 6,
+  KeyB: 7, KeyH: 8, KeyN: 9, KeyJ: 10, KeyM: 11, Comma: 12, KeyL: 13,
+  Period: 14, Semicolon: 15, Slash: 16,
+  KeyQ: 12, Digit2: 13, KeyW: 14, Digit3: 15, KeyE: 16, KeyR: 17, Digit5: 18,
+  KeyT: 19, Digit6: 20, KeyY: 21, Digit7: 22, KeyU: 23, KeyI: 24, Digit9: 25,
+  KeyO: 26, Digit0: 27, KeyP: 28,
+};
+
+/** MIDI note of the bottom key of the home row. C3 = 48 by default. */
+let octaveBase = 48;
+const heldKeys = new Set<string>();
+
 async function ensureAudio(): Promise<AudioWorkletNode> {
   if (node) return node;
   context = new AudioContext();
@@ -148,6 +166,7 @@ async function loadInstrument(row: ManifestRow): Promise<void> {
     `splitNotes ${instrument.splitNotes.slice(0, slots.length + 1).join(', ')}`;
 
   buildKeyboard();
+  $('octave').textContent = `octave: ${noteName(octaveBase)}`;
   $('status').textContent = `${row.path.replace(/^gamedata\/audio\/music\/instruments\//, '')}`;
   $('controls').hidden = false;
   // Everything a console session needs to tap either engine. `master` matters:
@@ -264,6 +283,53 @@ function zoneColour(zone: number): string {
   return `hsl(${hues[zone % hues.length]} 60% 55%)`;
 }
 
+/** Light the on-screen key so the mapping is visible while playing. */
+function flashKey(note: number): void {
+  const el = [...document.querySelectorAll<HTMLElement>('#keys .key')]
+    .find((k) => k.textContent === noteName(note));
+  if (!el) return;
+  el.classList.add('lit');
+  setTimeout(() => el.classList.remove('lit'), 140);
+}
+
+function bindKeyboard(): void {
+  window.addEventListener('keydown', (event) => {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const target = event.target as HTMLElement | null;
+    if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
+
+    if (event.code === 'ArrowLeft' || event.code === 'ArrowDown') {
+      octaveBase = Math.max(0, octaveBase - 12);
+      $('octave').textContent = `octave: ${noteName(octaveBase)}`;
+      event.preventDefault();
+      return;
+    }
+    if (event.code === 'ArrowRight' || event.code === 'ArrowUp') {
+      octaveBase = Math.min(108, octaveBase + 12);
+      $('octave').textContent = `octave: ${noteName(octaveBase)}`;
+      event.preventDefault();
+      return;
+    }
+
+    const offset = KEY_MAP[event.code];
+    if (offset === undefined) return;
+    event.preventDefault();
+    // Key repeat would retrigger the note dozens of times a second.
+    if (event.repeat || heldKeys.has(event.code)) return;
+    heldKeys.add(event.code);
+
+    const note = octaveBase + offset;
+    if (note < 0 || note > 127) return;
+    playNote(note);
+    flashKey(note);
+    $('detail').textContent = describe(note);
+  });
+
+  window.addEventListener('keyup', (event) => heldKeys.delete(event.code));
+  // A dropped keyup (alt-tab mid-note) would otherwise wedge the key.
+  window.addEventListener('blur', () => heldKeys.clear());
+}
+
 function playSequence(notes: number[], step: number): void {
   notes.forEach((n, i) => playNote(n, i * step));
   $('detail').textContent =
@@ -319,6 +385,7 @@ async function init(): Promise<void> {
     playSequence(notes, 0.12);
   });
   $('stop').addEventListener('click', () => node?.port.postMessage({ type: 'stopAll' }));
+  bindKeyboard();
   $<HTMLSelectElement>('engine').addEventListener('change', (e) => {
     engine = (e.target as HTMLSelectElement).value as 'ours' | 'browser';
     log(`engine: ${engine}`);

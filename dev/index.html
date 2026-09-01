@@ -56,10 +56,15 @@
     font-family: ui-monospace, Consolas, monospace;
   }
   .key.sharp { background: #12141a; color: var(--dim); }
+  .key.lit { background: var(--accent); color: #10141a; border-color: var(--accent); }
 
   #detail {
     font-family: ui-monospace, Consolas, monospace; font-size: .85rem;
     color: var(--accent); min-height: 1.4em; margin: .5rem 0 1rem;
+  }
+  #octave {
+    font-family: ui-monospace, Consolas, monospace; font-size: .85rem;
+    color: var(--ink); min-height: 1.4em;
   }
   #meter {
     font-family: ui-monospace, Consolas, monospace; font-size: .85rem;
@@ -127,11 +132,18 @@
       <span id="gainLabel">0.50</span>
     </div>
 
+    <div id="octave"></div>
     <div id="splits"></div>
     <div id="meter"></div>
     <div id="detail"></div>
     <div id="keys"></div>
 
+    <p class="note">
+      <strong>Play it.</strong> The computer keyboard is live: <code>Z S X D C V G B
+      H N J M</code> is one octave with its sharps above, <code>Q 2 W 3 E R 5 T 6
+      Y 7 U</code> is the octave above that, and the arrow keys shift octave.
+      Click anywhere outside a control first so the keys reach the page.
+    </p>
     <p class="note">
       <strong>What to listen for.</strong> “Every slot at its base note” plays each
       sample at ratio exactly 1.0 — they should sound like one instrument, and a
