@@ -416,3 +416,38 @@ position, duration and automation point in the renderer goes through `swungFrame
 **5,760**, and `48000 * 60 / (125 * 4)` is 5,760 too — so **four steps to the beat** is measured now,
 not assumed, and it is measured at a 48 kHz output rate.
 
+## 5b. How the ÷2 and ÷4 copies are produced — SETTLED: an int16 pair average
+
+The builder is `fmodextinput.prx` **`0x1320`** — a function with no frame pointer, which is why
+earlier prologue scans walked past it. It was found by aligning a disassembly on a known instruction
+(`cmp dword ptr [rdi + 0x78], r8d` at `0x1325`) and stepping the start offset until it decoded, which
+is the technique in the method note.
+
+```
+0x1322  r8d = [rdi]                          ; the sample's length
+0x1325  cmp [rdi + 0x78], r8d ; jle          ; keep the running maximum
+0x1340  len/2 -> [rdi+0x28], [rdi+0x40]      ; the halved copy's length
+0x134d  len/4 -> [rdi+0x50], [rdi+0x68]      ; and the quartered one's
+0x13ae  esi = (int16)src[2i]
+0x13b9  edx = (int16)src[2i | 2]             ; the next frame of that channel
+0x13bd  edx += esi
+0x13f4  ebx = edx; ebx >>>= 31; ebx += edx; ebx >>= 1
+0x13fd  dst[i] = (int16)ebx
+```
+
+So each copy is a **plain average of adjacent frames**, which is what `decimateBy2` already did. Two
+refinements come out of the code:
+
+- The `| 2` rather than `+ 1` is because the buffer is **interleaved stereo** — `2i` and `2i|2` are
+  consecutive frames of the *same* channel, and `0x1400`-`0x1429` repeats the whole thing on the odd
+  elements for the other. Per channel it is exactly `(a + b) / 2`.
+- ⚠️ **The arithmetic is int16 and rounds toward zero.** The `shr` by one after adding the sign bit
+  is a signed halve that only works because the store keeps the low 16 bits, so every output lands
+  back on the sample grid. `(a + b) * 0.5` in floats differs by under an LSB — still a difference the
+  brief cares about, and `decimateBy2` now does it the engine's way.
+
+⚠️ **`[rdi + 0x78]` is a running maximum of sample lengths, not one sample's length.** That matters
+beyond this question: the stack loop at `0x1b11` scales `Params[2]` by the same field, so the random
+start offset is a fraction of *the largest sample the instrument has loaded*, not of the one being
+played. Question 12 was reasoning about it as a per-slot length; it is not.
+

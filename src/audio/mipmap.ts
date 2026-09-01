@@ -37,14 +37,31 @@ export function mipLevelFor(playbackRate: number): number {
 }
 
 /**
- * ⚠️ **UNMEASURED: the filter used to build the copies.**
+ * **MEASURED: the copies are a pair average.**
  *
- * The PRX only *reads* the three pointers; whatever fills them is on the eboot
- * side and has not been found (open question 5b). Averaging pairs is the cheap
- * conventional choice and is what this uses. Dropping every other frame would
- * alias, and a proper half-band filter would be cleaner than the game most
- * likely is -- both are wrong in a direction, and this one is at least the
- * middle. Swap it here when 5b closes; nothing else needs to change.
+ * The builder is `fmodextinput.prx` `0x1320`, and it is a plain average of
+ * adjacent frames:
+ *
+ * ```
+ * 0x1340  len/2 -> [rdi+0x28], [rdi+0x40]      ; the halved copy's length
+ * 0x134d  len/4 -> [rdi+0x50], [rdi+0x68]      ; and the quartered one's
+ * 0x13ae  esi = (int16)src[2i]
+ * 0x13b9  edx = (int16)src[2i | 2]             ; the next frame of that channel
+ * 0x13bd  edx += esi
+ * 0x13f4  ebx = edx; ebx >>>= 31; ebx += edx; ebx >>= 1
+ * 0x13fd  dst[i] = (int16)ebx
+ * ```
+ *
+ * The `| 2` rather than `+ 1` is because the buffer is **interleaved stereo**:
+ * elements `2i` and `2i|2` are consecutive frames of the same channel, and
+ * `0x1400`-`0x1429` repeats the whole thing on the odd elements for the other.
+ * Per channel it is exactly `(a + b) / 2`.
+ *
+ * ⚠️ **The arithmetic is int16 and rounds toward zero.** The `shr` by one after
+ * adding the sign bit is a signed halve that works because only the low 16 bits
+ * are kept, so the result lands back on the sample grid. `(a + b) * 0.5` in
+ * floats differs by under an LSB, which is still a difference the brief cares
+ * about.
  *
  * The `.smp` files almost certainly hold level 0 only: they are plain RIFF with
  * a single `data` chunk, and their `smpl` loop points land where a loop belongs
@@ -54,7 +71,18 @@ export function mipLevelFor(playbackRate: number): number {
 export function decimateBy2(data: Float32Array): Float32Array {
   const out = new Float32Array(data.length >> 1);
   for (let i = 0; i < out.length; i += 1) {
-    out[i] = (data[i * 2] + data[i * 2 + 1]) * 0.5;
+    // The engine averages the pair in **int16**, not in floats:
+    //
+    //   esi = (int16)src[2i]; edx = (int16)src[2i|2]; edx += esi
+    //   ebx = edx; ebx >>>= 31; ebx += edx; ebx >>= 1     ; toward zero
+    //   dst[i] = (int16)ebx
+    //
+    // so the result lands on the sample grid, rounded toward zero rather than
+    // to nearest. The difference from `(a + b) * 0.5` is under one LSB, but the
+    // brief asks for bit-exact sample data and this is what bit-exact means
+    // here.
+    const sum = Math.round(data[i * 2] * 32768) + Math.round(data[i * 2 + 1] * 32768);
+    out[i] = Math.trunc(sum / 2) / 32768;
   }
   return out;
 }

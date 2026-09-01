@@ -119,21 +119,6 @@ Related and unresolved: **`basenote` and `Splitnotes` may not use the same numbe
 annotates `basenote` as MIDI note numbers and `Splitnotes` as piano key numbers — 20 apart. Our
 key-split logic compares them directly, so one of those annotations has to give.
 
-## 5b. How the ÷2 and ÷4 sample copies are produced — NEW
-
-The sampler reads pre-decimated copies of every sample above pitch ratio 2.0 and 4.0 (see the PRX
-section of [sequencer-data-model.md](sequencer-data-model.md)). The slot descriptor holds three
-pointers; **what fills them is not known**, and it decides how our high notes sound:
-
-- if the `.smp` resources carry the levels, we just read them — check whether a sample's byte length
-  exceeds its frame count × 2, which would be the extra levels;
-- if the game builds them at load, we must match the decimation filter. Plain frame-dropping,
-  averaging pairs, and a proper half-band filter all sound different at the ÷4 level.
-
-**Anchor**: the loader is on the eboot side, near the `RSample` load at `v0x1c38aa` and the preload
-worker `v0x1c37f0` — look for a pass that allocates roughly 1.75× a sample's size (1 + ½ + ¼) and
-writes three pointers 40 bytes apart into a 152-byte slot.
-
 ## 6. `ReverbSetting` → which reverb — **it is the GAME's own reverb, and it can be read**
 
 The question was "which FMOD DSP?". The answer is none of them: **the reverb is game code**, so it
@@ -535,7 +520,15 @@ which is precisely what `Params[2] = 1.000` with `Numstack` 1 produces, and six 
 set exactly that. The repair is worth **11.6 dB** of drum kit and is not in doubt as a description of
 what sounds right; it is in doubt as a description of the engine.
 
-**The reconciliation has to be `[slot + 0x78]`.** If that field is the *loop* length rather than the
+**`[slot + 0x78]` is now known, and it is not what question 12 assumed.** `0x1325` keeps it as a
+**running maximum of sample lengths** (`cmp` then `jle`, updating only upward), written by the mipmap
+builder at `0x1320` — see *5b* in [answered-questions.md](answered-questions.md). So `Params[2]`
+scales a fraction of *the largest sample the instrument has loaded*, not of the one being played.
+That is stranger than a per-slot length, and it does not by itself rescue the drums: `a_kit_1`'s
+largest sample is 35,128 frames, so a `Params[2]` of 1.000 would still start a kick anywhere inside
+three quarters of a second.
+
+**The old reconciliation, now ruled out.** If that field is the *loop* length rather than the
 sample length, it is zero for the loopless percussion samples and the offset vanishes for exactly the
 instruments that would otherwise break -- and the code and the ear agree again. What is known: the
 slot record is `0x98` bytes and starts at `+0x78`, twelve bytes before the `+0x84` that the eboot's

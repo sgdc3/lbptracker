@@ -156,3 +156,17 @@ test('mipping beats plain linear at both thresholds', () => {
   // that is the point of keeping the measurement here: when 5b closes, this
   // test says whether the new filter is actually better.
 });
+
+test('the halved copy is the engine’s int16 pair average', () => {
+  // fmodextinput.prx 0x13ae-0x13fd: sum the pair as int16, halve toward zero,
+  // store back as int16. The float `(a + b) * 0.5` differs on odd sums.
+  const q = (n: number) => n / 32768;
+  const src = new Float32Array([q(3), q(4), q(-3), q(-4), q(1), q(2)]);
+  const out = decimateBy2(src);
+  assert.equal(out.length, 3);
+  assert.equal(out[0], q(3), '(3 + 4) / 2 truncates to 3, not 3.5');
+  assert.equal(out[1], q(-3), 'and (-3 + -4) / 2 to -3, toward zero rather than down');
+  assert.equal(out[2], q(1), '(1 + 2) / 2 -> 1');
+  // Every output sits on the int16 grid, which is the point.
+  for (const v of out) assert.equal(v * 32768, Math.round(v * 32768));
+});
