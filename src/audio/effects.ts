@@ -276,7 +276,7 @@ export class Reverb {
    */
   private readonly normaliseCombs: boolean;
 
-  constructor(sampleRate: number, preset: readonly number[], normaliseCombs = false) {
+  constructor(sampleRate: number, preset: readonly number[], normaliseCombs = true) {
     this.normaliseCombs = normaliseCombs;
     const ms = (v: number) => Math.max(1, Math.round((v / 1000) * sampleRate));
     const row = preset[PRESET_SLOT.tapSet];
