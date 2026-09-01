@@ -266,10 +266,27 @@ export interface ScheduledNote {
   /** Index into the sequencer's `tracks`. */
   readonly track: number;
   readonly guid: number;
-  /** The note record's pitch field, **before** the scale quantiser. */
+  /** The first control point's pitch, **before** the scale quantiser. */
   readonly pitch: number;
   readonly volume: number;
   readonly timbre: number;
+  /**
+   * Every control point, in step order, **relative to `step`**.
+   *
+   * ⚠️ A note is a chain, not a value: the engine glides linearly between
+   * consecutive points, and that glide is the sequencer's pitch bend. **53.9%
+   * of the corpus's notes have more than one point** and 6.7% bend in pitch, so
+   * a player that reads only the first is wrong more often than it is right --
+   * which is exactly what an earlier version of this did.
+   */
+  readonly points: readonly {
+    readonly step: number;
+    readonly pitch: number;
+    readonly volume: number;
+    readonly timbre: number;
+  }[];
+  readonly hasPitchAutomation: boolean;
+  readonly hasVolumeAutomation: boolean;
 }
 
 /**
@@ -293,6 +310,14 @@ export function schedule(sequencer: Sequencer): ScheduledNote[] {
         pitch: first.pitch,
         volume: first.volume,
         timbre: first.timbre,
+        points: note.points.map((p) => ({
+          step: p.step - first.step,
+          pitch: p.pitch,
+          volume: p.volume,
+          timbre: p.timbre,
+        })),
+        hasPitchAutomation: note.hasPitchAutomation,
+        hasVolumeAutomation: note.hasVolumeAutomation,
       });
     }
   });

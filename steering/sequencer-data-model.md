@@ -1428,7 +1428,23 @@ voice.panSlide    = (modNext/15       - voice.pan   ) / span
 ```
 
 and when there is no next record it writes **zero** to all three. So a note glides linearly between
-its control points and holds flat otherwise — which is exactly the "records are control points"
+its control points and holds flat otherwise.
+
+**This is the sequencer's pitch bend, and it is not a garnish — measured over the corpus's
+2,027,633 notes:**
+
+| | notes | share |
+|---|---|---|
+| more than one control point | 1,092,680 | **53.9%** |
+| pitch automation (a bend) | 135,718 | 6.7% |
+| volume automation | 104,456 | 5.2% |
+| timbre automation | 79,399 | 3.9% |
+
+Up to **48 control points** on one note, bends up to **95 semitones** wide, median bend length two
+steps. ⚠️ A player that reads only `points[0]` is wrong on **more than half** of all notes — which
+is exactly what `schedule()` did until this was measured. The glide is **linear in semitones**, then
+exponentiated: the engine ramps `voice.pitch` and only afterwards feeds it to `exp2f`, so
+interpolating the playback rate instead sags in the middle of every bend — which is exactly the "records are control points"
 model we recovered from the corpus, seen from the engine's side. **The amplitude envelope is
 separate from this and multiplies it**; the ramps carry the authored automation, `Params[11..14]`
 carries the instrument's own shape.

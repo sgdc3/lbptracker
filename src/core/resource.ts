@@ -28,6 +28,12 @@ export interface Resource {
   /** Four-character magic, e.g. "LVLb". */
   readonly magic: string;
   readonly revision: Revision;
+  /** Branch id and revision, a separate pair from the head word's subVersion. */
+  readonly branchId: number;
+  readonly branchRevision: number;
+  /** See `COMPRESSED_INTEGERS` in serializer.ts -- this changes how to read everything. */
+  readonly compressionFlags: number;
+  readonly isCompressed: boolean;
   /** Offset of the dependency table, which is also the end of the chunk data. */
   readonly dependencyTableOffset: number;
   readonly chunks: readonly ResourceChunk[];
@@ -66,6 +72,17 @@ export async function loadResource(
   const revision = new Revision(reader.u32());
   const dependencyTableOffset = reader.u32();
 
+  // ⚠️ These three sit between the dependency-table offset and the chunk table,
+  // and the reader used to jump straight past them. `compressionFlags` is not
+  // optional detail: with its COMPRESSED_INTEGERS bit set, every 32- and 64-bit
+  // integer in the payload is a LEB128 varint instead of four bytes, so a
+  // deserialiser that does not know it reads the whole stream wrong.
+  const branchId = reader.u16();
+  const branchRevision = reader.u16();
+  const compressionFlags = reader.u8();
+  const isCompressed = reader.u8() !== 0;
+
+  // 0x12 is a flag that is always 0x0001; the chunk count follows it.
   reader.position = 0x14;
   const chunkCount = reader.u16();
 
@@ -118,5 +135,8 @@ export async function loadResource(
     );
   }
 
-  return { magic, revision, dependencyTableOffset, chunks, data: out };
+  return {
+    magic, revision, branchId, branchRevision, compressionFlags, isCompressed,
+    dependencyTableOffset, chunks, data: out,
+  };
 }

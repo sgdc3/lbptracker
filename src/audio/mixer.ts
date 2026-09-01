@@ -37,6 +37,31 @@ export interface SampleBuffer {
   readonly mips?: readonly MipChain[];
 }
 
+/**
+ * One control point of a note's automation.
+ *
+ * The engine holds a note's pitch, volume and pan as **(value, slide) pairs**
+ * and rewrites both at every control point, so a note glides linearly from one
+ * point to the next -- see `sub_0x38e0`. That glide is the sequencer's pitch
+ * bend, and it is not a rare flourish: **53.9% of the corpus's 2,027,633 notes
+ * carry more than one control point**, and 6.7% bend in pitch, by up to 95
+ * semitones.
+ */
+export interface AutomationPoint {
+  /** Frames from the voice's start. */
+  readonly frame: number;
+  /**
+   * Semitones relative to the note's base pitch.
+   *
+   * ⚠️ Interpolated **linearly in semitones**, not in playback rate. The engine
+   * ramps `voice.pitch` and only then feeds it to `exp2f`, so a bend is
+   * exponential in rate; linear-in-rate would sag in the middle of every glide.
+   */
+  readonly pitch: number;
+  /** Linear gain relative to the note's base volume. */
+  readonly gain: number;
+}
+
 export interface VoiceSpec {
   readonly sample: SampleBuffer;
   /** Sample frames advanced per output frame. */
@@ -105,6 +130,13 @@ export interface VoiceSpec {
    * modulate differently -- pass `random` to make a render reproducible.
    */
   readonly lfos?: readonly [LfoSettings, LfoSettings, LfoSettings];
+  /**
+   * The note's control points, in frame order and relative to its start.
+   *
+   * A single point, or none, means a flat note. Anything past the last point
+   * holds its value, which is what the engine does when it runs out of records.
+   */
+  readonly automation?: readonly AutomationPoint[];
   /** Injected so an offline render can be deterministic. */
   readonly random?: () => number;
 }
@@ -123,6 +155,9 @@ class Voice {
   /** Which mip this voice reads, fixed by its rate. Unused without `mips`. */
   private readonly mipLevel: number;
   private readonly env = new Envelope();
+  /** Frames rendered since this voice started, for the automation cursor. */
+  private elapsed = 0;
+  private autoIndex = 0;
   private readonly lfo: readonly [Lfo, Lfo, Lfo];
   // The filter envelope and one ladder per channel -- the engine keeps two,
   // which is what its ten per-voice state floats are.
@@ -178,6 +213,7 @@ class Voice {
     const envelope = this.spec.envelope;
     const filter = this.spec.filter;
     const lfos = this.spec.lfos;
+    const automation = this.spec.automation;
     // With the engine sampler off the voice falls back to `interpolate` over
     // the full-rate channels, which is the A/B path: it is how a different
     // interpolator can be heard against the game's own.
@@ -236,6 +272,32 @@ class Voice {
       let panLeft = this.left;
       let panRight = this.right;
       let rate = playbackRate;
+
+      // The note's own bend and volume glide, ahead of the LFOs, which
+      // multiply on top of it exactly as the engine's do.
+      if (automation && automation.length > 0) {
+        while (
+          this.autoIndex + 1 < automation.length &&
+          automation[this.autoIndex + 1].frame <= this.elapsed
+        ) {
+          this.autoIndex += 1;
+        }
+        const from = automation[this.autoIndex];
+        const to = automation[this.autoIndex + 1];
+        let semitones = from.pitch;
+        let gain = from.gain;
+        if (to) {
+          const span = to.frame - from.frame;
+          // A zero-length segment would divide by zero; two records on the same
+          // step is authoring debris, not a glide, so take the later value.
+          const t = span > 0 ? (this.elapsed - from.frame) / span : 1;
+          semitones += (to.pitch - from.pitch) * t;
+          gain += (to.gain - from.gain) * t;
+        }
+        if (semitones !== 0) rate *= 2 ** (semitones / 12);
+        fade *= gain;
+      }
+      this.elapsed += 1;
       if (lfos) {
         for (let n = 0; n < 3; n += 1) {
           this.lfo[n].advance(this.secondsPerFrame, lfos[n].rate * LFO_RATE_SCALE[n]);

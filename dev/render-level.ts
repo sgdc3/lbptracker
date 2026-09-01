@@ -122,6 +122,16 @@ for (const event of events) {
     spread: p[LFO_PARAMS[n].spread].x,
   });
 
+  // The note's control points as mixer automation: semitones and gain relative
+  // to the first point, at frame offsets. A one-point note gives one entry and
+  // the voice stays flat.
+  const base = event.points[0];
+  const automation = event.points.map((p) => ({
+    frame: Math.round(p.step * framesPerStep),
+    pitch: quantise(p.pitch, track.scale) - note,
+    gain: base.volume > 0 ? p.volume / base.volume : 1,
+  }));
+
   const spec: VoiceSpec = {
     sample: slot.wav,
     playbackRate: pitchRatio(definition, note, seq.tempo) * (slot.wav.sampleRate / RATE),
@@ -140,6 +150,7 @@ for (const event of events) {
       envelope: evaluateAdsr(p, ADSR_PARAMS_B, 0),
     },
     lfos: [lfo(0), lfo(1), lfo(2)],
+    automation,
   };
   mixer.play(spec);
   played += 1;
