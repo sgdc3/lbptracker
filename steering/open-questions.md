@@ -751,10 +751,18 @@ off; the renderer reads `LBP_VOICES`. **This belongs in the UI** as a number rat
 — 32 is the game's and is the default, and letting a composer try 16 or 64 costs nothing, but
 raising it is no longer faithful and should say so.
 
-WARNING: **it is not the cause of every density complaint.** On the 1:25-1:40 window of seq 737099
-it cuts 248 of 1,684 notes, and the losers are `robot` (110), `a_kit_1` (81), `pulse_wave` (22),
-`musicbox` (17) and `baiyon_drums_1` (13) — **`ray_gun` is untouched**. Overall RMS moves 0.1324 to
-0.1304.
+WARNING: **it fixed nothing audible, and that is the point of recording it.** The cap went in while
+chasing a report that "the aggressive synth with long notes is too loud at 1:30, only there". On
+that window it cuts 248 of 1,684 notes -- `robot` (110), `a_kit_1` (81), `pulse_wave` (22),
+`musicbox` (17), `baiyon_drums_1` (13), with `ray_gun` untouched -- and overall RMS moves 0.1324 to
+0.1304. **A listener compared the two renders and heard no difference.** The cap stays because it is
+the engine's, not because it solved anything.
+
+**So the 1:30 report is still open**, and the cheap leads are used up: it is not the gain chain
+(measured against `0x23c1`-`0x2408`, every factor accounted for), not polyphony, not the stack
+layers. What has not been looked at is why that passage in particular -- the next step is to find
+which instrument it actually is by rendering the window one instrument at a time and asking, rather
+than reasoning from the parameter tables.
 
 ### Stack layers are the same sample, not different slots
 
