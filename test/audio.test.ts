@@ -222,26 +222,59 @@ test('samplesPerStep converts tempo to frames', () => {
 
 // --------------------------------------------------------------------- splits
 
-test('a single-stack instrument always uses slot 0', () => {
-  const inst = instrument({ numStack: 1 });
+test('a one-slot instrument sends every note to slot 0', () => {
+  // The game's own shape for these: bounds 87, then zeros.
+  const inst = instrument({ splitNotes: [87, 0, 0, 0, 0, 0, 0, 0, 0] });
   for (const note of [0, 40, 60, 127]) {
-    assert.equal(resolveSlot(inst, note), 0);
+    assert.equal(resolveSlot(inst, note, 1), 0);
   }
 });
 
-test('key splits select by zone and clamp outside them', () => {
+test('key splits are descending inclusive upper bounds — the real piano', () => {
+  // Measured from the game's piano.rinst: bounds 87, 66, 54, 40, 30 over base
+  // notes 84, 72, 60, 48, 36.
   const inst = instrument({
-    slots: [slot(), slot(), slot()],
-    numStack: 3,
-    splitNotes: [36, 48, 60, 72, 0, 0, 0, 0, 0],
+    slots: [slot({ baseNote: 84 }), slot({ baseNote: 72 }), slot({ baseNote: 60 }),
+            slot({ baseNote: 48 }), slot({ baseNote: 36 })],
+    splitNotes: [87, 66, 54, 40, 30, 0, 0, 0, 0],
   });
-  assert.equal(resolveSlot(inst, 36), 0);
-  assert.equal(resolveSlot(inst, 47), 0);
-  assert.equal(resolveSlot(inst, 48), 1);
-  assert.equal(resolveSlot(inst, 59), 1);
-  assert.equal(resolveSlot(inst, 60), 2);
-  assert.equal(resolveSlot(inst, 0), 0, 'below every zone clamps to the first');
-  assert.equal(resolveSlot(inst, 127), 2, 'above every zone clamps to the last');
+  const at = (n: number) => resolveSlot(inst, n, 5);
+
+  assert.equal(at(87), 0, 'top of zone 0');
+  assert.equal(at(67), 0, 'bottom of zone 0');
+  assert.equal(at(66), 1, 'top of zone 1');
+  assert.equal(at(55), 1);
+  assert.equal(at(54), 2);
+  assert.equal(at(41), 2);
+  assert.equal(at(40), 3);
+  assert.equal(at(31), 3);
+  assert.equal(at(30), 4, 'top of the last zone');
+  assert.equal(at(0), 4, 'below every bound stays in the last zone');
+  assert.equal(at(127), 0, 'above every bound stays in the first');
+
+  // Every zone plays its sample downward, which is what a sampler should do.
+  for (const note of [87, 66, 54, 40, 30]) {
+    const chosen = inst.slots[at(note)];
+    assert.ok(
+      note <= chosen.baseNote + 3,
+      `note ${note} should not be pitched far above base ${chosen.baseNote}`,
+    );
+  }
+});
+
+test('key splits: bass_guitar reads the same way', () => {
+  // bounds 87, 42, 31, 20 over bases 48, 36, 28, 28.
+  const inst = instrument({
+    slots: [slot({ baseNote: 48 }), slot({ baseNote: 36 }),
+            slot({ baseNote: 28 }), slot({ baseNote: 28 })],
+    splitNotes: [87, 42, 31, 20, 0, 0, 0, 0, 0],
+  });
+  assert.equal(resolveSlot(inst, 43, 4), 0);
+  assert.equal(resolveSlot(inst, 42, 4), 1);
+  assert.equal(resolveSlot(inst, 32, 4), 1);
+  assert.equal(resolveSlot(inst, 31, 4), 2);
+  assert.equal(resolveSlot(inst, 21, 4), 2);
+  assert.equal(resolveSlot(inst, 20, 4), 3);
 });
 
 // --------------------------------------------------------------------- mixing

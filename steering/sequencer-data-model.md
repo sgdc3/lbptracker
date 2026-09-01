@@ -80,9 +80,8 @@ level parser must not assume every `PSequencer` is one.
 the element callback) allocates `count * 4`. The same mechanism gives 1 for `Name`, which is a
 string — so the multiplier is the element size, not a coincidence.
 
-The **internal layout of that 4-byte record** is described under "The note record" below. It is
-not ours: it comes from ennuo's toolkit and we have not yet confirmed it against the game. Treat it
-as a strong hypothesis — see [open-questions.md](open-questions.md), question 1.
+The **internal layout of that 4-byte record** is described under "The note record" below, and is
+confirmed against 1.6 million real notes.
 
 ## RInstrument — serialiser at `v0xc68a70`
 
@@ -92,15 +91,30 @@ numbered fields rather than nested arrays.
 | base name | count | member stride | what it is |
 |---|---|---|---|
 | `Samples_0..7` | 8 | `0x10` from `+0x48` | the sample-slot structs below |
-| `SampleGuids_0..7` | 8 | `4` from `+0xc8` | u32 GUIDs → the actual audio |
+| `SampleGuids_0..7` | 8 | `4` from `+0xc8` | GUIDs → RIFF/WAV in the FARCs (see game-assets.md) |
 | `Splitnotes_*` | 9 | from `+0xe8` | key-split boundaries between the 8 slots |
-| `Numstack` | 1 | | how many slots are actually in use |
+| `Numstack` | 1 | | ⚠️ **not** the used-slot count — see below |
 | `Params[i]_*` | n | two f32 at `+0x1e8`/`+0x1ec` per index | per-slot parameters, meaning TBD |
 | `Arpeggio_*` | n | | arpeggiator pattern |
 | `Arpeggiate` | 1 | bool | arpeggiator on/off |
 
 `Splitnotes` having **9** entries for **8** slots is the classic fencepost of a key-split sampler:
-8 zones need 9 boundaries. Treat it that way until something contradicts it.
+8 zones need 9 boundaries.
+
+**Measured across the game's 68 `.rinst` files** (`tools/ExtractGuid.java` pulls them out):
+
+- `Splitnotes` is **descending**, and `splitNotes[0]` is **87 in every single instrument**. Unused
+  trailing entries are 0.
+- ⚠️ **`Numstack` is NOT the number of slots in use.** It matches the used-slot count in only 14 of
+  68. `electric_piano` uses one sample with `Numstack` 2, `ghost` one with 3, and most 8-slot drum
+  kits carry 1. It is a voice-stacking count — how many voices to layer per note. To find the slots
+  that exist, test `SampleGuids[i] != 0`.
+- ⚠️ **The zone→slot rule is still unresolved**; see open question 1. The obvious reading puts a
+  zone's own base note inside it only 56.8% of the time.
+- `basenote` **is a MIDI note number**, settled: the piano's five slots read 84, 72, 60, 48, 36 and
+  its `SampleGuids` resolve to `piano_c6` … `piano_c2`. 84 = C6.
+- 68 instruments, 47 of them multisampled, 274 pitched slots against 4 unpitched, and **not one**
+  with `fitbpm` set.
 
 ## The sample slot — serialiser at `v0xcc0e90`
 

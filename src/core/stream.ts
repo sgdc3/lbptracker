@@ -78,6 +78,37 @@ export class ByteReader {
     return this.view.getFloat32(this.need(4), false);
   }
 
+  /**
+   * LEB128 varint: 7 bits per byte, least significant group first, high bit
+   * marks continuation.
+   *
+   * ⚠️ **Most integers in LBP's serialised structs are varints, not the
+   * fixed-width `u32`/`i32` above.** The resource *container* header is
+   * fixed-width; the payload inside it is not. Measured by hand-decoding
+   * `piano.rinst` -- see steering/sequencer-data-model.md for the worked
+   * example. Reading a varint field as `u32` silently desynchronises
+   * everything after it.
+   */
+  varuint(): number {
+    let result = 0;
+    let shift = 1;
+    for (let i = 0; i < 5; i += 1) {
+      const byte = this.u8();
+      // Multiply rather than shift: `<<` is 32-bit signed and the fifth group
+      // would overflow into the sign bit.
+      result += (byte & 0x7f) * shift;
+      if ((byte & 0x80) === 0) return result;
+      shift *= 128;
+    }
+    throw new RangeError(`varint longer than 5 bytes at ${this.cursor - 5}`);
+  }
+
+  /** Zigzag-decoded signed varint: what the game's `s32` fields use. */
+  varint(): number {
+    const raw = this.varuint();
+    return (raw >>> 1) ^ -(raw & 1);
+  }
+
   /** A view onto `n` bytes, without copying. */
   slice(n: number): Uint8Array {
     const at = this.need(n);
