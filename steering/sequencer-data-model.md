@@ -441,6 +441,63 @@ Each `RInstrument` array is preceded in the stream by an explicit i32 count.
 comments cannot be right if the two are compared directly at playback, and our key-split logic
 compares them. See [open-questions.md](open-questions.md).
 
+## PSequencer → the audio engine — measured at `v0x1c6250`
+
+One small function pushes the whole sequencer part into a global audio-state block, and it settles
+several things that were guesses.
+
+| PSequencer field | what the game does with it |
+|---|---|
+| `Tempo` `+0x10` | copied verbatim |
+| **`Swing` `+0x14`** | **`vminss` against `0.99`** (`v0xe60fe4`) — so `Swing` is a **normalised 0..1 ratio**, clamped just below 1. Not a percentage, not a fraction of a step |
+| `EchoFeedback` `+0x18` | copied verbatim |
+| **`EchoTime` `+0x1c`** | **multiplied by `0.5`** (`v0xe60fe8`) before it reaches the DSP |
+| `EchoMix` `+0x20` | copied verbatim |
+| **`Volume[]`** | each **multiplied by `0.75`** (`v0xe60fec`) — a fixed headroom factor |
+| `ReverbSetting` `+0x24` | passed as an int to `v0x3e7470`, which tail-calls the DSP block |
+
+⚠️ **The volume loop reads EIGHT floats, from `+0x34` to `+0x50`, not six.** Our schema puts
+`Volume[0..5]` at `+0x34`–`+0x48` and `PlayHead` at `+0x4c`, so either there are 8 mixer slots with
+only 6 serialised, or one of those two offsets is wrong. Unresolved; do not build on either reading
+until it is checked.
+
+## The reverb preset table — located and dumped
+
+`ReverbSetting` does **not** index the presets directly. `v0x3fd4c0`:
+
+```
+index  = remap[ReverbSetting]        remap table at v0x1062830, 8 entries: 3 6 8 5 11 2 0 0
+record = presets + index * 0x2c      preset table at v0x1062620, 12 records of 44 bytes
+DSP::setParameter(dsp, 1..10, ...)   from the record, ints converted to float
+```
+
+The two tables are adjacent — the presets end exactly where the remap begins, which is what fixes
+the counts at 12 and 8.
+
+| preset | p1 | p2 | p3 | p4 | p5 | p6 | p7 | p8 | p9 | p10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0, 1 | −350 | −200 | 0 | 3 | 25 | 30 | 1 | 20 | 1 | 12000 |
+| 2 | −160 | −120 | 8 | 5 | 30 | 70 | 1 | 20 | 1 | 7000 |
+| 3 | −200 | −100 | 10 | 1 | 6 | 1 | 1 | 20 | 1 | 5000 |
+| 4 | −350 | −300 | 4 | 2 | 25 | 60 | 1 | 20 | 1 | 5000 |
+| 5 | −150 | −150 | 2 | 1 | 12 | 5 | 1 | 20 | 1 | 5000 |
+| 6 | −100 | −700 | 13 | 0 | 12 | 5 | 1 | 20 | 1 | 5000 |
+| 7 | −160 | −200 | 18 | 5 | 25 | 10 | 1 | 400 | 1 | 3000 |
+| 8 | −250 | −100 | 16 | 3 | 20 | 15 | 1 | 20 | **0** | 5000 |
+| 9 | −130 | −170 | 18 | 3 | 20 | 15 | 1 | 20 | 1 | 10000 |
+| 10 | −240 | −200 | 2 | 1 | 10 | 10 | 1 | 20 | 1 | 8000 |
+| 11 | −280 | −60 | 4 | 5 | 50 | 45 | 1 | 100 | 1 | 10000 |
+
+Parameters 7 and 9 are set from **bytes tested against zero** — booleans. 1 and 2 are negative in
+the hundreds, which reads as **millibels**; 10 lands on 3000–12000, which reads as **Hz**.
+
+⚠️ **The parameter meanings are still unconfirmed, and the boolean slots argue against FMOD.**
+`FMOD_DSP_SFXREVERB`'s indices 7 and 9 are `REVERBLEVEL` and `DIFFUSION`, both floats — a boolean
+there makes no sense. That is evidence the sequencer's reverb is Sony's `aSfxDsp` plugin rather
+than FMOD's, which is the case [project-brief.md](project-brief.md) flags as "close, not
+identical". The numbers above are enough to reproduce the *preset choice*; matching the algorithm
+is a separate question.
+
 ## Runtime entry points (for further RE, not for the tracker)
 
 | what | address |
