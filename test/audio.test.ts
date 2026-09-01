@@ -130,9 +130,12 @@ test('resampling SNR: the reason linear is not the default', () => {
   );
 });
 
-test('the default interpolator is the band-limited one', () => {
-  assert.equal(DEFAULT_INTERPOLATOR, 'sinc8');
-  assert.equal(INTERPOLATORS[DEFAULT_INTERPOLATOR], sinc8);
+// The game's sampler (sub_0x3740 in fmodextinput.prx) is a two-tap lerp, so the
+// faithful default is `linear` even though it measures worst above. Locking it
+// down here stops it drifting back to whatever sounds nicest.
+test('the default interpolator is the one the game uses', () => {
+  assert.equal(DEFAULT_INTERPOLATOR, 'linear');
+  assert.equal(INTERPOLATORS[DEFAULT_INTERPOLATOR], linear);
 });
 
 // ------------------------------------------------------------------ pitch math
@@ -152,10 +155,21 @@ test('a semitone is the twelfth root of two', () => {
   assert.ok(Math.abs(pitchRatio(s, 49, 120) - 2 ** (1 / 12)) < 1e-12);
 });
 
-test('fineTune of 100 (assumed cents) equals one semitone', () => {
-  const tuned = pitchRatio(slot({ baseNote: 48, fineTune: 100 }), 48, 120);
+// fineTune is in SEMITONES: fmodextinput.prx adds it into the same sum as the
+// note and the root note before the one division by 12. The corpus agrees --
+// the game's own non-zero values run -0.17..+0.56, which is a sane fine-tune
+// range in semitones and a silent one in cents.
+test('fineTune of 1 equals one semitone', () => {
+  const tuned = pitchRatio(slot({ baseNote: 48, fineTune: 1 }), 48, 120);
   const semitone = pitchRatio(slot({ baseNote: 48 }), 49, 120);
   assert.ok(Math.abs(tuned - semitone) < 1e-12);
+});
+
+test('a real fineTune from the corpus is a fraction of a semitone', () => {
+  // baiyon_city_guildford's largest offset, 0.5625 semitones = 56 cents.
+  const ratio = pitchRatio(slot({ baseNote: 48, fineTune: 0.5625 }), 48, 120);
+  assert.ok(Math.abs(ratio - 2 ** (0.5625 / 12)) < 1e-12);
+  assert.ok(ratio > 1.03 && ratio < 1.04, `got ${ratio}`);
 });
 
 test('an unpitched slot ignores the note entirely', () => {

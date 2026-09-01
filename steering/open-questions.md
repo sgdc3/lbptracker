@@ -4,19 +4,20 @@ Read before planning a work session. Everything here is genuinely unknown or unc
 here is a guess dressed up as a fact. When one gets resolved, move the answer into the descriptive
 steering file it belongs to and delete the entry.
 
-**Nothing here blocks the build any more**, but question 1 changes what the tracker sounds like on
-every multisampled instrument, so treat it as the next real piece of work.
+**Nothing here blocks the build.** `SampleGuids` → audio, the last blocking unknown, was resolved on
+2026-09-01: sequencer samples are plain RIFF/WAV files in the FARC archives, addressed by GUID
+through the game's FileDB. See [game-assets.md](game-assets.md). The note format, the container, the
+level walk and the asset chain are all measured — import and playback can both be built.
 
-** `SampleGuids` -> audio, the last blocking unknown, was resolved
-on 2026-09-01: sequencer samples are plain RIFF/WAV files in the FARC archives, addressed by GUID
-through the game's FileDB. See [game-assets.md](game-assets.md). The note format, the container,
-the level walk and now the asset chain are all measured — import and playback can both be built.
+What remains below is fidelity work, ranked by how audible a mistake would be. **The envelope
+(inside question 8, `Params`) is the top item**: it is the difference between notes that decay like
+the game's and notes that do not, and it is now attackable, because the synthesiser turned out to be
+a 23 KB PRX rather than the 18 MB eboot.
 
-What remains below is fidelity work, ranked by how audible a mistake would be.
-
-Last re-ranked 2026-09-01, after analysing the toolkit and then measuring 1.6 million notes out of
-a 22-level corpus — see [lbp-modding-toolchain.md](lbp-modding-toolchain.md) for what came from
-whom, and [sequencer-data-model.md](sequencer-data-model.md) for the measurements.
+Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` — which closed question 5 and half of
+question 7, opened 5b, and rewrote what the state block's pointers mean. See
+[sequencer-data-model.md](sequencer-data-model.md) for the measurements and
+[lbp-modding-toolchain.md](lbp-modding-toolchain.md) for what came from whom.
 
 ---
 
@@ -63,15 +64,32 @@ Related and unresolved: **`basenote` and `Splitnotes` may not use the same numbe
 annotates `basenote` as MIDI note numbers and `Splitnotes` as piano key numbers — 20 apart. Our
 key-split logic compares them directly, so one of those annotations has to give.
 
-## 5. `finetune` units
+## 5. `finetune` units — RESOLVED, 2026-09-01: **semitones**
 
-`finetune` is an f32, which is consistent with cents *or* semitones. The pitch formula in
-[sequencer-data-model.md](sequencer-data-model.md) assumes cents and says so. The toolkit carries
-the field but never interprets it, so it is no help. Find the arithmetic in the playback path, or
-resolve it by ear against the game once the tracker can play a note.
+`sub_0x1c40` adds the slot's f32 into the same sum as the note and the root note, before the one
+division by 12 — same units, no scaling. `FINETUNE_PER_SEMITONE` is now 1.
 
-*(The other half of this question — the "unnamed third bool" in the sample slot — is resolved: the
-serialiser writes `fitbpm` twice to the same member. See the data-model file.)*
+The corpus agrees independently: the 23 distinct non-zero values the game's own instruments carry
+run **−0.17 … +0.56**. Read as semitones that is −17 to +56 cents, an ordinary fine-tune range; read
+as cents it would be five-thousandths of a semitone, which nobody would author.
+
+*(The other half of this question — the "unnamed third bool" in the sample slot — was already
+resolved: the serialiser writes `fitbpm` twice to the same member.)*
+
+## 5b. How the ÷2 and ÷4 sample copies are produced — NEW
+
+The sampler reads pre-decimated copies of every sample above pitch ratio 2.0 and 4.0 (see the PRX
+section of [sequencer-data-model.md](sequencer-data-model.md)). The slot descriptor holds three
+pointers; **what fills them is not known**, and it decides how our high notes sound:
+
+- if the `.smp` resources carry the levels, we just read them — check whether a sample's byte length
+  exceeds its frame count × 2, which would be the extra levels;
+- if the game builds them at load, we must match the decimation filter. Plain frame-dropping,
+  averaging pairs, and a proper half-band filter all sound different at the ÷4 level.
+
+**Anchor**: the loader is on the eboot side, near the `RSample` load at `v0x1c38aa` and the preload
+worker `v0x1c37f0` — look for a pass that allocates roughly 1.75× a sample's size (1 + ½ + ¼) and
+writes three pointers 40 bytes apart into a 152-byte slot.
 
 ## 6. `ReverbSetting` → which reverb
 
@@ -81,15 +99,26 @@ linked. Establish which one the sequencer's send feeds and, if it is SFXREVERB, 
 table. If it is the Sony plugin, accept an approximation — reversing a proprietary reverb is out of
 proportion to the payoff.
 
-## 7. FMOD's resampler quality and pan law — **now audible, not cosmetic**
+## 7. FMOD's pan law — the resampler half is ANSWERED
 
-Which interpolator `fmod_dsp_resampler.cpp` is configured to use, and what curve FMOD's 2D pan
-applies.
+**RESOLVED, 2026-09-01: the sampler interpolates linearly and mipmaps by octave.** It is not
+`fmod_dsp_resampler.cpp` at all — the sequencer's sampler is `sub_0x3740` in `fmodextinput.prx`, two
+taps on int16 scaled by `1/32768`, with the source switched to a ÷2 or ÷4 pre-decimated copy once the
+pitch ratio reaches 2.0 or 4.0. Read the disassembly and the constants in
+[sequencer-data-model.md](sequencer-data-model.md). Consequences already applied: the default
+interpolator is `linear`, and the mipmapping is a **new** thing to implement — it is what stops
+linear from sounding as bad as the table below says.
 
-**Why this was promoted.** The first listening test came back "extremely distorted, like dither" on
-a single note. It was the interpolator. Every shipped instrument sample is 22050 or 32000 Hz and
-plays on a 44100/48000 Hz device, so **every note is resampled** — this is not an edge case. SNR
-against an analytic sine, 22050 Hz source at `playbackRate` 0.5:
+**What remains open is the pan law**, and it is unchanged in urgency: one measurement prevents a
+stereo-image error across the entire project. Note `PInstrument.Pan` runs `0..1` centred at `0.5`,
+not `-1..+1`; equal-power is currently assumed in `panGains`. The anchor is now much better than it
+was: the renderer holds pan at voice record `+0x28` with its slide at `+0x34` and uses it to lerp
+four (lo, hi) pairs out of the instrument tail — decode those and the pan law falls out.
+
+---
+
+The measurement that promoted this question is kept below, because it is still the reason the
+choice matters. SNR against an analytic sine, 22050 Hz source at `playbackRate` 0.5:
 
 | source Hz | nearest | linear | cubic | sinc8 |
 |---|---|---|---|---|
@@ -98,17 +127,14 @@ against an analytic sine, 22050 Hz source at `playbackRate` 0.5:
 | **4000** | 8.0 | **19.0** | 32.0 | **72.0** |
 | 8000 | 2.3 | 7.7 | 10.8 | 43.1 |
 
-19 dB at 4 kHz is a 16% amplitude error, and a piano attack is full of 2–8 kHz. The default is now
-`sinc8` (8-tap Blackman-windowed sinc), and `test/audio.test.ts` guards the floor.
+19 dB at 4 kHz is a 16% amplitude error, and a piano attack is full of 2–8 kHz. `sinc8` was the
+default on the reasoning that it added least of its own character while the question was open.
 
-⚠️ **Clean is not the goal — matching the game is.** If FMOD Ex interpolates crudely, that
-roughness belongs in our output too, and `sinc8` would be *wrong* in the faithful direction. So this
-question is now on the critical path: measure what the engine does before tuning anything by ear
-against it.
-
-**The pan law** is the other half and is unchanged in urgency: one measurement prevents a
-stereo-image error across the entire project. Note `PInstrument.Pan` runs `0..1` centred at `0.5`,
-not `-1..+1`; equal-power is currently assumed in `panGains`.
+⚠️ **That reasoning was right and its conclusion was wrong**, which is worth keeping as a lesson:
+"adds least character" is a tiebreaker, not evidence, and it survived four sessions because nobody
+went and read the sampler. Clean was never the goal — matching the game is, and the game is linear.
+The table is now a statement about *how much* the mipmapping has to do, since without it linear
+would sit at 19 dB on exactly the notes that need it most.
 
 ## 8. Semantics of the remaining fields
 

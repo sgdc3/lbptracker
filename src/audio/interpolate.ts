@@ -6,10 +6,21 @@
  * unspecified, differs between engines, and is not FMOD's. See
  * steering/tracker-architecture.md.
  *
- * ⚠️ **Which one FMOD Ex actually uses is still open.** `sinc8` is the default
- * because it adds least of its own character, not because it is known to match.
- * Everything here is behind one signature so swapping is a one-line change and
- * an A/B is trivial.
+ * ⚠️ **The game's answer is `linear`, and it was measured.** The sequencer's
+ * sampler is not `fmod_dsp_resampler.cpp` at all -- it is `sub_0x3740` in
+ * `fmodextinput.prx`, and it is two taps:
+ *
+ * ```
+ * a = (float)d[i] / 32768;  b = (float)d[i + 1] / 32768
+ * out = a + (b - a) * frac
+ * ```
+ *
+ * What keeps that from sounding as rough as the SNR table below implies is the
+ * other half of the design: the game holds **three pre-decimated copies** of
+ * every sample and switches to the /2 copy once the pitch ratio reaches 2.0 and
+ * the /4 copy at 4.0, so the ratio actually fed to this lerp never exceeds 2.
+ * See steering/sequencer-data-model.md. **That mipmapping is not implemented
+ * here yet** -- until it is, high notes will alias more than the game's do.
  */
 
 /** The half-open loop region a voice is currently inside, if any. */
@@ -107,10 +118,10 @@ export const cubic: Interpolator = (data, position, loop) => {
  * 2-8 kHz. That is audible as broadband grunge, and it is what the first
  * listening test heard.
  *
- * ⚠️ This being better does NOT make it right. The goal is to match FMOD Ex,
- * not to be clean -- if the game's own sampler interpolates crudely, that
- * roughness is part of the sound we are reproducing. Open question 7 decides;
- * it just stopped being cosmetic.
+ * ⚠️ This being better does NOT make it right, and that caveat turned out to be
+ * the whole story: the game interpolates linearly. `sinc8` is kept for A/B
+ * listening and as the reference for how much the mipmapping has to buy back,
+ * but it is **not** the faithful choice.
  */
 const SINC_TAPS = 8;
 
@@ -150,7 +161,7 @@ export const INTERPOLATORS = { nearest, linear, cubic, sinc8 } as const;
 export type InterpolatorName = keyof typeof INTERPOLATORS;
 
 /**
- * ⚠️ Still a guess, but a better-founded one than `linear` was: it is the
- * option that adds least of its own character while open question 7 is open.
+ * **Measured, not chosen.** `sub_0x3740` in `fmodextinput.prx` is a two-tap
+ * lerp; anything smoother is our character, not the game's.
  */
-export const DEFAULT_INTERPOLATOR: InterpolatorName = 'sinc8';
+export const DEFAULT_INTERPOLATOR: InterpolatorName = 'linear';

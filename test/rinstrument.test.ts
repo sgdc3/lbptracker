@@ -158,6 +158,10 @@ test('every instrument the game ships parses, consuming its payload exactly', as
   let unpitchedSlots = 0;
   let multisamples = 0;
   let fitBpm = 0;
+  // `fineTune` is in semitones (measured in fmodextinput.prx, which adds it
+  // straight into the semitone sum). Tally the values so the corpus says how
+  // much that unit actually matters.
+  const fineTunes = new Set<number>();
 
   for (const name of files) {
     const resource = await loadResourceFile(path.join(RINST, name));
@@ -185,13 +189,15 @@ test('every instrument the game ships parses, consuming its payload exactly', as
       if (slot.pitched) pitchedSlots += 1;
       else unpitchedSlots += 1;
       if (slot.fitBpm) fitBpm += 1;
+      if (slot.fineTune !== 0) fineTunes.add(slot.fineTune);
     }
   }
 
   console.log(
     `    ${files.length} instruments, ${multisamples} multisampled, ` +
       `${pitchedSlots} pitched / ${unpitchedSlots} unpitched slots, ` +
-      `${fitBpm} with fitBpm`,
+      `${fitBpm} with fitBpm, ` +
+      `non-zero fineTune: ${fineTunes.size ? [...fineTunes].join(' ') : 'none'}`,
   );
   console.log(`    revisions: ${[...revisions].sort().join(', ')}`);
   assert.ok(files.length >= 60, 'expected the full instrument set');

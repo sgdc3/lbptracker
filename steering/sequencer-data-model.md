@@ -448,7 +448,9 @@ wrong**: `v0x1c5670` is *inside* `v0x1c5640`, which is the sequencer's **playbac
 
 - fetches the audio-state block (`v0x3fbf20`, which is just `lea rax, [rip+…]` — a fixed global),
 - calls the generic play-sound `v0x3de390` with a constant `1.5`,
-- manages audio handles in the state block at `+0x1ad0`, `+0x1ad8`, `+0x1ae0`, `+0x1af0`, `+0x1af8`,
+- fills the state block at `+0x1ad0`, `+0x1ad8`, `+0x1ae0`, `+0x1af0`, `+0x1af8` — ⚠️ steering used
+  to call these "audio handles"; they are the **note-block arrays and their count**, see the PRX
+  section below,
 - calls the grid-placement helper `v0x1c49e0`,
 - and finishes by pushing the same settings `v0x1c6250` does (below).
 
@@ -669,6 +671,204 @@ it statically means finding and analysing that PRX, which is a different and muc
 anything attempted so far. **Measuring the game instead is now the cheaper path, not the fallback**
 — see the recording proposal in [game-assets.md](game-assets.md). Seven searches have failed for
 the same reason, and this is the first explanation that accounts for all seven.
+
+## The synthesiser's runtime structures — mapped from `fmodextinput.prx`
+
+Everything in this section was read out of the PRX's instructions. **How to re-measure it**, since
+none of it is guessable:
+
+- `file = vaddr + 0x7a0` (the SELF segment table at `0x20`; see the section above).
+- The module's LOAD segments are `vaddr 0x0000 filesz/memsz 0x4ab0` (code + rodata) and
+  `vaddr 0x8000 filesz 0x210 memsz 0x53a0` — so everything from `0x8210` to `0xd3a0` is BSS.
+- `sub_0xab0` copies the game's block into BSS at **module vaddr `0xb850`** (`lea r14, [rip+0xad6e]`
+  at `0x0adb`) and keeps its base in **`r14`** for the rest of the function.
+- The base register changes per function: **`r13`** in `sub_0x1c40`, **`r15`** in `sub_0x38e0`,
+  **`r9`** (pointing at `+0x1a28`, not at the block start) in `sub_0x290`.
+- A whole-module scan for rip-relative accesses into the copy finds only `lea`s of its base: the
+  fields are always reached through a register, so a plain disassembly grep does **not** find them.
+  Follow branches from an entry point, then collect `[base + disp]`.
+
+### The block is three regions, and the arithmetic proves it
+
+Two independent loops in `sub_0xab0` walk the same array with the same stride:
+
+```
+0x0c69   r15 = 0x28 ;  lea rdi, [r14 + r15]        ; add r15, 0xd0 ; cmp r15d, 0x1a28 ; jne
+0x0eb0   rbx = 0    ;  lea rdi, [r14 + rbx + 0x28] ; add rbx, 0xd0 ; cmp ebx,  0x1a00 ; jne
+```
+
+`0x1a00 / 0xd0 = 32` exactly, and `0x28 + 32 × 0xd0 = 0x1a28` — the array ends precisely where the
+settings begin. So the 6992 bytes are:
+
+| range | size | what |
+|---|---|---|
+| `+0x0000` … `+0x0027` | 40 | header; `+0x10` is a **pointer to the instrument table** |
+| `+0x0028` … `+0x1a27` | 6656 | **32 voice records of `0xd0` = 208 bytes** |
+| `+0x1a28` … `+0x1b4f` | 296 | settings and playback runtime |
+
+### Settings — corrections to what the eboot side suggested
+
+The eboot writes these; the PRX reads them, which is how the roles below are pinned down.
+
+| offset | type | what |
+|---|---|---|
+| `+0x1a28` | f32 | **Tempo**. Also passed to the renderer as its third float argument. |
+| `+0x1a2c` | f32 | Swing |
+| `+0x1a30` | f32 | EchoTime × 0.5 |
+| `+0x1a34`, `+0x1a38` | f32 | EchoFeedback, EchoMix |
+| `+0x1a44` | i32 | **disabled/paused** — `sub_0x38e0` returns early unless this is 0 |
+| `+0x1a48` | i32 | **restart pending**; set to 1 at the top of a block, cleared after the step runs |
+| `+0x1a4c` | f32 | the **previous** playhead in steps. A step boundary is `floor(now) != floor(prev)` |
+| `+0x1a58` | i32 | −1 sentinel |
+| `+0x1a68 + 12·i` | f32 | **Volume[i] × 0.75**, `i = 0..7` — 8 × 12 = 96, ending exactly at `+0x1ac8` |
+| `+0x1ad0`, `+0x1ad8` | ptr | **note-block arrays A and B** |
+| `+0x1af0` | i32 | **how many note blocks** |
+| `+0x1af8`, `+0x1b00` | ptr | **block-header arrays A and B**, 16 bytes per entry |
+| `+0x1b18` | ptr | the 768,000-byte output buffer |
+
+⚠️ **`+0x1ad0`/`+0x1ad8`/`+0x1af0`/`+0x1af8` are not "audio handles"** — the note data reaches the
+synthesiser through them. The earlier note under *Playback start* is wrong on this point. A/B is
+chosen by a module-global byte (`0x8210` in `sub_0x38e0` and `sub_0x3740`, `0xa210` in `sub_0x290`),
+which is double buffering: the game can rebuild the notes while the audio thread reads the other copy.
+
+### The 208-byte voice record
+
+| offset | type | what |
+|---|---|---|
+| `+0x00` | u8 | instrument index; **`0xff` means the voice is free** (`cmp rax, 0xff` → return) |
+| `+0x08` | f32 | pitch in **semitones** |
+| `+0x0c` | f32 | volume at the start of the block |
+| `+0x10` | i32 | **stop**: set to 1 wherever the voice must end |
+| `+0x14` | i32 | the caller skips `sub_0x38e0` while this is `> 0` |
+| `+0x1c`, `+0x24` | f32 | two output gains, always applied as a pair (12 sites, 3 groups of 4) — *inferred* to be the two output busses of the 4-in/4-out DSP |
+| `+0x20` | f32 | broadcast to all SIMD lanes |
+| `+0x28` | f32 | pan at the start of the block |
+| `+0x2c`, `+0x30`, `+0x34` | f32 | **slide rates** per unit time for volume, pitch and pan |
+| `+0x38` | i32 | which note block this voice reads |
+| `+0x3c` | u16 | **note cursor** within that block (`inc word ptr` advances it) |
+| `+0x3e` | u16 | start offset, scaled by **exactly `1/3`** (`v0x4504 = 0.333333`) |
+| `+0x40` | **f64** | **playback position in frames** — a double, not a float |
+| `+0xa4` … `+0xc8` | 10 × f32 | filter state: broadcast into SIMD registers at the top of a block (`0x2ea7`–`0x2f04`) and written back at the end (`0x3658`–`0x36b1`) |
+| `+0xcc` | i32 | **sample-slot index**, 0..7 |
+
+Three parameters are linear ramps stored as (value, rate) pairs — pitch `+0x08`/`+0x30`, volume
+`+0x0c`/`+0x2c`, pan `+0x28`/`+0x34` — and the renderer evaluates each at both ends of the block.
+
+⚠️ `+0x3e`'s scale being **one third** is a lead for open question 3: thirds of a step is exactly
+the resolution triplets need. The interpretation is a guess; the constant is not.
+
+### The instrument struct — an independent confirmation of `MAX_SLOTS = 8`
+
+`imul rdx, rax, 0x5f0 ; add rdx, [state + 0x10]` indexes instruments of **1520 bytes**, and
+`imul rbx, rax, 0x98` indexes sample slots of **152 bytes** from offset 0 of the instrument. So:
+
+```
+instrument (0x5f0)
+  +0x000 … +0x4bf   8 slots x 152 bytes          <- 8 x 152 = 1216 = 0x4c0
+  +0x4c0 … +0x5ef   304 bytes of instrument data
+```
+
+**Eight slots, derived here purely from struct arithmetic**, matching `MAX_SLOTS = 8` measured from
+the serialised resource. Two unrelated sources agreeing is what makes this solid.
+
+The renderer reads four (lo, hi) float pairs from the instrument tail — at `+0x540`/`+0x544`,
+`+0x548`/`+0x54c`, `+0x550`/`+0x554`, `+0x558`/`+0x55c` — and lerps each by the voice's pan value.
+Ranges lerped by a modulation source is the shape the 27 `Params` would take, but which params these
+are is **not** established; see open-questions.
+
+### The 152-byte sample slot — and three mip levels
+
+| offset | type | what |
+|---|---|---|
+| `+0x00`, `+0x28`, `+0x50` | 40 B each | **mip 0 (full rate), mip 1 (÷2), mip 2 (÷4)**; each has data pointers at its own `+0x08` and `+0x10` |
+| `+0x78` | i32 | **length in frames**. `<= 0` switches the slot to a saw oscillator (below) |
+| `+0x7c` | i32 | **loop start** |
+| `+0x80` | i32 | **loop length**; `<= 0` means no loop |
+| `+0x84` | i32 | the slot's **root note** |
+| `+0x88` | f32 | the slot's **native tempo** |
+| `+0x8c` | f32 | **fine tune in semitones** |
+| `+0x90` | u8 | **pitched**: when 0 the ratio is forced to exactly 1.0 |
+| `+0x91` | u8 | **tempo-synced** |
+| `+0x94` | u8 | **stereo** (selects a ×4 stride over ×2) |
+
+Looping is a plain modulo (`0x3769`–`0x377a`): if `pos > loopStart + loopLength`, then
+`pos = (pos − loopStart) mod loopLength + loopStart`. The region is
+**`[loopStart, loopStart + loopLength)`**, half-open — the same join our `loopRegion()` reached by
+measuring smoothness, from the other direction.
+
+### The pitch formula — measured, no free constants
+
+`0x1d71`–`0x1db3`, with `v0x4508 = 0.0833333 = 1/12` and an imported **`exp2f`** (NID
+`wuAQt-j+p4o`, resolved against the PS4 NID hash):
+
+```
+if (!slot.pitched)  ratio = 1.0
+else                ratio = exp2f((t·voice.pitchSlide + voice.pitch + slot.fineTune
+                                   − (float)slot.rootNote) · (1/12))
+
+if (slot.tempoSynced)  ratio *= Tempo / slot.nativeTempo
+```
+
+That replaces the three constants still marked UNMEASURED in `src/core/voice.ts`. The tempo-sync
+branch is new: some slots stretch with the sequencer's tempo instead of being pitched.
+
+### The sampler is LINEAR, and it mipmaps by octave
+
+This answers open question 7, and it is not a preference — it is what `sub_0x3740` does.
+
+**Mip selection**, on the pitch ratio, with the constants read from rodata:
+
+| ratio | mip | position scale |
+|---|---|---|
+| `>= 4.0` (`v0x4530`) | `slot + 0x50` | `× 0.25` (`v0x4534`) |
+| `>= 2.0` (`v0x4538`) | `slot + 0x28` | `× 0.5` (`v0x453c`) |
+| otherwise | `slot + 0x00` | `× 1` |
+
+The fraction is carried correctly into the mip: for the ÷4 level the index is `pos / 4` and the
+fraction is `(frac + (pos mod 4)) / 4`. So **a note two octaves above its slot's root reads a
+pre-decimated copy** rather than skipping frames in the full-rate one. Nothing we have written does
+this, and it matters exactly where the complaints were — high notes.
+
+**The interpolation** (`0x38ac`–`0x38d7`, mono path), with `v0x4540 = 3.05176e-05 = 1/32768`:
+
+```
+a = (float)d[i]   · 1/32768
+b = (float)d[i+1] · 1/32768
+out = a + (b − a) · frac
+```
+
+Two taps. Plain linear. The stereo path (`0x3847`–`0x38a2`) is bilinear: it lerps L and R by a
+blend the caller passes, and lerps the two frames by `frac`.
+
+⚠️ **So `sinc8` is the wrong default for a faithful tracker.** Linear is not a compromise here, it
+is the target. The SNR table in `src/audio/interpolate.ts` still stands — the game simply lives with
+19 dB at 4 kHz, and that roughness is part of the sound being reproduced. What keeps it from being
+as bad as that table implies is the mipmapping, which is the half of the design we were missing.
+
+When a slot has no data (`length <= 0`) the reader synthesises `frac(pos × 0.01) × 2 − 1` — a
+**saw oscillator** fallback (`v0x4544 = 0.01`, `v0x4548 = −1`).
+
+### Notes at runtime — 4 bytes each
+
+`sub_0x38e0` walks them. Each of the `[state+0x1af0]` blocks is `0x470` = 1136 bytes:
+
+| offset | what |
+|---|---|
+| `+0x00` | i32, **note count**; the voice ends when its cursor reaches it |
+| `+0x1c` | i32, the block's **length in steps** |
+| `+0x20 + 4·cursor` | the **note words**, 4 bytes each |
+
+with a parallel 16-byte header per block (`[state+0x1af8]`/`+0x1b00`) whose `+0x00` is a **start, in
+units of 16 steps** and whose `+0x0c` is a **lane index** — `sub_0x290` tests it with `bt` against a
+mask argument, so lanes can be muted individually.
+
+Of the note word, two fields are certain:
+
+- **bits 0..6** — the step within the block, compared against `currentStep − header.start·16`
+- **bit 15** — set means "stop the voice here"
+
+The remaining bits carry pitch and velocity but were not decoded; this is the runtime form, built
+from the on-disk record documented above, not the record itself.
 
 ## Runtime entry points (for further RE, not for the tracker)
 

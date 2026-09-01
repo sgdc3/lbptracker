@@ -15,11 +15,20 @@ import type { Instrument, SampleSlot } from './instrument.ts';
 import { resolveSlot } from './instrument.ts';
 
 /**
- * ⚠️ UNMEASURED. `fineTune` is an f32, consistent with cents or with
- * semitones. Cents is assumed; open question 5 resolves it. If it turns out to
- * be semitones, set this to 1.
+ * **MEASURED: `fineTune` is in semitones.** `sub_0x1c40` in `fmodextinput.prx`
+ * adds the slot's f32 straight into the semitone sum, alongside the note and
+ * the root note, before the single division by 12:
+ *
+ * ```
+ * xmm1  = t * voice.pitchSlide + voice.pitch    // semitones
+ * xmm1 += [slot + 0x8c]                         // fineTune  <- same units
+ * xmm1 -= (float)[slot + 0x84]                  // rootNote
+ * exp2f(xmm1 * 0.0833333)                       // 1/12
+ * ```
+ *
+ * It was 100 (cents) on a coin-flip; open question 5 is closed.
  */
-export const FINETUNE_PER_SEMITONE = 100;
+export const FINETUNE_PER_SEMITONE = 1;
 
 /** ⚠️ UNMEASURED. See open question 3 -- inferred from clip lengths, not the engine. */
 export const STEPS_PER_BEAT = 4;
@@ -59,10 +68,15 @@ export interface VoiceRequest {
  * The pitch ratio for one note on one slot, before the sample-rate conversion.
  *
  * ```
- * ratio = 2 ^ ((note - baseNote + fineTune/100) / 12)
+ * ratio = 2 ^ ((note - baseNote + fineTune) / 12)
  * if !pitched: ratio = 1            // percussion plays at a fixed rate
  * if fitBpm:   ratio *= tempo / baseBpm
  * ```
+ *
+ * **This shape is confirmed against the engine**, not inferred: the branch
+ * structure, the order of the terms and the `tempo / baseBpm` factor all match
+ * `sub_0x1c40` in `fmodextinput.prx` exactly. See
+ * steering/sequencer-data-model.md.
  */
 export function pitchRatio(
   slot: SampleSlot,
