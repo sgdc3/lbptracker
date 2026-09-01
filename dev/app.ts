@@ -32,6 +32,22 @@ const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 
 const noteName = (n: number) => `${NOTE_NAMES[n % 12]}${Math.floor(n / 12) - 1}`;
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+
+/**
+ * Fetch an asset, failing loudly if the server did not serve it.
+ *
+ * Without the status check a 404 comes back as an HTML error page, and the
+ * first thing to notice is `readWav` saying "not a RIFF/WAVE file" -- which
+ * points at the parser instead of at the URL. That is exactly how the `#` in
+ * `choir_g#4_v2.smp` hid for as long as it did.
+ */
+async function fetchAsset(url: string): Promise<ArrayBuffer> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`${response.status} fetching ${url}`);
+  }
+  return response.arrayBuffer();
+}
 const log = (message: string, kind: 'info' | 'bad' = 'info') => {
   const line = document.createElement('div');
   line.className = kind;
@@ -118,7 +134,7 @@ async function fetchManifest(dir: string): Promise<ManifestRow[]> {
 async function loadInstrument(row: ManifestRow): Promise<void> {
   $('status').textContent = `loading ${row.file}…`;
 
-  const bytes = new Uint8Array(await (await fetch(`/fixtures/rinst/${row.file}`)).arrayBuffer());
+  const bytes = new Uint8Array(await fetchAsset(`/fixtures/rinst/${encodeURIComponent(row.file)}`));
   const resource = await loadResource(bytes, webInflate);
   instrument = readInstrument(resource.data);
 
@@ -130,8 +146,16 @@ async function loadInstrument(row: ManifestRow): Promise<void> {
       log(`slot base ${slot.baseNote}: no sample for GUID ${guid}`, 'bad');
       continue;
     }
+    // ⚠️ encodeURIComponent, not the bare name. Three of the game's 216 sample
+    // files are named for sharps -- `choir_g#4_v2.smp`, `choir_f#3_v2.smp`,
+    // `violin_spic_string4_f#4.smp` -- and a `#` in a URL starts the fragment,
+    // so the browser requested `/fixtures/smp/choir_g` and silently dropped the
+    // rest. It 404s, `readWav` then reports "not a RIFF/WAVE file", and the
+    // instrument looks like a parser bug rather than a URL one. The 48 files
+    // with spaces in their names had been working only because the browser
+    // encodes those for you.
     const wavBytes = new Uint8Array(
-      await (await fetch(`/fixtures/smp/${sample.file}`)).arrayBuffer(),
+      await fetchAsset(`/fixtures/smp/${encodeURIComponent(sample.file)}`),
     );
     const wav = readWav(wavBytes);
     slots.push({ guid, wav, name: sample.file, baseNote: slot.baseNote });
