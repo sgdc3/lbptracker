@@ -13,8 +13,8 @@ What remains below is fidelity work, ranked by how audible a mistake would be. *
 was the top item for four sessions, is resolved**: `Params[11..14]` is an ADSR. So is the scale
 quantiser found alongside it — five scales, table at module vaddr `0x8090`. So is the **second**
 envelope: it sweeps the cutoff of a 4-pole Moog ladder low-pass, which `Params[3..6]` configure. All
-three are in [sequencer-data-model.md](sequencer-data-model.md). **Twelve of the 27 `Params` are now
-named** (3..14). The most audible thing still open is the **pan law** (question 7).
+three are in [sequencer-data-model.md](sequencer-data-model.md). **Fifteen of the 27 `Params` are now
+named** (0..14). The most audible thing still open is the **pan law** (question 7).
 
 Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then the envelope out of it. That
 work closed question 5, half of question 7 and the envelope half of question 8, opened 5b, and
@@ -154,15 +154,17 @@ Recovered as names, sizes and defaults only:
 
   | indices | what |
   |---|---|
+  | `Params[0..2]` | the unison stack: per-layer **detune**, **spread**, **random start position** |
   | `Params[3..6]` | the low-pass: **cutoff** (squared), **resonance**, **key tracking**, **envelope amount** |
   | `Params[7..10]` | the **filter** ADSR — envelope B |
   | `Params[11..14]` | the **amplitude** ADSR — envelope A |
 
-  The evidence and the formulas are in [sequencer-data-model.md](sequencer-data-model.md). **Fifteen
-  indices remain unnamed** — 0, 1, 2 and 15..26. Indices 0, 1 and 2 are read in the same stretch of
-  the renderer as the filter block (`0x1aaa`–`0x1b6d`), so they are the obvious next ones to attack,
-  and the method that worked twice now is the one to reuse: label the instruments by how they
-  behave, then score every index against the labels.
+  The evidence and the formulas are in [sequencer-data-model.md](sequencer-data-model.md). **Twelve
+  indices remain unnamed** — 15..26. Two have a concrete anchor already: `Params[16]` and
+  `Params[22]` are the pairs handed to the unidentified import at stub `0x130` alongside the
+  per-layer detune and spread, so naming that function names them too. The rest are read in the
+  renderer between `0x2100` and `0x2900`; the method that has worked three times is to label the
+  instruments by how they behave and score every index against the labels.
 
   ⚠️ **Read the failure record below with this in mind: the shape analysis had already seen the
   answer and mis-read it.** It filed index 13 under "near-boolean — 6 distinct values, 1.0 ×69 and

@@ -742,12 +742,16 @@ which is double buffering: the game can rebuild the notes while the audio thread
 | `+0x14` | i32 | the caller skips `sub_0x38e0` while this is `> 0` |
 | `+0x1c`, `+0x24` | f32 | two output gains, always applied as a pair (12 sites, 3 groups of 4) — *inferred* to be the two output busses of the 4-in/4-out DSP |
 | `+0x20` | f32 | broadcast to all SIMD lanes |
-| `+0x28` | f32 | pan at the start of the block |
-| `+0x2c`, `+0x30`, `+0x34` | f32 | **slide rates** per unit time for volume, pitch and pan |
+| `+0x28` | f32 | ⚠️ the note's **modulation**, `bits 24..27 / 15` — *not pan*, which is what this row said until `sub_0x38e0` was read. It is the value that picks a point inside every `Params` range. |
+| `+0x2c`, `+0x30`, `+0x34` | f32 | **slide rates** per unit time for volume, pitch and the modulation |
 | `+0x38` | i32 | which note block this voice reads |
 | `+0x3c` | u16 | **note cursor** within that block (`inc word ptr` advances it) |
 | `+0x3e` | u16 | start offset, scaled by **exactly `1/3`** (`v0x4504 = 0.333333`) |
-| `+0x40` | **f64** | **playback position in frames** — a double, not a float |
+| `+0x40 + 8i` | **f64** | **playback position in frames** for stack layer `i` — a double, not a float. See the `Numstack` section below; there are up to five. |
+| `+0x68 + 4i` | f32 | per-layer detune, a ratio near 1 |
+| `+0x7c + 4i` | f32 | per-layer spread, centred on 0 |
+| `+0x90`, `+0x94` | f32 | the two envelope levels, cleared together at note start |
+| `+0x98`, `+0x9c`, `+0xa0` | f32 | three LFO phases, randomised in `[0, 2π)` at note start |
 | `+0xa4` … `+0xc8` | 10 × f32 | filter state: broadcast into SIMD registers at the top of a block (`0x2ea7`–`0x2f04`) and written back at the end (`0x3658`–`0x36b1`) |
 | `+0xcc` | i32 | **sample-slot index**, 0..7 |
 
@@ -1078,6 +1082,90 @@ other is left set.
 register carrying `envFactor` is multiplied by the evaluated `Params[4]`. It is the least certain
 line in this section; the cutoff path is unambiguous.
 
+## `Params[0..2]` are the unison stack — and `Numstack` is real
+
+`sub_0x19c0` starts a voice: it `memset`s the 208-byte record, then writes the instrument index, the
+note's modulation, the note-block index and the cursor, and tail-jumps into `sub_0x1a50`, which is
+where the three remaining low `Params` live.
+
+**`sub_0x1a50` loops `Numstack` times**, and each pass fills one *layer* of a stacked voice:
+
+```
+for i in 0 .. Numstack-1:
+    r01 = rand() * 9.31323e-10                      ; v0x??? , and 9.31323e-10 * 2^30 = 1.0 exactly
+    voice.position[i]  = eval(Params[2]) * slot.lengthFrames * r01        ; +0x40 + 8i, a double
+    r = eval(Params[0])
+    voice.detune[i]    = 1 + 0.05 * (r01' * 2r - r)                       ; +0x68 + 4i
+    r = eval(Params[1])
+    voice.spread[i]    = 0.5 * (r01'' * 2r - r)                           ; +0x7c + 4i
+voice.position[0] = 0                               ; layer 0 always starts at the beginning
+voice.envelopeA = voice.envelopeB = 0               ; one qword clears +0x90 and +0x94
+voice.lfoPhase[0..2] = rand() * 5.85167e-09         ; and 5.85167e-09 * 2^30 = 2*pi
+```
+
+where `eval(P)` is the usual `P.x + mod*(P.y - P.x)`.
+
+So:
+
+| param | what it does |
+|---|---|
+| `Params[0]` | **detune spread**: each layer gets `1 + 0.05·U(−r, +r)`, a ratio, so ±5% at full range |
+| `Params[1]` | **stereo/offset spread**: each layer gets `0.5·U(−r, +r)`, centred on zero |
+| `Params[2]` | **random start position**: each layer begins at `range · length · U(0,1)` frames in |
+
+### The record is now fully accounted for
+
+`Numstack` runs to **5** in the corpus, and at five layers the three arrays tile the record with no
+slack at all:
+
+```
++0x40 + 8i   double   position   i = 0..4   ->  +0x40 .. +0x67
++0x68 + 4i   f32      detune     i = 0..4   ->  +0x68 .. +0x7b
++0x7c + 4i   f32      spread     i = 0..4   ->  +0x7c .. +0x8f
++0x90        f32      envelope A level
++0x94        f32      envelope B level
++0x98/9c/a0  f32      three LFO phases, randomised in [0, 2pi) at note start
++0xa4 .. cc           the two Moog ladders, five states each
+```
+
+Every byte from `+0x40` to `+0xcc` has an owner, and the five-layer maximum falls out of the layout
+rather than being assumed. It also settles `Numstack`, which steering has carried since the schema
+work as "a voice-stacking count -- not an array length": **it is an array length after all**, of
+this array, and the note plays that many overlapping copies.
+
+### What the corpus says, and the one instrument that proves it
+
+`Params[0]` is non-zero in 29 of 68, `Params[1]` in 15, `Params[2]` in 27, and only 15 instruments
+stack at all. The stacked ones read like a list of things that are ensembles or detuned:
+
+| instrument | stack | `Params[0]` detune | `Params[1]` spread | `Params[2]` start |
+|---|---|---|---|---|
+| `choir` | 5 | 0.00 | 0.34 | **1.00** |
+| `synth_strings` | 5 | 0.04/0.06 | 0.11/0.25 | **1.00** |
+| `brass` | 5 | 0.00 | 0.25 | 0.00 |
+| **`honky_tonk_piano`** | 4 | **0.15** | 0.15 | 0.00 |
+| `piano` | 2 | **0.00** | 0.03 | 0.00 |
+| `record_static` | 2 | 0.76 | 0.00 | 0.06 |
+
+**`honky_tonk_piano` carries detune 0.15 and `piano` carries 0.00.** A honky-tonk piano *is* a piano
+with its unison strings detuned; there is no other reason for those two instruments to differ in one
+parameter and agree everywhere else. And `choir` — five layers, each starting at a random point in
+the one recording, spread across the field, no detune — is exactly how an ensemble is built out of a
+single sample.
+
+⚠️ **Where the detune and spread values actually go is not established.** Both are read back in the
+renderer (`0x2730` and `0x2588`) indexed by layer and handed to an imported function at stub
+`0x130`, together with `Params[16]` and `Params[22]` respectively. What is measured here is what the
+initialiser computes and its shape — a ratio centred on 1, an offset centred on 0. The names above
+follow from that shape and from the corpus, not from the consumer.
+
+⚠️ **`sub_0x130` is unidentified.** It is PLT index 5, symbol index 5, one of the three imported NIDs
+that did not fall to a name search (`H2e8t5ScQGc`, `P330P3dFF68`, `ZtjspkJQ+vw`). The anchor to
+finish it: the JUMP_SLOT relocations are 24-byte `Elf64_Rela` records starting at file `0x5750`, the
+NID strings run from file `0x5543` at 16-byte spacing, and the string table's leading NUL is at
+`0x54ce` — what is missing is the `Elf64_Sym` array that joins them, which resisted a search by
+guessed base address. Parse the SCE dynamic tags properly rather than guessing.
+
 ## The note word — 4 bytes, decoded
 
 `sub_0x38e0` pulls it apart with `bextr`, so the field boundaries are literal immediates rather than
@@ -1111,17 +1199,25 @@ quantise(n, s):
     return octave * 12 + TABLE[s][n mod 12]
 ```
 
-`TABLE` is at module vaddr **`0x8090`** — reached through a relocated pointer at `0x8020`, so it is
-in the data segment, whose file mapping is `file = vaddr − 0x2d90` (SELF segment [3], `off=0x5270`,
-`vaddr=0x8000`). Six rows of twelve `int32`; row 0 is not a scale, because scale 0 returns early.
+`TABLE` is at module vaddr **`0x80c0`**. That is the **addend of the `R_X86_64_RELATIVE`
+relocation** on the pointer slot at `0x8020` (the reloc record is at file `0x5888`), not a figure
+derived from the segment mapping. Six rows of twelve `int32`, and the seventh reads as garbage, so
+the table is exactly six.
 
 | scale | table row | tones |
 |---|---|---|
-| 1 | `0 1 2 3 4 5 6 7 8 9 10 11` | **chromatic** — the identity |
-| 2 | `0 0 2 2 4 5 5 7 7 9 9 11` | **major** — {0,2,4,5,7,9,11} |
-| 3 | `0 0 2 3 3 5 5 7 8 8 10 10` | **natural minor** — {0,2,3,5,7,8,10} |
-| 4 | `0 0 0 3 3 5 5 7 7 7 10 10` | **minor pentatonic** — {0,3,5,7,10} |
-| 5 | `0 0 3 3 5 5 6 6 7 7 10 10` | **blues** — {0,3,5,6,7,10} |
+| 0 | `0 1 2 3 4 5 6 7 8 9 10 11` | **chromatic** — the identity, and never reached: scale 0 returns early, to the same effect |
+| 1 | `0 0 2 2 4 5 5 7 7 9 9 11` | **major** — {0,2,4,5,7,9,11} |
+| 2 | `0 0 2 3 3 5 5 7 8 8 10 10` | **natural minor** — {0,2,3,5,7,8,10} |
+| 3 | `0 0 0 3 3 5 5 7 7 7 10 10` | **minor pentatonic** — {0,3,5,7,10} |
+| 4 | `0 0 3 3 5 5 6 6 7 7 10 10` | **blues** — {0,3,5,6,7,10} |
+| 5 | `0 0 2 2 4 4 6 7 7 9 9 11` | **lydian** — {0,2,4,6,7,9,11} |
+
+⚠️ **This table was wrong here once, shifted by one row.** The first reading computed the address
+from the SELF segment mapping (`file = vaddr − 0x2d90`), landed 48 bytes early on a row of zeros
+that looked like a plausible unused row 0, and so named every scale one place late and lost lydian
+entirely. The mapping was wrong because a PLT GOT slot also sits at `0x8090`, which is what exposed
+it. **Read the relocation's addend; do not compute the address.**
 
 The octave is preserved, and every entry lands on a tone of its own scale within two semitones. So
 the note field is a semitone after all — but one the engine moves by up to two, which is not

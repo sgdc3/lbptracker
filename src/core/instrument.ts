@@ -44,9 +44,14 @@ export interface Instrument {
    * ⚠️ **Not the number of slots in use.** Measured across the game's 68
    * instruments: `numStack` equals the used-slot count in only 14 of them.
    * `electric_piano` uses one sample with `numStack` 2, `ghost` one with 3, and
-   * most 8-slot drum kits have `numStack` 1. It is a voice-stacking count --
-   * how many voices to layer per note -- not an array length. Use
-   * `sampleGuids[i] !== 0` to find the slots that exist.
+   * most 8-slot drum kits have `numStack` 1. Use `sampleGuids[i] !== 0` to find
+   * the slots that exist.
+   *
+   * It **is** an array length, just not of the slots: `sub_0x1a50` in
+   * `fmodextinput.prx` loops `numStack` times filling one playback position,
+   * one detune and one spread per layer, so a note plays that many overlapping
+   * copies of the same slot. It runs to 5 in the corpus, and at five the three
+   * arrays tile the voice record exactly. See steering/sequencer-data-model.md.
    */
   readonly numStack: number;
   readonly arpeggiate: boolean;

@@ -165,7 +165,7 @@ test('every scale table lands on a tone of its own scale, within two semitones',
   // disproves it: position 2 goes UP to 3, because blues has no tone at 1 or 2.
   // Ties are not consistent either (position 4 goes up to 5, position 11 down
   // to 10), so the tables are the fact here and no rule is claimed.
-  for (let s = 1; s <= MAX_SCALE; s += 1) {
+  for (let s = 0; s <= MAX_SCALE; s += 1) {
     const tones = new Set(SCALE_TABLES[s]);
     for (let n = 0; n < 12; n += 1) {
       const q = SCALE_TABLES[s][n];
@@ -174,23 +174,30 @@ test('every scale table lands on a tone of its own scale, within two semitones',
       assert.ok(Math.abs(q - n) <= 2, `scale ${s} moved ${n} to ${q}, too far`);
     }
   }
-  // Chromatic is the identity; anything else would transpose every level.
-  assert.deepEqual([...SCALE_TABLES[1]], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
-  // The tones each table can produce are the scales they claim to be.
+  // ⚠️ These ids were wrong once, off by a row, because the table's address was
+  // computed from the segment mapping instead of read from its relocation. Six
+  // rows, and the first is the identity.
+  assert.equal(SCALE_TABLES.length, 6);
+  assert.deepEqual([...SCALE_TABLES[0]], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   const tones = (s: number) => [...new Set(SCALE_TABLES[s])].sort((a, b) => a - b);
-  assert.deepEqual(tones(2), [0, 2, 4, 5, 7, 9, 11], 'major');
-  assert.deepEqual(tones(3), [0, 2, 3, 5, 7, 8, 10], 'natural minor');
-  assert.deepEqual(tones(4), [0, 3, 5, 7, 10], 'minor pentatonic');
-  assert.deepEqual(tones(5), [0, 3, 5, 6, 7, 10], 'blues');
+  assert.deepEqual(tones(1), [0, 2, 4, 5, 7, 9, 11], 'major');
+  assert.deepEqual(tones(2), [0, 2, 3, 5, 7, 8, 10], 'natural minor');
+  assert.deepEqual(tones(3), [0, 3, 5, 7, 10], 'minor pentatonic');
+  assert.deepEqual(tones(4), [0, 3, 5, 6, 7, 10], 'blues');
+  assert.deepEqual(tones(5), [0, 2, 4, 6, 7, 9, 11], 'lydian');
 });
 
 test('quantise preserves the octave and passes unknown scales through', () => {
-  // C4 = 60. On the major scale C#4 (61) snaps down to C4.
-  assert.equal(quantise(60, 2), 60);
-  assert.equal(quantise(61, 2), 60);
-  assert.equal(quantise(66, 2), 65, 'F#4 snaps to F4');
-  assert.equal(quantise(72, 2), 72, 'the octave above is untouched');
-  assert.equal(quantise(73, 4), 72, 'pentatonic snaps C#5 to C5');
+  // C4 = 60. Scale 1 is major: C#4 (61) snaps to C4, F#4 (66) to F4.
+  assert.equal(quantise(60, 1), 60);
+  assert.equal(quantise(61, 1), 60);
+  assert.equal(quantise(66, 1), 65, 'F#4 snaps to F4 in major');
+  assert.equal(quantise(72, 1), 72, 'the octave above is untouched');
+  assert.equal(quantise(73, 3), 72, 'pentatonic snaps C#5 to C5');
+  // Lydian is major with the fourth raised, so it keeps F# and moves F.
+  assert.equal(quantise(66, 5), 66, 'lydian keeps F#4');
+  assert.equal(quantise(65, 5), 64, 'and pulls F4 down to E4');
+  assert.equal(quantise(65, 1), 65, 'which major does not');
   // ⚠️ Out of range is chromatic, not an error -- the engine's own guard.
   assert.equal(quantise(61, 0), 61);
   assert.equal(quantise(61, 99), 61);
@@ -198,9 +205,9 @@ test('quantise preserves the octave and passes unknown scales through', () => {
 });
 
 test('notePitch applies the root and the engine’s -12', () => {
-  assert.equal(notePitch(60, 1, 12), 60);
-  assert.equal(notePitch(61, 2, 12), 60, 'quantised first, then offset');
-  assert.equal(notePitch(60, 1, 0), 48);
+  assert.equal(notePitch(60, 0, 12), 60, 'scale 0 leaves the note alone');
+  assert.equal(notePitch(61, 1, 12), 60, 'quantised first, then offset');
+  assert.equal(notePitch(60, 0, 0), 48);
 });
 
 // ------------------------------------------------------ through the mixer
