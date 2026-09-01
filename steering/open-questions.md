@@ -731,7 +731,52 @@ sample `Numstack` times, and this instrument has four distinct samples with `Num
 stack's layers can be different samples is unmeasured, and if they can, `dev/render-level.ts` is
 wrong for it.
 
-### `<` versus `<=` — UNSETTLED, and it is worth 22% of the corpus
+### `<` versus `<=` — SETTLED from the engine: strict
+
+Found by re-scanning the PRX for **indexed** addressing. The first scan looked only for
+`[reg + disp]` and concluded the PRX never touches `Splitnotes`; the walk uses
+`[rdx + rax*4 + 0x4c4]`, so it was invisible. **A negative result from a pattern scan is only as
+strong as the pattern.**
+
+The array's home in the PRX block comes from the eboot's builder at `v0x2a1190`, which maps the
+`RInstrument` onto the block the DSP receives:
+
+```
+memcpy(r14+0x4e8, rbx+0x110, 0xd8)     ; the 27 Params
+r14+0x4c0 .. r14+0x4e3  <- rbx+0xe8    ; Splitnotes, nine int32
+r14+0x4e4               <- rbx+0x10c   ; Numstack
+slots: rbx+0x48 + 0x10*i  ->  r14+0x84 + 0x98*i
+```
+
+and the walk itself is at `0x05a0`, repeated identically at `0x0a40`:
+
+```
+bextr ecx, r12d, 0x708          ; note = bits 8..14 of the note word
+xor   eax, eax                  ; i = 0
+loop: cmp eax, 7
+      jg  done                  ; i > 7 -> slot 0
+      cmp [rdx + rax*4 + 0x4c4], ecx   ; splitNotes[i + 1] vs note
+      lea rax, [rax + 1]
+      jg  loop                  ; keep going while splitNotes[i + 1] > note
+      dec eax
+      mov r8d, eax              ; slot = i
+```
+
+- **The comparison is strict**, so a note on a bound takes the zone **above** it. That settles the
+  22.2% (215,449 of 968,829 corpus notes sit exactly on a bound) in favour of what the code already
+  did — though the reason recorded for it was a base-in-zone argument, which is the reasoning this
+  same file warns against. It was right by luck.
+- **The walk starts at `splitNotes[1]`** (`0x4c4` against an array at `0x4c0`), so `splitNotes[0]`
+  is a ceiling that is never compared.
+- **The cap is a fixed 8**, not a slot count. Our extra clamp to the slots actually held never
+  changes the answer: entries past the last real bound are zero and `0 > note` is false.
+
+⚠️ **The note is the RAW field.** `bextr ..., 0x708` takes bits 8..14 of the note word
+directly — the scale quantiser applies to the *pitch*, not to the slot choice, and the renderer was
+passing the quantised note. Only 185 corpus notes are on a non-chromatic scale and none changes
+slot, so nothing sounds different today; a project authored in a scale would diverge. Fixed anyway.
+
+### The old note on this question, kept for the method
 
 The two differ exactly when a note sits on a bound, and **215,449 of 968,829 corpus notes on
 multi-slot instruments do** — across 47 of the 68 instruments. This is not a detail.

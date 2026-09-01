@@ -26,3 +26,26 @@ test('the zone count comes from the splits, not the sample count', async () => {
   assert.equal(zoneCount(mime), 1);
   assert.equal(resolveSlot(mime, 40, 4), 0, 'every note plays the one zone');
 });
+
+test('a note exactly on a bound belongs to the zone above it', async () => {
+  const { resolveSlot } = await import('../src/core/instrument.ts');
+  // The engine's loop at fmodextinput.prx 0x05a0 continues while
+  // `splitNotes[i + 1] > note`, so equality exits and the note keeps the
+  // higher zone. 215,449 of 968,829 corpus notes sit exactly on a bound, so
+  // this is 22.2% of everything, not an edge case.
+  const kit = {
+    slots: Array.from({ length: 8 }, (_, i) => ({ baseNote: [87, 78, 57, 51, 40, 33, 27, 21][i] })),
+    splitNotes: [87, 72, 60, 54, 48, 36, 30, 24, 0],
+  } as never as Parameters<typeof resolveSlot>[0];
+
+  assert.equal(resolveSlot(kit, 24, 8), 6, 'on the bound -> the zone above it');
+  assert.equal(resolveSlot(kit, 23, 8), 7, 'one below -> the zone under it');
+  assert.equal(resolveSlot(kit, 25, 8), 6);
+  // The whole drum pattern this came from: 12 and 24 must be different drums.
+  assert.notEqual(resolveSlot(kit, 12, 8), resolveSlot(kit, 24, 8));
+
+  // splitNotes[0] is a ceiling and is never compared -- the walk starts at
+  // [0x4c4], one int past the base of the array.
+  assert.equal(resolveSlot(kit, 87, 8), 0);
+  assert.equal(resolveSlot(kit, 127, 8), 0, 'above the ceiling still lands in zone 0');
+});

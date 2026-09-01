@@ -140,7 +140,10 @@ for (const event of events) {
   // supplies the engine's root is open question 4, and getting it wrong
   // transposes rather than detunes -- so it is left off rather than guessed.
   const note = quantise(event.pitch, track.scale);
-  const zone = resolveSlot(loaded.inst, note, loaded.slots.length);
+  // ⚠️ The slot comes from the RAW note, not the quantised one: the engine's
+  // walk at 0x05a0 takes bits 8..14 of the note word with `bextr` and compares
+  // that. The quantiser applies to the pitch below, not to the choice of sample.
+  const zone = resolveSlot(loaded.inst, event.pitch, loaded.slots.length);
   const slot = loaded.slots[Math.min(zone, loaded.slots.length - 1)];
   const definition = loaded.inst.slots[Math.min(zone, loaded.inst.slots.length - 1)];
   const p = loaded.inst.params;

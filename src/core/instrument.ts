@@ -86,21 +86,44 @@ export const DEFAULT_SLOT: SampleSlot = {
  *   13` over bases `84, 72, 60, 48, 36, 24, 13, 12` puts every base note inside
  *   its own zone, eight for eight.
  *
- * ⚠️ **The boundary convention is NOT settled, and it is worth 22% of the
- * corpus.** `<` and `<=` place a note differently whenever it sits exactly on a
- * bound, and **215,449 of 968,829 corpus notes on multi-slot instruments do**,
- * across 47 of the 68 instruments. The synth PRX cannot settle it: it never
- * reads `Splitnotes` at all -- the only field it touches below the parameter
- * block is `+0x4e4`, `Numstack` -- so the selection is eboot-side and has not
- * been found. Two engine-independent checks were run and neither is decisive:
- * once the zone count is right, both conventions leave the same single
- * unreachable zone; and `<` reaches more distinct samples than `<=` on 5,657
- * corpus tracks against 3,900, a lean rather than a verdict. `<` stays because
- * it is what was here, not because it was proved.
+ * **The walk is the engine's, read out of `fmodextinput.prx` at `0x05a0`** (and
+ * again, identically, at `0x0a40`):
+ *
+ * ```
+ * bextr ecx, r12d, 0x708          ; note = bits 8..14 of the note word
+ * xor   eax, eax                  ; i = 0
+ * loop: cmp eax, 7
+ *       jg  done                  ; i > 7 -> slot 0
+ *       cmp [rdx + rax*4 + 0x4c4], ecx   ; splitNotes[i + 1] vs note
+ *       lea rax, [rax + 1]
+ *       jg  loop                  ; keep going while splitNotes[i + 1] > note
+ *       dec eax
+ *       mov r8d, eax              ; slot = i
+ * ```
+ *
+ * Three things fall out of it, and all three were open before:
+ *
+ * - **The comparison is strict.** The loop continues while `splitNotes[i+1] >
+ *   note`, so a note sitting exactly on a bound belongs to the zone **above**
+ *   it. This decides 215,449 of 968,829 corpus notes -- 22.2%, across 47 of the
+ *   68 instruments -- which is how many sit exactly on a bound.
+ * - **The walk starts at `splitNotes[1]`.** The displacement is `0x4c4`, and the
+ *   array begins at `0x4c0`, so `splitNotes[0]` (87 on every instrument the game
+ *   ships) is a ceiling that is never compared.
+ * - **The cap is a fixed 8**, not a slot count. `usable` below clamps further to
+ *   the slots we actually hold, which never changes the answer: the entries past
+ *   the last real bound are zero, and `0 > note` is false for every note.
+ *
+ * ⚠️ **The note is the raw field, not the quantised one.** `bextr ..., 0x708`
+ * takes bits 8..14 of the note word directly; the scale quantiser applies to the
+ * *pitch*, not to the slot choice. Only 185 corpus notes are on a non-chromatic
+ * scale and none of them changes slot, so this costs nothing today -- but a
+ * project authored in a scale would diverge.
  *
  * ⚠️ **Do not test this rule by asking whether a zone contains its own base
  * note.** That measures the sound designer, not the engine, and it cost a whole
- * session once. `piano` sets its bounds `87, 66, 54, 40, 30` against bases
+ * session once -- and it was also the argument that had been standing in for a
+ * proof of the strict comparison, which the loop above now supplies. `piano` sets its bounds `87, 66, 54, 40, 30` against bases
  * `84, 72, 60, 48, 36` — every bound about six semitones below its slot's base
  * — so the piano is voiced to *always transpose downward*, which is the normal
  * sampler preference since pitching up thins a sample out. `guildford` centres
