@@ -160,53 +160,42 @@ test('the envelope only moves the filter when the amount is set', () => {
 });
 
 test('the param indices are the ones the renderer reads', () => {
-  // ⚠️ 5 and 6 are envelope amount and key tracking, in that order, and this
-  // test asserted the reverse. `fmodextinput.prx` loads the four as consecutive
-  // (x,y) pairs at 0x2985-0x29bd and uses them at 0x2a02-0x2a90: 0x510 goes
-  // into `1 + p*(envB - 1)` and 0x518 into `1 + (rate - 1)*p`. The array base is
-  // pinned independently by Params[11..14] landing on the amplitude ADSR and
-  // Params[24] on the output level.
   assert.deepEqual({ ...FILTER_PARAMS }, {
     cutoff: 3,
     resonance: 4,
-    envAmount: 5,
-    keyTrack: 6,
+    keyTrack: 5,
+    envAmount: 6,
   });
 });
 
 // ------------------------------------------------- the two paths, kept apart
 
-test('the resonance follows the key tracking, not the filter envelope', () => {
-  // Read out of fmodextinput.prx at 0x2a90: `vmulps xmm1, xmm4, xmm1`, where
-  // xmm4 is the keytrack built at 0x2a28 and xmm1 the interpolated Params[4].
-  // The cutoff at 0x2a72 takes both keytrack and envFactor; the resonance takes
-  // only keytrack, and this file asserted `resonance * envFactor` until the two
-  // were read side by side.
-  const settings = { cutoff: 0.89, resonance: 0.9, keyTrack: 0.6, envAmount: 0.63 };
-  const rate = 2 ** ((25 - 48) / 12); // synth/ghost.rinst at its lowest note
-  const keytrack = 1 + (rate - 1) * settings.keyTrack;
+test('the resonance follows the filter envelope, not the key tracking', () => {
+  // ⚠️ This test asserted the opposite for one commit. The two terms in
+  // fmodextinput.prx are the same shape -- `1 + (X - 1) * p` -- so they cannot
+  // be told apart from the arithmetic. What separates them is X: [rbp-0xa90]
+  // is set to 1.0 at 0x1e25 and multiplied by a frequency ratio at 0x1e4a, so
+  // it is the pitch; [rbp-0xb70] holds the return of the envelope evaluator
+  // called at 0x222d with Params[7..10], so it is envelope B. The value
+  // multiplied into the resonance at 0x2a90 is the envelope one.
+  const settings = { cutoff: 0.6, resonance: 0.9, keyTrack: 0.6, envAmount: 0.63 };
+  const rate = 2 ** ((25 - 48) / 12);
 
-  // The filter envelope moves the cutoff...
+  // The key tracking moves the cutoff...
+  const low = filterAt(settings, 1, rate);
+  const high = filterAt(settings, 1, 1);
+  assert.ok(low.freq < high.freq, 'a lower note tracks the cutoff down');
+
+  // ...and leaves the resonance alone.
+  assert.equal(low.res, high.res, 'the pitch must not touch the resonance');
+
+  // The envelope moves both.
   const open = filterAt(settings, 1, rate);
   const shut = filterAt(settings, 0, rate);
   assert.ok(open.freq > shut.freq, 'envelope B opens the cutoff');
-
-  // ...and leaves the resonance alone.
-  assert.equal(open.res, shut.res, 'envelope B must not touch the resonance');
-  assert.ok(Math.abs(open.res - settings.resonance * keytrack) < 1e-12);
-
-  // The size of the old error, on the patch that exposed it: ghost's amplitude
-  // decay is 0.85s against a 1.04s filter attack, so envelope B never gets past
-  // 0.194 and envFactor stays between 0.37 at the note's onset and 0.49 at the
-  // envelope's peak. The wrong reading therefore delivered 0.33 where the right
-  // one delivers 0.50 -- a factor of 1.51 at the attack, still 1.14 at the peak,
-  // and it is the attack that a 0.85s note is mostly made of.
-  const atOnset = 1 + settings.envAmount * (0 - 1);
-  const atPeak = 1 + settings.envAmount * (0.194 - 1);
-  assert.ok(
-    keytrack / atOnset > 1.5 && keytrack / atPeak > 1.1,
-    `keytrack ${keytrack.toFixed(3)} against envFactor ${atOnset.toFixed(3)}..${atPeak.toFixed(3)}`,
-  );
+  assert.ok(open.res > shut.res, 'envelope B opens the resonance too');
+  const envFactor = 1 + settings.envAmount * (0 - 1);
+  assert.ok(Math.abs(shut.res - settings.resonance * envFactor) < 1e-12);
 });
 
 test('a note far above the base note drives the cutoff to its ceiling', () => {

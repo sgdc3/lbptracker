@@ -529,36 +529,60 @@ tempo-locked, since the same project at half the tempo would echo off the beat.
 4 s buffer ceiling (the old 1 s ceiling rested on an unmeasured claim about the engine's buffer, and
 would silently fold a four-beat echo at a slow tempo down to one beat).
 
-## 6b. The filter's resonance path — CORRECTED, 2026-09-01
+## 6b. The filter's four controls — SETTLED, and got wrong twice on the way
 
-`filterAt` applied the filter envelope to the resonance as well as the cutoff, and said so as its
-own least-certain line. **It was wrong**, and `fmodextinput.prx` settles it. Every parameter reaches
-the block at `0x2a02`–`0x2a90` through the same shape — `vsubss; vmulss xmm7; vaddss; vpshufd 0`
-is `x + mod * (y - x)` broadcast to four lanes — which makes the arithmetic between them readable:
+The final reading, all of it out of `fmodextinput.prx` `0x2a02`-`0x2a90`:
 
 ```
-0x2a28   xmm4 = (1 - keyTrack) + pitchRatio * keyTrack   ; keytrack
-0x2a3f   xmm6 = cutoff * cutoff                          ; cutoff²
-0x2a6a   xmm1 = 1 + envAmount * (envB - 1)               ; envFactor
-0x2a6e   xmm1 = cutoff² * envFactor
-0x2a72   xmm9 = keytrack * xmm1                          ; freq
-0x2a90   xmm1 = xmm4 * resonance                         ; res  <-- keytrack, NOT envFactor
+0x2a28   xmm4 = (1 - envAmount) + envB * envAmount      ; envFactor
+0x2a3f   xmm6 = cutoff * cutoff                         ; cutoff²
+0x2a6a   xmm1 = 1 + (pitchRatio - 1) * keyTrack         ; keytrack
+0x2a6e   xmm1 = cutoff² * keytrack
+0x2a72   xmm9 = envFactor * xmm1                        ; freq
+0x2a90   xmm1 = xmm4 * resonance                        ; res = envFactor * resonance
 ```
 
-The cutoff formula was already right. `xmm4` is untouched between `0x2a28` and `0x2a90`, so the
-resonance takes the key tracking and nothing else. The ladder consumes both from voice state
-`[r14+0xc0]` (res) and `[r14+0xc8]` (freq), broadcast at `0x2eb6`/`0x2ed0`, and the ladder's own
-coefficients at `0x3164`–`0x31bc` match `ladderCoefficients` instruction for instruction — `freq`
-is normalised to Nyquist there, with no conversion to Hz anywhere.
+with `Params[3..6]` = cutoff, resonance, keyTrack, envAmount. **This is what the code had before
+this session touched it.** Two changes were made against it and both were wrong; they are recorded
+because the trap is a good one and cheap to fall into again.
 
-**Why it mattered and how it surfaced.** A listener reported `synth/ghost.rinst` as thin and
-unresonant. That patch is the worst case for the error: its amplitude decay is 0.85 s against a
-**filter attack of 1.04 s**, so the note is gone before envelope B opens — B peaks at 0.194, and
-`envFactor` sits between 0.37 at the attack and 0.49 at its own peak. An authored resonance of 0.90
-arrived at the ladder as **0.33** instead of **0.50**, and the ladder's `q` as 0.90 instead of 1.36.
+### Why it is hard, and what actually settles it
 
-⚠️ The clamps in `filterAt` are still ours. Nothing in that block bounds either value; the
-ladder diverges for `freq > 1`.
+**The key-tracking and envelope terms are the same shape** — both are `1 + (X - 1) * p`, built from
+the same `vsubps/vmulps/vaddps` triple. Nothing in the arithmetic distinguishes them. Reading the
+block and asking "which of these looks like key tracking" gets a coin flip, and a coin flip is what
+it got.
+
+What settles it is the identity of `X`, and each one is a short trace:
+
+| register | what it is | how that is known |
+|---|---|---|
+| `[rbp-0xa90]` | the **pitch ratio** | set to `1.0` at `0x1e25`, then multiplied at `0x1e4a` by `[rbp-0x9d0] / [rcx+rbx+0x88]` — a frequency over the slot's own base frequency |
+| `[rbp-0xb70]` | **envelope B** | `0x21ef`-`0x220d` interpolate `Params[7..10]`, the filter ADSR, and `0x222d` calls the envelope evaluator with them and stores its result there |
+
+`[rbp-0xa90]` pairs with `Params[5]`, so `Params[5]` is the key tracking. `[rbp-0xb70]` pairs with
+`Params[6]` **and is the `xmm4` that reaches the resonance at `0x2a90`**, so `Params[6]` is the
+envelope amount and the resonance takes the envelope, not the pitch.
+
+### The two wrong turns
+
+1. **"The resonance follows the key tracking."** Asserted from `0x2a90` alone, on the assumption
+   that `xmm4` was the keytrack. It is the envFactor.
+2. **"`Params[5]` and `[6]` are swapped."** A consequence of the first: with the resonance wrongly
+   taking the pitch, `musicbox.rinst` (key tracking 1) self-oscillated on high notes, and swapping
+   the indices made that symptom go away. It made the symptom go away by moving the error, not by
+   removing it — and it silently traded every instrument's filter-envelope depth for its key
+   tracking, which a listener heard immediately as broken envelopes.
+
+⚠️ **A fix that removes a symptom is not evidence.** Both changes were made because a render
+sounded better or worse afterwards. The only thing that settled the question was tracing two stack
+slots back to their writers, which cost less than either wrong turn did.
+
+⚠️ **Still open: whether `q` should reach 3.** With the correct reading, `musicbox` at full
+modulation has resonance 0.856 at `freq ≈ 0.019`, and the Stilson/Smith compensation grows as the
+cutoff falls, so `q ≈ 3.1`. The coefficient formula matches the engine instruction for instruction,
+but the **saturation that bounds the ladder** has only been read as `b4 -= b4³/6`. If a resonant
+patch still sounds like it is howling, that is where to look — not at these four indices.
 
 ## 6c. The unison stack — measured, documented, and NOT WIRED UP until now
 
@@ -582,42 +606,6 @@ comparable with the last one.
 14 of them, and most 8-slot drum kits have `numStack` 1, so the corpus-wide effect of wiring it up
 has not been measured — only that the peak of the rendered mix fell from 1.749 to 1.491, which is
 the `sqrt(1/N)` correction arriving.
-
-## 6e. `Params[5]` and `Params[6]` were swapped — CORRECTED, 2026-09-01
-
-`FILTER_PARAMS` had `keyTrack: 5, envAmount: 6`. It is the other way round, and the array base is
-pinned rather than assumed. `fmodextinput.prx` loads the four filter controls as consecutive `(x,y)`
-pairs from `rcx` at `0x2985`-`0x29bd` and uses them at `0x2a02`-`0x2a90`:
-
-```
-[rcx+0x500]/[0x504]  lerped at 0x2a2c, then SQUARED at 0x2a3f    -> cutoff      Params[3]
-[rcx+0x508]/[0x50c]  lerped at 0x2a76, times keytrack at 0x2a90  -> resonance   Params[4]
-[rcx+0x510]/[0x514]  lerped at 0x2a43, into 1 + p*(envB - 1)     -> envAmount   Params[5]
-[rcx+0x518]/[0x51c]  lerped at 0x2a02, into 1 + (rate - 1)*p     -> keyTrack    Params[6]
-```
-
-The same function reads `[rcx+0x540..0x55c]` as the amplitude ADSR (`Params[11..14]`),
-`[rcx+0x560..0x5a4]` as the LFO triples and `[rcx+0x5a8]` as the output level. That places
-`Params[0]` at `rcx+0x4e8` and leaves no freedom in the four above.
-
-**How it surfaced, and why it only surfaced now.** A listener reported a strange detune on the music
-box in one level's intro, immediately after per-note modulation was wired up. `musicbox.rinst` has
-`Params[5] = 1` and `Params[6] = 0`, and its filter pair sweeps with the modulation: cutoff 1.0 to
-0.1375, resonance 0.0 to 0.8562. Read the old way its key tracking was **1**, so
-`resonance * keytrack` doubled at the octave, clamped at 1, and drove the ladder's `q` past 3 into
-self-oscillation — a resonant peak that climbed with the note, which is exactly what a detune
-sounds like. Read correctly its key tracking is **0** and the filter is identical at every pitch.
-
-The error was invisible until modulation was connected because both instruments' `x` endpoints
-happened not to expose it: at modulation 0 the music box's resonance is exactly **0**, a plain
-lowpass wide open, which is what the listener expected the timbre knob to give.
-
-⚠️ **`q` still reaches 3.13 on the music box at full modulation.** The Stilson/Smith
-approximation's resonance compensation grows as the cutoff falls, so a 0.856 resonance at
-`freq = 0.019` is a very strong peak at 454 Hz. It is now pitch-independent, so it reads as a
-timbre rather than a detune, but whether the engine's ladder is that fierce there is unverified —
-the coefficient formula matches instruction for instruction, the *saturation* that bounds it has
-only been read as `b4 -= b4³/6`.
 
 ## 6d. Per-note modulation — WIRED UP 2026-09-01
 

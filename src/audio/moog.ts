@@ -100,9 +100,9 @@ export interface FilterSettings {
   readonly cutoff: number;
   /** `Params[4]`, 0..1. Zero in 60 of the game's 68 instruments. */
   readonly resonance: number;
-  /** `Params[6]`, 0..1: how far the cutoff follows the note. */
+  /** `Params[5]`, 0..1: how far the cutoff follows the note. */
   readonly keyTrack: number;
-  /** `Params[5]`, 0..1: how far envelope B moves the cutoff. */
+  /** `Params[6]`, 0..1: how far envelope B moves the cutoff. */
   readonly envAmount: number;
 }
 
@@ -114,34 +114,32 @@ export interface FilterSettings {
  * keytrack  = 1 + (pitchRatio - 1) * keyTrack
  * envFactor = 1 + envAmount * (envelopeB - 1)
  * freq = clamp(cutoff² * keytrack * envFactor, 0, 1)
- * res  = clamp(resonance      * keytrack,         0, 1)
+ * res  = clamp(resonance      * envFactor,     0, 1)
  * ```
  *
- * **Both lines are now read out of `fmodextinput.prx`**, in the block at
- * `0x2a02`-`0x2a90`. Every parameter arrives through the same shape --
- * `vsubss; vmulss xmm7; vaddss; vpshufd 0` is `x + mod * (y - x)` broadcast to
- * four lanes -- which makes the arithmetic between them readable:
+ * Read out of `fmodextinput.prx` at `0x2a02`-`0x2a90`. Every parameter arrives
+ * through the same lerp-and-broadcast shape, `vsubss; vmulss xmm7; vaddss;
+ * vpshufd 0`, which is `x + mod * (y - x)`:
  *
  * ```
- * 0x2a28   xmm4 = (1 - keyTrack) + pitchRatio * keyTrack   ; keytrack
- * 0x2a3f   xmm6 = cutoff * cutoff                          ; cutoff²
- * 0x2a6a   xmm1 = 1 + envAmount * (envB - 1)               ; envFactor
- * 0x2a6e   xmm1 = cutoff² * envFactor
- * 0x2a72   xmm9 = keytrack * xmm1                          ; freq
- * 0x2a90   xmm1 = xmm4 * resonance                         ; res
+ * 0x2a28   xmm4 = (1 - envAmount) + envB * envAmount      ; envFactor
+ * 0x2a3f   xmm6 = cutoff * cutoff                         ; cutoff²
+ * 0x2a6a   xmm1 = 1 + (pitchRatio - 1) * keyTrack         ; keytrack
+ * 0x2a6e   xmm1 = cutoff² * keytrack
+ * 0x2a72   xmm9 = envFactor * xmm1                        ; freq
+ * 0x2a90   xmm1 = xmm4 * resonance                        ; res = envFactor * resonance
  * ```
  *
- * ⚠️ **The resonance takes the key tracking, not the envelope.** This file
- * said `resonance * envFactor` and flagged it as the least certain line
- * recovered; it was wrong. The two are not interchangeable on a patch whose
- * envelopes disagree: `synth/ghost.rinst` has an amplitude decay of 0.85 s
- * against a filter attack of 1.04 s, so envelope B never gets past 0.194 and
- * `envFactor` stays in 0.37-0.49 for the whole audible life of the note. Its
- * authored resonance of 0.90 arrived at the ladder as 0.33; with the key
- * tracking it arrives as 0.50, and the ladder's `q` goes from 0.90 to 1.36.
+ * ⚠️ **`xmm4` is `envFactor`, not `keytrack`, and the two are indistinguishable
+ * from the arithmetic alone** — both are `1 + (X - 1) * p`. A session read them
+ * the wrong way round, concluded that the resonance takes the key tracking, and
+ * swapped `Params[5]` and `[6]` to match. What settles it is the identity of
+ * `X`: `[rbp-0xa90]` starts at 1.0 and is multiplied by a frequency ratio, so it
+ * is the pitch; `[rbp-0xb70]` is the return of the envelope evaluator called at
+ * `0x222d` with `Params[7..10]`, so it is envelope B. See `FILTER_PARAMS`.
  *
- * ⚠️ The clamps are ours. Nothing in that block bounds either value, but the
- * ladder diverges for `freq > 1`.
+ * ⚠️ The clamps are ours. Nothing in that block bounds either value; the ladder
+ * diverges for `freq > 1`.
  */
 export function filterAt(
   settings: FilterSettings,
@@ -153,7 +151,7 @@ export function filterAt(
   const clamp = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
   return {
     freq: clamp(settings.cutoff * settings.cutoff * keytrack * envFactor),
-    res: clamp(settings.resonance * keytrack),
+    res: clamp(settings.resonance * envFactor),
   };
 }
 
@@ -161,32 +159,32 @@ export function filterAt(
 /**
  * Which `Params` index is which filter control.
  *
- * ⚠️ **5 and 6 were the wrong way round here**, and the swap is measurable
- * rather than arguable. `fmodextinput.prx` loads the four as consecutive `(x,y)`
- * pairs from `rcx`, at `0x2985`-`0x29bd`:
+ * `fmodextinput.prx` loads the four as consecutive `(x,y)` pairs from `rcx` at
+ * `0x2985`-`0x29bd` and combines them at `0x2a02`-`0x2a90`. The array base is
+ * pinned rather than assumed: the same function reads `[rcx+0x540..0x55c]` as
+ * the amplitude ADSR (`Params[11..14]`), `[rcx+0x560..0x5a4]` as the LFO
+ * triples and `[rcx+0x5a8]` as the output level, which puts `Params[0]` at
+ * `rcx+0x4e8` and `Params[3]` at `rcx+0x500`.
  *
- * ```
- * [rcx+0x500]/[0x504]  -> lerped at 0x2a2c, then SQUARED at 0x2a3f   -> cutoff
- * [rcx+0x508]/[0x50c]  -> lerped at 0x2a76, times keytrack at 0x2a90 -> resonance
- * [rcx+0x510]/[0x514]  -> lerped at 0x2a43, into 1 + p*(envB - 1)    -> envAmount
- * [rcx+0x518]/[0x51c]  -> lerped at 0x2a02, into 1 + (rate - 1)*p    -> keyTrack
- * ```
+ * ⚠️ **The key-tracking and envelope terms are the same shape**, `1 + (X - 1)*p`,
+ * so the indices cannot be told apart from the arithmetic — only from what `X`
+ * is. This was got wrong once by guessing:
  *
- * The base is not assumed: the same function reads `[rcx+0x540..0x55c]` as the
- * amplitude ADSR (`Params[11..14]`), `[rcx+0x560..0x5a4]` as the LFO triples
- * and `[rcx+0x5a8]` as the output level, which pins `Params[0]` at `rcx+0x4e8`
- * and leaves no freedom in the four above.
+ * - `[rbp-0xa90]` is the **pitch ratio**. It is set to `1.0` at `0x1e25` and
+ *   multiplied at `0x1e4a` by `[rbp-0x9d0] / [rcx+rbx+0x88]`, a frequency over
+ *   the slot's own base frequency. It pairs with `Params[5]`, so
+ *   **`Params[5]` is the key tracking**.
+ * - `[rbp-0xb70]` is **envelope B**. `0x21ef`-`0x220d` interpolate
+ *   `Params[7..10]` — the filter ADSR — and `0x222d` calls the envelope
+ *   evaluator with them, storing its result there. It pairs with `Params[6]`,
+ *   so **`Params[6]` is the envelope amount**.
  *
- * The swap is audible, not cosmetic. `move_pack/musicbox.rinst` has
- * `Params[6] = 0` and `Params[5] = 1`: read the old way its key tracking was 1,
- * so `resonance * keytrack` doubled at the octave, clamped at 1, and drove the
- * ladder's `q` past 3 into self-oscillation -- a resonant peak that climbed
- * with the note, which is what a listener reported as a detune. Read correctly
- * its key tracking is 0 and the resonance does not move with pitch at all.
+ * Everything downstream follows from those two, including which of the two
+ * factors reaches the resonance at `0x2a90`.
  */
 export const FILTER_PARAMS = {
   cutoff: 3,
   resonance: 4,
-  envAmount: 5,
-  keyTrack: 6,
+  keyTrack: 5,
+  envAmount: 6,
 } as const;
