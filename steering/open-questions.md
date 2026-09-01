@@ -29,14 +29,30 @@ scale table's address, `Numstack`, voice `+0x28`, and the pan law. See
 
 ---
 
-## 2. Echo DSP parameter indices
+## 2. The echo — and `v0x3fd4c0` turned out to be the REVERB
 
-`v0x3fd4c0`–`v0x3fd5d0` issues 10 `DSP::setParameter` calls (`fmod_dspi` `v0xa23970`). Read the
-immediate parameter indices and the values fed in, and match them against
-`FMOD_DSP_ECHO_*` / `FMOD_DSP_SFXREVERB_*`. That converts `EchoTime`/`EchoFeedback`/`EchoMix` from
-"floats with suggestive names" into exact DSP settings, and very likely answers question 7 as a
-side effect. Straightforward disassembly; no cleverness needed. **Do this before implementing the
-echo**, or you will tune by ear against a moving target.
+⚠️ **This question was aimed at the wrong function.** `v0x3fd4c0` is
+`applyReverbPreset(dsp, setting)`, not an echo setup: it indexes an 8-entry remap at `v0x1062830`,
+multiplies by 44 to index the 12-preset table at `v0x1062620`, and pushes ten of each preset's
+eleven `int32` slots into DSP parameters **1–10** — reading slots 7 and 9 as booleans and skipping
+slot 0. Both tables are dumped in `src/audio/effects.ts`. So `ReverbSetting` 0–7 selects presets
+**3, 6, 8, 5, 11, 2, 0, 0**, and the corpus only ever uses settings 1–5.
+
+**The echo is not an FMOD DSP at all.** It is inside `fmodextinput.prx`: `sub_0x670` reads the
+768,000-byte buffer at state `+0x1b18` with a wrapping two-part copy, and 768,000 bytes is
+**192,000 floats = 48,000 frames × 4 channels = exactly 1.000 s at 48 kHz**. A one-second delay
+line, four channels wide — the DSP's two stereo busses.
+
+**What is left of this question**, and it is now a `sub_0x670` job rather than an FMOD one:
+
+- the feedback path, the wet/dry law, and whether the two stereo busses cross-feed;
+- **`EchoTime`'s unit.** The eboot stores `EchoTime × 0.5`, and `EchoTime` runs 1–4 across the
+  corpus, so the state sees 0.5–2 against a one-second buffer. Seconds is the literal reading of
+  those two facts and is what `src/audio/effects.ts` uses, clamped; tempo-synced beats would fit
+  the numbers too and would sound quite different.
+
+The parameters themselves are no longer in doubt: `EchoFeedback` runs 0–0.9 (median 0.45) and
+`EchoMix` 0–1 (median 0.5) over 338 sequencers — a feedback coefficient and a wet/dry mix.
 
 ## 3. Grid resolution, swing, and triplets
 
@@ -102,13 +118,24 @@ pointers; **what fills them is not known**, and it decides how our high notes so
 worker `v0x1c37f0` — look for a pass that allocates roughly 1.75× a sample's size (1 + ½ + ¼) and
 writes three pointers 40 bytes apart into a 152-byte slot.
 
-## 6. `ReverbSetting` → which reverb
+## 6. `ReverbSetting` → which reverb — **half answered**
 
-`ReverbSetting` is an i32 preset index. Both `FMOD_DSP_TYPE_SFXREVERB` (Freeverb-derived,
-reproducible) and Sony's `aSfxDsp` plugin (proprietary, called from game code at `v0xab51b0`) are
-linked. Establish which one the sequencer's send feeds and, if it is SFXREVERB, dump the preset
-table. If it is the Sony plugin, accept an approximation — reversing a proprietary reverb is out of
-proportion to the payoff.
+**The preset table is dumped** (see question 2 and `src/audio/effects.ts`): 12 presets of 44 bytes
+at `v0x1062620`, an 8-entry remap at `v0x1062830`, and ten fields per preset pushed into DSP
+parameters 1–10.
+
+**But the fields do not look like `FMOD_DSP_SFXREVERB`.** Two of the ten are booleans, which
+SFXREVERB has none of; the first two fields are negative in the hundreds, which reads as millibels;
+the last is 3000–12000, which reads as a reference frequency in Hz. That pattern fits an
+I3DL2-style or Sony reverb far better than FMOD's.
+
+So the remaining question is narrower and more answerable than it was: **find what consumes DSP
+parameters 1–10 here** — start from the callers of `v0x3fd4c0` and from the `aSfxDsp` plugin call at
+`v0xab51b0`. Until then the reverb in `src/audio/effects.ts` is a Schroeder network of ours that
+responds to the send levels and reproduces nothing, and it says so.
+
+⚠️ This matters more than its position here suggests: **71,781 of 129,696 instrument placements
+(55%) send to reverb.** A dry render is missing more than it keeps.
 
 ## 7. FMOD's pan law — the resampler half is ANSWERED
 

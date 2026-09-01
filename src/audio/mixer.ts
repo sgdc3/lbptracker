@@ -137,6 +137,20 @@ export interface VoiceSpec {
    * holds its value, which is what the engine does when it runs out of records.
    */
   readonly automation?: readonly AutomationPoint[];
+  /**
+   * How much of this voice goes to the echo and reverb buses, 0..1.
+   *
+   * `PInstrument` carries both as real fields (`echoSend`, `reverbSend`), and
+   * 22% and 55% of the corpus's placements set them.
+   *
+   * ⚠️ **Two buses is our arrangement, not a measured one.** The DSP is
+   * 4-in/4-out — one dry stereo pair and one send pair — and `Params[25]` is a
+   * single send level, so the engine very likely sums echo and reverb into that
+   * one pair rather than keeping them apart. Splitting them here is easier to
+   * mix and easier to be wrong about; see steering/open-questions.md.
+   */
+  readonly echoSend?: number;
+  readonly reverbSend?: number;
   /** Injected so an offline render can be deterministic. */
   readonly random?: () => number;
 }
@@ -380,13 +394,55 @@ export class Mixer {
    * Render one block. `left` and `right` are cleared first, so callers get the
    * mix rather than an accumulation across blocks.
    */
-  render(left: Float32Array, right: Float32Array): void {
+  render(
+    left: Float32Array,
+    right: Float32Array,
+    sends?: {
+      readonly echo?: readonly [Float32Array, Float32Array];
+      readonly reverb?: readonly [Float32Array, Float32Array];
+    },
+  ): void {
     const frames = Math.min(left.length, right.length);
     left.fill(0);
     right.fill(0);
+    sends?.echo?.[0].fill(0);
+    sends?.echo?.[1].fill(0);
+    sends?.reverb?.[0].fill(0);
+    sends?.reverb?.[1].fill(0);
+
+    // A send bus is the same render scaled: rather than render a voice twice,
+    // each voice writes into a scratch pair and that is added to dry and to
+    // each bus at its own level. The scratch is per render, not per voice.
+    const needsSends =
+      sends !== undefined &&
+      this.voices.some((v) => (v.spec.echoSend ?? 0) > 0 || (v.spec.reverbSend ?? 0) > 0);
+    const scratchL = needsSends ? new Float32Array(frames) : left;
+    const scratchR = needsSends ? new Float32Array(frames) : right;
 
     for (const voice of this.voices) {
-      voice.render(left, right, frames, this.interpolate, this.engineSampler);
+      const echo = voice.spec.echoSend ?? 0;
+      const reverb = voice.spec.reverbSend ?? 0;
+      if (!needsSends || (echo === 0 && reverb === 0)) {
+        voice.render(left, right, frames, this.interpolate, this.engineSampler);
+        continue;
+      }
+      scratchL.fill(0);
+      scratchR.fill(0);
+      voice.render(scratchL, scratchR, frames, this.interpolate, this.engineSampler);
+      for (let i = 0; i < frames; i += 1) {
+        const l = scratchL[i];
+        const r = scratchR[i];
+        left[i] += l;
+        right[i] += r;
+        if (echo > 0 && sends?.echo) {
+          sends.echo[0][i] += l * echo;
+          sends.echo[1][i] += r * echo;
+        }
+        if (reverb > 0 && sends?.reverb) {
+          sends.reverb[0][i] += l * reverb;
+          sends.reverb[1][i] += r * reverb;
+        }
+      }
     }
     // A voice that ran out mid-block has already written what it had.
     this.voices = this.voices.filter((v) => !v.finished);

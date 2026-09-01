@@ -17,6 +17,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { Echo, Reverb, reverbPreset } from '../src/audio/effects.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from '../src/audio/mixer.ts';
 import { buildMipChain } from '../src/audio/mipmap.ts';
 import { FILTER_PARAMS } from '../src/audio/moog.ts';
@@ -151,12 +152,39 @@ for (const event of events) {
     },
     lfos: [lfo(0), lfo(1), lfo(2)],
     automation,
+    echoSend: track.echoSend,
+    reverbSend: track.reverbSend,
   };
   mixer.play(spec);
   played += 1;
 }
 
-mixer.render(left, right);
+const echoL = new Float32Array(frames);
+const echoR = new Float32Array(frames);
+const reverbL = new Float32Array(frames);
+const reverbR = new Float32Array(frames);
+mixer.render(left, right, { echo: [echoL, echoR], reverb: [reverbL, reverbR] });
+
+// The two sends, mixed back over the dry signal. ⚠️ The echo's topology and the
+// reverb itself are not measured -- see src/audio/effects.ts, which says which
+// parts are the game's and which are ours.
+const echo = new Echo(RATE, seq.echoTime, seq.echoFeedback, seq.echoMix);
+const preset = reverbPreset(seq.reverb);
+// Preset slot 3 is a small integer that tracks how large the space sounds, and
+// slot 10 a frequency in Hz; both are used here only to vary the placeholder.
+const reverb = new Reverb(RATE, 0.7 + Math.min(preset[2], 18) / 60, 0.55 - preset[9] / 40000);
+const wetGain = 0.35;
+for (let i = 0; i < frames; i += 1) {
+  const e = echo.process(echoL[i], echoR[i]);
+  left[i] += e.left;
+  right[i] += e.right;
+  left[i] += reverb.process(reverbL[i]) * wetGain;
+  right[i] += reverb.process(reverbR[i]) * wetGain;
+}
+console.log(
+  `echo ${seq.echoTime}/${seq.echoFeedback}/${seq.echoMix}, ` +
+    `reverb setting ${seq.reverb} -> preset [${preset.join(', ')}]`,
+);
 
 let peak = 0;
 for (let i = 0; i < frames; i += 1) peak = Math.max(peak, Math.abs(left[i]), Math.abs(right[i]));
