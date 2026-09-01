@@ -232,10 +232,33 @@ was, because each one was a plausible candidate:
   loop with no float work.
 
 **So the process is not in the `v0x3fc000`–`v0x3fe000` window**, or is not reached by a pointer
-stored at load time. The next thing to try is neither of the above: **find every function that loads
-`[reg + 0x18]` and then indexes that pointer inside a loop with float arithmetic**, across the whole
-`.text`, rather than guessing at a module boundary. `[state+0x18]` is where `v0x3fcd50` stores the
-307 KB buffer, so the process must do exactly that.
+stored at load time.
+
+### The whole-`.text` search, and why it did not work either
+
+- **By `[reg + 0x18]`**, the offset where `v0x3fcd50` stores the buffer: **1,714 functions**. The
+  offset is far too common to discriminate.
+- **By the coefficient offsets** `0x2c`–`0x50`, hoping a function that reads several of them
+  together must be the reverb: three functions read **all ten**, and disassembling them shows all
+  three are false positives — `v0xa189f0` is a `memset` loop over `0x4940`-byte objects,
+  `v0xab7270` is a 6→1 channel downmix where those offsets are just consecutive channels. Offsets
+  in that range are ordinary struct and array strides; they carry no signal.
+- ⚠️ **Byte-pattern scans must be validated by disassembling.** The first pass matched
+  `F3 0F 10` / `C5 FA 10` anywhere in the image, including inside other instructions and in data,
+  and its best hit had no `movss` in it at all.
+- **By the buffer's size**, `0x4b000`: it appears in code exactly **twice**, both inside
+  `v0x3fcfe0`, the construction. Everything else reaches the buffer through the pointer, so there is
+  no second textual mention to find.
+
+⚠️ **Correction: `v0xab51b0` is not an `aSfxDsp` call.** This file has said so since the reverb was
+first written up; it is four instructions of table lookup (`lea rcx, [rip+…]; mov rax, [rcx+rax*8];
+ret`). The eboot also contains **no Sony audio-DSP library strings at all**, so the "FMOD SFXREVERB
+or Sony's plugin" framing that opened this question was wrong on both halves.
+
+**What to try next, and it is not another pattern search:** find the reverb object's *owner*.
+`v0x3fcfe0` builds it and stores the buffer at `[obj+0xe0]` and the two states at `[obj+0xf0]` and
+`[obj+0xf8]`. Whoever calls `v0x3fcfe0` holds that object and must drive it once per audio block —
+work forward from the callers of the construction rather than backward from the data.
 
 ⚠️ Worth doing, and worth doing before more of the mix is tuned: **71,781 of 129,696 instrument
 placements (55%) send to reverb.** Until it is done, `src/audio/effects.ts` carries a Schroeder
