@@ -271,6 +271,17 @@ export interface ScheduledNote {
   readonly volume: number;
   readonly timbre: number;
   /**
+   * The first control point's modulation, 0..1 -- the value that picks a point
+   * inside every `Params` range.
+   *
+   * ⚠️ **The first point's, not a curve.** 3.45% of the corpus's 2,027,633
+   * notes change modulation across their own points, and those are rendered at
+   * their opening value. Pitch and volume are interpolated between points;
+   * modulation is not, because it feeds parameters that are read once when the
+   * voice starts (the envelopes' times, the filter settings, the stack).
+   */
+  readonly modulation: number;
+  /**
    * Every control point, in step order, **relative to `step`**.
    *
    * ⚠️ A note is a chain, not a value: the engine glides linearly between
@@ -314,6 +325,7 @@ export function schedule(sequencer: Sequencer): ScheduledNote[] {
         pitch: first.pitch,
         volume: first.volume,
         timbre: first.timbre,
+        modulation: first.modulation,
         points: note.points.map((p) => ({
           step: p.step + p.subStep / 3 - note.startPosition,
           pitch: p.pitch,

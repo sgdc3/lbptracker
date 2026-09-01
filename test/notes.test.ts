@@ -21,6 +21,7 @@ function rec(
     pitch,
     volume: DEFAULT_VOLUME,
     timbre: DEFAULT_TIMBRE,
+    modulation: 0,
     subStep: 0,
     end: false,
     ...opts,
@@ -162,4 +163,15 @@ test('readNotes decodes a real clip from the corpus', () => {
     notes.map((n) => n.points[0].pitch),
     [0x25, 0x2f, 0x2c, 0x25, 0x2f, 0x2c, 0x23, 0x2f],
   );
+});
+
+test('the modulation is the low nibble of the fourth byte, over 15', () => {
+  const mod = (b3: number) => decodeRecord(new Uint8Array([0x04, 0x00, 0x60, b3])).modulation;
+  assert.equal(mod(0x00), 0);
+  assert.equal(mod(0x0f), 1);
+  assert.equal(mod(0x40), 0, 'bit 30 is not part of the modulation');
+  assert.equal(mod(0x4f), 1, 'nor does it disturb a full one');
+  assert.ok(Math.abs(mod(0x09) - 9 / 15) < 1e-12);
+  // ⚠️ Bits 28..29 select a per-block table and must not leak in either.
+  assert.equal(mod(0x30), 0);
 });

@@ -21,7 +21,12 @@ import { Echo, Reverb, reverbPreset } from '../src/audio/effects.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from '../src/audio/mixer.ts';
 import { buildMipChain } from '../src/audio/mipmap.ts';
 import { FILTER_PARAMS } from '../src/audio/moog.ts';
-import { ADSR_PARAMS, ADSR_PARAMS_B, evaluateAdsr } from '../src/core/envelope.ts';
+import {
+  ADSR_PARAMS,
+  ADSR_PARAMS_B,
+  evaluateAdsr,
+  evaluateParam,
+} from '../src/core/envelope.ts';
 import { resolveSlot } from '../src/core/instrument.ts';
 import { LFO_PARAMS, OUTPUT_PARAMS, STACK_PARAMS } from '../src/core/params.ts';
 import { importLevel, schedule, type DumpRow } from '../src/core/project.ts';
@@ -139,10 +144,18 @@ for (const event of events) {
   const slot = loaded.slots[Math.min(zone, loaded.slots.length - 1)];
   const definition = loaded.inst.slots[Math.min(zone, loaded.inst.slots.length - 1)];
   const p = loaded.inst.params;
+  // The note's own modulation picks a point inside EVERY parameter's `x..y`
+  // range -- `voice+0x28` in the engine, `(byte3 & 0x0f) / 15`. Reading `.x`
+  // instead, as this did, pins every note to the low end of every range: 19% of
+  // corpus records carry a non-zero modulation and 10% carry a full one, and on
+  // `synth/ghost.rinst` alone that is the difference between resonance 0.90 and
+  // resonance 0.53.
+  const mod = event.modulation;
+  const P = (index: number) => evaluateParam(p[index], mod);
   const lfo = (n: 0 | 1 | 2) => ({
-    rate: p[LFO_PARAMS[n].rate].x,
-    depth: p[LFO_PARAMS[n].depth].x,
-    spread: p[LFO_PARAMS[n].spread].x,
+    rate: P(LFO_PARAMS[n].rate),
+    depth: P(LFO_PARAMS[n].depth),
+    spread: P(LFO_PARAMS[n].spread),
   });
 
   // The note's control points as mixer automation: semitones and gain relative
@@ -167,19 +180,19 @@ for (const event of events) {
   const spec: VoiceSpec = {
     sample: slot.wav,
     playbackRate: pitchRatio(definition, note, seq.tempo) * (slot.wav.sampleRate / RATE),
-    gain: velocityGain(event.volume) * track.level * 2 * p[OUTPUT_PARAMS.level].x * stackGain,
+    gain: velocityGain(event.volume) * track.level * 2 * P(OUTPUT_PARAMS.level) * stackGain,
     pan: track.pan,
     startFrame: Math.round(event.step * framesPerStep),
     endFrame: Math.round((event.step + event.durationSteps) * framesPerStep),
-    envelope: evaluateAdsr(p, ADSR_PARAMS, 0),
+    envelope: evaluateAdsr(p, ADSR_PARAMS, mod),
     filter: {
       settings: {
-        cutoff: p[FILTER_PARAMS.cutoff].x,
-        resonance: p[FILTER_PARAMS.resonance].x,
-        keyTrack: p[FILTER_PARAMS.keyTrack].x,
-        envAmount: p[FILTER_PARAMS.envAmount].x,
+        cutoff: P(FILTER_PARAMS.cutoff),
+        resonance: P(FILTER_PARAMS.resonance),
+        keyTrack: P(FILTER_PARAMS.keyTrack),
+        envAmount: P(FILTER_PARAMS.envAmount),
       },
-      envelope: evaluateAdsr(p, ADSR_PARAMS_B, 0),
+      envelope: evaluateAdsr(p, ADSR_PARAMS_B, mod),
     },
     lfos: [lfo(0), lfo(1), lfo(2)],
     automation,
@@ -190,11 +203,11 @@ for (const event of events) {
   for (let layer = 0; layer < layers; layer += 1) {
     mixer.play({
       ...spec,
-      playbackRate: spec.playbackRate * (1 + 0.05 * p[STACK_PARAMS.detune].x * bipolar()),
-      pan: clamp01(spec.pan + 0.5 * p[STACK_PARAMS.spread].x * bipolar()),
-      startPosition: p[STACK_PARAMS.startOffset].x * sampleFrames * rand(),
+      playbackRate: spec.playbackRate * (1 + 0.05 * P(STACK_PARAMS.detune) * bipolar()),
+      pan: clamp01(spec.pan + 0.5 * P(STACK_PARAMS.spread) * bipolar()),
+      startPosition: P(STACK_PARAMS.startOffset) * sampleFrames * rand(),
       lfoPhaseOffset: [0, 1, 2].map(
-        (n) => p[LFO_PARAMS[n].spread].x * ((2 * Math.PI) / layers) * layer,
+        (n) => P(LFO_PARAMS[n].spread) * ((2 * Math.PI) / layers) * layer,
       ) as unknown as readonly [number, number, number],
     });
   }

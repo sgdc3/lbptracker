@@ -583,6 +583,33 @@ comparable with the last one.
 has not been measured — only that the peak of the rendered mix fell from 1.749 to 1.491, which is
 the `sqrt(1/N)` correction arriving.
 
+## 6d. Per-note modulation — WIRED UP 2026-09-01
+
+The note word's bits 24..27 are the note's own modulation, `× 1/15` (`v0x4550`), and it is the
+value that picks a point inside **every** `Params` range: `evaluateParam(p, mod) = p.x + mod*(p.y -
+p.x)`. `sequencer-data-model.md` has had this since the row at `voice+0x28` was corrected from "pan"
+to "modulation", and the renderer went on passing a hard-coded `0` — so every note used every
+parameter's `x` endpoint and the `y` endpoint was unreachable.
+
+**It is not a rounding-level difference.** Across 3,199,788 corpus records the nibble is 0 on
+80.74% and **15 on 10.20%**, with the other nine per cent spread thinly over the fourteen values
+between: mostly a two-position switch that a minority of authors sweep. On `synth/ghost.rinst`,
+`Params[4]` runs 0.90 to 0.53, so a full-modulation note should have *little* resonance where an
+unmodulated one has a lot — the two are not close.
+
+Per sequencer it is very uneven, which is worth knowing before concluding a render is unaffected:
+
+| sequencer | notes | with modulation | at full |
+|---|---|---|---|
+| 723339 "Ascetic" | 28,998 | 10 (0.0%) | 0 |
+| 737099 "This Is Halloween" | 29,260 | **2,488 (8.5%)** | 2,440 |
+
+⚠️ **The first point's value only.** 70,028 of the corpus's 2,027,633 notes (3.45%) change
+modulation across their own control points, and those render at their opening value. Pitch and
+volume are interpolated between points; modulation is not, because it feeds things read once when
+the voice starts — the envelope times, the filter settings, the unison stack. Whether the engine
+re-reads it mid-note is unmeasured.
+
 ## 7. FMOD's pan law — the resampler half is ANSWERED
 
 **RESOLVED, 2026-09-01: the sampler interpolates linearly and mipmaps by octave.** It is not

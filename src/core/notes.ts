@@ -36,8 +36,24 @@ export interface NoteRecord {
   readonly pitch: number;
   /** 0-255, though real data never exceeds 127. Default 0x60. */
   readonly volume: number;
-  /** 0-255, though real data never exceeds 127. Default 0x40. */
+  /**
+   * The raw fourth byte. Its name is historical: it is not a timbre but a
+   * packed field -- bits 24..27 of the word are the modulation, 28..29 select
+   * one of four per-block tables, and 30 is the sub-step shift.
+   */
   readonly timbre: number;
+  /**
+   * The note's own modulation, 0..1: `(timbre & 0x0f) / 15`.
+   *
+   * This is the value that picks a point inside **every** `Params` range, so a
+   * note at 1 gets each parameter's `y` where a note at 0 gets its `x`. It is
+   * `voice+0x28` in the engine, scaled by `1/15` (`v0x4550`).
+   *
+   * Across 3,199,788 corpus records it is 0 on 80.74% and 1 on 10.20%, with the
+   * remaining nine per cent spread thinly over the fourteen values between --
+   * so it is mostly a two-position switch that a minority of authors sweep.
+   */
+  readonly modulation: number;
   /** Marks the last record of a note. */
   readonly end: boolean;
 }
@@ -82,7 +98,8 @@ export function decodeRecord(bytes: Uint8Array, offset = 0): NoteRecord {
     // Unsigned. The toolkit reads these as signed Java bytes while its writer
     // masks with 0xff; anything above 0x7f would come back negative there.
     volume: bytes[offset + 2],
-    timbre: bytes[offset + 3],
+    timbre: b3,
+    modulation: (b3 & 0x0f) / 15,
   };
 }
 
