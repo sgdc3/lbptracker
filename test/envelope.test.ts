@@ -244,12 +244,17 @@ test('a voice with an envelope outlives its endFrame and dies on its own', async
   assert.equal(mixer.voiceCount, 0, 'the release ends the voice by itself');
 });
 
-test('without an envelope the old stand-ins still apply', async () => {
+test('a looping sample without an envelope still stops at its end frame', async () => {
   const { Mixer } = await import('../src/audio/mixer.ts');
   const rate = 48000;
   const mixer = new Mixer(rate);
   mixer.play({
-    sample: { channels: [new Float32Array(rate).fill(1)], sampleRate: rate },
+    sample: {
+      channels: [new Float32Array(rate).fill(1)],
+      sampleRate: rate,
+      // The loop is what makes this a sustained voice rather than a one-shot.
+      loop: { start: 0, end: rate },
+    },
     playbackRate: 1,
     gain: 1,
     pan: 0.5,
@@ -259,6 +264,26 @@ test('without an envelope the old stand-ins still apply', async () => {
   mixer.render(left, new Float32Array(200));
   assert.ok(left[99] !== 0, 'sounding up to the end frame');
   assert.equal(left[150], 0, 'and hard-stopped after it, as before');
+});
+
+test('a sample with no loop is a one-shot and outlives its note', async () => {
+  const { Mixer } = await import('../src/audio/mixer.ts');
+  const rate = 48000;
+  const mixer = new Mixer(rate);
+  // 300 frames of sample against a 100-frame note: percussion's whole shape.
+  mixer.play({
+    sample: { channels: [new Float32Array(300).fill(1)], sampleRate: rate },
+    playbackRate: 1,
+    gain: 1,
+    pan: 0.5,
+    endFrame: 100,
+  });
+  const left = new Float32Array(400);
+  mixer.render(left, new Float32Array(400));
+  assert.ok(left[99] !== 0, 'sounding during the note');
+  assert.ok(left[150] !== 0, 'and still sounding after it -- this is the change');
+  assert.ok(left[299] !== 0, 'right up to the last sample frame');
+  assert.equal(left[320], 0, 'then it ends, because the sample does');
 });
 
 // --------------------------------------------------------- the whole block

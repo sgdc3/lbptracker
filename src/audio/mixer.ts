@@ -228,12 +228,34 @@ class Voice {
     this.right = gains.right * spec.gain;
   }
 
+  /**
+   * Whether this voice ignores its note's end and runs to the end of the sample.
+   *
+   * A sample with no loop has no way to sustain, and the game's percussion is
+   * exactly that set. **89.4% of the corpus's 673,037 percussion notes last two
+   * steps or fewer** -- at 180 BPM, 167 ms against samples of 0.5 to 0.8 s. A
+   * one-step kick would be 83 ms of an 806 ms sample, and `a_kit_1.rinst`'s
+   * amplitude envelope is a bare gate (`sustain 1`, `release 0.068`), so gating
+   * would clip essentially every drum hit in every level to a stub.
+   *
+   * ⚠️ **This is inferred, not read.** There is no one-shot flag: the slot
+   * carries only `baseNote`, `baseBpm`, `pitched`, `fitBpm` and `fineTune`, so
+   * the loop's presence in the sample is the only signal the engine has to work
+   * with. What has not been found is the code that acts on it. See open
+   * question 10.
+   */
+  private get oneShot(): boolean {
+    return this.spec.sample.loop === undefined;
+  }
+
   get finished(): boolean {
+    const source = this.spec.sample.channels[0];
+    // A one-shot ends when the sample does, and only then.
+    if (this.oneShot) return this.position >= source.length;
     // With an envelope the voice ends when the release reaches zero, not when
     // its life runs out -- life only closes the gate.
     if (this.spec.envelope ? this.env.finished : this.life <= 0) return true;
-    const source = this.spec.sample.channels[0];
-    return !this.spec.sample.loop && this.position >= source.length;
+    return this.position >= source.length;
   }
 
   /**
@@ -279,9 +301,12 @@ class Voice {
       begin = skip;
     }
 
+    const oneShot = this.oneShot;
+
     let i = begin;
     for (; i < frames; i += 1) {
-      const held = this.life > 0;
+      // A one-shot is never released: it is held until the sample runs out.
+      const held = oneShot || this.life > 0;
       if (!envelope && !held) break;
 
       if (loop) {

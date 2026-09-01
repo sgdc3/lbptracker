@@ -666,6 +666,43 @@ volume are interpolated between points; modulation is not, because it feeds thin
 the voice starts — the envelope times, the filter settings, the unison stack. Whether the engine
 re-reads it mid-note is unmeasured.
 
+## 10. One-shots — percussion is not gated by its note, and the reason is inferred
+
+A listener reported the drums as far too quiet, and the ride cymbal at 5:17 of one level as barely
+audible. The gains were not the problem — in that window `a_kit_1` and `baiyon_drums_1` were the
+**loudest** voices in the mix (average voice gain 0.49 and 0.61, against 0.23 for the music box and
+0.06 for the ray gun), both on tracks at `level = 1.0`. The problem was duration:
+
+| note | sample | note length | sample length |
+|---|---|---|---|
+| kick | `kick.smp` | 0.083 s | 0.806 s |
+| snare | `snare.smp` | 0.167 s | 0.543 s |
+| ride | `ride.smp` | 0.500 s | 0.811 s |
+| open hi-hat | `hihat_open.smp` | 0.333 s | 0.630 s |
+
+Every one truncated, the kick to a tenth of itself. **89.4% of the corpus's 673,037 percussion notes
+last two steps or fewer**, and `a_kit_1`'s amplitude envelope is a bare gate (`sustain 1`,
+`release 0.068`), so gating clips essentially every drum hit in every level to a stub. A one-step
+kick is nobody's intention.
+
+`Voice` now treats **a sample with no loop as a one-shot**: it is never released, and it ends when
+the sample does.
+
+⚠️ **This is inferred, and the inference is the weak part.** There is no one-shot flag — the
+slot carries only `baseNote`, `baseBpm`, `pitched`, `fitBpm` and `fineTune`, and every drum slot
+reads `pitched: true` like everything else. The loop's presence in the sample is the only signal the
+engine has available, and the corpus statistics say gating cannot be what happens; but **the code
+that acts on it has not been found**. It should be in `sub_0x38e0`'s note-off path, near the voice
+record's `+0x3e`/`+0x3f` start/end pair.
+
+⚠️ **A second oddity found on the way, and left alone.** `a_kit_1`'s ride sits in slot 1, whose
+zone is notes 60..72 (`Splitnotes` `87,72,60,54,...`) but whose `baseNote` is **78** — outside its
+own zone. So notes 66 and 68 play the ride at rates 0.50 and 0.56, an octave down. Six of the eight
+slots have their base inside their zone and this one does not, which matches the corpus check
+already recorded ("one bound per slot: 62/68"). Whether the engine pitches a kit slot at all, or
+whether `Splitnotes` is being read half a zone out, is open question 4's territory and was not
+touched here.
+
 ## 7. FMOD's pan law — the resampler half is ANSWERED
 
 **RESOLVED, 2026-09-01: the sampler interpolates linearly and mipmaps by octave.** It is not
