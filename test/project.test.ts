@@ -229,3 +229,54 @@ test('the corpus resolves to real instrument GUIDs', async (t) => {
   // If this ever drops to zero again, the descriptor format has changed.
   assert.ok(resolved > rows.length * 0.9, `only ${resolved} of ${rows.length} resolved`);
 });
+
+// ------------------------------------------------------------------ triplets
+
+test('a triplet lands on its third of a step, not on the beat', () => {
+  // Three records at step 4, sub-steps 0, 1 and 2, each its own one-record
+  // note. Byte 3 carries bit 30, which is what turns sub-step 1 into 2.
+  const rec = (b0: number, b3: number) =>
+    b0.toString(16).padStart(2, '0') + '80' + '60' + b3.toString(16).padStart(2, '0');
+  const notes = rec(0x04, 0x00) + rec(0x84, 0x00) + rec(0x84, 0x40);
+  const [level] = importLevel([row({ notes, noteCount: 3, boardX: 26.25 })]);
+  const events = schedule(level.sequencers[0]);
+  assert.equal(events.length, 3);
+  assert.deepEqual(
+    events.map((e) => e.step),
+    [4, 4 + 1 / 3, 4 + 2 / 3],
+  );
+});
+
+test('the corpus’s sub-steps are the two balanced thirds, not a flag', async (t) => {
+  if (!existsSync(DUMP)) {
+    t.skip(`no ${DUMP}`);
+    return;
+  }
+  const { decodeRecords } = await import('../src/core/notes.ts');
+  const text = await readFile(DUMP, 'latin1');
+  const counts = [0, 0, 0];
+  let records = 0;
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('{')) continue;
+    const r = JSON.parse(line) as DumpRow;
+    if (!r.notes) continue;
+    const bytes = new Uint8Array(r.notes.length / 2);
+    for (let i = 0; i < bytes.length; i += 1) {
+      bytes[i] = parseInt(r.notes.slice(i * 2, i * 2 + 2), 16);
+    }
+    for (const rec of decodeRecords(bytes)) {
+      counts[rec.subStep] += 1;
+      records += 1;
+    }
+  }
+  console.log(
+    `    sub-steps: 0 ${counts[0]}, 1 ${counts[1]}, 2 ${counts[2]} of ${records} records`,
+  );
+  // ⚠️ Nothing may decode to a fourth value: `bit7 << bit30` cannot produce one,
+  // so a non-zero count here would mean the field boundaries moved.
+  assert.ok(counts[1] > 10_000 && counts[2] > 10_000, 'both thirds are used');
+  // A triplet group puts one note on each third, so the two are comparable.
+  // Wildly unbalanced counts would mean bit 30 is being read from the wrong byte.
+  const ratio = counts[1] / counts[2];
+  assert.ok(ratio > 0.5 && ratio < 2, `thirds are lopsided: ${ratio.toFixed(2)}`);
+});

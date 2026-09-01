@@ -303,15 +303,19 @@ export function schedule(sequencer: Sequencer): ScheduledNote[] {
     for (const note of track.notes) {
       const first = note.points[0];
       out.push({
-        step: track.stepOffset + note.startStep,
-        durationSteps: note.duration,
+        // ⚠️ `startPosition`, not `startStep`: a note a third of a step late is
+        // a third of a step late. Scheduling by the integer step collapsed
+        // every triplet onto the beat -- 39,000 corpus notes, and the reason a
+        // triplet passage came out sounding swung.
+        step: track.stepOffset + note.startPosition,
+        durationSteps: note.endPosition - note.startPosition + 1,
         track: index,
         guid: track.guid,
         pitch: first.pitch,
         volume: first.volume,
         timbre: first.timbre,
         points: note.points.map((p) => ({
-          step: p.step - first.step,
+          step: p.step + p.subStep / 3 - note.startPosition,
           pitch: p.pitch,
           volume: p.volume,
           timbre: p.timbre,

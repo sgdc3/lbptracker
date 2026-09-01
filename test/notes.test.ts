@@ -21,20 +21,43 @@ function rec(
     pitch,
     volume: DEFAULT_VOLUME,
     timbre: DEFAULT_TIMBRE,
-    triplet: false,
+    subStep: 0,
     end: false,
     ...opts,
   };
 }
 
-test('decodeRecord splits the two flag bits off the step and pitch', () => {
+test('decodeRecord splits the flag bits off the step and pitch', () => {
+  // Byte 3 is 0x40, so bit 30 is set: the sub-step is `1 << 1` = two thirds.
   const r = decodeRecord(new Uint8Array([0x85, 0xa5, 0x60, 0x40]));
   assert.equal(r.step, 5);
-  assert.equal(r.triplet, true);
+  assert.equal(r.subStep, 2);
   assert.equal(r.pitch, 0x25);
   assert.equal(r.end, true);
   assert.equal(r.volume, 0x60);
   assert.equal(r.timbre, 0x40);
+});
+
+test('the sub-step is bit 7 shifted by bit 30, and bit 30 is in the fourth byte', () => {
+  const sub = (b0: number, b3: number) =>
+    decodeRecord(new Uint8Array([b0, 0x00, 0x60, b3])).subStep;
+  assert.equal(sub(0x05, 0x00), 0, 'bit 7 clear is on the beat');
+  assert.equal(sub(0x05, 0x40), 0, 'bit 30 alone means nothing -- it is only a shift');
+  assert.equal(sub(0x85, 0x00), 1, 'bit 7 alone is one third');
+  assert.equal(sub(0x85, 0x40), 2, 'bit 7 with bit 30 is two thirds');
+  // ⚠️ The first byte's 0x40 is step bit 6, NOT a sub-step bit. 32,515 corpus
+  // records use it; masking the step with 0x3f moves every one by 64 steps.
+  assert.equal(decodeRecord(new Uint8Array([0x45, 0x00, 0x60, 0x00])).step, 69);
+  assert.equal(decodeRecord(new Uint8Array([0x45, 0x00, 0x60, 0x00])).subStep, 0);
+});
+
+test('a record round-trips through encode and decode, sub-step included', () => {
+  for (const bytes of [[0x05, 0xa5, 0x60, 0x00], [0x85, 0x25, 0x7f, 0x40], [0x45, 0x00, 0x01, 0x4f]]) {
+    const source = new Uint8Array(bytes);
+    const out = new Uint8Array(4);
+    encodeRecord(decodeRecord(source), out);
+    assert.deepEqual([...out], bytes);
+  }
 });
 
 test('volume and timbre are unsigned', () => {

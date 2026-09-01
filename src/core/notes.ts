@@ -16,15 +16,28 @@
 
 /** One 4-byte record as it sits in `PInstrument.Notes`. */
 export interface NoteRecord {
-  /** Step position within this instrument's clip, 0-127. Real clips stop at 63. */
+  /** Step position within this instrument's clip, 0-127. */
   readonly step: number;
+  /**
+   * Thirds of a step past `step`: 0, 1 or 2. This is where triplets come from.
+   *
+   * `sub_0x38e0` pulls the note word apart with `bextr`, so the fields are
+   * literal immediates: bits 0..6 are the step, **bit 7 is the sub-step shifted
+   * left by bit 30**, and bit 30 lives in the fourth byte. So bit 7 alone is
+   * one third, bit 7 with bit 30 is two thirds, and bit 7 clear is on the beat.
+   * The note's position is `step + subStep / 3` (`v0x4558 = 0.333333`).
+   *
+   * Across 3,199,788 corpus records that gives 0 on 98.78%, 1 on 0.67% and 2 on
+   * 0.54% -- the two non-zero values balanced, which is what a triplet group
+   * looks like when a third of its notes land on the beat.
+   */
+  readonly subStep: 0 | 1 | 2;
   /** Pitch, 0-127. */
   readonly pitch: number;
   /** 0-255, though real data never exceeds 127. Default 0x60. */
   readonly volume: number;
   /** 0-255, though real data never exceeds 127. Default 0x40. */
   readonly timbre: number;
-  readonly triplet: boolean;
   /** Marks the last record of a note. */
   readonly end: boolean;
 }
@@ -37,6 +50,10 @@ export interface Note {
   readonly endStep: number;
   /** `endStep - startStep + 1`, in steps. */
   readonly duration: number;
+  /** `startStep` including its sub-step, in fractional steps. */
+  readonly startPosition: number;
+  /** `endStep` including its sub-step, in fractional steps. */
+  readonly endPosition: number;
   /** True when pitch varies along the chain -- a glide. */
   readonly hasPitchAutomation: boolean;
   readonly hasVolumeAutomation: boolean;
@@ -51,9 +68,15 @@ export const DEFAULT_TIMBRE = 0x40;
 export function decodeRecord(bytes: Uint8Array, offset = 0): NoteRecord {
   const b0 = bytes[offset];
   const b1 = bytes[offset + 1];
+  const b3 = bytes[offset + 3];
+  // `bit7 << bit30`: 0 when bit 7 is clear, else 1 or 2 depending on bit 30.
+  // ⚠️ Bit 30 is in the FOURTH byte, not the first. The first byte's 0x40 is
+  // step bit 6 and 32,515 corpus records use it, so masking the step with 0x3f
+  // would move every one of them by 64 steps.
+  const subStep = (b0 & 0x80) === 0 ? 0 : (b3 & 0x40) !== 0 ? 2 : 1;
   return {
     step: b0 & 0x7f,
-    triplet: (b0 & 0x80) !== 0,
+    subStep,
     pitch: b1 & 0x7f,
     end: (b1 & 0x80) !== 0,
     // Unsigned. The toolkit reads these as signed Java bytes while its writer
@@ -65,7 +88,9 @@ export function decodeRecord(bytes: Uint8Array, offset = 0): NoteRecord {
 
 /** Encode one record back to 4 bytes, the inverse of decodeRecord. */
 export function encodeRecord(note: NoteRecord, into: Uint8Array, offset = 0): void {
-  into[offset] = (note.step & 0x7f) | (note.triplet ? 0x80 : 0);
+  // Bit 30 rides along inside `timbre`, which is the raw fourth byte, so only
+  // bit 7 has to be written here for the pair to round-trip.
+  into[offset] = (note.step & 0x7f) | (note.subStep > 0 ? 0x80 : 0);
   into[offset + 1] = (note.pitch & 0x7f) | (note.end ? 0x80 : 0);
   into[offset + 2] = note.volume & 0xff;
   into[offset + 3] = note.timbre & 0xff;
@@ -92,15 +117,20 @@ function varies<T>(points: readonly NoteRecord[], pick: (n: NoteRecord) => T): b
 }
 
 function makeNote(points: NoteRecord[]): Note {
-  // Sort by step: real files occasionally store a note's points out of order.
-  const sorted = points.length > 1 ? [...points].sort((a, b) => a.step - b.step) : points;
-  const startStep = sorted[0].step;
-  const endStep = sorted[sorted.length - 1].step;
+  // Sort by position, not by step: real files occasionally store a note's
+  // points out of order, and two points can share a step while sitting a third
+  // of one apart.
+  const at = (n: NoteRecord) => n.step + n.subStep / 3;
+  const sorted = points.length > 1 ? [...points].sort((a, b) => at(a) - at(b)) : points;
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
   return {
     points: sorted,
-    startStep,
-    endStep,
-    duration: endStep - startStep + 1,
+    startStep: first.step,
+    endStep: last.step,
+    startPosition: at(first),
+    endPosition: at(last),
+    duration: last.step - first.step + 1,
     hasPitchAutomation: varies(sorted, (n) => n.pitch),
     hasVolumeAutomation: varies(sorted, (n) => n.volume),
     hasTimbreAutomation: varies(sorted, (n) => n.timbre),

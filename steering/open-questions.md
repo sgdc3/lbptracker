@@ -66,6 +66,20 @@ The cell geometry is now **measured**: `gridX = floor(2*x/105 - 0.5)`, `gridY = 
   against **0.99** before handing it to the audio state, so `Swing` is a **normalised 0..1 ratio**,
   not a percentage and not a fraction of a step. What the engine *does* with that ratio is still
   unmeasured.
+- ~~**Triplet timing.**~~ **Settled from the engine, and WIRED UP 2026-09-01.** The finding below
+  sat in this file for a session without reaching the code: `decodeRecord` reduced the sub-step to a
+  boolean `triplet`, and `schedule` never read even that. Every one of the 39,000 corpus notes that
+  sits a third or two thirds of a step late was placed on the beat, which a listener reported as
+  triplet passages sounding swung. `NoteRecord.subStep` is now 0/1/2 and `Note` carries
+  `startPosition`/`endPosition` in fractional steps.
+
+  ⚠️ **Bit 30 is in the FOURTH byte** (`b3 & 0x40`), not the first. The first byte's `0x40` is step
+  bit 6 and 32,515 corpus records use it, so masking the step with `0x3f` — which looked right when
+  the two candidate bits came out near-equally common — moves every one of them by 64 steps. The
+  corpus decodes to sub-step 0 on 3,160,795 records, 1 on 21,582 and 2 on 17,411: the two thirds
+  balanced, which is what a triplet group looks like, and no fourth value, which `bit7 << bit30`
+  cannot produce.
+
 - ~~**Triplet timing.**~~ **Settled from the engine.** A note's position is
   **`step + subStep/3`**, where `subStep = bit7 << bit30` of the note word, so it takes the values
   0, 1 and 2 — thirds of a step, exactly. `sub_0x38e0` uses it for the ramp span (`v0x4558`,
