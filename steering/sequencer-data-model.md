@@ -187,6 +187,28 @@ and stayed that way.
 lives at `+0x08` but is written sixth. Always take the order from the serialiser's call sequence,
 never from the offsets.
 
+**2b. Integers are VARINTS, not fixed-width.** Measured by hand-decoding the real
+`piano.rinst`: array counts, `i32` and `s32` fields are LEB128-style 7-bit-per-byte varints, and
+signed ones are **zigzag** encoded. Floats stay fixed 4-byte big-endian. Worked example, the first
+bytes of the piano patch's payload:
+
+```
+08            count = 8 slots
+a8 01         s32 baseNote : varint 168 → zigzag → 84   (C6)
+43 15 80 00   f32 baseBpm  : 149.5
+01 00 00      pitched, fitbpm, fitbpm
+00 00 00 00   f32 fineTune : 0.0
+90 01         next slot's baseNote: 144 → zigzag → 72   (C5)
+…
+08            count = 8 SampleGuids
+c9 be 07      varint → 122697   = piano_c6.smp
+c8 be 07      varint → 122696   = piano_c5.smp
+…
+```
+
+⚠️ `src/core/stream.ts` has **no varint support yet** — it was written for the level container,
+whose header is fixed-width. Reading `.rinst` or any Thing data in TypeScript needs it first.
+
 **3. Fields are gated on the file's revision.** A level written by an older build simply does not
 contain the later fields, and reading them unconditionally desynchronises everything after. The
 gates below are from the toolkit; the version is the resource's own revision word.

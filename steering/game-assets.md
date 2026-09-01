@@ -95,6 +95,54 @@ tone at the expected pitch, so this is a real check and not a smoke test.
 python tools/fsb.py list "D:/PS4Games/CUSA00063/gamedata/audio/sfxbank_compressed.fsb" piano
 ```
 
+## ⚠️ The sequencer does NOT use the FSB banks
+
+**Read this before touching the FSB banks for instrument audio.** It was established on
+2026-09-01 and it invalidates the assumption the rest of this file was written under.
+
+The music sequencer's samples are **plain RIFF/WAV files stored in the FARC archives**, addressed
+by GUID through the game's own file database. The chain, verified end to end:
+
+```
+RInstrument.SampleGuids[i]                       e.g. 122694
+  → output/orbisguids.map (FileDB, 107,673 rows)  → gamedata/audio/music/samples/keys/piano/piano_c3.smp
+                                                    + SHA1 48a8ca84…
+  → base_001.farc (19,545 entries, by SHA1)       → 73,440 bytes beginning "RIFF"
+```
+
+`tools/GuidLookup.java` does the lookup, `tools/ExtractGuid.java` does the extraction.
+
+**The real piano, measured:**
+
+| file | format |
+|---|---|
+| `piano_c2.smp` … `piano_c6.smp` | **48000 Hz, 16-bit PCM, mono, uncompressed** |
+
+Against `piano_C2..C6.wav` in `sfxbank_compressed.fsb`: **22050 Hz, 4-bit IMA ADPCM**. They are
+different recordings of the same instrument at wildly different quality, and the FSB copies are
+audibly gritty — that grit is what the first listening test heard and mistook for a bug in our
+resampler. It was neither our resampler nor our decoder: it was the wrong source material.
+
+**How we know the sequencer uses the `.smp` side, not the FSB side.** `piano.rinst`
+(GUID 122737 = the "Piano" entry in the stock instrument table) decompresses to an `INSb` resource
+whose `SampleGuids` are `122697, 122696, 122695, 122694, 122693` — exactly `piano_c6` down to
+`piano_c2` — paired with `baseNote` values `84, 72, 60, 48, 36`. Nothing points at an FSB index.
+
+**Scale of the library.** 216 entries under `gamedata/audio/music/samples/`, organised by family:
+`keys/`, `guitar/`, `orchestra/`, `percussion/`, `synths/`, `sfx/`. Instrument definitions sit
+under `gamedata/audio/music/instruments/` as `.rinst` files, one per stock instrument.
+
+**Why the FSB banks looked convincing.** A scan of **all 514 banks, 4846 samples** finds
+instrument-shaped names in essentially one place — 25 of them in `sfxbank_compressed.fsb` — and
+nothing at all for Glockenspiel, Marimba, Vibraphone, Music Box, Clarinet or the rest of the 59
+stock instruments. The handful that do exist there are SFX-bank copies. If the whole instrument
+palette had been in the FSBs, they would all be there.
+
+The FSB reader (`tools/fsb.py`, `src/core/fsb.ts`, `src/core/ima.ts`) is still correct and still
+needed — it is how the game's SFX and ambience are read, and it is verified byte-exact. It is just
+not the sequencer's audio path. Everything below about codecs and bank layout stands; it simply
+describes a different part of the game.
+
 ## The instrument samples
 
 `sfxbank_compressed.fsb` contains recognisable sequencer instrument material, multisampled one

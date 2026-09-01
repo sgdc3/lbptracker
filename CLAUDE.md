@@ -49,6 +49,10 @@ they are the ground truth the JavaScript has to reproduce:
 - `RawDump.java` — the exception to the Python rule: walks a level's Thing graph via the external
   toolkit jar and dumps every music sequencer's note records as raw bytes. It is what makes the
   corpus statistics in `sequencer-data-model.md` reproducible. Build/run notes in its header.
+- `GuidLookup.java` — resolve a GUID (or a path substring) against the game's FileDB
+  `output/orbisguids.map`. This is how you find where any resource actually lives.
+- `ExtractGuid.java` — GUID → FileDB → SHA1 → FARC → bytes. This is how the sequencer's real
+  samples and `.rinst` instrument definitions come out of the game.
 - `lbpdis.py`, `callgraph.py`, `fmodapi.py` — eboot RE helpers (see `eboot-re.md`).
 
 Python on this machine: `C:\Users\sgdc3\AppData\Local\Programs\Python\Python314\python.exe`
