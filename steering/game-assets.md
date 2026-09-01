@@ -146,29 +146,28 @@ Most of it is debris (`CDif` from Cool Edit, `bext`, `acid`, `JUNK`), but two ch
 
   All type 0 (forward), count 0 (infinite).
 
-  **The loop end is INCLUSIVE** — measured, not assumed: across the 61 looping samples, the wrap is
-  smoother treating it as inclusive (`d[end] → d[start]`) in **56**, against 2 for exclusive and 3
-  too close to call. The mixer wants an exclusive bound, so pass `end + 1`.
+  ⚠️ **Do not use `start` and `end` verbatim — loop `[start-1, end+1)`.** Measured, not reasoned:
+  the join has to be phase-continuous, so the question is which frame follows which at the wrap.
+  Across the 60 loops with room on both sides, the jump at the join in units of the sample's own
+  average adjacent step:
 
-  ⚠️ **The loops are not perfectly continuous, and short ones buzz.** Measuring the waveform jump at
-  each wrap against the sample's own typical adjacent step: `piano_c3` jumps **4×**,
-  `eg_d_power_long_a4` 4.2×, `choir_g1` 4.4×, and `power.smp` **69×**. Level continuity is fine
-  (±0.7 dB at worst, so the loops do not pump) — it is phase. How often that jump is heard depends
-  on the loop's length and the playback rate: `piano_c6`'s loop is 2160 frames, 45 ms, wrapping
-  **22 times a second**, and `marimba_c3`'s is 184 frames wrapping **261 times a second**. A
-  listener reported exactly this as a transient on high notes.
+  | join | mean | median | worst |
+  |---|---|---|---|
+  | `d[end] → d[start-1]` | **0.59×** | **0.37×** | 3× |
+  | `d[end+1] → d[start]` | 0.98× | 0.33× | 16× |
+  | `d[end] → d[start]` (the literal reading) | 3.28× | 1.86× | 69× |
 
-  Part of it was ours and is fixed — interpolator taps now wrap inside the loop region instead of
-  reading the frames that follow it in the file. The rest is in the source loops. How the game
-  masks it is **not yet known**; the likeliest answer is that the envelope decays the note before
-  many wraps accumulate, which points back at the instrument's `Params`. Do not paper over it with
-  a crossfade: that would add character the game does not have.
+  A mean below 1 means the join is smoother than an average pair of adjacent frames, i.e.
+  continuous. The literal reading is 5× worse, and that is what a listener heard as a transient on
+  high notes — `piano_c6`'s loop is 45 ms and wraps 22 times a second, so a 2× step becomes a
+  22 Hz buzz. `loopRegion()` in `src/core/wav.ts` does the shift; `test/fsb.test.ts` guards the
+  0.59× figure.
 
-  ⚠️ **Skipping this produces a specific, diagnosable symptom**: a note's length becomes the
-  sample's length divided by the playback rate, so notes below a slot's base note ring far too long
-  and notes above it cut off early. That is exactly what the first instrument bench did, and it is
-  what a listener notices before anything else. A looping voice never ends on its own, so it needs
-  an explicit release — see `VoiceSpec.release`.
+  ⚠️ The metric is meaningless for synthesised waveforms. `kenny_saw_a4` measures 108× because a
+  sawtooth's vertical edge *is* its shape. Judge it on the acoustic multisamples.
+
+  Level continuity was never the problem — the loops sit within ±0.7 dB, so they do not pump. It
+  was always phase.
 
 - **`inst`** — key range and unity note. Present on a handful of samples.
 

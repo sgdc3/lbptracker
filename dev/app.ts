@@ -15,7 +15,7 @@ import { resolveSlot } from '../src/core/instrument.ts';
 import { readInstrument, usedSlots, type RInstrument } from '../src/core/rinstrument.ts';
 import { loadResource } from '../src/core/resource.ts';
 import { pitchRatio, velocityGain } from '../src/core/voice.ts';
-import { readWav, type WavData } from '../src/core/wav.ts';
+import { loopRegion, readWav, type WavData } from '../src/core/wav.ts';
 import { webInflate } from '../src/platform/web.ts';
 
 interface ManifestRow {
@@ -125,9 +125,9 @@ async function loadInstrument(row: ManifestRow): Promise<void> {
         id: `slot${i}`,
         channels: s.wav.channels,
         sampleRate: s.wav.sampleRate,
-        // `smpl` gives an inclusive last frame; the mixer wants it exclusive.
+        // loopRegion, not smpl's fields verbatim -- see its docstring.
         loop: s.wav.loop
-          ? { start: s.wav.loop.start, end: s.wav.loop.end + 1 }
+          ? loopRegion(s.wav.loop, s.wav.channels[0].length)
           : undefined,
       },
     });
@@ -175,9 +175,10 @@ function playNote(note: number, atSeconds = 0): void {
     const buffer = context.createBuffer(1, v.s.wav.channels[0].length, v.s.wav.sampleRate);
     buffer.copyToChannel(v.s.wav.channels[0], 0);
     if (v.s.wav.loop) {
+      const region = loopRegion(v.s.wav.loop, v.s.wav.channels[0].length);
       buffer.loop = true;
-      buffer.loopStart = v.s.wav.loop.start / v.s.wav.sampleRate;
-      buffer.loopEnd = (v.s.wav.loop.end + 1) / v.s.wav.sampleRate;
+      buffer.loopStart = region.start / v.s.wav.sampleRate;
+      buffer.loopEnd = region.end / v.s.wav.sampleRate;
     }
     const source = new AudioBufferSourceNode(context, { buffer, playbackRate: v.ratio });
     const gain = new GainNode(context, { gain: velocityGain(96) * Math.SQRT1_2 });

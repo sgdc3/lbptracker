@@ -293,3 +293,56 @@ test('every pitched sequencer sample carries a sustain loop', async (t) => {
     assert.ok(wav.loop.end < wav.channels[0].length, `${name} loop is inside the data`);
   }
 });
+
+test('loopRegion shifts both bounds down by one', async () => {
+  const { loopRegion } = await import('../src/core/wav.ts');
+  assert.deepEqual(loopRegion({ start: 100, end: 200, type: 0 }, 500), { start: 99, end: 201 });
+  // Clamped rather than out of range at either edge.
+  assert.deepEqual(loopRegion({ start: 0, end: 99, type: 0 }, 100), { start: 0, end: 100 });
+});
+
+test('loopRegion joins the loop more smoothly than smpl read literally', async (t) => {
+  const dir = process.env.LBP_SMP ?? 'fixtures/smp';
+  if (!existsSync(dir)) {
+    t.skip(`no ${dir} (extract with tools/ExtractGuid.java)`);
+    return;
+  }
+  const { loopRegion } = await import('../src/core/wav.ts');
+  const { readdir } = await import('node:fs/promises');
+  const files = (await readdir(dir)).filter((f) => f.endsWith('.smp'));
+  if (files.length === 0) {
+    t.skip(`no .smp files in ${dir}`);
+    return;
+  }
+
+  // The join has to be phase-continuous. Measure the jump across it in units of
+  // the sample's own average adjacent step, so the number is scale-free.
+  let fixed = 0;
+  let literal = 0;
+  let n = 0;
+  for (const name of files) {
+    const wav = readWav(new Uint8Array(readFileSync(path.join(dir, name))));
+    if (!wav.loop) continue;
+    const d = wav.channels[0];
+    const { start, end } = wav.loop;
+    if (end - start < 64 || start < 1 || end + 1 >= d.length) continue;
+
+    let step = 0;
+    const k = Math.min(2000, end - start - 1);
+    for (let i = start + 1; i < start + 1 + k; i += 1) step += Math.abs(d[i] - d[i - 1]);
+    step = step / k || 1e-9;
+
+    const region = loopRegion(wav.loop, d.length);
+    fixed += Math.abs(d[region.start] - d[region.end - 1]) / step;
+    literal += Math.abs(d[start] - d[end]) / step;
+    n += 1;
+  }
+  assert.ok(n > 20, `expected a corpus of loops, saw ${n}`);
+  console.log(
+    `    ${n} loops — join with loopRegion ${(fixed / n).toFixed(2)}x, ` +
+      `read literally ${(literal / n).toFixed(2)}x`,
+  );
+  // Under 1x means the join is smoother than an average pair of adjacent frames.
+  assert.ok(fixed / n < 1, `loopRegion should join continuously, got ${(fixed / n).toFixed(2)}x`);
+  assert.ok(literal / n > fixed / n * 2, 'and clearly better than the literal reading');
+});

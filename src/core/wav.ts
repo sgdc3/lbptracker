@@ -11,15 +11,42 @@
 const HEADER_SIZE = 44;
 
 export interface WavLoop {
-  /** First frame of the loop. */
+  /** `smpl`'s loop start, verbatim. */
   readonly start: number;
-  /**
-   * Last frame of the loop, INCLUSIVE, as the `smpl` chunk defines it. The
-   * mixer wants an exclusive end, so it uses `end + 1`.
-   */
+  /** `smpl`'s loop end, verbatim. */
   readonly end: number;
   /** 0 = forward, 1 = alternating, 2 = backward. Only 0 is seen in LBP. */
   readonly type: number;
+}
+
+/**
+ * The half-open region a player should actually loop, `[start, end)`.
+ *
+ * ⚠️ **Not what `smpl`'s own fields say, and this was measured rather than
+ * reasoned.** The join has to be phase-continuous, so the right question is
+ * which frame follows which at the wrap. Across the game's 60 usable loops,
+ * the jump at the join measured in units of the sample's own average adjacent
+ * step:
+ *
+ * | join | mean | worst |
+ * |---|---|---|
+ * | `d[end] → d[start-1]` | **0.59×** | 3.2× |
+ * | `d[end+1] → d[start]` | 0.98× | 15.9× |
+ * | `d[end] → d[start]` (the literal reading) | 3.28× | 69.5× |
+ *
+ * A mean below 1 means the join is smoother than an average pair of adjacent
+ * frames — continuous. The literal reading is five times worse and is what
+ * a listener heard as a transient on high notes, where a 45 ms loop wraps
+ * twenty times a second.
+ */
+export function loopRegion(
+  loop: WavLoop,
+  frameCount: number,
+): { start: number; end: number } {
+  return {
+    start: Math.max(0, loop.start - 1),
+    end: Math.min(frameCount, loop.end + 1),
+  };
 }
 
 export interface WavData {
