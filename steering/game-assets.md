@@ -186,8 +186,25 @@ Most of it is debris (`CDif` from Cool Edit, `bext`, `acid`, `JUNK`), but two ch
   single-block rendering is bit-identical to 128-frame blocks. A 5% modulation is not a transient;
   it is a flutter, and only a modulation measurement finds it.
 
-  `VoiceSpec.decayDbPerSecond` exists for this, defaults to **0**, and is labelled in the code as
-  ours rather than the game's. It is the visible cost of not having recovered the real envelope.
+  **Two fixes tried, neither sufficient:**
+
+  - **A decay envelope** (`VoiceSpec.decayDbPerSecond`, default 0). Drops the *ratio* to background
+    from 43.7× to 1.4×, but the absolute modulation stays around 6% — it raises the background
+    rather than removing the flutter, and a listener still hears it.
+  - **A loop crossfade** (`crossfadeLoop`). **Measured to make it worse**: 5.75% → 5.72% → 5.91% →
+    6.79% → 9.51% for fades of 0, 2, 5, 10, 20 ms. A long fade mixes in the louder pre-loop
+    material and adds contour. This is the proof that the seam is not the cause, and the function
+    is kept only so the dead end is not re-explored.
+
+  **So the honest position is that we do not yet know how the game avoids this.** Either its
+  envelope does more than a simple exponential decay, or it does not loop these samples the way we
+  assume. Both are open.
+
+  ⚠️ **The next move is not more analysis of our own output — it is a recording of the game.**
+  Play a sustained F5 on the stock piano in-game, capture it, and run the same modulation
+  measurement. If the game flutters at the wrap rate too, the artefact is in the asset and we are
+  already faithful. If it does not, the difference tells us what the envelope has to do. Nothing
+  else settles it, and both remaining hypotheses are cheap to distinguish that way.
 
   Level continuity was never the problem — the loops sit within ±0.7 dB, so they do not pump. It
   was always phase, and then contour.

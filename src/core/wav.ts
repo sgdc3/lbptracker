@@ -49,6 +49,58 @@ export function loopRegion(
   };
 }
 
+/**
+ * Crossfade a loop so its seam stops repeating the region's own amplitude
+ * contour.
+ *
+ * The shipped loops are spliced cleanly but each carries its own envelope --
+ * `piano_c6`'s spans 1.70 dB peak to trough over 45 ms -- so repeating one
+ * modulates the output at the wrap rate and is heard as a flutter. Fading the
+ * end of the loop into the material that precedes `start` removes the seam
+ * itself; it does not flatten the contour, but it stops the discontinuity in
+ * the contour's *slope* at the wrap, which is the audible part.
+ *
+ * ⚠️ **MEASURED NOT TO HELP. Kept only so the dead end is not re-explored.**
+ * On `piano_c6` at F5, the envelope modulation at the wrap rate goes
+ * *up*, not down, as the crossfade lengthens:
+ *
+ * | crossfade | none | 2 ms | 5 ms | 10 ms | 20 ms |
+ * |---|---|---|---|---|---|
+ * | modulation | 5.75% | 5.72% | 5.91% | 6.79% | **9.51%** |
+ *
+ * That is the proof that the flutter is **not the seam**: smoothing the seam
+ * changes nothing, and a long fade makes it worse by mixing in the louder
+ * pre-loop material. The cause is the loop region's own 1.70 dB amplitude
+ * contour, which no splice can flatten. See steering/game-assets.md.
+ *
+ * Returns new channel buffers, leaving the originals untouched.
+ */
+export function crossfadeLoop(
+  channels: readonly Float32Array[],
+  loop: { start: number; end: number },
+  fadeFrames: number,
+): Float32Array[] {
+  const span = loop.end - loop.start;
+  // The fade needs `fadeFrames` of material before the loop to blend with, and
+  // must not swallow the loop itself.
+  const n = Math.min(fadeFrames, loop.start, Math.floor(span / 2));
+  if (n <= 0) return channels.map((c) => new Float32Array(c));
+
+  return channels.map((source) => {
+    const out = new Float32Array(source);
+    for (let i = 0; i < n; i += 1) {
+      // Equal-power blend across the last n frames of the loop.
+      const t = (i + 1) / (n + 1);
+      const a = Math.cos((t * Math.PI) / 2);
+      const b = Math.sin((t * Math.PI) / 2);
+      const tail = loop.end - n + i;      // approaching the seam
+      const head = loop.start - n + i;    // what precedes the loop start
+      out[tail] = source[tail] * a + source[head] * b;
+    }
+    return out;
+  });
+}
+
 export interface WavData {
   readonly channels: Float32Array[];
   readonly sampleRate: number;
