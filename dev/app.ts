@@ -11,6 +11,7 @@
  * server only serves the repository, so nothing leaves this machine.
  */
 
+import { ADSR_PARAMS, evaluateAdsr } from '../src/core/envelope.ts';
 import { resolveSlot } from '../src/core/instrument.ts';
 import { readInstrument, usedSlots, type RInstrument } from '../src/core/rinstrument.ts';
 import { loadResource } from '../src/core/resource.ts';
@@ -162,6 +163,14 @@ async function loadInstrument(row: ManifestRow): Promise<void> {
         (s.wav.loop ? `, loop ${s.wav.loop.start}..${s.wav.loop.end}` : ', no loop'),
     );
   }
+  {
+    const a = evaluateAdsr(instrument.params, ADSR_PARAMS, 0);
+    log(
+      `   ADSR — attack ${a.attack.toFixed(3)}s, decay ${a.decay.toFixed(3)}s, ` +
+        `sustain ${a.sustain.toFixed(3)}, release ${a.release.toFixed(3)}s ` +
+        `(Params[11..14])`,
+    );
+  }
   $('splits').textContent =
     `splitNotes ${instrument.splitNotes.slice(0, slots.length + 1).join(', ')}`;
 
@@ -191,10 +200,24 @@ function noteSeconds(): number {
   return Number(($('length') as HTMLInputElement).value) / 100;
 }
 
+/**
+ * The instrument's own ADSR, or undefined when the bench is asked to fall back
+ * to the stand-ins so the two can be compared.
+ *
+ * `mod` is 0 here: the bench has no note word, so every `Params` range is taken
+ * at its `.x` end, which is what a note with the modulation field at zero gets.
+ */
+function currentAdsr() {
+  if (!instrument) return undefined;
+  if (!($('useEnvelope') as HTMLInputElement).checked) return undefined;
+  return evaluateAdsr(instrument.params, ADSR_PARAMS, 0);
+}
+
 function playNote(note: number, atSeconds = 0): void {
   const v = voiceFor(note);
   if (!v || !node || !context) return;
   const held = noteSeconds();
+  const adsr = currentAdsr();
   if (engine === 'browser') {
     const buffer = context.createBuffer(1, v.s.wav.channels[0].length, v.s.wav.sampleRate);
     buffer.copyToChannel(new Float32Array(v.s.wav.channels[0]), 0);
@@ -241,9 +264,15 @@ function playNote(note: number, atSeconds = 0): void {
       // The samples loop, so a voice never ends on its own -- it has to be
       // released. Without this, low notes ring on and high notes cut off with
       // the sample rather than with the note.
-      endFrame: Math.round((atSeconds + held + 0.12) * context.sampleRate),
-      release: Math.round(0.12 * context.sampleRate),
-      decayDbPerSecond: Number(($('decay') as HTMLInputElement).value),
+      // With the instrument's own ADSR the end frame is the GATE, not the end:
+      // the release runs on past it. Without it, the old stand-ins apply -- a
+      // fixed 0.12 s linear fade and the diagnostic decay slider.
+      endFrame: Math.round(
+        (atSeconds + held + (adsr ? 0 : 0.12)) * context.sampleRate,
+      ),
+      release: adsr ? 0 : Math.round(0.12 * context.sampleRate),
+      decayDbPerSecond: adsr ? 0 : Number(($('decay') as HTMLInputElement).value),
+      envelope: adsr,
     },
   });
 }

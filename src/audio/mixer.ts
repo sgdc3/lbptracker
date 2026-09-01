@@ -8,6 +8,8 @@
  */
 
 import { panGains } from '../core/voice.ts';
+import type { Adsr } from '../core/envelope.ts';
+import { Envelope } from '../core/envelope.ts';
 import type { Interpolator } from './interpolate.ts';
 import { INTERPOLATORS, DEFAULT_INTERPOLATOR } from './interpolate.ts';
 import type { MipChain } from './mipmap.ts';
@@ -67,6 +69,16 @@ export interface VoiceSpec {
    * from `RInstrument.Params`; see steering/open-questions.md.
    */
   readonly decayDbPerSecond?: number;
+  /**
+   * The instrument's ADSR, from `evaluateAdsr`.
+   *
+   * **When present this is what shapes the note, and `release` and
+   * `decayDbPerSecond` are ignored** -- those two were stand-ins for exactly
+   * this, invented while `Params` was unread. A voice with an envelope also
+   * outlives its `endFrame`: that frame closes the gate and the release runs
+   * on from there, which is what stops a held note ending in a step.
+   */
+  readonly envelope?: Adsr;
 }
 
 class Voice {
@@ -82,6 +94,8 @@ class Voice {
   readonly decayPerFrame: number;
   /** Which mip this voice reads, fixed by its rate. Unused without `mips`. */
   private readonly mipLevel: number;
+  private readonly env = new Envelope();
+  private readonly secondsPerFrame: number;
   private decayGain = 1;
   private readonly left: number;
   private readonly right: number;
@@ -98,13 +112,16 @@ class Voice {
       ? Math.pow(10, -Math.abs(spec.decayDbPerSecond) / 20 / outputRate)
       : 1;
     this.mipLevel = mipLevelFor(spec.playbackRate);
+    this.secondsPerFrame = 1 / outputRate;
     const gains = panGains(spec.pan);
     this.left = gains.left * spec.gain;
     this.right = gains.right * spec.gain;
   }
 
   get finished(): boolean {
-    if (this.life <= 0) return true;
+    // With an envelope the voice ends when the release reaches zero, not when
+    // its life runs out -- life only closes the gate.
+    if (this.spec.envelope ? this.env.finished : this.life <= 0) return true;
     const source = this.spec.sample.channels[0];
     return !this.spec.sample.loop && this.position >= source.length;
   }
@@ -123,6 +140,7 @@ class Voice {
     const srcL = chans[0];
     const srcR = mono ? chans[0] : chans[1];
     const loop = sample.loop;
+    const envelope = this.spec.envelope;
     // With the engine sampler off the voice falls back to `interpolate` over
     // the full-rate channels, which is the A/B path: it is how a different
     // interpolator can be heard against the game's own.
@@ -133,7 +151,8 @@ class Voice {
         this.delay -= 1;
         continue;
       }
-      if (this.life <= 0) return;
+      const held = this.life > 0;
+      if (!envelope && !held) return;
 
       if (loop) {
         const span = loop.end - loop.start;
@@ -148,12 +167,20 @@ class Voice {
       }
       if (!loop && this.position >= srcL.length) return;
 
-      // Linear release ramp over the last `release` frames of the voice's life.
-      let fade =
-        this.release > 0 && this.life < this.release ? this.life / this.release : 1;
-      if (this.decayPerFrame !== 1) {
-        this.decayGain *= this.decayPerFrame;
-        fade *= this.decayGain;
+      let fade: number;
+      if (envelope) {
+        fade = this.env.advance(this.secondsPerFrame, held, envelope);
+        if (this.env.finished) return;
+      } else {
+        // Linear release ramp over the last `release` frames of the voice's
+        // life, plus the optional decay. Both are ours, and both are what the
+        // envelope above replaces.
+        fade =
+          this.release > 0 && this.life < this.release ? this.life / this.release : 1;
+        if (this.decayPerFrame !== 1) {
+          this.decayGain *= this.decayPerFrame;
+          fade *= this.decayGain;
+        }
       }
 
       // Hand the loop to the interpolator only once the voice is inside it.

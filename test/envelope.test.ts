@@ -202,3 +202,54 @@ test('notePitch applies the root and the engine’s -12', () => {
   assert.equal(notePitch(61, 2, 12), 60, 'quantised first, then offset');
   assert.equal(notePitch(60, 1, 0), 48);
 });
+
+// ------------------------------------------------------ through the mixer
+
+test('a voice with an envelope outlives its endFrame and dies on its own', async () => {
+  const { Mixer } = await import('../src/audio/mixer.ts');
+  const rate = 48000;
+  const data = new Float32Array(rate).fill(1); // DC, so the output IS the envelope
+  const mixer = new Mixer(rate);
+  mixer.play({
+    sample: { channels: [data], sampleRate: rate, loop: { start: 0, end: rate - 1 } },
+    playbackRate: 1,
+    gain: 1,
+    pan: 0.5,
+    endFrame: Math.round(0.1 * rate), // the gate closes at 100 ms
+    envelope: { attack: 0, decay: 10, sustain: 1, release: 0.2 },
+  });
+
+  const left = new Float32Array(Math.round(0.09 * rate));
+  const right = new Float32Array(left.length);
+  mixer.render(left, right);
+  const gain = Math.SQRT1_2; // centre pan
+  assert.ok(left[10] / gain > 0.99, 'full level while the note is held');
+  assert.equal(mixer.voiceCount, 1);
+
+  // Past the end frame the release runs -- the old code returned silence here.
+  mixer.render(left, right);
+  assert.ok(left[left.length - 1] / gain > 0, 'still sounding into the release');
+  assert.ok(left[left.length - 1] < left[0], 'and falling');
+  assert.equal(mixer.voiceCount, 1, 'the voice is not dropped mid-release');
+
+  // 0.2 s of release from the gate: it must be gone well before another 0.3 s.
+  for (let i = 0; i < 4; i += 1) mixer.render(left, right);
+  assert.equal(mixer.voiceCount, 0, 'the release ends the voice by itself');
+});
+
+test('without an envelope the old stand-ins still apply', async () => {
+  const { Mixer } = await import('../src/audio/mixer.ts');
+  const rate = 48000;
+  const mixer = new Mixer(rate);
+  mixer.play({
+    sample: { channels: [new Float32Array(rate).fill(1)], sampleRate: rate },
+    playbackRate: 1,
+    gain: 1,
+    pan: 0.5,
+    endFrame: 100,
+  });
+  const left = new Float32Array(200);
+  mixer.render(left, new Float32Array(200));
+  assert.ok(left[99] !== 0, 'sounding up to the end frame');
+  assert.equal(left[150], 0, 'and hard-stopped after it, as before');
+});
