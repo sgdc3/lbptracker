@@ -1,0 +1,25 @@
+# Extracted game audio is copyrighted Sony / Media Molecule material and must never be committed
+# or shipped -- the tool reads the user's own installation at runtime. See steering/game-assets.md.
+*.fsb
+*.fev
+*.farc
+*.wav
+*.mp3
+*.ogg
+samples/
+extracted/
+
+# eboot dumps
+*.bin
+*.prx
+*.elf
+
+# tool caches
+.srcsites-*.json
+__pycache__/
+*.pyc
+
+# node
+node_modules/
+dist/
+.vite/

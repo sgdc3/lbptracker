@@ -1,0 +1,4 @@
+# Normalise line endings in the repo: the project mixes Python tooling with TypeScript that will
+# be built on more than one platform, and Windows' default autocrlf would otherwise churn every
+# file on checkout.
+* text=auto eol=lf
