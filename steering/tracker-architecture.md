@@ -143,7 +143,7 @@ Follow the pattern for anything else platform-shaped.
 | `src/core/notes.ts` | note records, chaining, duration, automation flags. Done |
 | `src/core/fsb.ts`, `ima.ts`, `wav.ts` | build order step 1. Done, **byte-identical to `tools/fsb.py`** |
 | `src/core/instrument.ts`, `voice.ts` | slots, key splits, pitch/gain/pan math. Done |
-| `src/audio/interpolate.ts`, `mixer.ts` | build order step 2: voices, resampling, panning, looping. Done |
+| `src/audio/interpolate.ts`, `mixer.ts` | build order step 2: voices, resampling, panning, looping. Done; default is `sinc8` after the first listening test found `linear` audibly broken (open question 7) |
 | `src/audio/mixer-worklet.ts` | the AudioWorklet shell around `Mixer`. **Verified in Chrome**: 441 Hz in, 441 Hz out at the expected amplitude |
 | `src/platform/node.ts`, `web.ts` | inflate adapters. Done |
 | `dev/serve.mjs`, `dev/index.html`, `dev/app.ts` | the piano_C2..C6 listening test. Runs |

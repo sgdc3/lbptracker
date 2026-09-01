@@ -99,12 +99,34 @@ linked. Establish which one the sequencer's send feeds and, if it is SFXREVERB, 
 table. If it is the Sony plugin, accept an approximation — reversing a proprietary reverb is out of
 proportion to the payoff.
 
-## 7. FMOD's resampler quality and pan law
+## 7. FMOD's resampler quality and pan law — **now audible, not cosmetic**
 
-Which interpolator `fmod_dsp_resampler.cpp` is configured to use (linear? spline?), and what curve
-FMOD's 2D pan applies. Both are small, systematic errors that would otherwise be baked into every
-render. The pan law in particular is a single measurement that prevents a stereo-image error across
-the entire project — and note that `PInstrument.Pan` runs `0..1` centred at `0.5`, not `-1..+1`.
+Which interpolator `fmod_dsp_resampler.cpp` is configured to use, and what curve FMOD's 2D pan
+applies.
+
+**Why this was promoted.** The first listening test came back "extremely distorted, like dither" on
+a single note. It was the interpolator. Every shipped instrument sample is 22050 or 32000 Hz and
+plays on a 44100/48000 Hz device, so **every note is resampled** — this is not an edge case. SNR
+against an analytic sine, 22050 Hz source at `playbackRate` 0.5:
+
+| source Hz | nearest | linear | cubic | sinc8 |
+|---|---|---|---|---|
+| 440 | 27.1 | 57.1 | 107.8 | 87.6 |
+| 2000 | 13.9 | 30.9 | 55.4 | 80.2 |
+| **4000** | 8.0 | **19.0** | 32.0 | **72.0** |
+| 8000 | 2.3 | 7.7 | 10.8 | 43.1 |
+
+19 dB at 4 kHz is a 16% amplitude error, and a piano attack is full of 2–8 kHz. The default is now
+`sinc8` (8-tap Blackman-windowed sinc), and `test/audio.test.ts` guards the floor.
+
+⚠️ **Clean is not the goal — matching the game is.** If FMOD Ex interpolates crudely, that
+roughness belongs in our output too, and `sinc8` would be *wrong* in the faithful direction. So this
+question is now on the critical path: measure what the engine does before tuning anything by ear
+against it.
+
+**The pan law** is the other half and is unchanged in urgency: one measurement prevents a
+stereo-image error across the entire project. Note `PInstrument.Pan` runs `0..1` centred at `0.5`,
+not `-1..+1`; equal-power is currently assumed in `panGains`.
 
 ## 8. Semantics of the remaining fields
 

@@ -61,6 +61,11 @@
     font-family: ui-monospace, Consolas, monospace; font-size: .85rem;
     color: var(--accent); min-height: 1.4em; margin: .5rem 0 1rem;
   }
+  #meter {
+    font-family: ui-monospace, Consolas, monospace; font-size: .85rem;
+    color: var(--dim); min-height: 1.4em;
+  }
+  #meter.bad { color: var(--bad); font-weight: 600; }
 
   #log {
     background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
@@ -99,12 +104,17 @@
       <button id="stop">Stop</button>
       <label for="interp">interpolator</label>
       <select id="interp">
-        <option value="linear" selected>linear (default)</option>
+        <option value="sinc8" selected>windowed sinc (default)</option>
         <option value="cubic">cubic</option>
+        <option value="linear">linear</option>
         <option value="nearest">nearest</option>
       </select>
+      <label for="gain">master</label>
+      <input type="range" id="gain" min="0" max="100" value="50">
+      <span id="gainLabel">0.50</span>
     </div>
 
+    <div id="meter"></div>
     <div id="detail"></div>
     <div id="keys"></div>
 

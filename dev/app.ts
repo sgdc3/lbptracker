@@ -58,6 +58,10 @@ const log = (message: string, kind: 'info' | 'bad' = 'info') => {
   $('log').prepend(line);
 };
 
+let master: GainNode | undefined;
+/** Peak of the last second of output, for the clip readout. */
+let analyser: AnalyserNode | undefined;
+
 async function ensureAudio(): Promise<AudioWorkletNode> {
   if (node) return node;
   context = new AudioContext();
@@ -68,9 +72,39 @@ async function ensureAudio(): Promise<AudioWorkletNode> {
       log(`worklet has no sample "${event.data.id}"`, 'bad');
     }
   };
-  node.connect(context.destination);
-  log(`audio started at ${context.sampleRate} Hz`);
+
+  // The mixer has no output limiting -- overlapping voices can sum past 1.0 and
+  // the destination hard-clips, which sounds like harsh digital distortion.
+  // Master gain is a diagnostic here, not a design decision: if turning it down
+  // cleans the sound up, the problem is summing headroom rather than the
+  // decoder.
+  analyser = new AnalyserNode(context, { fftSize: 2048 });
+  master = new GainNode(context, { gain: 0.5 });
+  node.connect(analyser);
+  analyser.connect(master);
+  master.connect(context.destination);
+
+  meter();
+  log(`audio started at ${context.sampleRate} Hz, master gain 0.50`);
   return node;
+}
+
+/** Show pre-master peak, so clipping caused by summing is visible. */
+function meter(): void {
+  const buf = new Float32Array(analyser!.fftSize);
+  const tick = () => {
+    analyser!.getFloatTimeDomainData(buf);
+    let peak = 0;
+    for (let i = 0; i < buf.length; i += 1) {
+      const a = Math.abs(buf[i]);
+      if (a > peak) peak = a;
+    }
+    const over = peak > 1;
+    $('meter').textContent = `pre-master peak ${peak.toFixed(3)}${over ? '  ← OVER 1.0, clipping' : ''}`;
+    $('meter').className = over ? 'bad' : '';
+    requestAnimationFrame(tick);
+  };
+  tick();
 }
 
 async function loadBank(file: File): Promise<void> {
@@ -90,11 +124,36 @@ async function loadBank(file: File): Promise<void> {
       continue;
     }
     const pcm = decodeIma(sampleData(bank, sample), sample.channels, sample.lengthSamples);
-    slots.push({ sample, channels: toFloatChannels(pcm, sample.channels) });
+    const channels = toFloatChannels(pcm, sample.channels);
+    slots.push({ sample, channels });
+
+    // Measure what actually came out of the decoder, in this browser, on this
+    // machine. piano_C3 is the one with published reference numbers
+    // (tools/fsb.py: peak 28588, rms 2770 in 16-bit), so a mismatch here says
+    // the decode is wrong; a match says the problem is downstream in playback.
+    const data = channels[0];
+    let peak = 0;
+    let sumSquares = 0;
+    for (let i = 0; i < data.length; i += 1) {
+      const a = Math.abs(data[i]);
+      if (a > peak) peak = a;
+      sumSquares += data[i] * data[i];
+    }
+    const rms = Math.sqrt(sumSquares / data.length);
     log(
       `${sample.name}: ${sample.lengthSamples} frames, ${sample.freq} Hz, ` +
-        `${sample.channels}ch, base ${noteName(wanted.baseNote)}`,
+        `${sample.channels}ch, base ${noteName(wanted.baseNote)} — ` +
+        `peak ${peak.toFixed(4)} rms ${rms.toFixed(4)}`,
     );
+    if (sample.name.startsWith('piano_C3')) {
+      const peakOk = Math.abs(peak - 28588 / 32768) < 1e-3;
+      const rmsOk = Math.abs(rms - 2770 / 32768) < 2e-3;
+      log(
+        `piano_C3 vs the Python reference: peak ${peakOk ? 'MATCH' : 'MISMATCH'}, ` +
+          `rms ${rmsOk ? 'MATCH' : 'MISMATCH'}`,
+        peakOk && rmsOk ? 'info' : 'bad',
+      );
+    }
   }
 
   if (slots.length === 0) {
@@ -123,19 +182,27 @@ async function loadBank(file: File): Promise<void> {
 
   const worklet = await ensureAudio();
   for (const [i, slot] of slots.entries()) {
-    worklet.port.postMessage(
-      {
-        type: 'load',
-        sample: {
-          id: `slot${i}`,
-          channels: slot.channels,
-          sampleRate: slot.sample.freq,
-        },
+    // Deliberately NOT transferred: transferring detaches the buffers on this
+    // side, which makes the decoded audio impossible to inspect and breaks
+    // loading a second bank. Five piano samples are ~1.3 MB; the copy is free
+    // next to the decode that produced them.
+    worklet.port.postMessage({
+      type: 'load',
+      sample: {
+        id: `slot${i}`,
+        channels: slot.channels,
+        sampleRate: slot.sample.freq,
       },
-      slot.channels.map((c) => c.buffer),
-    );
-    // The buffers were transferred, so re-decode is needed if we ever reload.
+    });
   }
+  // Handy from the console when something sounds wrong.
+  (window as unknown as { __lbp: unknown }).__lbp = {
+    bank,
+    loaded,
+    instrument,
+    context,
+    node,
+  };
 
   $('status').textContent = `${slots.length} piano samples loaded — play something`;
   buildKeyboard();
@@ -253,6 +320,12 @@ function init(): void {
     const name = (event.target as HTMLSelectElement).value;
     node?.port.postMessage({ type: 'interpolator', name });
     log(`interpolator: ${name}`);
+  });
+  const gain = $<HTMLInputElement>('gain');
+  gain.addEventListener('input', () => {
+    const value = Number(gain.value) / 100;
+    $('gainLabel').textContent = value.toFixed(2);
+    if (master && context) master.gain.setTargetAtTime(value, context.currentTime, 0.01);
   });
 }
 

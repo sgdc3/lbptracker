@@ -9,7 +9,7 @@
 
 import { panGains } from '../core/voice.ts';
 import type { Interpolator } from './interpolate.ts';
-import { linear } from './interpolate.ts';
+import { INTERPOLATORS, DEFAULT_INTERPOLATOR } from './interpolate.ts';
 
 export interface SampleBuffer {
   /** One Float32Array per channel, -1..1. */
@@ -104,7 +104,10 @@ export class Mixer {
   private voices: Voice[] = [];
   private interpolate: Interpolator;
 
-  constructor(outputRate: number, interpolate: Interpolator = linear) {
+  constructor(
+    outputRate: number,
+    interpolate: Interpolator = INTERPOLATORS[DEFAULT_INTERPOLATOR],
+  ) {
     this.outputRate = outputRate;
     this.interpolate = interpolate;
   }

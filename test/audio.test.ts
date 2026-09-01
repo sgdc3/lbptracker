@@ -1,7 +1,14 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
-import { cubic, linear, nearest } from '../src/audio/interpolate.ts';
+import {
+  cubic,
+  DEFAULT_INTERPOLATOR,
+  INTERPOLATORS,
+  linear,
+  nearest,
+  sinc8,
+} from '../src/audio/interpolate.ts';
 import { Mixer, type SampleBuffer } from '../src/audio/mixer.ts';
 import {
   DEFAULT_SLOT,
@@ -67,6 +74,65 @@ test('cubic reproduces a straight line exactly', () => {
   for (const p of [2.0, 2.25, 2.5, 2.75, 3.0]) {
     assert.ok(Math.abs(cubic(data, p) - p) < 1e-5, `cubic at ${p}`);
   }
+});
+
+test('resampling SNR: the reason linear is not the default', () => {
+  // Resample a 22050 Hz source to 44100 (playbackRate 0.5) and compare against
+  // the analytic sine. This is exactly what a piano sample does, and it is how
+  // the first listening test's "extreme distortion" was diagnosed: linear
+  // interpolation gives a 16% amplitude error at 4 kHz, where a piano attack
+  // has plenty of energy.
+  const SRC = 22050;
+  const OUT = 44100;
+
+  const snrAt = (freq: number, interp: typeof linear): number => {
+    const src = new Float32Array(SRC);
+    for (let i = 0; i < src.length; i += 1) {
+      src[i] = Math.sin((2 * Math.PI * freq * i) / SRC) * 0.8;
+    }
+    const mixer = new Mixer(OUT, interp);
+    mixer.play({
+      sample: { channels: [src], sampleRate: SRC },
+      playbackRate: 0.5,
+      gain: 1,
+      pan: 0.5,
+    });
+    const n = 16384;
+    const left = new Float32Array(n);
+    const right = new Float32Array(n);
+    mixer.render(left, right);
+
+    const g = 0.8 * Math.SQRT1_2;
+    let err = 0;
+    let sig = 0;
+    for (let i = 32; i < n - 32; i += 1) {
+      const ideal = Math.sin((2 * Math.PI * freq * (i * 0.5)) / SRC) * g;
+      err += (left[i] - ideal) ** 2;
+      sig += ideal ** 2;
+    }
+    return 10 * Math.log10(sig / err);
+  };
+
+  const linear4k = snrAt(4000, linear);
+  const cubic4k = snrAt(4000, cubic);
+  const sinc4k = snrAt(4000, sinc8);
+
+  assert.ok(linear4k < 25, `linear at 4 kHz should be poor, got ${linear4k.toFixed(1)} dB`);
+  assert.ok(cubic4k > linear4k, 'cubic beats linear');
+  assert.ok(
+    sinc4k > 60,
+    `sinc8 at 4 kHz should be clean, got ${sinc4k.toFixed(1)} dB`,
+  );
+  assert.ok(snrAt(2000, sinc8) > 60, 'sinc8 is clean at 2 kHz too');
+  console.log(
+    `    4 kHz SNR — linear ${linear4k.toFixed(1)} dB, ` +
+      `cubic ${cubic4k.toFixed(1)} dB, sinc8 ${sinc4k.toFixed(1)} dB`,
+  );
+});
+
+test('the default interpolator is the band-limited one', () => {
+  assert.equal(DEFAULT_INTERPOLATOR, 'sinc8');
+  assert.equal(INTERPOLATORS[DEFAULT_INTERPOLATOR], sinc8);
 });
 
 // ------------------------------------------------------------------ pitch math
@@ -210,8 +276,10 @@ test('rate 2 takes every other frame', () => {
   }
 });
 
-test('rate 0.5 lands on the midpoints', () => {
-  const mixer = new Mixer(44100);
+test('rate 0.5 lands on the midpoints under linear interpolation', () => {
+  // Explicitly linear: the default is band-limited and deliberately does not
+  // land on the arithmetic midpoint.
+  const mixer = new Mixer(44100, linear);
   const sample = ramp(8);
   mixer.play({ sample, playbackRate: 0.5, gain: 1, pan: 0 });
   const left = new Float32Array(8);
