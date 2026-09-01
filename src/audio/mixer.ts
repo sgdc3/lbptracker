@@ -10,12 +10,25 @@
 import { panGains } from '../core/voice.ts';
 import type { Interpolator } from './interpolate.ts';
 import { INTERPOLATORS, DEFAULT_INTERPOLATOR } from './interpolate.ts';
+import type { MipChain } from './mipmap.ts';
+import { mipLevelFor, readMipped } from './mipmap.ts';
 
 export interface SampleBuffer {
   /** One Float32Array per channel, -1..1. */
   readonly channels: readonly Float32Array[];
   readonly sampleRate: number;
   readonly loop?: { readonly start: number; readonly end: number };
+  /**
+   * Optional per-channel mip chains from `buildMipChain`.
+   *
+   * **When present the voice reads through `readMipped`, which is the engine's
+   * own sampler** -- linear, with the source swapped for a pre-decimated copy
+   * above pitch ratio 2 and 4. Without them the voice uses the `Interpolator`
+   * passed to the mixer, which is our reference path and stays available for
+   * A/B. The two differ slightly at the loop wrap; `readMipped` documents how
+   * and why they converge on real material.
+   */
+  readonly mips?: readonly MipChain[];
 }
 
 export interface VoiceSpec {
@@ -67,6 +80,8 @@ class Voice {
   readonly release: number;
   /** Per-frame multiplier for the optional decay, or 1. */
   readonly decayPerFrame: number;
+  /** Which mip this voice reads, fixed by its rate. Unused without `mips`. */
+  private readonly mipLevel: number;
   private decayGain = 1;
   private readonly left: number;
   private readonly right: number;
@@ -82,6 +97,7 @@ class Voice {
     this.decayPerFrame = spec.decayDbPerSecond
       ? Math.pow(10, -Math.abs(spec.decayDbPerSecond) / 20 / outputRate)
       : 1;
+    this.mipLevel = mipLevelFor(spec.playbackRate);
     const gains = panGains(spec.pan);
     this.left = gains.left * spec.gain;
     this.right = gains.right * spec.gain;
@@ -99,6 +115,7 @@ class Voice {
     outRight: Float32Array,
     frames: number,
     interpolate: Interpolator,
+    engineSampler: boolean,
   ): void {
     const { sample, playbackRate } = this.spec;
     const chans = sample.channels;
@@ -106,6 +123,10 @@ class Voice {
     const srcL = chans[0];
     const srcR = mono ? chans[0] : chans[1];
     const loop = sample.loop;
+    // With the engine sampler off the voice falls back to `interpolate` over
+    // the full-rate channels, which is the A/B path: it is how a different
+    // interpolator can be heard against the game's own.
+    const mips = engineSampler ? sample.mips : undefined;
 
     for (let i = 0; i < frames; i += 1) {
       if (this.delay > 0) {
@@ -114,9 +135,14 @@ class Voice {
       }
       if (this.life <= 0) return;
 
-      if (loop && this.position >= loop.end) {
+      if (loop) {
         const span = loop.end - loop.start;
-        if (span > 0) {
+        // The engine wraps only *past* loop.end, because it leaves the second
+        // interpolation tap unwrapped and so still needs the frame at the end
+        // to point somewhere. Our own path wraps both taps and therefore wraps
+        // at loop.end. See readMipped.
+        const past = mips ? this.position > loop.end : this.position >= loop.end;
+        if (span > 0 && past) {
           this.position = loop.start + ((this.position - loop.start) % span);
         }
       }
@@ -134,8 +160,15 @@ class Voice {
       // Before that the taps behind `loop.start` are the attack and are
       // correct as they stand; wrapping them would corrupt the note's onset.
       const region = loop && this.position >= loop.start ? loop : undefined;
-      const l = interpolate(srcL, this.position, region);
-      const r = mono ? l : interpolate(srcR, this.position, region);
+      const l = mips
+        ? readMipped(mips[0], this.position, this.mipLevel, region)
+        : interpolate(srcL, this.position, region);
+      let r = l;
+      if (!mono) {
+        r = mips
+          ? readMipped(mips[1] ?? mips[0], this.position, this.mipLevel, region)
+          : interpolate(srcR, this.position, region);
+      }
       outLeft[i] += l * this.left * fade;
       outRight[i] += r * this.right * fade;
 
@@ -149,6 +182,7 @@ export class Mixer {
   readonly outputRate: number;
   private voices: Voice[] = [];
   private interpolate: Interpolator;
+  private engineSampler = true;
 
   constructor(
     outputRate: number,
@@ -160,6 +194,18 @@ export class Mixer {
 
   setInterpolator(interpolate: Interpolator): void {
     this.interpolate = interpolate;
+  }
+
+  /**
+   * Whether voices read through the engine's own sampler (linear plus octave
+   * mipmaps, `readMipped`) or through the mixer's `Interpolator`.
+   *
+   * **On is the faithful setting and the default.** Off exists so a different
+   * interpolator can be compared against it; it also takes effect only for
+   * samples that were loaded with mip chains.
+   */
+  setEngineSampler(on: boolean): void {
+    this.engineSampler = on;
   }
 
   get voiceCount(): number {
@@ -188,7 +234,7 @@ export class Mixer {
     right.fill(0);
 
     for (const voice of this.voices) {
-      voice.render(left, right, frames, this.interpolate);
+      voice.render(left, right, frames, this.interpolate, this.engineSampler);
     }
     // A voice that ran out mid-block has already written what it had.
     this.voices = this.voices.filter((v) => !v.finished);

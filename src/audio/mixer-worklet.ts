@@ -13,6 +13,7 @@
 
 import { INTERPOLATORS, type InterpolatorName } from './interpolate.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from './mixer.ts';
+import { buildMipChain } from './mipmap.ts';
 
 /** A sample handed over from the main thread, with its channels transferred. */
 export interface SamplePayload {
@@ -25,7 +26,10 @@ export interface SamplePayload {
 export type MixerMessage =
   | { type: 'load'; sample: SamplePayload }
   | { type: 'play'; sampleId: string; voice: Omit<VoiceSpec, 'sample'> }
-  | { type: 'interpolator'; name: InterpolatorName }
+  // 'engine' is not an interpolator: it selects the game's own sampler, which
+  // is linear plus octave mipmaps and is the faithful setting. The named
+  // interpolators switch it off so they can be heard against it.
+  | { type: 'interpolator'; name: InterpolatorName | 'engine' }
   | { type: 'stopAll' };
 
 declare const sampleRate: number;
@@ -56,6 +60,11 @@ export class MixerProcessor extends AudioWorkletProcessor {
           channels: message.sample.channels,
           sampleRate: message.sample.sampleRate,
           loop: message.sample.loop,
+          // Built here, at load, because that is when the game builds them --
+          // and because a voice must never allocate on the audio thread. Costs
+          // 50% more memory per sample and buys the engine's own anti-aliasing
+          // above one octave up. See src/audio/mipmap.ts.
+          mips: message.sample.channels.map((c) => buildMipChain(c)),
         });
         break;
       case 'play': {
@@ -70,7 +79,10 @@ export class MixerProcessor extends AudioWorkletProcessor {
         break;
       }
       case 'interpolator':
-        this.mixer.setInterpolator(INTERPOLATORS[message.name]);
+        this.mixer.setEngineSampler(message.name === 'engine');
+        if (message.name !== 'engine') {
+          this.mixer.setInterpolator(INTERPOLATORS[message.name]);
+        }
         break;
       case 'stopAll':
         this.mixer.stopAll();

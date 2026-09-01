@@ -826,8 +826,23 @@ This answers open question 7, and it is not a preference — it is what `sub_0x3
 
 The fraction is carried correctly into the mip: for the ÷4 level the index is `pos / 4` and the
 fraction is `(frac + (pos mod 4)) / 4`. So **a note two octaves above its slot's root reads a
-pre-decimated copy** rather than skipping frames in the full-rate one. Nothing we have written does
-this, and it matters exactly where the complaints were — high notes.
+pre-decimated copy** rather than skipping frames in the full-rate one.
+
+**How much of the keyboard this covers — measured**, by running every instrument's own splits and
+pitch formula over the note range and asking which mip each note lands on:
+
+| notes | instruments ever on a mip | note-slots on a mip | of single-slot instruments' notes |
+|---|---|---|---|
+| 0..87 | 55 / 68 | 17.3% | 27.9% |
+| 0..127 | 68 / 68 | 41.7% | 50.4% |
+
+So it is not a corner case — but it is concentrated in the **21 single-slot instruments**, which
+stretch one recording across the whole keyboard (`woodpecker` reaches playback rate 383). A dense
+multisample rarely needs it: the piano's five slots keep the rate near 1 across the middle.
+
+⚠️ **It therefore does not explain the F5 click on the piano.** F5 is note 77 on the C6 slot, i.e.
+rate 0.67 — below 1, no mip involved. That symptom stays where it was, with the loop contour and the
+missing envelope.
 
 **The interpolation** (`0x38ac`–`0x38d7`, mono path), with `v0x4540 = 3.05176e-05 = 1/32768`:
 

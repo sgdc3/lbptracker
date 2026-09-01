@@ -393,7 +393,11 @@ async function init(): Promise<void> {
   $<HTMLSelectElement>('interp').addEventListener('change', (e) => {
     const name = (e.target as HTMLSelectElement).value;
     node?.port.postMessage({ type: 'interpolator', name });
-    log(`interpolator: ${name}`);
+    log(
+      name === 'engine'
+        ? "sampler: the game's — linear, with the /2 and /4 copies above rate 2 and 4"
+        : `sampler: ${name} over the full-rate sample (not what the game does)`,
+    );
   });
   const decay = $<HTMLInputElement>('decay');
   const showDecay = () => {
