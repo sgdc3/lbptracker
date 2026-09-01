@@ -22,41 +22,52 @@ whom, and [sequencer-data-model.md](sequencer-data-model.md) for the measurement
 
 ## 1. The `Splitnotes` convention — **the one that changes what you hear**
 
-**What is measured**, across the game's 68 `.rinst` instruments: `Splitnotes` is a **descending**
-list of 9 values, `splitNotes[0]` is **87 in every single instrument**, and unused trailing entries
-are 0. `numStack` is *not* the number of used slots (only 14 of 68 match) — use
-`sampleGuids[i] != 0` for that.
+Attacked on 2026-09-01 and **not resolved**. Written up in full because the negative results are
+what save the next attempt from repeating it.
 
-**What is not.** Reading them as inclusive upper bounds — zone `i` covers
-`splitNotes[i+1] < note <= splitNotes[i]` — puts a zone's own base note inside it only **56.8%** of
-the time. Over the 257 zones of the multisampled instruments: base inside its own zone 146, inside
-the zone above 31, neither 80.
+### Established
 
-| instrument | bounds | base notes | fits? |
-|---|---|---|---|
-| `baiyon_city_guildford` | 87, 73, 61, 49, 37, 25 | 84, 72, 60, 48, 36, 24 | **every zone** |
-| `piano` | 87, 66, 54, 40, 30 | 84, 72, 60, 48, 36 | only the first |
-| `honky_tonk_piano` | — | — | 1 of 5 |
-| `clarinet` | — | — | 1 of 3 |
+- `Splitnotes` is **descending**, 9 entries, unused trailing entries 0.
+- `splitNotes[0]` is **87 in every one of the game's 68 instruments** — and it is **not a playable
+  ceiling**. Corpus usage disproves that: creators play `bass_guitar`, `glockenspiel` and
+  `square_wave` up to note **95**, and single-slot instruments carry `[87, 0, 0, …]` while being
+  played across 0–95. It is a constant the editor writes, nothing more.
+- `numStack` is a voice-stacking count, not the used-slot count (14 of 68 match). Use
+  `sampleGuids[i] != 0`.
+- `baseNote` is confirmed MIDI: the piano's slots are 84, 72, 60, 48, 36 = C6…C2, and its
+  `SampleGuids` resolve to `piano_c6` … `piano_c2`.
 
-Drum kits explain some misses — a kit's base notes are arbitrary, one drum per key — but the piano
-and the clarinet are pitched instruments and they do not fit. Under this reading the piano would
-play C4 from the **C5** sample, twelve semitones down, while `piano_c4.smp` sits unused. That is
-audible, and it is the difference between the right timbre and a dull one across the whole keyboard.
+### Ruled out
 
-**How to attack it.** Three candidates, in order of cheapness:
+- **"A zone contains its own base note" is not a valid test.** It scores 56.8–83.2% depending on the
+  reading, but the misses are a *design* difference, not a rule error: `baiyon_city_guildford`
+  (bounds 87,73,61,49,37,25 over bases 84,72,60,48,36,24) centres each sample in its zone, while
+  `piano` (bounds 87,66,54,40,30 over bases 84,72,60,48,36) pitches every sample downward by 6–19
+  semitones. Both are legitimate sampler designs. Scoring rules on this metric measures the sound
+  designer, not the engine.
+- **Nine rule variants** were scored — inclusive/exclusive at each end, lower-bound readings, a
+  ±1 slot shift, and the piano-key→MIDI offsets of +20 and +21. The best on stranded samples is the
+  reading currently in `resolveSlot` (zone `i` = `splits[i+1] < note <= splits[i]`), which leaves
+  **2 samples unreachable out of 107**; every other variant leaves more. That is weak evidence for
+  it, not proof.
+- **The runtime consumer is not where you would expect.** A function-level disassembly of the
+  sequencer module (`v0x1c3000`–`v0x1d0000`, 61 functions) and the CWLib audio layer
+  (`v0x3dd000`–`v0x3fe000`, 204 functions) found no code reading a struct field at `+0xe8`
+  (`Splitnotes`) together with `+0xc8` (`SampleGuids`). The three raw-byte hits in the audio layer
+  are `rsp + 0xe8` stack offsets, not struct accesses. Either the runtime struct is not laid out
+  like the serialiser's members, or the selection happens somewhere else entirely.
 
-1. **An off-by-one in the slot↔zone pairing.** 12.1% of bases land in the zone *above* theirs.
-   Check whether `splitNotes[0]` is a global ceiling rather than zone 0's bound, which would shift
-   every pairing by one.
-2. **Different numbering.** cwlib annotates `baseNote` as MIDI and `Splitnotes` as piano key
-   numbers (20 apart). `baseNote` is now confirmed MIDI — the piano's are 84/72/60/48/36 = C6..C2 —
-   so if the annotation is right, `Splitnotes` needs converting before comparison.
-3. **The runtime.** Find where the sequencer picks a slot and read the comparison directly. That is
-   the only answer that ends the argument.
+### What would actually settle it
 
-Until it is settled, `resolveSlot` in `src/core/instrument.ts` carries the upper-bound reading and
-says all of this in its docstring.
+**The in-game experiment, and it needs someone in Create Mode.** Place a single note, sweep it up
+the keyboard one semitone at a time on a multisampled instrument — `piano` is ideal, its zones are
+wide and its samples differ audibly — and listen for the crossover points. Five or six notes either
+side of a suspected boundary is enough. That gives the boundaries directly, in the numbering the
+game actually uses, and no amount of static analysis substitutes for it.
+
+Failing that: find the slot-selection code by widening the disassembly beyond the two ranges
+already swept, starting from whatever loads an `RInstrument` at runtime rather than from the
+sequencer module.
 
 ## 2. Echo DSP parameter indices
 
