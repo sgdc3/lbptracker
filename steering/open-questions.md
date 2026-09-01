@@ -159,12 +159,30 @@ Recovered as names, sizes and defaults only:
      the code side — but **`BeginPlayback` never touches `+0xc8`, `+0xe8` or `+0x1e8`**. It handles
      note data (`+0x68`) and the `MusicSequencer` flag (`+0x56`) and nothing from the sampler patch.
 
-  **What that means, and what is left.** The preload path only resolves *which samples to load*.
-  The envelope is therefore applied at **note-trigger** time, not at playback start, so the
-  function to find is the one that starts a voice — not anything reachable from the preload. That is
-  the next anchor to attack, and it has not been attacked yet.
+  6. **Hunting the voice start.** The preload path only resolves *which samples to load*, so the
+     envelope must be applied at note-trigger time. Attacked from three angles, all dry for the
+     Params:
+     - The pitch math. FMOD's cents→frequency conversion is `v0xa73c10` (constants −6900, 1/1200,
+       440.0 at `v0xefd780`–`v0xefd78c`) but it is reached through function pointers, so the call
+       graph dead-ends inside FMOD after four hops.
+     - The three large float-heavy sequencer functions `v0x1c7390`, `v0x1c74b0`, `v0x1c7de0`. All
+       three are the **Create Mode editor**, not audio: their constants are 105, −52.5 and 7.5,
+       which is circuit-board geometry, and they call the grid-placement helper. Do not re-examine
+       them.
+     - `v0x1c5640`, the real playback start. It touches note data and the sequencer's own settings
+       and **nothing from `RInstrument`**.
 
-  Until then the envelope is ours and is marked as such: see `VoiceSpec.release`.
+  **Where that leaves it.** Six attempts, none naming a parameter. Every route through the
+  *sequencer module* is exhausted — that module is overwhelmingly Create Mode UI. What has never
+  been searched is the **CWLib audio layer** (`v0x3dd000`–`v0x3fe000`) from the note-trigger side:
+  `v0x1c5640` hands off to the generic play-sound `v0x3de390`, and whatever turns a note into a
+  voice lives past that, not in the sequencer.
+
+  ⚠️ **This stopped being a fidelity refinement.** A listener hears a flutter at the loop-wrap rate
+  that only an envelope can plausibly hide (see [game-assets.md](game-assets.md)), so the envelope
+  is now the difference between "close" and "wrong". Until it is recovered the envelope is ours and
+  is marked as such: `VoiceSpec.release` and `VoiceSpec.decayDbPerSecond`, both defaulting to
+  neutral.
 - `Arpeggio` — **32** bytes, default `0xf`, with `Arpeggiate` as the on/off bool.
 - `Behavior`, `TriggerPlayer`, `PreviewThing` on `PSequencer` — three fields our serialiser walk
   missed entirely; widen the window at `v0xd37d10`.
