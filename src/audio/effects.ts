@@ -289,6 +289,8 @@ export class Reverb {
   private readonly notch: { a: number; b: number; c: number };
   private notchPrev = 0;
   private notchOlder = 0;
+  /** The early field's damping state; the coefficient is the combs'. */
+  private earlyY = 0;
   private readonly early: { delay: number; gain: number }[] = [];
   /** `b` of the shared one-pole; `a` is `1 - b`. */
   private readonly damp: number;
@@ -382,9 +384,19 @@ export class Reverb {
         (this.preIndex + this.pre.length - Math.min(back, this.pre.length - 1)) % this.pre.length
       ];
 
+    // ⚠️ The early reflections run through the same damping one-pole as the
+    // combs. In the engine every recirculation is damped; here they were the
+    // only path that was not, and they carry **23.1% of the impulse response's
+    // energy and set its peak** -- so an undamped early field is most of what a
+    // listener hears as "too bright" and as "too much reverb" at once.
+    //
+    // Sharing the coefficient rather than inventing one keeps this to a routing
+    // choice: `a = exp(-2*PI*hf/48000)` is measured (`v0x3fce6c`), and what is
+    // unmeasured is only whether the engine's early taps pass through it.
     let out = 0;
     for (const e of this.early) out += tap(e.delay) * e.gain;
-    out *= this.wet1;
+    this.earlyY = this.earlyY + this.damp * (out - this.earlyY);
+    out = this.earlyY * this.wet1;
 
     const signal = tap(this.preDelay);
     this.preIndex = (this.preIndex + 1) % this.pre.length;
