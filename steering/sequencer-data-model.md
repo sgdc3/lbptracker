@@ -555,10 +555,42 @@ the **DSP read callback**, and a callback is *registered* as a function pointer 
 preload path, not from `BeginPlayback`, not backwards from FMOD's pitch conversion. All three
 failures now have one explanation.
 
-**The way in is the descriptor.** Find the `System::createDSP` call in the DSP-creation range
-(`v0x3e6700`–`v0x3e72c0`), read the `FMOD_DSP_DESCRIPTION` it passes, and take the `read` callback
-pointer out of it. That callback is the note decoder, the envelope and the `Params` consumer, all
-in one place. It is the single highest-value target left in the binary.
+### The DSP is created at `v0x3e65a0`, and it is called "Sequencer"
+
+Found. The descriptor is **built on the stack**, not stored statically, which is why scanning the
+data for one found nothing. At `v0x3e664b`:
+
+```
+movabs rax, 0x65636e6575716553      ; "Sequence", little-endian ASCII
+mov    [rsp+0x28], 0x72             ; + 'r'      -> name = "Sequencer"
+mov    dword [rsp+0x44], 4          ; channels = 4
+lea    rax, [rip - 0x101]           ; -> v0x3e6580
+mov    [rsp+0x48], rax              ; create   = v0x3e6580
+mov    rax, [rip + 0xce5d53]        ; from the global v0x10cc3f8
+mov    [rsp+0x60], rax              ; read     = whatever that global holds
+mov    [rsp+0x70], 0                ; numparameters = 0
+mov    [rsp+0x78], 0                ; paramdesc     = null
+call   v0xa48b90                    ; FMOD System::createDSP
+```
+
+The field offsets check out against `FMOD_DSP_DESCRIPTION` independently: the struct sits at
+`rsp+0x20`, so `create` lands at struct `+0x28`, `read` at `+0x40`, `numparameters` at `+0x50` —
+and the two the code sets to zero are exactly the two that should be zero for a DSP with no
+parameters. The handle is stored at **`v0x132aac8`**.
+
+⚠️ **`read` is an imported symbol, not eboot code.** The global at `v0x10cc3f8` is zero in the file
+and carries a relocation of type **`R_X86_64_GLOB_DAT`** (`info = 0x200000006`) naming dynamic
+symbol 2, **`wycAbBCjLI4#C#D`** — a PS4 NID imported from library id 2. So the read callback is
+provided by a shared module, while `create` is ours.
+
+**What that implies, and it is good news.** A library-provided read callback cannot know anything
+about notes or instruments. It can only be a generic "drain this buffer" reader — which fits the
+768 KB buffer at `[state+0x1b18]` exactly. **The synthesis is still game code**: it is whatever
+*fills* that buffer, and the DSP merely hands the result to FMOD.
+
+**So the target is now precise: find the writers of `[state+0x1b18]`.** That is the note decoder,
+the envelope and the `Params` consumer. `v0x3e6580`, the create callback, is the other loose end
+worth reading — it is where the buffer is likely wired to the DSP instance.
 
 ## Runtime entry points (for further RE, not for the tracker)
 
