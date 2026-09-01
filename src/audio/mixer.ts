@@ -210,14 +210,23 @@ class Voice {
     return !this.spec.sample.loop && this.position >= source.length;
   }
 
-  /** Render into the output, advancing by `frames`. Returns nothing; mixes additively. */
+  /**
+   * Render into the output, advancing by `frames`, mixing additively.
+   *
+   * Returns the half-open frame span it actually touched. Callers need that:
+   * a send bus has to clear and accumulate a scratch buffer around each voice,
+   * and doing that over the whole block instead of the voice's own window is
+   * what made a full-length render quadratic -- with tens of thousands of notes
+   * against a sixteen-million-frame block it is the difference between seconds
+   * and hours.
+   */
   render(
     outLeft: Float32Array,
     outRight: Float32Array,
     frames: number,
     interpolate: Interpolator,
     engineSampler: boolean,
-  ): void {
+  ): { begin: number; end: number } {
     const { sample, playbackRate } = this.spec;
     const chans = sample.channels;
     const mono = chans.length === 1;
@@ -233,13 +242,21 @@ class Voice {
     // interpolator can be heard against the game's own.
     const mips = engineSampler ? sample.mips : undefined;
 
-    for (let i = 0; i < frames; i += 1) {
-      if (this.delay > 0) {
-        this.delay -= 1;
-        continue;
-      }
+    // Skip the start delay by arithmetic. Counting it down a frame at a time
+    // made every voice walk the whole block before its first sample, so a note
+    // near the end of a long render cost as much as one at the beginning.
+    let begin = 0;
+    if (this.delay > 0) {
+      const skip = Math.min(this.delay, frames);
+      this.delay -= skip;
+      if (skip >= frames) return { begin: frames, end: frames };
+      begin = skip;
+    }
+
+    let i = begin;
+    for (; i < frames; i += 1) {
       const held = this.life > 0;
-      if (!envelope && !held) return;
+      if (!envelope && !held) break;
 
       if (loop) {
         const span = loop.end - loop.start;
@@ -252,12 +269,12 @@ class Voice {
           this.position = loop.start + ((this.position - loop.start) % span);
         }
       }
-      if (!loop && this.position >= srcL.length) return;
+      if (!loop && this.position >= srcL.length) break;
 
       let fade: number;
       if (envelope) {
         fade = this.env.advance(this.secondsPerFrame, held, envelope);
-        if (this.env.finished) return;
+        if (this.env.finished) break;
       } else {
         // Linear release ramp over the last `release` frames of the voice's
         // life, plus the optional decay. Both are ours, and both are what the
@@ -341,6 +358,7 @@ class Voice {
       this.position += rate;
       this.life -= 1;
     }
+    return { begin, end: i };
   }
 }
 
@@ -426,10 +444,10 @@ export class Mixer {
         voice.render(left, right, frames, this.interpolate, this.engineSampler);
         continue;
       }
-      scratchL.fill(0);
-      scratchR.fill(0);
-      voice.render(scratchL, scratchR, frames, this.interpolate, this.engineSampler);
-      for (let i = 0; i < frames; i += 1) {
+      // The scratch is left clean by whoever used it last, so only the span
+      // this voice writes needs clearing -- and only that span needs summing.
+      const span = voice.render(scratchL, scratchR, frames, this.interpolate, this.engineSampler);
+      for (let i = span.begin; i < span.end; i += 1) {
         const l = scratchL[i];
         const r = scratchR[i];
         left[i] += l;
@@ -443,6 +461,8 @@ export class Mixer {
           sends.reverb[1][i] += r * reverb;
         }
       }
+      scratchL.fill(0, span.begin, span.end);
+      scratchR.fill(0, span.begin, span.end);
     }
     // A voice that ran out mid-block has already written what it had.
     this.voices = this.voices.filter((v) => !v.finished);
