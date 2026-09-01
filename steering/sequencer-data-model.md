@@ -885,6 +885,190 @@ Of the note word, two fields are certain:
 The remaining bits carry pitch and velocity but were not decoded; this is the runtime form, built
 from the on-disk record documented above, not the record itself.
 
+## The envelope — found. `Params[11..14]` is an ADSR
+
+This was the top open question for four sessions. It is `Params`, it is an ordinary ADSR, and three
+independent lines of evidence agree on the assignment.
+
+### Where `Params` lives, exactly
+
+The eboot builds the runtime instrument at **`v0x1c3fb0`**, and the tail comes from `v0x2a1140`,
+which settles the offsets with a single instruction:
+
+```
+v0x2a1192   lea  rdi, [r14 + 0x4e8]        ; runtime instrument + 0x4e8
+v0x2a1199   lea  rsi, [rbx + 0x110]        ; the PInstrument's Params
+v0x2a11a0   mov  edx, 0xd8                 ; 216 bytes = 27 x (f32, f32)
+v0x2a11a5   call memcpy
+```
+
+So **`Params[i].x` is at `instrument + 0x4e8 + 8i` and `.y` at `+0x4ec + 8i`**, running to `+0x5bf`
+— and the next field starts at exactly `+0x5c0`, which is the fit that makes this certain rather
+than merely consistent. The rest of the tail falls out of the same function and **matches our
+serialised reader's field order exactly**:
+
+| runtime | size | field |
+|---|---|---|
+| `+0x4c0` | 9 × 4 | `Splitnotes[0..8]` |
+| `+0x4e4` | 4 | `Numstack` — this is the `cmp` the renderer does at `+0x4e4` |
+| `+0x4e8` | 27 × 8 | **`Params`** |
+| `+0x5c0` | 32 | `Arpeggio` |
+| `+0x5e0` | 1 | `Arpeggiate` |
+| `+0x5e4` | 4 | the instrument id, used to dedupe the table |
+
+The same function also copies the eight slots at stride `0x98`, and copies `+0x84`/`+0x88` as one
+qword and `+0x90`/`+0x91` as one word — a third confirmation of the slot layout, and of `pitched`
+and `fitBpm` being adjacent bytes.
+
+### Each param is a **range**, not a value
+
+Every use in the PRX has the same shape:
+
+```
+value = Params[i].x + mod * (Params[i].y - Params[i].x)
+```
+
+where `mod` is the voice's own `+0x28`, set at note-on from **bits 24..27 of the note word divided
+by 15** (`v0x4550 = 0.0666667`). So `.x` and `.y` are the ends of a range and each note picks a
+point inside it with a 4-bit value. Where `.x == .y` — most instruments, most params — the parameter
+is simply fixed.
+
+### Two ADSRs, `sub_0x1690`
+
+`sub_0x1690(bool gate, float *level, float dt, float a, float d, float s, float r)` advances a
+per-voice envelope level held at the pointer, and the renderer calls it four times — twice per
+envelope, once with a near-zero `dt` and once with the block's, which is how it gets a start and an
+end value to ramp between, exactly as it does for volume and pitch.
+
+| envelope | level state | Attack | Decay | Sustain | Release | passed at |
+|---|---|---|---|---|---|---|
+| A | `voice + 0x90` | `Params[11]` | `Params[12]` | **`Params[13]`** | `Params[14]` | `0x1fa3`, `0x1fed` |
+| B | `voice + 0x94` | `Params[7]` | `Params[8]` | `Params[9]` | `Params[10]` | `0x2193`, `0x21cd` |
+
+The gate is `voice[+0x10] == 0` — the flag the sequencer sets when the note's chain ends. So the
+envelope attacks and decays while the note is held and releases once it is not.
+
+**The stages are linear in level, and the stage time is the parameter squared.** In the release
+branch:
+
+```
+xmm2 = release * release
+level = level - dt / xmm2          ; and level is clamped at 0, which ends the voice
+```
+
+with `dt = frames * 5.20833e-06` (`v0x4510`) — that is `frames / 192000`, i.e. **quarter-seconds at
+48 kHz**, so a stage time of `param² × 4` seconds. The level is mirrored around 1 (values above 1
+encode the rising phase), which is why the function starts by folding `2 - x`.
+
+⚠️ **The `param² × 4 s` reading is a derivation, not a direct measurement**: it follows from the
+constant and from the renderer's frame count, and it has not been checked against the game. The
+other `dt` constant (`v0x450c = 2.08333e-08 = 1/48,000,000`) feeds the first call of each pair and
+is 250× smaller; the reading above assumes that call is there to sample the current level rather
+than to advance it. Settle both against a recording before trusting stage times to the millisecond.
+The full state machine inside `sub_0x1690` — how decay hands over to sustain — was not traced.
+
+### Why the assignment is certain
+
+The disassembly gives the four params and their order. Two independent checks on the data give the
+meaning:
+
+**They separate instruments by how they behave.** Hand-labelling 18 struck/plucked instruments
+against 15 sustained ones and scoring every param by Cohen's *d*:
+
+| param | plucked | sustained | d |
+|---|---|---|---|
+| `Params[13].x` | 0.012 | 0.860 | **−3.54** |
+| `Params[12].x` | 0.581 | 0.117 | +2.49 |
+
+Nothing else in the 54 values comes close. A sustain level *should* be the single strongest
+discriminator between a marimba and a choir, and it is.
+
+**The values themselves are unmistakable.** `Params[13].x` is exactly `1.000` for
+`strings_ensemble`, `choir`, `brass`, `clarinet`, `concertina`, `sine_wave` and `saw_wave`, and
+exactly `0.000` for `glockenspiel`, `marimba`, `kalimba`, `harp`, `strings_pizz`, `musicbox`,
+`vibraphone` and `tubular_bells`. The piano reads **0.070** — a real piano does hold a little under
+the damper. `Params[11]` (attack) is `0.000` on everything struck and non-zero only where an
+instrument swells: `strings_ensemble` `0.000/0.488`, `synth_strings` `0.070/0.120`, `choir` 0.013.
+`Params[12]` (decay) is `0.000` on the sustained winds and strings — which is right, because with
+sustain at 1.0 there is nothing to decay to — and largest on `vibraphone` 0.894, `tubular_bells`
+0.850, `marimba` 0.756, `glockenspiel` 0.741, `piano` 0.527.
+
+Envelope B's destination is **not** established. Its params sit next to the four the renderer loads
+into the SIMD path alongside `Params[3..6]`, and its two results are broadcast into that same path,
+so a filter envelope is the obvious guess — but it is a guess.
+
+## The note word — 4 bytes, decoded
+
+`sub_0x38e0` pulls it apart with `bextr`, so the field boundaries are literal immediates rather than
+inferred masks.
+
+| bits | what |
+|---|---|
+| 0..6 | step within the block, compared against `currentStep − header.start × 16` |
+| 7 | sub-step, **shifted left by bit 30** → 0, 1 or 2 |
+| 8..14 | the note, as a **scale degree** (see below) |
+| 15 | end of the note's chain |
+| 16..23 | velocity → `voice.volume = v × 1/127` (`v0x454c`) |
+| 24..27 | the modulation that picks a point in every `Params` range → `× 1/15` |
+| 28..29 | selects one of four per-block tables at `+0x428 + 20k` |
+| 30 | the sub-step shift, above |
+
+**Note position is `step + subStep/3`** (`v0x4558 = 0.333333`), which is where triplets come from
+and what the voice record's `+0x3e`/`+0x3f` pair counts — start and end of the note in thirds of a
+step. That closes the lead recorded earlier against open question 3.
+
+### The pitch goes through a scale quantiser — `sub_0x250`, decoded
+
+The 7-bit note field is **snapped to a scale** before it becomes a pitch:
+
+```
+voice.pitch = quantise(note, scale) + blockRoot - 12          ; scale from the note block's +0x0c,
+                                                              ; root from its +0x10
+quantise(n, s):
+    if (unsigned)(s - 1) > 4:  return n                       ; out of range -> chromatic
+    octave = n / 12                                           ; signed division
+    return octave * 12 + TABLE[s][n mod 12]
+```
+
+`TABLE` is at module vaddr **`0x8090`** — reached through a relocated pointer at `0x8020`, so it is
+in the data segment, whose file mapping is `file = vaddr − 0x2d90` (SELF segment [3], `off=0x5270`,
+`vaddr=0x8000`). Six rows of twelve `int32`; row 0 is not a scale, because scale 0 returns early.
+
+| scale | table row | tones |
+|---|---|---|
+| 1 | `0 1 2 3 4 5 6 7 8 9 10 11` | **chromatic** — the identity |
+| 2 | `0 0 2 2 4 5 5 7 7 9 9 11` | **major** — {0,2,4,5,7,9,11} |
+| 3 | `0 0 2 3 3 5 5 7 8 8 10 10` | **natural minor** — {0,2,3,5,7,8,10} |
+| 4 | `0 0 0 3 3 5 5 7 7 7 10 10` | **minor pentatonic** — {0,3,5,7,10} |
+| 5 | `0 0 3 3 5 5 6 6 7 7 10 10` | **blues** — {0,3,5,6,7,10} |
+
+The octave is preserved, and every entry lands on a tone of its own scale within two semitones. So
+the note field is a semitone after all — but one the engine moves by up to two, which is not
+something a tracker can skip: on the pentatonic row, seven of the twelve chromatic positions change.
+
+⚠️ **It is not a downward snap**, which was the first reading and is wrong: the blues row sends
+position 2 **up** to 3, because blues has no tone at 1 or 2. Ties do not break consistently either —
+on that same row position 4 goes up to 5 while position 11 goes down to 10. **Use the tables; do not
+replace them with a rule.**
+
+### The three ramps are note-to-note, not an envelope
+
+`sub_0x38e0` reads the **current and the next** note word (`[r12]` and `[r12+4]`), takes the span
+between their positions, and sets all three slide rates to reach the next record's values:
+
+```
+span = pos(next) - pos(current)                  ; in steps, thirds allowed
+voice.volumeSlide = (velocityNext/127 - voice.volume) / span
+voice.pitchSlide  = (pitchNext        - voice.pitch ) / span
+voice.panSlide    = (modNext/15       - voice.pan   ) / span
+```
+
+and when there is no next record it writes **zero** to all three. So a note glides linearly between
+its control points and holds flat otherwise — which is exactly the "records are control points"
+model we recovered from the corpus, seen from the engine's side. **The amplitude envelope is
+separate from this and multiplies it**; the ramps carry the authored automation, `Params[11..14]`
+carries the instrument's own shape.
+
 ## Runtime entry points (for further RE, not for the tracker)
 
 | what | address |

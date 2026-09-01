@@ -1,0 +1,204 @@
+import { strict as assert } from 'node:assert';
+import { existsSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
+import path from 'node:path';
+import test from 'node:test';
+
+import {
+  ADSR_PARAMS,
+  ENVELOPE_SECONDS_PER_UNIT,
+  Envelope,
+  evaluateAdsr,
+  evaluateParam,
+} from '../src/core/envelope.ts';
+import { readInstrument } from '../src/core/rinstrument.ts';
+import { loadResourceFile } from '../src/platform/node.ts';
+import { MAX_SCALE, SCALE_TABLES, notePitch, quantise } from '../src/core/scale.ts';
+
+const RINST = process.env.LBP_RINST ?? 'fixtures/rinst';
+
+// --------------------------------------------------------------- param ranges
+
+test('a param pair is a range the note picks a point inside', () => {
+  const p = { x: 0.2, y: 0.8 };
+  assert.equal(evaluateParam(p, 0), 0.2);
+  assert.equal(evaluateParam(p, 1), 0.8);
+  assert.ok(Math.abs(evaluateParam(p, 0.5) - 0.5) < 1e-9);
+  // Where x === y the modulation does nothing, which is most of the corpus.
+  assert.equal(evaluateParam({ x: 0.35, y: 0.35 }, 0.73), 0.35);
+});
+
+test('times are the parameter squared, the sustain is a level', () => {
+  const params = Array.from({ length: 27 }, () => ({ x: 0, y: 0 }));
+  params[ADSR_PARAMS.attack] = { x: 0.5, y: 0.5 };
+  params[ADSR_PARAMS.decay] = { x: 0.25, y: 0.25 };
+  params[ADSR_PARAMS.sustain] = { x: 0.6, y: 0.6 };
+  params[ADSR_PARAMS.release] = { x: 0.1, y: 0.1 };
+  const adsr = evaluateAdsr(params, ADSR_PARAMS, 0);
+  assert.ok(Math.abs(adsr.attack - 0.25 * ENVELOPE_SECONDS_PER_UNIT) < 1e-9);
+  assert.ok(Math.abs(adsr.decay - 0.0625 * ENVELOPE_SECONDS_PER_UNIT) < 1e-9);
+  assert.ok(Math.abs(adsr.release - 0.01 * ENVELOPE_SECONDS_PER_UNIT) < 1e-9);
+  assert.equal(adsr.sustain, 0.6, 'the sustain is not a time and is not squared');
+});
+
+// -------------------------------------------------------------- the generator
+
+const run = (adsr: ReturnType<typeof evaluateAdsr>, steps: [number, boolean][]) => {
+  const env = new Envelope();
+  return steps.map(([dt, gate]) => env.advance(dt, gate, adsr));
+};
+
+test('a held note rises over the attack and settles on the sustain', () => {
+  const adsr = { attack: 1, decay: 1, sustain: 0.5, release: 1 };
+  const out = run(adsr, [
+    [0.25, true],
+    [0.25, true],
+    [0.25, true],
+    [0.25, true], // attack completes exactly here
+    [0.25, true],
+    [0.25, true],
+  ]);
+  assert.ok(Math.abs(out[0] - 0.25) < 1e-9, 'linear rise, not a curve');
+  assert.ok(Math.abs(out[1] - 0.5) < 1e-9);
+  assert.ok(Math.abs(out[3] - 1) < 1e-9, 'full level at the end of the attack');
+  assert.ok(Math.abs(out[4] - 0.75) < 1e-9, 'then decays linearly');
+  assert.ok(Math.abs(out[5] - 0.5) < 1e-9, 'and stops at the sustain');
+  // It must stay there rather than keep falling.
+  const env = new Envelope();
+  for (let i = 0; i < 40; i += 1) env.advance(0.25, true, adsr);
+  assert.ok(Math.abs(env.level - 0.5) < 1e-9, 'the sustain holds');
+});
+
+test('the attack spends its leftover time on the decay, not on nothing', () => {
+  // Attack needs 0.1 s; the step is 0.5 s, so 0.4 s must go into the decay.
+  const adsr = { attack: 0.1, decay: 1, sustain: 0, release: 1 };
+  const env = new Envelope();
+  const level = env.advance(0.5, true, adsr);
+  assert.ok(
+    Math.abs(level - 0.6) < 1e-9,
+    `expected 1 - 0.4/1 = 0.6, got ${level} — the handover dropped the remainder`,
+  );
+});
+
+test('a zero attack starts at full level', () => {
+  const adsr = { attack: 0, decay: 1, sustain: 0.25, release: 1 };
+  const env = new Envelope();
+  // A tiny step: the attack is instant, so almost all of it is already decay.
+  const level = env.advance(1e-6, true, adsr);
+  assert.ok(level > 0.999, `struck instruments start loud, got ${level}`);
+});
+
+test('a zero decay drops straight to the sustain', () => {
+  const env = new Envelope();
+  const level = env.advance(0.01, true, { attack: 0, decay: 0, sustain: 0.3, release: 1 });
+  assert.ok(Math.abs(level - 0.3) < 1e-9);
+});
+
+test('releasing falls from wherever the level was, and ends the voice', () => {
+  const adsr = { attack: 0, decay: 4, sustain: 1, release: 0.5 };
+  const env = new Envelope();
+  env.advance(0.001, true, adsr); // up to full
+  assert.ok(!env.finished);
+  assert.ok(Math.abs(env.advance(0.25, false, adsr) - 0.5) < 1e-3);
+  assert.ok(!env.finished, 'still sounding halfway through the release');
+  env.advance(0.3, false, adsr);
+  assert.equal(env.level, 0);
+  assert.ok(env.finished, 'a released envelope that reaches zero frees the voice');
+});
+
+test('a zero release cuts immediately rather than hanging', () => {
+  const env = new Envelope();
+  env.advance(0.001, true, { attack: 0, decay: 1, sustain: 1, release: 0 });
+  assert.equal(env.advance(0.01, false, { attack: 0, decay: 1, sustain: 1, release: 0 }), 0);
+  assert.ok(env.finished);
+});
+
+// ------------------------------------------------------- against the real set
+
+test('the shipped instruments give musically sensible envelopes', async (t) => {
+  if (!existsSync(RINST)) {
+    t.skip(`no ${RINST} (extract with tools/ExtractGuid.java, or set LBP_RINST)`);
+    return;
+  }
+  const files = (await readdir(RINST)).filter((f) => f.endsWith('.rinst'));
+  if (files.length === 0) {
+    t.skip(`no .rinst files in ${RINST}`);
+    return;
+  }
+  const load = async (name: string) =>
+    evaluateAdsr(
+      readInstrument((await loadResourceFile(path.join(RINST, `${name}.rinst`))).data).params,
+      ADSR_PARAMS,
+      0,
+    );
+
+  // Struck instruments hold nothing; blown and bowed ones hold everything.
+  // These are facts about the instruments, so they are a real check on the
+  // index assignment rather than a restatement of the data.
+  for (const name of ['glockenspiel', 'marimba', 'vibraphone', 'harp', 'musicbox']) {
+    if (!existsSync(path.join(RINST, `${name}.rinst`))) continue;
+    const a = await load(name);
+    assert.equal(a.sustain, 0, `${name} should not sustain`);
+    assert.ok(a.decay > 0.5, `${name} should have a real decay, got ${a.decay}s`);
+    assert.equal(a.attack, 0, `${name} is struck, so it has no attack`);
+  }
+  for (const name of ['choir', 'brass', 'clarinet', 'strings_ensemble']) {
+    if (!existsSync(path.join(RINST, `${name}.rinst`))) continue;
+    const a = await load(name);
+    assert.equal(a.sustain, 1, `${name} should sustain fully`);
+  }
+  if (existsSync(path.join(RINST, 'piano.rinst'))) {
+    const a = await load('piano');
+    assert.ok(a.sustain > 0 && a.sustain < 0.2, `a piano holds a little, got ${a.sustain}`);
+    assert.ok(a.decay > 0.5 && a.decay < 3, `piano decay ${a.decay}s`);
+    console.log(
+      `    piano — attack ${a.attack.toFixed(3)}s decay ${a.decay.toFixed(3)}s ` +
+        `sustain ${a.sustain.toFixed(3)} release ${a.release.toFixed(3)}s`,
+    );
+  }
+});
+
+// ------------------------------------------------------------------ the scale
+
+test('every scale table lands on a tone of its own scale, within two semitones', () => {
+  // ⚠️ NOT "always downward" -- that was the first guess and the blues table
+  // disproves it: position 2 goes UP to 3, because blues has no tone at 1 or 2.
+  // Ties are not consistent either (position 4 goes up to 5, position 11 down
+  // to 10), so the tables are the fact here and no rule is claimed.
+  for (let s = 1; s <= MAX_SCALE; s += 1) {
+    const tones = new Set(SCALE_TABLES[s]);
+    for (let n = 0; n < 12; n += 1) {
+      const q = SCALE_TABLES[s][n];
+      assert.ok(q >= 0 && q <= 11, `scale ${s} entry ${n} out of range`);
+      assert.ok(tones.has(q), `scale ${s} sent ${n} to ${q}, not a tone of the scale`);
+      assert.ok(Math.abs(q - n) <= 2, `scale ${s} moved ${n} to ${q}, too far`);
+    }
+  }
+  // Chromatic is the identity; anything else would transpose every level.
+  assert.deepEqual([...SCALE_TABLES[1]], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  // The tones each table can produce are the scales they claim to be.
+  const tones = (s: number) => [...new Set(SCALE_TABLES[s])].sort((a, b) => a - b);
+  assert.deepEqual(tones(2), [0, 2, 4, 5, 7, 9, 11], 'major');
+  assert.deepEqual(tones(3), [0, 2, 3, 5, 7, 8, 10], 'natural minor');
+  assert.deepEqual(tones(4), [0, 3, 5, 7, 10], 'minor pentatonic');
+  assert.deepEqual(tones(5), [0, 3, 5, 6, 7, 10], 'blues');
+});
+
+test('quantise preserves the octave and passes unknown scales through', () => {
+  // C4 = 60. On the major scale C#4 (61) snaps down to C4.
+  assert.equal(quantise(60, 2), 60);
+  assert.equal(quantise(61, 2), 60);
+  assert.equal(quantise(66, 2), 65, 'F#4 snaps to F4');
+  assert.equal(quantise(72, 2), 72, 'the octave above is untouched');
+  assert.equal(quantise(73, 4), 72, 'pentatonic snaps C#5 to C5');
+  // ⚠️ Out of range is chromatic, not an error -- the engine's own guard.
+  assert.equal(quantise(61, 0), 61);
+  assert.equal(quantise(61, 99), 61);
+  assert.equal(quantise(61, -3), 61);
+});
+
+test('notePitch applies the root and the engine’s -12', () => {
+  assert.equal(notePitch(60, 1, 12), 60);
+  assert.equal(notePitch(61, 2, 12), 60, 'quantised first, then offset');
+  assert.equal(notePitch(60, 1, 0), 48);
+});

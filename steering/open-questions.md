@@ -9,13 +9,15 @@ steering file it belongs to and delete the entry.
 through the game's FileDB. See [game-assets.md](game-assets.md). The note format, the container, the
 level walk and the asset chain are all measured — import and playback can both be built.
 
-What remains below is fidelity work, ranked by how audible a mistake would be. **The envelope
-(inside question 8, `Params`) is the top item**: it is the difference between notes that decay like
-the game's and notes that do not, and it is now attackable, because the synthesiser turned out to be
-a 23 KB PRX rather than the 18 MB eboot.
+What remains below is fidelity work, ranked by how audible a mistake would be. **The envelope, which
+was the top item for four sessions, is resolved**: `Params[11..14]` is an ADSR. So is the scale
+quantiser found alongside it — five scales, table at module vaddr `0x8090`. Both are in
+[sequencer-data-model.md](sequencer-data-model.md). The most audible thing still open is the **pan
+law** (question 7), followed by envelope B's destination and the other 19 `Params`.
 
-Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` — which closed question 5 and half of
-question 7, opened 5b, and rewrote what the state block's pointers mean. See
+Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then the envelope out of it. That
+work closed question 5, half of question 7 and the envelope half of question 8, opened 5b, and
+rewrote what the state block's pointers mean. See
 [sequencer-data-model.md](sequencer-data-model.md) for the measurements and
 [lbp-modding-toolchain.md](lbp-modding-toolchain.md) for what came from whom.
 
@@ -42,9 +44,12 @@ The cell geometry is now **measured**: `gridX = floor(2*x/105 - 0.5)`, `gridY = 
   against **0.99** before handing it to the audio state, so `Swing` is a **normalised 0..1 ratio**,
   not a percentage and not a fraction of a step. What the engine *does* with that ratio is still
   unmeasured.
-- **Triplet timing.** `sequencerdump` re-times a `triplet` note to 1/12 notes with
-  `group = step/4, pos = step%4, tick = group*96 + pos*32`, which overruns the quarter on the
-  fourth slot. Its author has disowned that layer; treat it as unmeasured.
+- ~~**Triplet timing.**~~ **Settled from the engine.** A note's position is
+  **`step + subStep/3`**, where `subStep = bit7 << bit30` of the note word, so it takes the values
+  0, 1 and 2 — thirds of a step, exactly. `sub_0x38e0` uses it for the ramp span (`v0x4558`,
+  `v0x455c = ±0.333333`) and the voice record carries the note's start and end in the same units at
+  `+0x3e`/`+0x3f`. `sequencerdump`'s `group*96 + pos*32` re-timing is not what the game does; it was
+  already disowned by its author, and this confirms it.
 
 All three feed the same conversion in the scheduler
 (`samplesPerStep = rate * 60 / (Tempo * stepsPerBeat)`). Answerable from the sequencer module, or
@@ -143,9 +148,22 @@ Recovered as names, sizes and defaults only:
 - `Numstack` (default 1) — looks like a per-instrument voice-stacking count.
 - `Loops` on `PInstrument` — **1 in all 105,785 instruments of the corpus**, so whatever it
   does, no creator has used it. Safe to treat as 1 and revisit only if the editor exposes it.
-- `Params` — **27** pairs of f32, all in 0..1. **The envelope is almost certainly in here** and no
-  index is identified. Attacked on 2026-09-01 from three directions; all three failed, so the
-  negative results are below to stop the next attempt repeating them.
+- `Params` — **27** pairs of f32, all in 0..1. **RESOLVED for the envelope, 2026-09-01: it is
+  `Params[11..14]` = Attack, Decay, Sustain, Release**, with a second ADSR at `Params[7..10]`. Each
+  pair is a *range* that the note's own 4-bit modulation field picks a point inside. The evidence
+  and the formulas are in [sequencer-data-model.md](sequencer-data-model.md); what remains open here
+  is the other 19 indices and envelope B's destination.
+
+  ⚠️ **Read the failure record below with this in mind: the shape analysis had already seen the
+  answer and mis-read it.** It filed index 13 under "near-boolean — 6 distinct values, 1.0 ×69 and
+  0.0 ×56" and moved on. But a *sustain level* is exactly that shape: an instrument either holds its
+  note or it does not, and only the few in between (the piano's 0.070) are interesting. The
+  reasoning had classified by distribution and then assumed a two-valued distribution meant a flag.
+  What broke it open was labelling the instruments by **how they behave as instruments** — struck
+  versus sustained — and asking which param separates the groups. Index 13 came back at Cohen's
+  *d* = −3.54, with nothing else close.
+
+  The three earlier attempts failed for reasons worth keeping: they are below.
 
   **What the block's shape says** (68 instruments, so 136 values per index):
 
@@ -167,6 +185,12 @@ Recovered as names, sizes and defaults only:
      for "sustains"), its measured sample decay in dB, and its unpitched fraction, then correlated
      all 54 components. Best results are |r| ≈ 0.5 at n = 59 — real, but several indices share it
      and the target is itself only a proxy. It narrows, it does not name.
+
+     ⚠️ **This one was the right idea with the wrong labels.** Whether a *sample* loops is a fact
+     about the recording, not about the patch; `piano_c6` loops and the piano still decays. Hand-
+     labelling the *instruments* — a marimba is struck, a choir is not — and scoring the groups
+     with Cohen's *d* named index 13 immediately. Prefer a small hand-labelled set that means what
+     you want over a large automatic proxy that does not.
   2. **The tweak UI.** `gamedata/scripts/tweakinstrument.ff` (GUID 122184) is the *sequencer's* note
      editor — `edit_notes_mode`, `InTripletMode`, `pattern_width`, `BeginSequencerPlayback`. There is
      no in-game editor for the sampler's parameters, so no label exists to recover. The only other
