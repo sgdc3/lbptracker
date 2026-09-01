@@ -102,7 +102,7 @@ test('resampling SNR: the reason linear is not the default', () => {
     const right = new Float32Array(n);
     mixer.render(left, right);
 
-    const g = 0.8 * Math.SQRT1_2;
+    const g = 0.8 * 0.5; // centre pan, linear law
     let err = 0;
     let sig = 0;
     for (let i = 32; i < n - 32; i += 1) {
@@ -217,15 +217,27 @@ test('gain multiplies note volume by the instrument level', () => {
   assert.ok(Math.abs(v.gain - (96 / 127) * 0.5) < 1e-12);
 });
 
-test('pan is 0..1 centred at 0.5 and equal-power', () => {
+// ⚠️ This test asserted EQUAL-POWER for most of the project's life, and the
+// engine turned out to be linear (0x2d39-0x2dda: left = 1 - p, right = p).
+// Linear is the worse-sounding law -- amplitude sums to 1 instead of power, so
+// a sound dips about 3 dB crossing the centre -- which is exactly why it has to
+// be asserted rather than left to taste.
+test('pan is linear, 0..1, and NOT equal-power', () => {
   const centre = panGains(0.5);
-  assert.ok(Math.abs(centre.left - centre.right) < 1e-12, 'centre is balanced');
+  assert.equal(centre.left, 0.5);
+  assert.equal(centre.right, 0.5);
   assert.ok(
-    Math.abs(centre.left ** 2 + centre.right ** 2 - 1) < 1e-12,
-    'constant power',
+    Math.abs(centre.left ** 2 + centre.right ** 2 - 1) > 0.4,
+    'the centre is well below constant power -- that is the point',
   );
-  assert.ok(panGains(0).left > 0.999, 'pan 0 is hard left');
-  assert.ok(panGains(1).right > 0.999, 'pan 1 is hard right');
+  for (const p of [0, 0.25, 0.5, 0.75, 1]) {
+    const g = panGains(p);
+    assert.ok(Math.abs(g.left + g.right - 1) < 1e-12, `amplitudes sum to 1 at ${p}`);
+  }
+  assert.equal(panGains(0).left, 1, 'pan 0 is hard left');
+  assert.equal(panGains(1).right, 1, 'pan 1 is hard right');
+  assert.equal(panGains(-3).left, 1, 'and it clamps');
+  assert.equal(panGains(9).right, 1);
 });
 
 test('samplesPerStep converts tempo to frames', () => {
@@ -424,7 +436,7 @@ test('looping is continuous at the wrap — the high-note transient', () => {
 
   const playbackRate = 0.5442; // what a 48 kHz sample an octave down actually gets
   const outHz = freq * playbackRate;
-  const allowed = 0.8 * Math.SQRT1_2 * 2 * Math.sin((Math.PI * outHz) / rate);
+  const allowed = 0.8 * 0.5 * 2 * Math.sin((Math.PI * outHz) / rate);
 
   const worstStep = (interp: typeof linear): number => {
     const mixer = new Mixer(rate, interp);

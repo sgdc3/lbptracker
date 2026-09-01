@@ -229,7 +229,7 @@ test('a voice with an envelope outlives its endFrame and dies on its own', async
   const left = new Float32Array(Math.round(0.09 * rate));
   const right = new Float32Array(left.length);
   mixer.render(left, right);
-  const gain = Math.SQRT1_2; // centre pan
+  const gain = 0.5; // centre pan, and the law is linear
   assert.ok(left[10] / gain > 0.99, 'full level while the note is held');
   assert.equal(mixer.voiceCount, 1);
 

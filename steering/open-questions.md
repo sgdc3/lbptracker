@@ -9,19 +9,22 @@ steering file it belongs to and delete the entry.
 through the game's FileDB. See [game-assets.md](game-assets.md). The note format, the container, the
 level walk and the asset chain are all measured — import and playback can both be built.
 
-What remains below is fidelity work, ranked by how audible a mistake would be. **The envelope, which
-was the top item for four sessions, is resolved**: `Params[11..14]` is an ADSR. So is the scale
-quantiser found alongside it — five scales, table at module vaddr `0x8090`. So is the **second**
-envelope: it sweeps the cutoff of a 4-pole Moog ladder low-pass, which `Params[3..6]` configure. All
-three are in [sequencer-data-model.md](sequencer-data-model.md). **All 27 `Params` are now named**:
-the block is a small subtractive synth — unison stack, Moog ladder, two envelopes, three LFOs,
-output stage. See `src/core/params.ts`. The most audible thing still open is the **pan law**
-(question 7).
+What remains below is fidelity work, ranked by how audible a mistake would be. **The synth side is
+now fully recovered.** All 27 `Params` are named and the block turns out to be a small subtractive
+synth — unison stack, 4-pole Moog ladder, two ADSRs, three LFOs, output stage (`src/core/params.ts`).
+The sampler, the envelope, the scale quantiser (six rows at module vaddr `0x80c0`), the three LFO
+destinations and the pan law are all measured; see
+[sequencer-data-model.md](sequencer-data-model.md).
 
-Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then the envelope out of it. That
-work closed question 5, half of question 7 and the envelope half of question 8, opened 5b, and
-rewrote what the state block's pointers mean. See
-[sequencer-data-model.md](sequencer-data-model.md) for the measurements and
+**What is left is mostly timing and effects**: what the engine does with `Swing` (question 3), the
+echo's DSP parameter indices (2), which reverb the send feeds (6), how the ÷2 and ÷4 sample copies
+are built (5b), and the `Notes.y` / `Splitnotes` numbering question (4) — which is the one that can
+still transpose an imported level.
+
+Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then working outward from it. That
+run closed questions 5 and 7 outright, the whole of 8's `Params`, and the triplet half of 3; it
+opened 5b; and it corrected several things steering had wrong — the state block's pointers, the
+scale table's address, `Numstack`, voice `+0x28`, and the pan law. See
 [lbp-modding-toolchain.md](lbp-modding-toolchain.md) for what came from whom.
 
 ---
@@ -117,11 +120,15 @@ pitch ratio reaches 2.0 or 4.0. Read the disassembly and the constants in
 interpolator is `linear`, and the mipmapping is a **new** thing to implement — it is what stops
 linear from sounding as bad as the table below says.
 
-**What remains open is the pan law**, and it is unchanged in urgency: one measurement prevents a
-stereo-image error across the entire project. Note `PInstrument.Pan` runs `0..1` centred at `0.5`,
-not `-1..+1`; equal-power is currently assumed in `panGains`. The anchor is now much better than it
-was: the renderer holds pan at voice record `+0x28` with its slide at `+0x34` and uses it to lerp
-four (lo, hi) pairs out of the instrument tail — decode those and the pan law falls out.
+**RESOLVED too, 2026-09-01: the pan law is LINEAR.** `left = 1 - pan`, `right = pan`, read off
+`0x2d39`–`0x2dda` where the voice's pan becomes the two per-channel factors. It came out of tracing
+LFO 3, which writes that same value. Amplitudes sum to 1 rather than powers, so a sound dips about
+3 dB crossing the centre — the worse-sounding law, and the game's.
+
+⚠️ `panGains` had assumed equal-power since early on. Corrected, along with the five tests that
+depended on the old `sqrt(1/2)` centre factor.
+
+**This question is closed.**
 
 ---
 

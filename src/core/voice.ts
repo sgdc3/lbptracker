@@ -120,17 +120,30 @@ export function voiceFor(request: VoiceRequest): VoiceParams {
 }
 
 /**
- * Equal-power pan, 0..1 with 0.5 centred.
+ * **MEASURED: the pan law is linear.** `left = 1 - pan`, `right = pan`, 0..1
+ * with 0.5 centred.
  *
- * ⚠️ UNMEASURED. FMOD's own 2D pan law is open question 7; equal-power is the
- * conventional choice and is at least continuous and centre-correct. One
- * measurement replaces this and fixes the stereo image across the whole
- * project, so it is worth doing before any serious listening test.
+ * Read straight off the renderer at `0x2d39`-`0x2dda` in `fmodextinput.prx`,
+ * where the voice's pan value `p` becomes the two per-channel factors:
+ *
+ * ```
+ * xmm3  = 1 - p        ; left
+ * xmm10 = p            ; right
+ * ...
+ * L += (1 - p) * gain * sample
+ * R +=      p  * gain * sample
+ * ```
+ *
+ * ⚠️ **This was equal-power here for most of the project's life, and that was
+ * wrong.** A linear law is about 3 dB quieter at the centre than an equal-power
+ * one and its perceived loudness dips as a sound crosses the middle -- audible
+ * on anything panned, and on everything once auto-pan (LFO 3) is running.
+ * Equal-power is the better-sounding choice and it is not the game's, so it
+ * does not belong in a faithful tracker.
  */
 export function panGains(pan: number): { left: number; right: number } {
   const p = Math.max(0, Math.min(1, pan));
-  const angle = p * (Math.PI / 2);
-  return { left: Math.cos(angle), right: Math.sin(angle) };
+  return { left: 1 - p, right: p };
 }
 
 /** Output frames per sequencer step. */

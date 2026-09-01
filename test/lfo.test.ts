@@ -97,9 +97,9 @@ test('an all-off LFO set changes nothing', () => {
 // scale, not of the test.
 test('LFO 2 modulates the amplitude', () => {
   const tremolo = render([off, { rate: 0.63, depth: 0.5, spread: 0 }, off]).left;
-  // The factor swings 0.5..1.5, so a span of 1.0 -- but a centred pan puts
-  // sqrt(1/2) on each channel, so what reaches `left` is 1.0 * 0.7071.
-  const span = (Math.max(...tremolo) - Math.min(...tremolo)) / Math.SQRT1_2;
+  // The factor swings 0.5..1.5, so a span of 1.0 -- but a centred pan puts 0.5
+  // on each channel (the law is linear), so what reaches `left` is 1.0 * 0.5.
+  const span = (Math.max(...tremolo) - Math.min(...tremolo)) / 0.5;
   assert.ok(span > 0.95 && span < 1.05, `depth 0.5 should swing 1.0, got ${span.toFixed(4)}`);
   // Depth zero must be flat over the same span, or the swing above proves nothing.
   const flat = render([off, off, off]).left;

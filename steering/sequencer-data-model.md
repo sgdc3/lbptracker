@@ -1275,10 +1275,34 @@ per-layer float. The value lands in array B, and array B feeds the point where t
 interleaved L/R buffer is written with **two different factors for the two channels** (`0x2dc1` and
 `0x2dda`). A per-layer `0..1` quantity arriving at a two-channel split is pan.
 
-⚠️ **LFO 3's target is the one still short of proof.** The fold to `[0,1]`, the per-layer spread
-offset, and the two-channel split all point one way, but the last hop — array B into the specific
-factors at `0x2dc1`/`0x2dda` — was followed through register moves rather than read end to end.
-Treat pitch and amplitude as measured and pan as the strong reading.
+**LFO 3's last hop is closed, and it hands over the pan law.** At `0x2d39`–`0x2d68` the value from
+array B, call it `p`, becomes the two per-channel factors directly:
+
+```
+0x2d39   xmm6  = p                       ; array B, the pan
+0x2d41   xmm3  = 1 - p                   ; the LEFT factor
+0x2d5c   xmm0  = p + step                ; walk it to the next sample
+0x2d68   xmm10 = p                       ; the RIGHT factor
+...
+0x2dbd   xmm4  = gain * sample
+0x2dc1   L += (1 - p) * xmm4
+0x2dda   R +=      p  * xmm4
+```
+
+So all three destinations are measured, and **the pan law falls out of the same three instructions:
+it is linear.** `left = 1 - pan`, `right = pan` — see below.
+
+### The pan law is LINEAR, not equal-power
+
+`left = 1 - p`, `right = p`, with amplitudes summing to 1 rather than powers. A sound crossing the
+centre therefore dips about **3 dB** relative to an equal-power law.
+
+⚠️ **`panGains` was equal-power here for most of the project's life.** Equal-power is the
+conventional choice, it is the better-sounding one, and it is not what the game does — so it does
+not belong in a faithful tracker. Corrected in `src/core/voice.ts`, and the test that had asserted
+constant power now asserts the opposite, with the reason written next to it. Five other tests
+depended on the old `sqrt(1/2)` centre factor and were updated with it; that spread is a fair
+measure of how much a pan law touches.
 
 ## The oscillator at stub `0x130` — libc's sine/cosine
 
