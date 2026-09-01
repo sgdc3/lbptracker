@@ -589,6 +589,37 @@ the name.
 without once checking what values the game's own instruments carry. Reading the corpus first — one
 query — would have shown 1.000 against `Numstack` 1 and stopped the change.
 
+## 14c. Why the reverb's level keeps missing — the output stage is a MATRIX, not a gain
+
+A listener kept bracketing the wet level differently from what the code seemed to say, across four
+rounds. The reason is structural rather than a missing constant, and it was found by scanning the
+**right module**: the earlier claim that "the PRX never reads `[state+0x48]`, `[+0x4c]`, `[+0x50]`"
+was a scan of `fmodextinput.prx`. `v0x3fcd50` configures the **reverb** DSP, so those fields are read
+by `fmodsmsreverb.prx`, where they are everywhere.
+
+The output stage runs a **2×2 pan matrix over several taps**. `0x1368`-`0x13ab` builds four gains
+from two sources and two pan positions:
+
+```
+[+0x520] = (1 - p1) * A      [+0x52c] = p1 * A
+[+0x524] = (1 - p2) * B      [+0x530] = p2 * B
+```
+
+and `0x1f80`-`0x1fc1` mixes them out through `sub_0x2490` (a vectorised `dst[i] += gain * src[i]`),
+each scaled by `[state+0x50]` — **slot 2's level divided by 100**, the factor `v0x3fce41` applies and
+this project does not. Two more calls at `0x1da8` and `0x1dc4` mix further sources scaled by
+`[state+0x4c]` and `[state+0x48]` — slots 0 and 1.
+
+**So the engine's wet output is at least four scaled contributions through a stereo matrix, and this
+project collapses all of it into one `wet2` multiply on a mono-summed wet signal.** That is the shape
+of the discrepancy: not a constant to find, but a count of paths. Four contributions at a comparable
+gain are 6 dB above one, and the `/100` on slot 2 is offset by stage gains of order 100 — which is
+why every single-factor guess lands in the wrong place and why the ear kept disagreeing with the
+arithmetic.
+
+**The next step is structural**: model the output as the matrix rather than fitting a scalar. Until
+then the comb normalisation is a stand-in for a missing path count and should not be tuned further.
+
 ## 14. The reverb send is `Params[25]`, and the wet level rests on one invented factor
 
 Reported: the reverb seems missing on many tracks, or imperceptible.
