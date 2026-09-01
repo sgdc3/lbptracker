@@ -118,16 +118,44 @@ Recovered as names, sizes and defaults only:
 - `Numstack` (default 1) — looks like a per-instrument voice-stacking count.
 - `Loops` on `PInstrument` — **1 in all 105,785 instruments of the corpus**, so whatever it
   does, no creator has used it. Safe to treat as 1 and revisit only if the editor exposes it.
-- `Params` — **27** entries of two f32 each, all in 0..1, and **the likeliest home of the
-  envelope**. A listener's first complaint about the instrument bench was that sustain was wrong;
-  the sample loop points fixed the gross symptom, but the release shape is still ours rather than
-  the game's. Sampled values, piano / harp / glockenspiel / bass_guitar:
-  index 3 `1.0 / 1.0 / 0.565 / 0.400`, index 12 `0.527 / 0.650 / 0.741 / 1.0`,
-  index 14 `0.154 / 0.440 / 0.600 / 0.033`, index 15 and 18 often exactly `0.5`.
-  Pairs are frequently identical and sometimes not, which suggests (value, second value) rather
-  than a single number — a range, a key-tracking pair, or a modulation depth. **Do not guess an
-  index and call it attack.** The way in is the tweak UI: `gamedata/scripts/tweakinstrument.ff`
-  (GUID 122184) is the script that edits these, and its labels name them.
+- `Params` — **27** pairs of f32, all in 0..1. **The envelope is almost certainly in here** and no
+  index is identified. Attacked on 2026-09-01 from three directions; all three failed, so the
+  negative results are below to stop the next attempt repeating them.
+
+  **What the block's shape says** (68 instruments, so 136 values per index):
+
+  | kind | indices | evidence |
+  |---|---|---|
+  | boolean | **23** | only two distinct values ever, 0 and 1 |
+  | near-boolean | **13** | 6 distinct values, 1.0 ×69 and 0.0 ×56 |
+  | centred bipolar, neutral 0.5 | **21**, **18**, **15** | 21 is 0.5 in 110 of 136, range 0.34–0.62, and x = y in 67 of 68 |
+  | level, usually full | **9**, **5** | 1.0 in 94 and 81 of 136 |
+  | per-instrument, genuinely paired | **24**, **3**, **14** | 24 has x ≠ y in 52 of 68 and 92 distinct values; 14 has 67 distinct |
+  | barely used | 17, 20, 22, 26 | non-zero in 9 instruments or fewer |
+
+  Indices 24, 3 and 14 are where an envelope would live if it is here: they vary per instrument and
+  carry two different numbers, which is what a (value, key-tracking) or (min, max) pair looks like.
+
+  **What failed, and why:**
+
+  1. **Correlation with behaviour.** Labelled each instrument by whether its samples loop (a proxy
+     for "sustains"), its measured sample decay in dB, and its unpitched fraction, then correlated
+     all 54 components. Best results are |r| ≈ 0.5 at n = 59 — real, but several indices share it
+     and the target is itself only a proxy. It narrows, it does not name.
+  2. **The tweak UI.** `gamedata/scripts/tweakinstrument.ff` (GUID 122184) is the *sequencer's* note
+     editor — `edit_notes_mode`, `InTripletMode`, `pattern_width`, `BeginSequencerPlayback`. There is
+     no in-game editor for the sampler's parameters, so no label exists to recover. The only other
+     sequencer scripts are `tweaksequencer.ff` and `tweaksequencergame.ff`.
+  3. **The serialiser.** It names them literally: the format string at `v0xc68bea` is `"%s_%d"` over
+     the base `"Params[i]"`, giving `Params[i]_0`, `Params[i]_1`, … The game does not name them
+     either.
+  4. **The runtime.** Scanned all 25,074 function prologues in the eboot for code touching the pair
+     at `+0x1e8`/`+0x1ec`: 70 functions, and 42 of those also touch `+0x48`, `+0xc8` or `+0xe8`.
+     Those offsets are far too common to discriminate; this did not converge.
+
+  **What is left to try:** find the RInstrument consumer from the *object* rather than the offsets —
+  whatever the sample-preload path (`v0x1c37f0`) hands its loaded instrument to. Or accept the
+  envelope as ours and mark it as such, which is what `VoiceSpec.release` already does.
 - `Arpeggio` — **32** bytes, default `0xf`, with `Arpeggiate` as the on/off bool.
 - `Behavior`, `TriggerPlayer`, `PreviewThing` on `PSequencer` — three fields our serialiser walk
   missed entirely; widen the window at `v0xd37d10`.
