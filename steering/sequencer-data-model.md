@@ -588,9 +588,39 @@ about notes or instruments. It can only be a generic "drain this buffer" reader 
 768 KB buffer at `[state+0x1b18]` exactly. **The synthesis is still game code**: it is whatever
 *fills* that buffer, and the DSP merely hands the result to FMOD.
 
-**So the target is now precise: find the writers of `[state+0x1b18]`.** That is the note decoder,
-the envelope and the `Params` consumer. `v0x3e6580`, the create callback, is the other loose end
-worth reading — it is where the buffer is likely wired to the DSP instance.
+### The writers of the buffer: there are none
+
+Searched. **Exactly three functions in the whole eboot touch `[state+0x1b18]`**: `v0x3e6c10`
+(allocate and zero), `v0x3e7060` (free), and `v0x2681e0`, which reads a *dword* at that offset from
+an unrelated struct and is a false positive. Nothing writes audio into it. There is also no
+rip-relative access to the slot's global address `v0x132d628` anywhere.
+
+**What the buffer is, from three numbers that agree.** The init passes `esi = 0xbb80 = 48000` to the
+DSP creation, the descriptor declares `channels = 4`, and the allocation is `0xbb800 = 768,000`
+bytes. `48000 × 4 × 4 = 768,000`: the buffer is **exactly one second of 4-channel 32-bit float at
+48 kHz**. None of those three was assumed; they are separately encoded and they agree.
+
+**Where the buffer goes.** `v0x3e6c10` creates the DSP with `rdx = rbx` = **the state block itself**
+as `userdata`, and the `create` callback `v0x3e6580` does nothing but ask FMOD for that userdata and
+cache it at `[dspstate+8]`. The `read` callback is the imported symbol — referenced exactly once,
+as the callback, and never called directly.
+
+⚠️ **The best-supported reading is that the synthesis is not in the eboot.** The library that
+provides `read` (`#C#D`) imports **exactly one symbol**, the buffer pointer never leaves
+`[state+0x1b18]`, no eboot code fills it, and the DSP is handed the state block as its context. The
+consistent explanation is that the imported module owns the synthesis and treats part of that block
+as its own context. That would put the note decoding, the envelope and the `Params` consumption in
+a PRX, not here.
+
+The alternative — that the buffer is filled through a pointer copy that this search missed — is not
+excluded, but nothing supports it: the allocation's result is stored in exactly one place and read
+in exactly two.
+
+**Consequence, and it is the useful part.** If the envelope lives in a separate module, recovering
+it statically means finding and analysing that PRX, which is a different and much larger job than
+anything attempted so far. **Measuring the game instead is now the cheaper path, not the fallback**
+— see the recording proposal in [game-assets.md](game-assets.md). Seven searches have failed for
+the same reason, and this is the first explanation that accounts for all seven.
 
 ## Runtime entry points (for further RE, not for the tracker)
 
