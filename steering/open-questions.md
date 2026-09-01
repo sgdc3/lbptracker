@@ -956,9 +956,43 @@ Recovered as names, sizes and defaults only:
 None are blocking: an instrument with `Arpeggiate` off and one stack behaves correctly without any
 of this.
 
-## 9. Board row → mixer channel
+## 9. Board row → mixer channel — the routing is MEASURED; one link is still inferred
 
-`PSequencer` has `NumChannels` and `Volume[0..5]`; instruments have a `gridY` row on the circuit
-board. A row is very likely a mixer channel, but nothing has established the mapping — including
-what happens when a board has more than 6 rows. The toolkit sidesteps it by grouping tracks on
-"same row + same instrument" and ignoring the sequencer's mixer entirely.
+The old note here guessed "a row is very likely a mixer channel" as a direct index. **The corpus
+refutes that**: 88% of tracks have a `gridY` outside `0..NumChannels-1`, boards run to 25 distinct
+rows, and **308 of 338 sequencers have `NumChannels = 1`**. A row cannot be a channel index.
+
+Taken **modulo 8** it fits exactly, and that is what the engine does:
+
+```
+0x3a0b  rdx  = [state + 0x1b00]            ; the 16-byte per-block header array
+0x3a32  r15d = [rdx + block*16 + 4]        ; header + 0x04
+0x3afc  r15d = r15d mod 8                  ; signed modulo
+0x3b1b  rcx  = channel * 3                 ; 12-byte records
+0x3b3c  xmm0 = [state + 0x1a68 + 12*channel]
+```
+
+Eight records against a `NumChannels` capped at 6 is what the `mod 8` is for, and it is why a board
+row of 24 is not out of range.
+
+**The headroom is real and constant.** `0x10f7`-`0x11e7` initialises all eight records to
+`{0.75, 0, 0}`, and the eboot writes `Volume[i] * 0.75` over them. A sequencer whose volumes are all
+1.0 runs every channel at **0.75**, not 1.0 — uniform −2.5 dB, absorbed by a normalising render
+and audible in one that does not normalise.
+
+**A second factor rides along.** `0x3b11`-`0x3b49` extracts **bits 28..29 of the note word** with
+`bextr 0x21c`, indexes one of four 20-byte records at `+0x420`, and multiplies the channel volume by
+its first float. So the note's own two-bit table selector scales the channel gain. What the four
+tables hold is unread.
+
+⚠️ **The inferred link: that `header + 0x04` is the board row.** What the eboot writes there
+has not been read — linear disassembly of the sequencer module desynchronises and no indexed
+16-byte store was found. The row is the candidate because it is the only per-track integer wide
+enough to need wrapping (`gridY` runs 0..24). `channelVolume` in `project.ts` implements it and says
+so. If it is wrong, the 30 multi-channel sequencers are mixed wrong — but they were mixed wrong
+before too, since the volumes were not applied at all.
+
+⚠️ **Neither rendered sequencer exercises any of this**: 723339 and 737099 both have
+`NumChannels = 1` with all six volumes at 1.0, so every row lands on the same 0.75. The 30 that do
+use it carry descending ramps like `1.00, 0.70, 0.50, 0.20` — which reads like an intensity
+layering, not a per-instrument mixer.

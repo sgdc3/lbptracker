@@ -280,3 +280,30 @@ test('the corpus’s sub-steps are the two balanced thirds, not a flag', async (
   const ratio = counts[1] / counts[2];
   assert.ok(ratio > 0.5 && ratio < 2, `thirds are lopsided: ${ratio.toFixed(2)}`);
 });
+
+// ------------------------------------------------------------ mixer channels
+
+test('a track’s channel is its board row modulo eight', async () => {
+  const { channelVolume, CHANNEL_HEADROOM } = await import('../src/core/project.ts');
+  const seq = {
+    numChannels: 4,
+    volumes: [1, 0.7, 0.5, 0.2, 1, 1],
+  } as never as Parameters<typeof channelVolume>[0];
+  const at = (gridY: number) =>
+    channelVolume(seq, { gridY } as never as Parameters<typeof channelVolume>[1]);
+
+  assert.equal(at(0), CHANNEL_HEADROOM * 1);
+  assert.equal(at(1), CHANNEL_HEADROOM * 0.7);
+  assert.equal(at(3), CHANNEL_HEADROOM * 0.2);
+  // The engine takes the row modulo eight (0x3afc-0x3b0b), which is what makes a
+  // 24-row board safe against a NumChannels of at most 6.
+  assert.equal(at(8), at(0));
+  assert.equal(at(9), at(1));
+  assert.equal(at(24), at(0));
+  // Records past Volume[5] keep the engine's initialised 0.75, i.e. volume 1.
+  assert.equal(at(6), CHANNEL_HEADROOM);
+  assert.equal(at(7), CHANNEL_HEADROOM);
+  // ⚠️ Even an all-ones sequencer is not unity: the headroom is always there.
+  const flat = { numChannels: 1, volumes: [1, 1, 1, 1, 1, 1] } as never as typeof seq;
+  assert.equal(channelVolume(flat, { gridY: 3 } as never as Parameters<typeof channelVolume>[1]), 0.75);
+});

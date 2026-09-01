@@ -29,7 +29,12 @@ import {
 } from '../src/core/envelope.ts';
 import { resolveSlot } from '../src/core/instrument.ts';
 import { LFO_PARAMS, OUTPUT_PARAMS, STACK_PARAMS } from '../src/core/params.ts';
-import { importLevel, schedule, type DumpRow } from '../src/core/project.ts';
+import {
+  channelVolume,
+  importLevel,
+  schedule,
+  type DumpRow,
+} from '../src/core/project.ts';
 import { readInstrument, usedSlots, type RInstrument } from '../src/core/rinstrument.ts';
 import { quantise } from '../src/core/scale.ts';
 import { loadResourceFile } from '../src/platform/node.ts';
@@ -183,7 +188,13 @@ for (const event of events) {
   const spec: VoiceSpec = {
     sample: slot.wav,
     playbackRate: pitchRatio(definition, note, seq.tempo) * (slot.wav.sampleRate / RATE),
-    gain: velocityGain(event.volume) * track.level * 2 * P(OUTPUT_PARAMS.level) * stackGain,
+    gain:
+      velocityGain(event.volume) *
+      track.level *
+      channelVolume(seq, track) *
+      2 *
+      P(OUTPUT_PARAMS.level) *
+      stackGain,
     pan: track.pan,
     startFrame: Math.round(event.step * framesPerStep),
     endFrame: Math.round((event.step + event.durationSteps) * framesPerStep),

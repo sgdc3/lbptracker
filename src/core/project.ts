@@ -259,6 +259,59 @@ export function importLevel(rows: readonly DumpRow[]): LevelProject[] {
   return out;
 }
 
+/**
+ * The engine's fixed headroom on every mixer channel.
+ *
+ * `fmodextinput.prx` initialises all eight channel records to `{0.75, 0, 0}` at
+ * `0x10f7`-`0x11e7`, and the eboot writes `Volume[i] * 0.75` over them. A
+ * sequencer whose volumes are all 1.0 therefore runs every channel at 0.75, not
+ * at 1.0 -- a uniform -2.5 dB that a normalising render absorbs, and a real
+ * level difference in one that does not normalise.
+ */
+export const CHANNEL_HEADROOM = 0.75;
+
+/** How many channel records the engine keeps, whatever `NumChannels` says. */
+export const CHANNEL_COUNT = 8;
+
+/**
+ * The mixer channel a track feeds, and the gain that comes with it.
+ *
+ * **What is measured**, in `fmodextinput.prx`:
+ *
+ * ```
+ * 0x3a32  r15d = header[block] + 0x04        ; the 16-byte per-block header
+ * 0x3afc  r15d = r15d mod 8                  ; signed modulo, eight records
+ * 0x3b1b  rcx  = channel * 3                 ; 12-byte records
+ * 0x3b3c  xmm0 = [state + 0x1a68 + 12*channel]   ; that channel's volume
+ * ```
+ *
+ * The eight records against a `NumChannels` that never exceeds 6 is what the
+ * `mod 8` is for, and it is why a board row of 24 is not out of range.
+ *
+ * ⚠️ **The last link is inferred: that `header + 0x04` is the board row.** What
+ * the eboot writes there has not been read -- the linear disassembly of the
+ * sequencer module desynchronises, and no indexed 16-byte store was found. The
+ * row is the candidate because it is the only per-track integer that ranges wide
+ * enough to need wrapping: across the corpus `gridY` runs 0..24 while
+ * `NumChannels` is 1 on 308 of 338 sequencers.
+ *
+ * ⚠️ **This is also what refutes the guess this file used to carry.** "A row is
+ * very likely a mixer channel" was recorded as a direct index, and the corpus
+ * says it cannot be: **88% of tracks have a `gridY` outside `0..NumChannels-1`**,
+ * and boards run to 25 distinct rows against at most 6 channels. Taken modulo 8
+ * the same field fits perfectly.
+ *
+ * Only 30 of 338 sequencers use more than one channel, and 28 of those carry a
+ * non-unit volume -- typically a descending ramp like `1.00, 0.70, 0.50, 0.20`.
+ */
+export function channelVolume(sequencer: Sequencer, track: Track): number {
+  const channel = ((track.gridY % CHANNEL_COUNT) + CHANNEL_COUNT) % CHANNEL_COUNT;
+  // Records past `Volume[5]` keep the engine's initialised 0.75, which is the
+  // same as a volume of 1.0 through the headroom factor.
+  const volume = channel < sequencer.volumes.length ? sequencer.volumes[channel] : 1;
+  return CHANNEL_HEADROOM * volume;
+}
+
 /** One note, placed on a sequencer's timeline. */
 export interface ScheduledNote {
   readonly step: number;
