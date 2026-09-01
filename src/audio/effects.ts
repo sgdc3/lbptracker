@@ -235,6 +235,11 @@ export const REVERB_ALLPASS_RATIOS: readonly number[] = [0.93, 1.06];
  * engine's: `REVERB_EARLY_SETS` (`v0xe1d920`, slot 4), the levels through
  * `millibelToLinear`, and the pre-delay in samples from slot 8.
  */
+/**
+ * WARNING: OURS. See the note where the allpasses are built.
+ */
+const ALLPASS_GAIN = 0.5;
+
 export class Reverb {
   private readonly pre: Float32Array;
   private readonly preDelay: number;
@@ -271,7 +276,7 @@ export class Reverb {
    */
   private readonly normaliseCombs: boolean;
 
-  constructor(sampleRate: number, preset: readonly number[], normaliseCombs = true) {
+  constructor(sampleRate: number, preset: readonly number[], normaliseCombs = false) {
     this.normaliseCombs = normaliseCombs;
     const ms = (v: number) => Math.max(1, Math.round((v / 1000) * sampleRate));
     const row = preset[PRESET_SLOT.tapSet];
@@ -319,7 +324,19 @@ export class Reverb {
       this.allpasses.push({
         buffer: new Float32Array(ms(length)),
         index: 0,
-        gain: gainFor(length),
+        // WARNING: 0.5 is OURS, and it is a stand-in for a measurement, not a
+        // measurement. Both readings that follow from the record layout are
+        // provably wrong against the ear and the tests:
+        //
+        //  - the RT60 gain in a true allpass rings 2.48x the nominal RT60;
+        //  - the RT60 gain feed-forward is not an allpass at all -- `z^-L - g`
+        //    with g near 0.93 ripples about 29 dB, a comb filter, and it was
+        //    reported as the reverb sounding far too bright and metallic.
+        //
+        // Schroeder's conventional 0.5 in a true allpass is flat in magnitude
+        // and does not stretch the tail. It is a placeholder until the wiring
+        // of the four kernels is read rather than inferred. See open question 6.
+        gain: ALLPASS_GAIN,
       });
     }
 
@@ -371,7 +388,12 @@ export class Reverb {
     // Each one's `g` is its own RT60 gain, not a constant.
     for (const ap of this.allpasses) {
       const delayed = ap.buffer[ap.index];
-      ap.buffer[ap.index] = wet;
+      // A **true** allpass: the feedback term is what makes it flat in
+      // magnitude. WARNING: this was feed-forward only for a while, which is
+      // not an allpass at all -- `z^-L - g` with the measured `g` near 0.93
+      // ripples about 29 dB, a comb filter, and a listener heard it straight
+      // away as the reverb being far too bright and metallic.
+      ap.buffer[ap.index] = wet + ap.gain * delayed;
       ap.index = (ap.index + 1) % ap.buffer.length;
       wet = delayed - ap.gain * wet;
     }
