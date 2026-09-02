@@ -81,6 +81,24 @@ export interface VoiceSpec {
   /** Output frame at which it stops, or undefined to run to the end of the sample. */
   readonly endFrame?: number;
   /**
+   * Output frame at which this voice is **taken away**, whatever it is doing.
+   *
+   * ⚠️ Not the same thing as `endFrame`, and the difference is the whole
+   * point. `endFrame` closes the note's gate -- the envelope releases, and a
+   * one-shot ignores it entirely, because a drum hit is not shortened by how
+   * long the note was written. `cutFrame` is the engine's allocator handing this
+   * voice's record to a later note: `fmodextinput.prx` 0x1640 returns a record
+   * and the caller overwrites it, so whatever was playing there stops mid-sample
+   * with no release. A one-shot cannot ignore that one.
+   *
+   * Leaving it out is what let a stolen one-shot keep sounding. On `Ascetic`
+   * that is `mime_artist` -- five stack layers of a loopless 9,142-frame vocal,
+   * played at rate 0.02 because the note sits 68 semitones under the sample's
+   * base note, so each note occupied five of the engine's 32 voices for **9.5
+   * seconds** and none of them ever went away.
+   */
+  readonly cutFrame?: number;
+  /**
    * Frames of linear fade before `endFrame`.
    *
    * Needed for looping samples: they never run out on their own, so a voice
@@ -184,6 +202,8 @@ class Voice {
   delay: number;
   /** Output frames remaining before it is cut, or Infinity. */
   life: number;
+  /** Frames until the allocator takes this voice away; Infinity if it never does. */
+  cut: number;
   /** Frames of linear fade at the end of that life. */
   readonly release: number;
   /** Per-frame multiplier for the optional decay, or 1. */
@@ -208,10 +228,17 @@ class Voice {
   // Fields are declared and assigned longhand rather than with TypeScript
   // parameter properties: Node's strip-only type removal rejects any syntax
   // that emits runtime code. See steering/tracker-architecture.md.
-  constructor(spec: VoiceSpec, delay: number, life: number, outputRate: number) {
+  constructor(
+    spec: VoiceSpec,
+    delay: number,
+    life: number,
+    cut: number,
+    outputRate: number,
+  ) {
     this.spec = spec;
     this.delay = delay;
     this.life = life;
+    this.cut = cut;
     this.release = Number.isFinite(life) ? Math.min(spec.release ?? 0, life) : 0;
     this.decayPerFrame = spec.decayDbPerSecond
       ? Math.pow(10, -Math.abs(spec.decayDbPerSecond) / 20 / outputRate)
@@ -265,6 +292,8 @@ class Voice {
 
   get finished(): boolean {
     const source = this.spec.sample.channels[0];
+    // Being taken away ends any voice, one-shot or not.
+    if (this.cut <= 0) return true;
     // A one-shot ends when the sample does, and only then.
     if (this.oneShot) return this.position >= source.length;
     // With an envelope the voice ends when the release reaches zero, not when
@@ -334,11 +363,14 @@ class Voice {
       if (skip >= frames) return { begin: frames, end: frames };
       begin = skip;
     }
+    // The allocator's cut, by arithmetic rather than a per-frame test: it is
+    // known before the loop and never moves.
+    const last = Number.isFinite(this.cut) ? Math.min(frames, begin + this.cut) : frames;
 
     const oneShot = this.oneShot;
 
     let i = begin;
-    for (; i < frames; i += 1) {
+    for (; i < last; i += 1) {
       // A one-shot is never released: it is held until the sample runs out.
       const held = oneShot || this.life > 0;
       if (!envelope && !held) break;
@@ -467,6 +499,7 @@ class Voice {
 
       this.position += rate;
       this.life -= 1;
+      this.cut -= 1;
     }
     return { begin, end: i };
   }
@@ -511,7 +544,9 @@ export class Mixer {
     const delay = Math.max(0, spec.startFrame ?? 0);
     const life =
       spec.endFrame === undefined ? Infinity : Math.max(0, spec.endFrame - delay);
-    this.voices.push(new Voice(spec, delay, life, this.outputRate));
+    const cut =
+      spec.cutFrame === undefined ? Infinity : Math.max(0, spec.cutFrame - delay);
+    this.voices.push(new Voice(spec, delay, life, cut, this.outputRate));
   }
 
   stopAll(): void {

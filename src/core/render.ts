@@ -17,7 +17,10 @@
  *
  * ✔ **Measured, 2026-09-02**: `This Is Halloween` rendered end to end under Node
  * and in Chrome produced the same **70,704,044-byte** file with the same
- * SHA-256, `1785d0d8ae658eeb726300aa7726b8d9`. A test cannot drive a browser, so
+ * SHA-256, `1785d0d8ae658eeb726300aa7726b8d9`. ⚠️ That file predates the
+ * voice-pool fix later the same day and is no longer what this code produces;
+ * what it is evidence for -- that the two hosts run identical arithmetic -- is
+ * unaffected. A test cannot drive a browser, so
  * `test/render.test.ts` pins the property that made that comparison meaningful:
  * the pipeline is deterministic and depends on its seed and nothing else.
  */
@@ -167,41 +170,36 @@ export async function renderSequencer(
     .filter((e) => (onlyGuids.length === 0 || onlyGuids.includes(e.guid)))
     .filter((e) => !skipGuids.includes(e.guid));
 
-  // The engine has 32 voices and steals the quietest when they run out. Without
-  // that cap a dense passage plays every note and is louder than the game's --
-  // which is exactly where a listener hears it. Peak simultaneous notes in this
-  // sequencer is 88.
-  const pooled = allocateVoices(
-    events.map((e) => {
-      const track = seq.tracks[e.track];
-      return {
-        start: e.step,
-        end: e.step + e.durationSteps,
-        // voice[+0x04] * voice[+0x0c]: channel volume times note volume. The
-        // instrument's own level and its envelope are not in the engine's score.
-        score: channelVolume(seq, track) * velocityGain(e.volume),
-      };
-    }),
-    voiceLimit,
-  );
-  const realEnd = new Map(pooled.map((p) => [p.index, p.end]));
-  let stolen = 0;
-  const stolenBy = new Map<number, number>();
-  for (const [i, e] of events.entries()) {
-    if (realEnd.get(i)! < e.step + e.durationSteps) {
-      stolen += 1;
-      stolenBy.set(e.guid, (stolenBy.get(e.guid) ?? 0) + 1);
-    }
+  // ## Resolving every note before the pool runs, and why
+  //
+  // The pool has to be told how long a voice actually holds a record, and that
+  // is not the note's written length. A **one-shot** -- a slot whose sample has
+  // no loop -- ignores the gate and plays the whole sample, stretched by 1 over
+  // the playback rate, and the rate is not known until the instrument is loaded
+  // and its key zone resolved. So that happens here, first, and the play loop
+  // below reuses what this pass worked out instead of doing it again.
+  //
+  // ⚠️ **Getting this wrong is not a rounding error.** On `Ascetic` the pool was
+  // told `mime_artist`'s notes were two steps long. They are loopless, five
+  // stack layers each, and sit 68 semitones below the sample's base note, so
+  // each one really held **five** voices for **9.5 seconds** -- 1,760 voices
+  // sounding at once against the engine's 32. It is why that render was slow and
+  // why its low end was a smear.
+  interface Prepared {
+    readonly loaded: LoadedInstrument;
+    readonly note: number;
+    readonly zone: number;
+    readonly playbackRate: number;
+    readonly layers: number;
+    /** Steps this voice occupies a pool record, gate or no gate. */
+    readonly occupancySteps: number;
   }
-
-
-  let played = 0;
-  let skipped = 0;
-  for (const [eventIndex, event] of events.entries()) {
-    if (onProgress && (eventIndex & 0x3ff) === 0) await onProgress('voices', eventIndex, events.length);
+  const prepared: (Prepared | null)[] = [];
+  for (const [i, event] of events.entries()) {
+    if (onProgress && (i & 0x3ff) === 0) await onProgress('voices', i, events.length * 2);
     const loaded = await loadInstrument(event.guid);
     if (!loaded || loaded.slots.length === 0) {
-      skipped += 1;
+      prepared.push(null);
       continue;
     }
     const track = seq.tracks[event.track];
@@ -213,6 +211,90 @@ export async function renderSequencer(
     // walk at 0x05a0 takes bits 8..14 of the note word with `bextr` and compares
     // that. The quantiser applies to the pitch below, not to the choice of sample.
     const zone = resolveSlot(loaded.inst, event.pitch, loaded.slots.length);
+    const slot = loaded.slots[Math.min(zone, loaded.slots.length - 1)];
+    const definition = loaded.inst.slots[Math.min(zone, loaded.inst.slots.length - 1)];
+    const playbackRate =
+      ((unpitchedPercussion && slot.wav.loop === undefined) ||
+      unpitchedGuids.includes(event.guid)
+        ? 1
+        : pitchRatio(definition, note, seq.tempo)) *
+      (slot.wav.sampleRate / RATE) *
+      (pitchShift.get(event.guid) ?? 1);
+    // ⚠️ A looped voice is counted at its written length, which understates it
+    // by the envelope's release. That tail is bounded and small; a one-shot's
+    // overrun is neither, and it is the one measured here.
+    const oneShotSteps =
+      slot.wav.loop === undefined && playbackRate > 0
+        ? slot.wav.channels[0].length / playbackRate / framesPerStep
+        : 0;
+    prepared.push({
+      loaded,
+      note,
+      zone,
+      playbackRate,
+      layers: Math.max(1, loaded.inst.numStack),
+      occupancySteps: Math.max(event.durationSteps, oneShotSteps),
+    });
+  }
+
+  // The engine has 32 voices and steals the quietest when they run out. Without
+  // that cap a dense passage plays every note and is louder than the game's --
+  // which is exactly where a listener hears it.
+  //
+  // ⚠️ **One entry per stack layer, not per note.** `Numstack` layers are
+  // `Numstack` sampler voices, so a five-layer instrument spends five of the
+  // thirty-two on every note it plays. Counting a note as one voice let
+  // `mime_artist` put 1,760 of them in a 32-voice pool without the allocator
+  // noticing.
+  const entries: { eventIndex: number; layer: number }[] = [];
+  const pooled = allocateVoices(
+    events.flatMap((e, i) => {
+      const track = seq.tracks[e.track];
+      const prep = prepared[i];
+      const note = {
+        start: e.step,
+        end: e.step + (prep ? prep.occupancySteps : e.durationSteps),
+        // voice[+0x04] * voice[+0x0c]: channel volume times note volume. The
+        // instrument's own level and its envelope are not in the engine's score.
+        score: channelVolume(seq, track) * velocityGain(e.volume),
+      };
+      return Array.from({ length: prep ? prep.layers : 1 }, (_, layer) => {
+        entries.push({ eventIndex: i, layer });
+        return note;
+      });
+    }),
+    voiceLimit,
+  );
+  /** `eventIndex,layer` -> the step at which the allocator takes the voice back. */
+  const cutAt = new Map<string, number>();
+  let stolen = 0;
+  const stolenBy = new Map<number, number>();
+  for (const p of pooled) {
+    const { eventIndex, layer } = entries[p.index];
+    const event = events[eventIndex];
+    const natural = event.step + (prepared[eventIndex]?.occupancySteps ?? event.durationSteps);
+    if (p.end < natural) {
+      cutAt.set(`${eventIndex},${layer}`, p.end);
+      if (layer === 0) {
+        stolen += 1;
+        stolenBy.set(event.guid, (stolenBy.get(event.guid) ?? 0) + 1);
+      }
+    }
+  }
+
+  let played = 0;
+  let skipped = 0;
+  for (const [eventIndex, event] of events.entries()) {
+    if (onProgress && (eventIndex & 0x3ff) === 0) {
+      await onProgress('voices', events.length + eventIndex, events.length * 2);
+    }
+    const prep = prepared[eventIndex];
+    if (!prep) {
+      skipped += 1;
+      continue;
+    }
+    const { loaded, note, zone } = prep;
+    const track = seq.tracks[event.track];
     const slot = loaded.slots[Math.min(zone, loaded.slots.length - 1)];
     const definition = loaded.inst.slots[Math.min(zone, loaded.inst.slots.length - 1)];
     const p = loaded.inst.params;
@@ -247,20 +329,14 @@ export async function renderSequencer(
     // random detune, pan offset and start point, at `sqrt(1 / Numstack)` gain --
     // all four measured and all four previously unused, which is why a
     // three-layer patch like `synth/ghost.rinst` came out as one thin copy.
-    const layers = Math.max(1, loaded.inst.numStack);
+    const layers = prep.layers;
     const stackGain = Math.sqrt(1 / layers);
     const sampleFrames = slot.wav.channels[0].length;
     const bipolar = () => rand() * 2 - 1;
 
     const spec: VoiceSpec = {
       sample: slot.wav,
-      playbackRate:
-        ((unpitchedPercussion && slot.wav.loop === undefined) ||
-        unpitchedGuids.includes(event.guid)
-          ? 1
-          : pitchRatio(definition, note, seq.tempo)) *
-        (slot.wav.sampleRate / RATE) *
-        (pitchShift.get(event.guid) ?? 1),
+      playbackRate: prep.playbackRate,
       gain:
         velocityGain(event.volume) *
         track.level *
@@ -271,12 +347,10 @@ export async function renderSequencer(
       pan: track.pan,
       // Swing bends the step clock, so every frame position goes through it.
       startFrame: Math.round(swungFrame(event.step, framesPerStep, seq.swing)),
+      // The note's own end -- what closes the gate. A one-shot ignores it; see
+      // `cutFrame` below, which nothing ignores.
       endFrame: Math.round(
-        swungFrame(
-          realEnd.get(eventIndex) ?? event.step + event.durationSteps,
-          framesPerStep,
-          seq.swing,
-        ),
+        swungFrame(event.step + event.durationSteps, framesPerStep, seq.swing),
       ),
       envelope: evaluateAdsr(p, ADSR_PARAMS, mod),
       filter: {
@@ -321,8 +395,15 @@ export async function renderSequencer(
     };
     const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
     for (let layer = 0; layer < layers; layer += 1) {
+      const cut = cutAt.get(`${eventIndex},${layer}`);
       mixer.play({
         ...spec,
+        // The allocator handing this record to a later note. Undefined when the
+        // pool never came for it, which is the usual case.
+        cutFrame:
+          cut === undefined
+            ? undefined
+            : Math.round(swungFrame(cut, framesPerStep, seq.swing)),
         // ⚠️ All three of Params[0..2] are per-LAYER, and a voice with one layer
         // has nothing to spread against itself. Applying them regardless is what
         // broke the drums twice over: the random start turned every hit into half

@@ -320,5 +320,5 @@ dropZone.addEventListener('drop', (e) => {
 // the server first: level data is other people's work, this app is meant to be a
 // static site, and a page that quietly pulls 81 MB of levels off its own host is
 // the thing `steering/game-assets.md` rules out. Ask, always.
-setStatus('open your songs file to begin');
+setStatus('open a level to begin');
 setBar(0);

@@ -268,6 +268,28 @@ engine has available, and the corpus statistics say gating cannot be what happen
 that acts on it has not been found**. It should be in `sub_0x38e0`'s note-off path, near the voice
 record's `+0x3e`/`+0x3f` start/end pair.
 
+### The evidence that the rule reaches further than percussion — 2026-09-02
+
+The rule is stated over *loopless samples*, and the instruments it was reasoned about are drum kits,
+whose samples are under a second. `mime_artist` is not a drum kit and is caught by it too:
+
+- four loopless samples of **9,142 frames** (0.19 s) at base notes 81, 69, 57, 45, `Numstack` **5**;
+- one `Splitnotes` bound, so all four are stack layers rather than zones and every note resolves to
+  the base-81 slot;
+- `Ascetic` plays it at notes 9–24, i.e. **57 to 72 semitones below that base**, so the playback
+  rate is 0.016–0.037 and the 0.19-second sample becomes **5 to 12 seconds** of sound.
+
+Ungated, that is five voices held for around 9.5 seconds by a note written two steps long. It is a
+low, smeared drone, and it is what a listener reported as *"note basse incasinate"*. Whether the
+engine really lets a **pitched, non-percussive** loopless sample run past its note is exactly this
+question, and `mime_artist` is a far sharper test case than a kick drum: the difference there is a
+tenth of a second, here it is nine seconds.
+
+⚠️ Do not "fix" this by gating it without an answer. The 32-voice pool now accounts for the real
+occupancy (see *17. What a voice occupies* in `answered-questions.md`), so the drone is cut by voice
+stealing rather than left to pile up — the render is right about the engine's pool either way, and
+wrong about this note's length only if the one-shot rule is wrong.
+
 ⚠️ **A second oddity found on the way, and left alone.** `a_kit_1`'s ride sits in slot 1, whose
 zone is notes 60..72 (`Splitnotes` `87,72,60,54,...`) but whose `baseNote` is **78** — outside its
 own zone. So notes 66 and 68 play the ride at rates 0.50 and 0.56, an octave down. Six of the eight

@@ -25,7 +25,9 @@ const SMP = 'fixtures/smp';
  * and that is the whole point of `src/core/render.ts`: a browser render differs
  * from a Node one only in how bytes arrive. On 2026-09-02 both were run on
  * `This Is Halloween` end to end and produced the **same 70,704,044-byte file
- * with the same SHA-256** (`1785d0d8…`). A test cannot drive a browser, so what
+ * with the same SHA-256** (`1785d0d8…`). ⚠️ That file predates the voice-pool
+ * fix later the same day; the equality it demonstrates does not. A test cannot
+ * drive a browser, so what
  * is pinned below is the property that made that comparison meaningful: the
  * pipeline is deterministic, and its output depends on the seed and on nothing
  * else.

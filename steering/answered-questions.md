@@ -761,3 +761,51 @@ exactly why the property test above matters more than the agreement does.
 just to work out the sequencer's structure"* — and it was half right in a useful way. The
 quaternion round-trip is indeed absurd; the frame change is not, and the corpus is what separated
 the two in about ten minutes.
+
+---
+
+## 17. What a voice occupies in the 32-voice pool — SETTLED: not what the note says
+
+The engine has 32 voice records and steals the quietest when they run out (question 6's allocator,
+`fmodextinput.prx` 0x1640). `src/core/render.ts` fed that allocator one entry per note, ending at
+the note's **written** end. Both halves of that were wrong, and on a dense sequencer the error is
+not subtle.
+
+### What a note really occupies
+
+- **A one-shot runs past its note.** A slot whose sample has no loop is not gated (question 10), so
+  it holds its record for `sampleFrames / playbackRate` output frames — and the rate is not known
+  until the instrument is loaded and its key zone resolved, which is why the pool was never told.
+- **`Numstack` layers are `Numstack` voices.** A five-layer instrument spends five of the
+  thirty-two on every note it plays.
+
+`Ascetic`'s `mime_artist` is both at once: five layers, loopless, 68 semitones below its sample's
+base note. The pool was told "two steps"; the truth was **five voices for 9.5 seconds**. 352 notes
+in the first 24 seconds meant **1,760 simultaneous voices** in a 32-voice pool, and the allocator
+reported nothing stolen.
+
+### And a stolen voice has to actually stop
+
+`endFrame` closed the note's gate, and a one-shot ignores the gate by design — so even when the
+allocator did take a record away, the voice carried on. `VoiceSpec.cutFrame` is now separate from
+`endFrame`: the gate is the note's, the cut is the allocator's, and nothing ignores the cut. That is
+what the engine does, since the caller simply overwrites the record it was handed.
+
+### Measured, on `Ascetic` (uid 723339, tempo 240, 1,150 tracks, 14,499 notes)
+
+| audio rendered | mix, before | mix, after |
+|---|---|---|
+| 6 s | 0.93 s | 0.48 s |
+| 12 s | 4.90 s | 1.47 s |
+| 24 s | 14.88 s | 2.98 s |
+
+⚠️ Read the **shape**, not the ratio. Before, the cost per second of audio was 0.155, 0.408, 0.620 —
+rising, because every extra second added notes whose voices never went away, so the work grew with
+the square of the length. After: 0.080, 0.123, 0.124 — flat. The whole 339-second song now renders
+in **26 s** (13× realtime); on the old curve it was heading for tens of minutes, which is what was
+reported as "estremamente lento".
+
+**The general rule this earns:** when a cap exists to reproduce the engine's behaviour, check that
+it is being told the truth before concluding the engine is generous. "0 of 934 notes cut short by
+voice stealing" on a passage with 1,760 sounding voices should have been read as an accusation
+against the accounting, not as a fact about the music.
