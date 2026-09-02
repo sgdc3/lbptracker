@@ -1292,8 +1292,23 @@ everywhere, so no amount of listening separates them -- but the family as a whol
 the extreme where constant power predicts 0.198.
 
 `c = 2^-1.5` is `0.5 / sqrt2`: the mono average of a stereo pair folded back at the standard -3 dB,
-which is what a **centre channel** does. That is the shape of the mechanism, and finding *where* it
-happens is what is left of question 22 in [open-questions.md](open-questions.md).
+which is what a **centre channel** does.
+
+### ✔ And the fold happens below the game
+
+Read the same day, `v0xa57770` -- the `GetDriverCaps` callback of the output description named
+"FMOD Orbis AudioOut Output" -- reports `FMOD_SPEAKERMODE_7POINT1` (`[r8] = 6`), 48000 Hz, and
+`FMOD_CAPS_OUTPUT_MULTICHANNEL | FMOD_CAPS_OUTPUT_FORMAT_PCMFLOAT` (`0x84`). The game never calls
+`setSpeakerMode`, so that is the mode it runs in, and `sceAudioOutOpen` gets `param = 5`,
+`FLOAT_8CH`.
+
+**LBP3 renders eight channels.** The stereo anyone hears is a downmix underneath it, and `0.7071` is
+the ITU-R BS.775 centre coefficient -- the textbook one. ⚠️ **So the constant is the playback
+chain's, not LBP's own pan law.** Keeping it is still right for this tracker, which is a stereo
+renderer for stereo listeners; what it means is that the game's *internal* image is wider, and that
+a capture made through a different downmixer should reproduce the same number only insofar as that
+downmixer follows the standard. See question 22 in [open-questions.md](open-questions.md) for the
+one piece still missing: what puts `(L+R)/2` in the centre channel in the first place.
 
 ### What was implemented
 

@@ -70,13 +70,23 @@ export const RATE = 48000;
  * average of a stereo pair folded back in at the textbook -3 dB, which is what a
  * **centre channel** does.
  *
- * ⚠️ **The effect is measured; the mechanism is not.** Nothing in the sequencer
- * produces this: the plugin's pan law is exactly `1-p` / `p` (`0x2d21`/`0x2d40`),
- * the pan reaches the voice unmodified (`0x3b29`), and its four output channels
- * are one image plus a scaled copy, which cannot cross-feed. It enters in FMOD's
- * mixdown of the 4-channel DSP or in the console's downmix below it -- see
- * question 22 in steering/open-questions.md, which is now about *where*, not
- * *whether*.
+ * ⚠️ **This is the playback chain's fold, not LBP's own pan law.** The game
+ * renders **7.1**: `v0xa57770`, FMOD's `GetDriverCaps` for its "FMOD Orbis
+ * AudioOut Output" driver, reports `FMOD_SPEAKERMODE_7POINT1`, 48 kHz and
+ * float, and the game never calls `setSpeakerMode`. So eight channels leave the
+ * game and the stereo anyone hears is a downmix underneath it -- where `1/sqrt2`
+ * is the ITU-R BS.775 centre coefficient.
+ *
+ * Nothing in the sequencer itself does this: the plugin's pan law is exactly
+ * `1-p` / `p` (`0x2d21`/`0x2d40`), the pan reaches the voice unmodified
+ * (`0x3b29`), and its four output channels are one image plus a scaled copy,
+ * which cannot cross-feed. What still has no reading is what puts `(L+R)/2` in
+ * the centre channel -- see question 22 in steering/open-questions.md.
+ *
+ * Keeping it is right anyway: this is a stereo renderer for stereo listeners,
+ * and it matches what they hear. It does mean the game's **internal** image is
+ * wider than this, and that a capture made through a downmixer that does not
+ * follow the standard would measure a different constant.
  *
  * ⚠️ **Width, not gain.** The recordings were level-matched, so they fix the
  * ratio between the channels and say nothing about the absolute level. This

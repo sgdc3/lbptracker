@@ -626,18 +626,56 @@ What works instead, in order of preference:
 
 ---
 
-## 22. WHERE the stereo narrowing enters -- the effect is settled, the mechanism is not
+## 22. What puts a mono sum in the centre channel -- the fold itself is now placed
 
 ⚠️ **Read [answered-questions.md](answered-questions.md) entry 22 first.** What the game does is
-measured to six significant figures and implemented: every pan is narrowed to `PAN_WIDTH = 2-sqrt2`,
-confirmed by a prediction that held at a new operating point. **This question is no longer about
-fidelity** -- the renderer matches the game -- it is about the one thing still unread: *where in the
-chain the narrowing happens*, and therefore whether it is FMOD's or the console's.
+measured to six significant figures and implemented (`PAN_WIDTH = 2-sqrt2`). What is left is a much
+smaller question than it was, because the *location* is now read.
 
-It matters for exactly one reason. If the fold is FMOD's, it is inside the game and applies to every
-listener. If it is the console's 7.1->stereo downmix, then it is what a **stereo** listener hears and
-the tracker is right to bake it in, but someone playing in 7.1 hears something wider -- and the
-constant would not belong to LBP at all.
+### ✔ The game's output is 7.1, so the fold is BELOW the game
+
+`v0xa57770`, the `GetDriverCaps` callback of the output description built at `v0x13e3c78` and named
+**"FMOD Orbis AudioOut Output"**:
+
+```
+0xa57775  [rdx] = 0x84      ; FMOD_CAPS_OUTPUT_MULTICHANNEL | FMOD_CAPS_OUTPUT_FORMAT_PCMFLOAT
+0xa57780  [rcx] = 0xbb80    ; 48000
+0xa5778b  [r8]  = 6         ; FMOD_SPEAKERMODE_7POINT1
+```
+
+Its two neighbours in the same table confirm it is that table: `v0xa57720` writes `[rsi] = 1` (one
+driver) and `v0xa57730` copies the string `"Orbis AudioOut output"`. The game never calls
+`setSpeakerMode`, so this **is** the mode FMOD runs in: `ebx` in `Init` is 8 and
+`param = 4 | (8 != 2) = 5`, `SCE_AUDIO_OUT_PARAM_FORMAT_FLOAT_8CH`.
+
+⚠️ **So LBP3 renders eight channels and the stereo a listener hears is a downmix underneath it.**
+The narrowing is not in the game. Branches 1 and 2 of the old version of this question -- FMOD
+downmixing 4->2 itself -- are dead: FMOD is *up*mixing 4->8 here, and the fold to two is somebody
+else's.
+
+That also explains the constant's shape. `c = 2^-1.5` is `0.7071 * (L+R)/2`: a **centre channel**
+carrying the mono average, folded at the -3 dB coefficient of ITU-R BS.775 -- the textbook stereo
+downmix, which any standards-following downmixer applies identically.
+
+### What is actually left
+
+**Where does the centre content come from?** A 7.1 downmix only cross-feeds through C, so something
+must be putting `(L+R)/2` there, and nothing found so far does:
+
+- the sequencer DSP is 4-channel and writes one image plus a scaled copy (see below), no centre;
+- FMOD's `FMOD_SPEAKERMAPTYPE_DEFAULT` maps a 4-channel source as quad -- FL, FR and two surrounds,
+  which fold without cross-feed;
+- a mapping that reached C would have to be **symmetric**, and the recordings prove symmetry: pan 0
+  and pan 1 give the same 0.261202, so a scheme feeding only one channel into C is excluded.
+
+⚠️ **And the measured constant belongs to the downmixer, not to LBP.** If the capture that
+produced it came from an emulator rather than PS4 hardware, the number is that emulator's fold. It
+is the ITU coefficient, so a compliant downmixer agrees -- but this has not been checked against two
+different chains, and it is the cheapest thing left to check.
+
+⚠️ **What this does NOT change:** the tracker is a stereo renderer for stereo listeners, and it
+matches what they hear. Keeping `PAN_WIDTH` is right regardless of which side of the HDMI cable the
+fold happens on. Only the *attribution* of the constant is at stake here, not the audio.
 
 ### What has been eliminated, with the address that eliminated it
 
@@ -653,46 +691,12 @@ constant would not belong to LBP at all.
 | the mixer-channel records carrying a pan | **no** — `0x10b7`-`0x10cb` fill them `{0.75, 0, 0}` and `0x3adf`/`0x3ae9` read the second and third as **integer flags**, `or`-ed with a global |
 | the level position | **no** — the listener plays the game and says so |
 
-### What the measurement says the mechanism has to look like
+### The next reading, if it is picked up again
 
-A mono copy of the sequencer bus at `c = 2^-1.5 = 0.3535534` added to both channels. Because the
-plugin's pan law sums to 1, that copy is exactly `(L+R)/2` -- **a centre channel, folded back at the
-textbook `1/sqrt2`**. Whatever is found has to produce that and nothing else: the recordings put the
-residual at 0.0008 and the correlation at 1.000000, so there is no delay, no decorrelation and no
-second path.
-
-### The two branches, and how to tell them apart
-
-Everything before FMOD is excluded by reading (see the table above and entry 22): the plugin's pan
-law is exactly `1-p` / `p`, the pan reaches the voice unmodified, and the DSP's four output channels
-are one image plus a scaled copy, which cannot cross-feed. So:
-
-1. **Output is stereo** => FMOD downmixes the 4-channel DSP itself, and the matrix is in
-   `fmod_dspi.cpp` / `fmod_dsp_connectionpool.cpp`. A quad source mapped by speaker angle into a
-   stereo field would cross-feed; that matrix is then the whole answer.
-2. **Output is 7.1** => FMOD spreads 4->8 and the fold is the console's, downstream of the game. The
-   constant is then not in the eboot at all.
-
-The speaker count decides it and is still unread. ✔ **Not from the output plugin** -- `v0xa577a0` is
-its `Init` and `ebx` is `r8d`, the `outputchannels` **argument**, so the value is handed down by FMOD
-core. The full FMOD Ex signature checks out and pins the neighbours at the same time:
-
-```
-Init(state, driver, flags, int *rate, int channels, FMOD_SOUND_FORMAT *fmt, buflen, numbuf, extra)
-     rdi    esi     edx    rcx        r8d           r9                      [rbp+0x18] [rbp+0x20]
-                           [rcx]=48000 -> ebx        [r9]=5 (PCMFLOAT)       grain      count
-```
-
-Reading the rest of that file is a dead end too: `v0xa570f0`, which had the shape of a caps callback,
-is a plain `read()` retry loop -- `fmodapi.py`'s `__FILE__` attribution span is coarser than the file
-it names. Go at `System::init`'s speaker-mode negotiation in `fmod_systemi.cpp`, or at the
-`FMOD_OUTPUT_DESCRIPTION` carrying `v0xa577a0`, which is built at runtime (searched: no qword and no
-`R_X86_64_RELATIVE` addend equal to `0xa577a0` exists anywhere in the image).
-
-⚠️ **A cheap experiment beats all of this.** The console's downmix is not the game's: **record the
-game once with the PS4 set to stereo output and once set to 7.1**, on the same hard-panned
-instrument. If the ratio moves, the fold is the console's and branch 2 is settled without reading a
-byte of FMOD.
+FMOD's own upmix of a 4-channel DSP unit into a 7.1 bus: `fmod_dspi.cpp` /
+`fmod_dsp_connectionpool.cpp`, the default connection matrix. That is the only place left inside the
+game where a centre feed could be created, and if it is not there then the fold is entirely the
+playback chain's and question 22 closes as "not LBP's".
 
 
 ## 23. A flat ~1 dB deficit above 315 Hz
