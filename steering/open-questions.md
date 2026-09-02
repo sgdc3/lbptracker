@@ -689,19 +689,44 @@ Three searches, all negative:
   and 0.56 at `v0x3ee7f2` — tantalising, and reading them shows `|a - b|` against a threshold and
   then `(x + c)/d`: a **distance crossfade**, positional audio rather than a pan law.
 
-⚠️ ⚠️ That last one is the hypothesis worth testing. **A music sequencer is a Thing at a
-position in the level**, and the game's audio layer places sounds in the world. If the sequencer is
-panned by where it is relative to the camera, the placement's own pan is a sub-mix inside a narrower
-window — which is a constant width scale, flat across frequency, and exactly "100 is not 100% right".
+⚠️ Those two constants read as a **distance crossfade**, and the listener has ruled the whole idea
+out anyway: **the level position has nothing to do with it.** So the narrowing is intrinsic to the
+sequencer's own path and applies wherever the sequencer sits.
 
-### The two experiments that would settle it, both recordings
+### What has been eliminated, with the address that eliminated it
 
-1. **One instrument at pan 0 or 1.** Two interior points (0.4 and 0.6) cannot separate a linear
-   compression `0.5 + (p-0.5)k` from a cross-bleed `L' = L + bR` from a reduced-angle power law; one
-   extreme point separates all three at once.
-2. **The same sequencer recorded from two positions in the level.** If the width changes, it is
-   positional and a tracker with no world cannot reproduce it faithfully — which would itself be the
-   answer, and would make `panWidth` a legitimate user setting rather than a diagnostic.
+| hypothesis | verdict |
+|---|---|
+| the pan is compressed before reaching the voice | **no** — `0x3b20`/`0x3b29` copy it raw |
+| the pan law is not linear | **no** — `0x2d21`/`0x2d40` are `1-p` and `p` |
+| a constant in the plugin | **no** — no float between 0.35 and 0.5 is referenced anywhere in it |
+| a constant in the eboot's sequencer module | **no** — 39 functions, only 0.25/0.5/0.75/0.95 |
+| stereo samples | **no** — every kit sample is mono, 48 kHz |
+| the pan LFO or the unison spread | **no** — both kits leave every depth at 0, `Numstack` 1 |
+| a mono reverb send bleeding into the output | **no** — the two dominant placements have `reverbSend` **0.000** |
+| the mixer-channel records carrying a pan | **no** — `0x10b7`-`0x10cb` fill them `{0.75, 0, 0}` and `0x3adf`/`0x3ae9` read the second and third as **integer flags**, `or`-ed with a global |
+| the level position | **no** — the listener plays the game and says so |
+
+### What is left
+
+**What FMOD does with the plugin's four output channels.** That is the one link in the chain nobody
+has read: it is neither in `fmodextinput.prx` nor in the game's own code, but in the FMOD library
+compiled into the eboot (`fmod_dspi.cpp`, `fmod_channelgroupi.cpp` — `tools/fmodapi.py` locates
+both). A 4-to-2 downmix with the usual −3 dB coefficient is the shape that fits: adding a component
+at `1/(2√2) = 0.3536` of the mono sum to both channels reproduces the measured 1.2654 from 0.4/0.6
+to three decimals, and `1/(2√2)` is not a number one invents.
+
+### ⚠️ The one recording that would narrow this fast
+
+**One instrument at pan 0, or at pan 1.** Two interior points (0.4 and 0.6) **cannot** separate
+
+- a linear compression `p' = 0.5 + (p - 0.5)k`, k = 0.586,
+- a cross-bleed `L' = L + bR`, b = 0.261,
+- a mono add `L' = L + cA`, c = 0.353,
+- a power law over a reduced angle,
+
+because all four fit both points. One extreme point separates all four at once, and each implies a
+different cause.
 
 ⚠️ `RenderOptions.panWidth` exists **only** as a diagnostic and defaults to 1, the file's own value.
 At 0.58 it reproduces the recording almost exactly — side/mid 0.1043 against the game's 0.1026, and
