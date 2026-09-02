@@ -1,0 +1,439 @@
+/**
+ * The whole render pipeline, in one platform-neutral function.
+ *
+ * This is the code `dev/render-level.ts` used to be, lifted out of it verbatim
+ * so that **the same pipeline runs under Node and in the browser**. The only
+ * thing either wrapper supplies is a way to load an instrument by GUID: Node
+ * reads files, the browser fetches them, and nothing else differs. Every
+ * measured law -- the sampler, the ladder, the envelopes, the LFOs, the voice
+ * pool, the sends, the echo, the reverb and the output clip -- lives below and
+ * is exercised identically by both.
+ *
+ * ⚠️ It renders offline into plain `Float32Array`s rather than through
+ * `OfflineAudioContext`. That is the point: the browser's own resampler and
+ * mixer are exactly what this project must not use (see
+ * `steering/tracker-architecture.md`), so the output has to be arithmetic we
+ * control, and it has to be bit-identical to the Node render.
+ *
+ * ✔ **Measured, 2026-09-02**: `This Is Halloween` rendered end to end under Node
+ * and in Chrome produced the same **70,704,044-byte** file with the same
+ * SHA-256, `1785d0d8ae658eeb726300aa7726b8d9`. A test cannot drive a browser, so
+ * `test/render.test.ts` pins the property that made that comparison meaningful:
+ * the pipeline is deterministic and depends on its seed and nothing else.
+ */
+
+import { Echo, Reverb, clipToUnit, reverbPreset } from '../audio/effects.ts';
+import { Mixer, type SampleBuffer, type VoiceSpec } from '../audio/mixer.ts';
+import { FILTER_PARAMS } from '../audio/moog.ts';
+import { ADSR_PARAMS, ADSR_PARAMS_B, evaluateAdsr, evaluateParam } from './envelope.ts';
+import { resolveSlot } from './instrument.ts';
+import { LFO_PARAMS, OUTPUT_PARAMS, STACK_PARAMS } from './params.ts';
+import { VOICE_POOL_SIZE, allocateVoices } from './polyphony.ts';
+import { channelVolume, schedule, type Sequencer } from './project.ts';
+import { type RInstrument } from './rinstrument.ts';
+import { quantise } from './scale.ts';
+import { swungFrame } from './swing.ts';
+import { pitchRatio, samplesPerStep, velocityGain } from './voice.ts';
+
+/** The output rate. The engine's own is hard-coded to this too. */
+export const RATE = 48000;
+
+/** One instrument, with its samples decoded and mipmapped. */
+export interface LoadedInstrument {
+  readonly inst: RInstrument;
+  readonly slots: readonly { readonly wav: SampleBuffer; readonly base: number }[];
+}
+
+/** Load an instrument by GUID, or return null when it is not available. */
+export type InstrumentLoader = (
+  guid: number,
+) => Promise<LoadedInstrument | null | undefined>;
+
+/** Progress callback. Returning a promise lets a browser caller yield. */
+export type RenderProgress = (
+  phase: 'voices' | 'mix' | 'effects',
+  done: number,
+  total: number,
+) => void | Promise<void>;
+
+export interface RenderOptions {
+  /** Seconds to render; 0 or absent renders to the end plus the effect tail. */
+  readonly secondsArg?: number;
+  /** Start offset in seconds, for rendering a window out of the middle. */
+  readonly fromArg?: number;
+  /** Instrument GUIDs to keep, or empty for all. */
+  readonly onlyGuids?: readonly number[];
+  /** Instrument GUIDs to drop. */
+  readonly skipGuids?: readonly number[];
+  /** GUIDs whose slots play at their own rate rather than transposed. */
+  readonly unpitchedGuids?: readonly number[];
+  /** A/B: any loopless sample plays at its own rate. */
+  readonly unpitchedPercussion?: boolean;
+  /** A/B: force the filter's key-tracking term to 1. */
+  readonly noKeyTrack?: boolean;
+  /** Voice pool size; `VOICES_UNLIMITED` removes the cap. */
+  readonly voiceLimit?: number;
+  /** Whether the plugin's own hard clip to +-1 runs. Defaults to on. */
+  readonly clip?: boolean;
+  /** GUID -> playback-rate factor, for octave A/Bs. */
+  readonly pitchShift?: ReadonlyMap<number, number>;
+  /** The PRNG seed. Fixed by default, so a render is reproducible. */
+  readonly seed?: number;
+  readonly onProgress?: RenderProgress;
+}
+
+export interface RenderResult {
+  readonly left: Float32Array;
+  readonly right: Float32Array;
+  readonly frames: number;
+  readonly seconds: number;
+  readonly framesPerStep: number;
+  readonly events: number;
+  readonly played: number;
+  readonly skipped: number;
+  readonly stolen: number;
+  /** GUID -> how many of its notes the pool cut short. */
+  readonly stolenBy: ReadonlyMap<number, number>;
+  /** Echo and reverb level as a fraction of the dry mix, by RMS. */
+  readonly echoRel: number;
+  readonly reverbRel: number;
+  readonly clippedFrames: number;
+  readonly peak: number;
+  readonly rms: number;
+  readonly echo: Echo;
+  readonly reverb: Reverb;
+  readonly preset: readonly number[];
+}
+
+/** Render one sequencer end to end. */
+export async function renderSequencer(
+  seq: Sequencer,
+  loadInstrument: InstrumentLoader,
+  options: RenderOptions = {},
+): Promise<RenderResult> {
+  const {
+    secondsArg = 0,
+    fromArg = 0,
+    onlyGuids = [],
+    skipGuids = [],
+    unpitchedGuids = [],
+    unpitchedPercussion = false,
+    noKeyTrack = false,
+    voiceLimit = VOICE_POOL_SIZE,
+    clip = true,
+    pitchShift = new Map<number, number>(),
+    onProgress,
+  } = options;
+  // ⚠️ That claim used to be false: `VoiceSpec.random` was never set, so the LFO
+  // phases came from `Math.random` and two runs of the same build produced
+  // different files. It surfaced when a hash was used to check that an
+  // optimisation had not changed the output -- the hash changed on every run.
+  let seed = options.seed ?? 0x2545f491;
+  const rand = () => {
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    return ((seed >>> 0) % 0x100000) / 0x100000;
+  };
+
+  const framesPerStep = samplesPerStep(RATE, seq.tempo);
+  // End to end means the last step plus whatever tail the effects still have
+  // to give: a reverb cut off at the final note is not the whole render.
+  const TAIL_SECONDS = 6;
+  const fullSeconds = (seq.lengthSteps * framesPerStep) / RATE + TAIL_SECONDS;
+  const seconds = secondsArg > 0 ? secondsArg : fullSeconds;
+  const frames = Math.round(seconds * RATE);
+  const left = new Float32Array(frames);
+  const right = new Float32Array(frames);
+  const mixer = new Mixer(RATE);
+
+  const fromFrame = Math.round(fromArg * RATE);
+  const events = schedule(seq)
+    .filter((e) => e.step * framesPerStep < fromFrame + frames)
+    .map((e) => ({ ...e, step: e.step - fromFrame / framesPerStep }))
+    .filter((e) => (e.step + e.durationSteps) * framesPerStep > 0)
+    .filter((e) => (onlyGuids.length === 0 || onlyGuids.includes(e.guid)))
+    .filter((e) => !skipGuids.includes(e.guid));
+
+  // The engine has 32 voices and steals the quietest when they run out. Without
+  // that cap a dense passage plays every note and is louder than the game's --
+  // which is exactly where a listener hears it. Peak simultaneous notes in this
+  // sequencer is 88.
+  const pooled = allocateVoices(
+    events.map((e) => {
+      const track = seq.tracks[e.track];
+      return {
+        start: e.step,
+        end: e.step + e.durationSteps,
+        // voice[+0x04] * voice[+0x0c]: channel volume times note volume. The
+        // instrument's own level and its envelope are not in the engine's score.
+        score: channelVolume(seq, track) * velocityGain(e.volume),
+      };
+    }),
+    voiceLimit,
+  );
+  const realEnd = new Map(pooled.map((p) => [p.index, p.end]));
+  let stolen = 0;
+  const stolenBy = new Map<number, number>();
+  for (const [i, e] of events.entries()) {
+    if (realEnd.get(i)! < e.step + e.durationSteps) {
+      stolen += 1;
+      stolenBy.set(e.guid, (stolenBy.get(e.guid) ?? 0) + 1);
+    }
+  }
+
+
+  let played = 0;
+  let skipped = 0;
+  for (const [eventIndex, event] of events.entries()) {
+    if (onProgress && (eventIndex & 0x3ff) === 0) await onProgress('voices', eventIndex, events.length);
+    const loaded = await loadInstrument(event.guid);
+    if (!loaded || loaded.slots.length === 0) {
+      skipped += 1;
+      continue;
+    }
+    const track = seq.tracks[event.track];
+    // ⚠️ The scale quantiser is applied; the key/root offset is not. Which field
+    // supplies the engine's root is open question 4, and getting it wrong
+    // transposes rather than detunes -- so it is left off rather than guessed.
+    const note = quantise(event.pitch, track.scale);
+    // ⚠️ The slot comes from the RAW note, not the quantised one: the engine's
+    // walk at 0x05a0 takes bits 8..14 of the note word with `bextr` and compares
+    // that. The quantiser applies to the pitch below, not to the choice of sample.
+    const zone = resolveSlot(loaded.inst, event.pitch, loaded.slots.length);
+    const slot = loaded.slots[Math.min(zone, loaded.slots.length - 1)];
+    const definition = loaded.inst.slots[Math.min(zone, loaded.inst.slots.length - 1)];
+    const p = loaded.inst.params;
+    // The note's own modulation picks a point inside EVERY parameter's `x..y`
+    // range -- `voice+0x28` in the engine, `(byte3 & 0x0f) / 15`. Reading `.x`
+    // instead, as this did, pins every note to the low end of every range: 19% of
+    // corpus records carry a non-zero modulation and 10% carry a full one, and on
+    // `synth/ghost.rinst` alone that is the difference between resonance 0.90 and
+    // resonance 0.53.
+    const mod = event.modulation;
+    const P = (index: number) => evaluateParam(p[index], mod);
+    const lfo = (n: 0 | 1 | 2) => ({
+      rate: P(LFO_PARAMS[n].rate),
+      depth: P(LFO_PARAMS[n].depth),
+      spread: P(LFO_PARAMS[n].spread),
+    });
+
+    // The note's control points as mixer automation: semitones and gain relative
+    // to the first point, at frame offsets. A one-point note gives one entry and
+    // the voice stays flat.
+    const base = event.points[0];
+    const automation = event.points.map((p) => ({
+      frame: Math.round(
+        swungFrame(event.step + p.step, framesPerStep, seq.swing) -
+          swungFrame(event.step, framesPerStep, seq.swing),
+      ),
+      pitch: quantise(p.pitch, track.scale) - note,
+      gain: base.volume > 0 ? p.volume / base.volume : 1,
+    }));
+
+    // The unison stack. `Numstack` layers of the same sample, each with its own
+    // random detune, pan offset and start point, at `sqrt(1 / Numstack)` gain --
+    // all four measured and all four previously unused, which is why a
+    // three-layer patch like `synth/ghost.rinst` came out as one thin copy.
+    const layers = Math.max(1, loaded.inst.numStack);
+    const stackGain = Math.sqrt(1 / layers);
+    const sampleFrames = slot.wav.channels[0].length;
+    const bipolar = () => rand() * 2 - 1;
+
+    const spec: VoiceSpec = {
+      sample: slot.wav,
+      playbackRate:
+        ((unpitchedPercussion && slot.wav.loop === undefined) ||
+        unpitchedGuids.includes(event.guid)
+          ? 1
+          : pitchRatio(definition, note, seq.tempo)) *
+        (slot.wav.sampleRate / RATE) *
+        (pitchShift.get(event.guid) ?? 1),
+      gain:
+        velocityGain(event.volume) *
+        track.level *
+        channelVolume(seq, track) *
+        2 *
+        P(OUTPUT_PARAMS.level) *
+        stackGain,
+      pan: track.pan,
+      // Swing bends the step clock, so every frame position goes through it.
+      startFrame: Math.round(swungFrame(event.step, framesPerStep, seq.swing)),
+      endFrame: Math.round(
+        swungFrame(
+          realEnd.get(eventIndex) ?? event.step + event.durationSteps,
+          framesPerStep,
+          seq.swing,
+        ),
+      ),
+      envelope: evaluateAdsr(p, ADSR_PARAMS, mod),
+      filter: {
+        settings: {
+          cutoff: P(FILTER_PARAMS.cutoff),
+          resonance: P(FILTER_PARAMS.resonance),
+          keyTrack: noKeyTrack ? 0 : P(FILTER_PARAMS.keyTrack),
+          envAmount: P(FILTER_PARAMS.envAmount),
+        },
+        envelope: evaluateAdsr(p, ADSR_PARAMS_B, mod),
+      },
+      lfos: [lfo(0), lfo(1), lfo(2)],
+      automation,
+      // The sends, `fmodextinput.prx` 0x3c8a-0x3d10 (true vaddrs). The note block
+      // carries five floats per placement at `+0x420 + 20i` -- level, pan,
+      // echoSend, reverbSend, instrument index -- and the two sends are treated
+      // very differently:
+      //
+      //   voice+0x1c = clamp01( bipolar(Params[25], 2*echoSend - 1) )   the echo
+      //   voice+0x24 = clamp01( reverbSend )                            the reverb
+      //
+      // ⚠️ The echo's placement field is a **bipolar offset**, not a blend.
+      // `v0x1607e9` writes `2*echoSend - 1` into the note block and 0x3ca1 applies
+      // it as `v + o*v` when `o < 0` and `v + o*(1 - v)` when `o >= 0`. So 0.5
+      // leaves the instrument's own send alone, 0 mutes it and 1 forces unity. A
+      // previous reading used `v + e*(1 - v)` with the raw field, which is only
+      // the upper half of that curve.
+      //
+      // ⚠️ The reverb send is `reverbSend` **alone**. The instrument's own reverb
+      // send does reach the voice, at `voice+0x20` from Params at `+0x5b8`, and
+      // then **nothing reads it** -- a grep of the whole PRX finds the store and
+      // no load.
+      echoSend: (() => {
+        const base = P(OUTPUT_PARAMS.send);
+        const offset = 2 * track.echoSend - 1;
+        const blended = offset < 0 ? base + offset * base : base + offset * (1 - base);
+        return Math.min(1, Math.max(0, blended));
+      })(),
+      reverbSend: Math.min(1, Math.max(0, track.reverbSend)),
+      // Seeded, so the LFO phases are reproducible along with everything else.
+      random: rand,
+    };
+    const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+    for (let layer = 0; layer < layers; layer += 1) {
+      mixer.play({
+        ...spec,
+        // ⚠️ All three of Params[0..2] are per-LAYER, and a voice with one layer
+        // has nothing to spread against itself. Applying them regardless is what
+        // broke the drums twice over: the random start turned every hit into half
+        // a sample, and the random detune -- ±0.15% on `a_kit_1` -- put a phaser
+        // over the kit, because this level plays every drum hit on TWO board
+        // components at once (140 of 140 (step, pitch) slots in the window, across
+        // 146 components) and two coherent copies a hair apart is a comb filter.
+        playbackRate:
+          spec.playbackRate *
+          (layer === 0 ? 1 : 1 + 0.05 * P(STACK_PARAMS.detune) * bipolar()),
+        pan: layer === 0 ? spec.pan : clamp01(spec.pan + 0.5 * P(STACK_PARAMS.spread) * bipolar()),
+        // ⚠️ Layers after the first only. Applied to every voice, this destroys
+        // any instrument whose `Numstack` is 1: `a_kit_1` sets `Params[2]` to
+        // **1.000**, so every drum hit started at a uniformly random point
+        // anywhere in its sample -- on average half a kick, with no transient and
+        // a click where the waveform jumps. Six of the game's kits do the same
+        // (`8bit_kit_1`, `a_kit_1`, `bb_kit_1`, `bb_kit_2`, `e_kit_1`,
+        // `e_perc_1`), all with `Numstack` 1.
+        //
+        // A per-layer randomisation exists to decorrelate stacked layers, and a
+        // single layer has nothing to decorrelate, so skipping it there is the
+        // conservative reading. ⚠️ It does not explain why those kits set the
+        // value at all -- see open question 12.
+        startPosition:
+          layer === 0 ? 0 : P(STACK_PARAMS.startOffset) * sampleFrames * rand(),
+        lfoPhaseOffset: [0, 1, 2].map(
+          (n) => P(LFO_PARAMS[n].spread) * ((2 * Math.PI) / layers) * layer,
+        ) as unknown as readonly [number, number, number],
+      });
+    }
+    played += 1;
+  }
+
+  const echoL = new Float32Array(frames);
+  const echoR = new Float32Array(frames);
+  const reverbL = new Float32Array(frames);
+  const reverbR = new Float32Array(frames);
+  mixer.render(left, right, { echo: [echoL, echoR], reverb: [reverbL, reverbR] });
+
+  // The two sends, mixed back over the dry signal. Both are the game's own now --
+  // topology, levels and all -- so there is nothing to scale here.
+  const echo = new Echo(RATE, seq.echoTime, framesPerStep, seq.echoFeedback, seq.echoMix);
+  const preset = reverbPreset(seq.reverb);
+  const reverb = new Reverb(RATE, preset);
+  // The plugin's output stage, in the engine's order (`fmodextinput.prx` 0x07c0):
+  // the echo's wet is added to ALL FOUR channels -- the dry pair and the reverb
+  // send pair -- and then all four are hard-clipped to +-1. Only after that does
+  // the reverb DSP see its input.
+  //
+  // ⚠️ The clip is measured but its effect depends on our absolute level matching
+  // the game's, which nothing here verifies. The share of frames it touches is
+  // reported below; `LBP_NO_CLIP=1` removes it for an A/B.
+  let dryEnergy = 0;
+  let echoEnergy = 0;
+  let reverbEnergy = 0;
+  let clipped = 0;
+  for (let i = 0; i < frames; i += 1) {
+    dryEnergy += left[i] ** 2 + right[i] ** 2;
+    const e = echo.process(echoL[i], echoR[i]);
+    echoEnergy += e.left ** 2 + e.right ** 2;
+    let dryL = left[i] + e.left;
+    let dryR = right[i] + e.right;
+    let sendL = reverbL[i] + e.left;
+    let sendR = reverbR[i] + e.right;
+    if (clip) {
+      if (dryL > 1 || dryL < -1 || dryR > 1 || dryR < -1) clipped += 1;
+      dryL = clipToUnit(dryL);
+      dryR = clipToUnit(dryR);
+      sendL = clipToUnit(sendL);
+      sendR = clipToUnit(sendR);
+    }
+    // ⚠️ One call per frame, stereo. It used to be two calls -- one per channel --
+    // through a single instance, which ran every delay line at twice the frame
+    // rate and put both channels through the same state.
+    const r = reverb.process(sendL, sendR);
+    reverbEnergy += r.left ** 2 + r.right ** 2;
+    left[i] = dryL + r.left;
+    right[i] = dryR + r.right;
+  }
+
+  let peak = 0;
+  let energy = 0;
+  for (let i = 0; i < frames; i += 1) {
+    peak = Math.max(peak, Math.abs(left[i]), Math.abs(right[i]));
+    energy += left[i] ** 2 + right[i] ** 2;
+  }
+  return {
+    left,
+    right,
+    frames,
+    seconds,
+    framesPerStep,
+    events: events.length,
+    played,
+    skipped,
+    stolen,
+    stolenBy,
+    echoRel: Math.sqrt(echoEnergy / dryEnergy),
+    reverbRel: Math.sqrt(reverbEnergy / dryEnergy),
+    clippedFrames: clipped,
+    peak,
+    rms: Math.sqrt(energy / (2 * frames)),
+    echo,
+    reverb,
+    preset,
+  };
+}
+
+/** The 16-bit interleaved PCM a WAV writer wants, with the usual peak guard. */
+export function toPcm16(
+  left: Float32Array,
+  right: Float32Array,
+  normalise = true,
+): { pcm: Int16Array; norm: number } {
+  let peak = 0;
+  for (let i = 0; i < left.length; i += 1) {
+    peak = Math.max(peak, Math.abs(left[i]), Math.abs(right[i]));
+  }
+  const norm = normalise && peak > 0.99 ? 0.99 / peak : 1;
+  const pcm = new Int16Array(left.length * 2);
+  for (let i = 0; i < left.length; i += 1) {
+    pcm[i * 2] = Math.max(-32768, Math.min(32767, Math.round(left[i] * norm * 32767)));
+    pcm[i * 2 + 1] = Math.max(-32768, Math.min(32767, Math.round(right[i] * norm * 32767)));
+  }
+  return { pcm, norm };
+}

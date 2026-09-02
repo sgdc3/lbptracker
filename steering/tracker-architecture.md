@@ -122,8 +122,11 @@ reorder 1 and 2 — you want the asset pipeline proven before anything depends o
 7. **Round-trip export** back into a game-loadable resource. The feature that makes the project
    matter to the LBP community, and it depends on step 4.
 
-Steps 1–3 are done, and step 4 now plays a real level end to end with Java doing the extraction.
-What remains of it is the eight part readers that move that step into the browser. Steps 5–7 follow.
+Steps 1–3 and 5 are done. Step 4 plays a real level end to end, and **the render itself is now in
+the browser**: `src/core/render.ts` holds the pipeline, `dev/render-level.ts` is the Node wrapper and
+`dev/render-worker.ts` the browser one, and on 2026-09-02 the two produced the *same file* — 368
+seconds of `This Is Halloween`, 70,704,044 bytes, one SHA-256. What still needs Java is the
+*extraction*: the eight part readers that would replace `tools/RawDump.java`. Steps 6–7 follow.
 See
 [open-questions.md](open-questions.md) — none of what remains blocks the build, it only affects
 fidelity.
@@ -176,7 +179,10 @@ Follow the pattern for anything else platform-shaped.
 | `src/core/wav.ts` | 16-bit PCM RIFF read + write — the sequencer's own sample format |
 | `dev/serve.mjs`, `dev/index.html`, `dev/app.ts` | the instrument bench: picks any of the game's 68 instruments, loads its real samples, plays them across its key splits |
 | the Thing-graph walk | **not started** — this is the next real piece |
-| echo, reverb, UI | not started (build order steps 5–6) |
+| `src/core/render.ts` | the whole pipeline as one platform-neutral function. **Verified 2026-09-02: the Node render and a Chrome render of the same level are byte-identical** — 70,704,044 bytes, SHA-256 `1785d0d8…` |
+| `dev/render.html`, `render-app.ts`, `render-worker.ts` | the browser renderer: pick any of the corpus's 338 sequencers, render it in a worker, play it and save the WAV |
+| echo, reverb | done and measured — see *2 / 2b* and *6 / 14* in [answered-questions.md](answered-questions.md) |
+| UI | not started (build order step 6) |
 
 ## The dev server, and why there is no bundler
 
