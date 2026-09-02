@@ -19,6 +19,8 @@ const statsTable = $<HTMLTableElement>('stats');
 const errorBox = $<HTMLPreElement>('error');
 const player = $<HTMLAudioElement>('player');
 const canvas = $<HTMLCanvasElement>('wave');
+const dropZone = $<HTMLDivElement>('drop');
+const fileInput = $<HTMLInputElement>('file');
 
 const worker = new Worker(new URL('./render-worker.ts', import.meta.url), { type: 'module' });
 
@@ -150,6 +152,17 @@ worker.onmessage = (event: MessageEvent) => {
     return;
   }
 
+  if (message.type === 'needFile') {
+    // The normal case on a static host: there is no dump to serve, so ask for
+    // one. `steering/game-assets.md` is the reason -- levels and samples are
+    // other people's work and the game's, and they are read from the visitor's
+    // own disk rather than shipped in a bucket.
+    dropZone.hidden = false;
+    setBar(0);
+    setStatus('open your sequencers.jsonl to begin');
+    return;
+  }
+
   if (message.type === 'error') {
     goButton.disabled = false;
     setStatus('failed', true);
@@ -177,4 +190,34 @@ saveButton.addEventListener('click', () => {
   link.click();
 });
 
+/** Hand the worker a `File`; it does the reading, so this thread stays free. */
+function loadFrom(file: File) {
+  dropZone.hidden = true;
+  setStatus(`reading ${file.name}…`);
+  worker.postMessage({ type: 'load', file });
+}
+
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => {
+  const file = fileInput.files?.[0];
+  if (file) loadFrom(file);
+});
+for (const event of ['dragenter', 'dragover'] as const) {
+  dropZone.addEventListener(event, (e) => {
+    e.preventDefault();
+    dropZone.classList.add('over');
+  });
+}
+for (const event of ['dragleave', 'drop'] as const) {
+  dropZone.addEventListener(event, () => dropZone.classList.remove('over'));
+}
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const file = e.dataTransfer?.files?.[0];
+  if (file) loadFrom(file);
+});
+
+// Ask the server first: under `dev/serve.mjs` the fixtures are on the same disk
+// and there is no reason to make anyone pick a file. On a static host the fetch
+// 404s, the worker answers `needFile`, and the picker appears.
 worker.postMessage({ type: 'load' });
