@@ -29,9 +29,14 @@ Output goes through `orbis\src\fmod_output_audioout.cpp` → `libSceAudioOut`.
 So the only genuinely separate audio path in the whole game is the movie player.
 
 The dynamic section declares four import libraries — `FMODExtInput`, `FMODSmsReverb`,
-`FMODSmsWaveHammer`, `FMODVoIPMixer` — but each with **0 imported functions**, and no matching
-`.prx` exists on disk. They are leftovers from the PS3 build system, not loaded plugins. The Sony
-reverb is instead linked in statically as `lib\sfx\foreverb\aSfxDsp.cpp`.
+`FMODSmsWaveHammer`, `FMODVoIPMixer` — each with **0 imported functions** in the import table.
+
+⚠️ **That zero was once read as "these plugins do not exist", and it is wrong.** All four `.prx`
+files are on disk in `gamedata_orbis/spu/`, they are loaded at runtime, and **two of them are the
+sequencer**: `fmodextinput.prx` is its synthesiser and `fmodsmsreverb.prx` is its reverb. The
+import count is zero because the plugins are resolved by FMOD's own plugin loader rather than by
+the dynamic linker. The statically linked Sony `aSfxDsp` is a different effect and is not what
+`ReverbSetting` selects.
 
 ## How much of FMOD the game actually drives
 
@@ -86,12 +91,15 @@ arithmetic, not guesswork.
 
 ## What this means for matching the sound
 
-- **Echo**: reproducible essentially exactly, once we read the parameter indices out of the
-  `v0x3fd4c0` block (open question 3).
-- **Reverb**: the risk. `FMOD_DSP_TYPE_SFXREVERB` (a Freeverb derivative — reproducible) and the
-  Sony `aSfxDsp` plugin (proprietary — not) are **both** linked, and `aSfxDsp` is called from game
-  code at `v0xab51b0` (3 sites, from `v0xac67xx`). Which one `ReverbSetting` selects is unresolved.
-  Plan for "close", expose a dry render.
+- **Echo**: not an FMOD DSP at all — it lives inside `fmodextinput.prx`, on a stereo buffer the
+  block processor accumulates into. Its unit and its send are measured; its feedback topology is
+  the last inferred thing in the effects chain. See open question 2.
+- **Reverb**: **settled, and it is neither of the two candidates this file used to name.** It is
+  `fmodsmsreverb.prx`, a plugin the game ships and loads, and the whole of it has been read: a mono
+  downmix into a damped one-pole and a notch, a parallel bank of `tapCount - 2` damped feedback
+  combs plus two stereo comb pairs, an output delay, and three panned early-reflection taps. There
+  is no Freeverb, no allpass and no `aSfxDsp` in the path. See *6 / 14. The reverb* in
+  [answered-questions.md](answered-questions.md); `src/audio/effects.ts` implements it.
 - **Resampling**: FMOD Ex interpolates in `fmod_dsp_resampler.cpp` at a selectable quality. If we
   play samples through the browser's `AudioBufferSourceNode.playbackRate`, we get *the browser's*
   interpolator instead, which differs between engines and cannot be pinned. This is the single

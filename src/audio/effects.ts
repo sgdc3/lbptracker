@@ -1,34 +1,38 @@
 /**
  * The sequencer's two send effects: echo and reverb.
  *
- * ## What is measured, and what is not
+ * Both are now read out of the game rather than inferred. The echo lives inside
+ * `fmodextinput.prx`; the reverb is a separate DSP, `fmodsmsreverb.prx`,
+ * configured by the eboot at `v0x3fcd50`.
  *
- * **Measured.** The sequencer carries `EchoTime`, `EchoFeedback` and `EchoMix`,
- * and each instrument an `echoSend` and a `reverbSend`. Across the corpus's 338
- * sequencers `EchoFeedback` runs 0–0.9 (median 0.45) and `EchoMix` 0–1 (median
- * 0.5) — a feedback coefficient and a wet/dry mix, unmistakably. `ReverbSetting`
- * runs 1–5. Of 129,696 instrument placements, **71,781 (55%) send to reverb**
- * and 28,244 (22%) to echo, so a dry render is missing more than it keeps.
+ * ⚠️ **PRX addresses in this file are TRUE ELF vaddrs** (`file = vaddr + 0x7c0`
+ * for `fmodsmsreverb.prx`, `+ 0x7e0` for `fmodextinput.prx`). Addresses recorded
+ * anywhere in this project before 2026-09-02 used a delta 0x40 too small and are
+ * therefore **0x40 too high**. The readings themselves were not wrong — a
+ * rip-relative operand resolves through the same delta twice, so the data those
+ * disassemblies reported was correct — but the labels do not match a real
+ * disassembler. See `steering/eboot-re.md`.
  *
- * **Measured about the echo's implementation.** It is not an FMOD DSP: it lives
- * in `fmodextinput.prx`, and `sub_0x670` reads the 768,000-byte buffer at state
- * `+0x1b18` with a wrapping two-part copy. 768,000 bytes is **192,000 floats =
- * 48,000 frames × 4 channels = exactly 1.000 s at 48 kHz** — a one-second
- * delay line, and the DSP's own four channels are the two stereo busses the
- * renderer accumulates into.
+ * **The sends, measured** (`fmodextinput.prx` `0x3b4f`-`0x3d10`). Each voice
+ * carries three floats:
  *
- * ⚠️ **Not measured: the echo's topology and `EchoTime`'s unit.** The eboot
- * writes `EchoTime × 0.5` into the state, and `EchoTime` itself runs 1–4, so
- * the state sees 0.5–2 against a buffer that holds 1 s. Seconds is the literal
- * reading of those two facts and is what this uses, clamped; beats at some
- * tempo would fit too. The feedback path, the wet/dry law and any stereo
- * cross-feed were not traced out of `sub_0x670` either. **Finish that trace
- * before trusting this to sound like the game** — what is below is a plain
- * delay, which is the shape those parameters describe and no more.
+ * | field | source | used for |
+ * |---|---|---|
+ * | `voice+0x1c` | the instrument's Params pair at `+0x5b0`/`+0x5b4`, interpolated by the note's modulation, then offset by the placement's `2*echoSend - 1` and clamped to 0..1 | the **echo** send |
+ * | `voice+0x20` | the instrument's Params pair at `+0x5b8`/`+0x5bc` | **nothing — it is written and never read** |
+ * | `voice+0x24` | the placement's `reverbSend`, clamped to 0..1 | the **reverb** send |
  *
- * **The reverb is now built on the game's own geometry.** Its tap lengths and
- * early reflections are read out of the eboot -- see the `Reverb` class -- and
- * only its topology is still inferred. It is no longer a Freeverb with a label.
+ * The mixer at `0x2f00`-`0x2f8f` writes `L, R` into channels 0-1 of the DSP's
+ * four-channel output, `L*voice[0x24], R*voice[0x24]` into channels 2-3 — that
+ * pair is the reverb send bus — and `L*voice[0x1c], R*voice[0x1c]` into a stereo
+ * stack buffer, which is the echo's input. So the reverb send is **post-fader
+ * and post-pan**: it is the voice's own stereo output, scaled.
+ *
+ * ⚠️ The echo send is a **bipolar offset**, not a blend: `0x1607e9` stores
+ * `2*echoSend - 1` into the note block, and `0x3ca1` applies it as
+ * `v + o*v` when `o < 0` and `v + o*(1 - v)` when `o >= 0`. An `echoSend` of
+ * 0.5 therefore leaves the instrument's own send untouched, 0 mutes it and 1
+ * forces it to unity.
  */
 
 /** A stereo delay with feedback, driven by the sequencer's three fields. */
@@ -98,34 +102,66 @@ export class Echo {
   }
 }
 
-/** How a preset's eleven `int32` slots are named, from `v0x3fcd50`. */
+/**
+ * How a preset's eleven `int32` slots are named, from the DSP configure at
+ * `v0x3fcd50` — the code that turns them into the plugin's parameter block.
+ */
 export const PRESET_SLOT = {
-  /** Millibels. ⚠️ Never set from the table — the constructor pins it at −800. */
-  level0: 0,
-  /** Millibels. */
-  level1: 1,
-  /** Millibels, then divided by 100. */
-  level2: 2,
+  /**
+   * Millibels — the **dry** level, `[param+0x4c]`.
+   *
+   * `v0x3fd4c0` pushes slots 1-10 into DSP parameters 1-10 and never touches
+   * slot 0; the constructor pins it at **-800**. `millibelToLinear`'s floor is
+   * on `v*10 > -8000`, so -800 converts to a hard **zero**: the DSP is a pure
+   * send effect and emits no dry signal at all.
+   */
+  dryLevel: 0,
+  /** Millibels — the **late** (comb network) level, `[param+0x48]`. */
+  lateLevel: 1,
+  /**
+   * Millibels — the **early reflections** level, `[param+0x50]`, and the engine
+   * **divides it by 100** (`v0x3fce41`, `vdivss` against a literal 100).
+   *
+   * The divide is not a curiosity: the early rows carry gains of 46, -60 and 21,
+   * so the hundredth is what brings them back to sane numbers. An earlier
+   * revision of this file tried the divide on the *late* level instead and
+   * killed the tail.
+   */
+  earlyLevel: 2,
   /** Index into `REVERB_TAP_SETS` — the late network's delay lengths. */
   tapSet: 3,
   /** Index into `REVERB_EARLY_SETS` — the early reflections. */
   earlySet: 4,
-  /** Decay, read here as tenths of a second: the presets give 0.6–5.0 s. */
+  /** Decay in tenths of a second: RT60 = `slot5 * 0.1` s. The presets give 0.6-5.0 s. */
   decay: 5,
-  /** An integer the configure copies raw; role unknown. */
-  unknown6: 6,
-  flag7: 7,
   /**
-   * The **notch frequency in hertz** — not a pre-delay, which is what this said.
-   * `v0x3fce8e` divides it by 48,000 and clamps to `[0.0004, 0.49]`, and
-   * `v0x3fcefb`-`v0x3fcf9f` turns that into a two-pole resonator whose output is
-   * subtracted from the signal. The presets use 20, 100 and 400 — highpass
-   * corners, which is what a reverb puts there.
+   * The **output delay in milliseconds**, `[param+0x3c]` — a delay line the
+   * summed comb bank passes through before the late level is applied, one per
+   * output channel (`state+0x400` and `state+0x440`).
+   *
+   * This slot was called `unknown6` for a long time. The presets give 1-70 ms,
+   * which is exactly the range a reverb's pre-delay lives in.
+   */
+  outputDelayMs: 6,
+  /** Boolean — whether the input notch runs, `[param+0x20]`. Always 1 in the presets. */
+  notchEnable: 7,
+  /**
+   * The notch frequency in hertz, before the engine's own scaling.
+   *
+   * `v0x3fce8e`-`v0x3fceed`: `f = slot8 / 48000`, then **`f /= 2.2` when
+   * `f < 1/96` and `f /= 3.3` otherwise**, then clamp to `[0.0004, 0.49]`. The
+   * threshold is 500 Hz, which no preset reaches, so every preset takes the
+   * `/2.2` branch: 20 Hz ends up at 19.2 Hz after the clamp, 100 at 45.5 and
+   * 400 at 181.8.
+   *
+   * ⚠️ An earlier revision used `slot8 / 48000` with no divisor, putting the
+   * corner 2.2x too high.
    */
   notchHz: 8,
-  flag9: 9,
-  /** Hertz, 3000–12000. Read here as the damping corner. */
-  hf: 10,
+  /** Boolean — whether the damping one-pole runs, `[param+0x24]`. Preset 8 has it **off**. */
+  dampEnable: 9,
+  /** Hertz, 3000-12000 — the damping corner. `a = exp(-2*PI*hf/48000)`. */
+  dampHz: 10,
 } as const;
 
 export const REVERB_TAP_SETS: readonly (readonly number[])[] = [
@@ -150,6 +186,32 @@ export const REVERB_TAP_SETS: readonly (readonly number[])[] = [
   [29.809, 12.764, 49.653, 20.817, 25.333, 43.015, 15.957, 4.613, 9.111, 36.519], // 18: 10 taps
 ];
 
+/**
+ * The early-reflection rows at `v0xe1d920`, nine floats each.
+ *
+ * **The columns are `[d0, d1, d2, g0, g1, g2, p0, p1, p2]`** — three delays in
+ * milliseconds, three gains, three pan positions in 0..1 — and the configure at
+ * `0x1254`-`0x136b` is what says so:
+ *
+ * - the first three are multiplied by the sample rate, with the fixed offsets
+ *   **+0.051, +0.151 and +0.078 ms** added first, and truncated to whole samples;
+ * - the next three go straight into the tap gains at `state+0x51c`..`+0x530`;
+ * - the last three are applied as `L = (1 - p) * g`, `R = p * g` — a **linear**
+ *   pan law, not constant power — whenever the DSP is stereo, which it always is
+ *   (`[param+0x40]` is pinned to 2 at `v0x3fce57`).
+ *
+ * ⚠️ An earlier revision read columns 6-8 as the gains and dismissed 3-5 as
+ * "not levels" because 46, -60 and 21 are absurd as gains. They are not absurd:
+ * the level they multiply is `10^(slot2/200) / 100`, of order 0.003.
+ *
+ * ⚠️ **The delay-to-gain pairing is not positional.** `0x1382`-`0x13ef` sorts
+ * the three delays and permutes the gains as it goes, and the permutation is not
+ * the identity even when nothing needs swapping. All seven rows happen to be
+ * sorted ascending already, so the branch taken is always the same one, and it
+ * pairs **`d0` with `g1`/`p1`, `d1` with `g0`/`p0`, `d2` with `g2`/`p2`**. That
+ * is what `Reverb` implements. If a row ever arrived unsorted the pairing would
+ * change, and reading the code that does it will not tell you what was intended.
+ */
 export const REVERB_EARLY_SETS: readonly (readonly number[])[] = [
   [6.113, 17.041, 29.231, 46, -60, 21, 0.14, 0.855, 0.474275], // 0
   [8.213, 20.043, 53.213, 56, -60, 18, 0.85, 0.15, 0.58], // 1
@@ -170,304 +232,308 @@ export function millibelToLinear(value: number): number {
  *
  * The table at `v0xe1d5d0` is **eleven** floats per row, not ten: the first is a
  * count and the other ten are the lengths in milliseconds. `v0x3fc8c0` reads it
- * as `vcvttss2si r9, [row]`, and `fmodsmsreverb.prx` `0x0c52` does the same
- * against its own copy of the table at `v0x2750`.
+ * as `vcvttss2si r9, [row]`, and `fmodsmsreverb.prx` `0x0c12` does the same
+ * against its own copy at `v0x2710`.
  */
 export const REVERB_TAP_COUNTS: readonly number[] = [
   10, 8, 10, 10, 10, 10, 10, 9, 10, 10, 10, 10, 10, 10, 10, 9, 9, 10, 10,
 ];
 
 /**
- * The two delay ratios the allpass pair is built from, at `v0x2c08`.
+ * The two ratios the stereo comb pairs are detuned by, at `v0x2bc8`.
  *
- * Exactly two floats. `fmodsmsreverb.prx` `0x10d6` indexes this table by the
- * allpass index and multiplies the base delay by it, which is why the eboot's
- * sizer allocates `idx1`, `idx2`, `0.93 * idx1` and `1.06 * idx2`.
+ * Exactly two floats. `fmodsmsreverb.prx` `0x109d` indexes this table by the
+ * pair index and multiplies the base delay by it, so the second pair's lengths
+ * are `0.93 * taps[0]` and `1.06 * taps[1]`.
+ *
+ * ⚠️ These were called `REVERB_ALLPASS_RATIOS` for several revisions. There is
+ * no allpass anywhere in this DSP; the stages they size are combs like all the
+ * others, and what they do is decorrelate the left and right tails.
  */
-export const REVERB_ALLPASS_RATIOS: readonly number[] = [0.93, 1.06];
+export const REVERB_PAIR_RATIOS: readonly number[] = [0.93, 1.06];
+
+/** The engine's own output rate, hard-coded at `v0x3fce4f` as `[param+0x10]`. */
+const ENGINE_RATE = 48000;
 
 /**
- * The game's reverb.
+ * One damped feedback comb — the kernel at `fmodsmsreverb.prx` `0x09d0`:
  *
- * ## The topology, read from the code that builds it
+ * ```
+ * x       = delay.read()
+ * acc[i] += x                       ; the RAW delayed sample is what accumulates
+ * y       = a*y + b*x               ; damped, inside the loop only
+ * delay.write( gain * (y + send) )
+ * ```
  *
- * `fmodsmsreverb.prx` builds stage arrays of `0x50` = 80 bytes each, and the
- * counts are not guesses:
- *
- * - **`[state+0x514] = 2`**, a literal immediate at `0x0c39`.
- * - **`[state+0x510] = (int)tapRow[0] - 2`** at `0x0c52`-`0x0c5d`: the row's
- *   count float, minus two. A ten-tap row gives **8**.
- *
- * The loop bounded by `0x510` builds the **combs** from lengths `idx3..idx(n)`.
- *
- * ⚠️ **What the `0x514` loops build is NOT an allpass cascade.** This file said
- * so for several revisions and it was wrong at every level: there is no
- * Schroeder allpass in the reverb, no cascade, and therefore no allpass
- * coefficient. The kernel those stages run (`0x1850`) computes a two-pole
- * resonator and **subtracts** it from the signal, which is a notch — see the
- * `notch` field. `REVERB_ALLPASS_RATIOS` keeps its measured values because the
- * eboot's sizer really does allocate `0.93 * idx1` and `1.06 * idx2`, but what
- * those buffers are for is no longer claimed.
- *
- * Combs run in parallel and sum -- `dampedComb` carries `acc[i] += x[i]`, and a
- * series chain has nothing to accumulate.
- *
- * ## The coefficients, read from the code that writes them
- *
- * Every stage record -- comb and allpass alike -- gets the same three fields,
- * and the kernel's `[base+0x44]`/`[+0x48]`/`[+0x4c]` are those fields (the comb
- * records sit at `state+0x300` and the kernel's base is `state+0x2c0`, so
- * `0x2c0+0x44 = 0x304`, the record's `+0x04`):
- *
- * | field | value | where |
- * |---|---|---|
- * | `+0x04` = `b` | `1 - a` | `0x0bd1` |
- * | `+0x08` = `a` | `expf(state[+0x2c])`, derived from slot 10 | `0x0bbb` |
- * | `+0x0c` = gain | `powf(10, -0.003 * ms / RT60)` | `0x0ffa`-`0x100f` |
- *
- * With damping disabled (`state[+0x24]` zero) `0x0bdd` stores `b = 1, a = 0` as
- * one qword. `b = 1 - a` is a one-pole with **unity DC gain**, which is the form
- * used here.
- *
- * WARNING: **there is no separate allpass coefficient.** A previous revision
- * used Schroeder's conventional 0.5. The allpass records get the identical gain
- * law as the combs, on their own delays -- so an allpass whose delay is
- * `0.93 * idx1` has `g = 10^(-0.003 * 0.93 * idx1 / RT60)`. Nothing in the
- * module holds a constant allpass gain.
- *
- * RT60 is `slot5 * 0.1` seconds, confirmed from the writing side at `0x0c9d`
- * (`[rsi+0x38] * 0.1`).
- *
- * ## What is still ours
- *
- * One thing, flagged at its line: the `1 - gain` normalisation on each comb's
- * contribution. Without it the bank is about nine times unity at DC and the
- * preset's own wet level stops meaning anything. Also unread: whether the DSP
- * emits the accumulator or the last stage's output.
- *
- * The early reflections and the millibel levels are unchanged and are the
- * engine's: `REVERB_EARLY_SETS` (`v0xe1d920`, slot 4), the levels through
- * `millibelToLinear`, and the pre-delay in samples from slot 8.
+ * Two details a Freeverb-shaped guess gets wrong, and this project did: the
+ * value that leaves the comb is the **undamped** delay output, and the gain
+ * multiplies the **input as well as** the recirculation.
  */
-export class Reverb {
-  private readonly pre: Float32Array;
-  private readonly preDelay: number;
-  private preIndex = 0;
-  /** The parallel bank: `tapCount - 2` damped feedback combs whose outputs sum. */
-  private readonly combs: {
-    buffer: Float32Array;
-    index: number;
-    y: number;
-    gain: number;
-  }[] = [];
-  /**
-   * The two-pole notch the comb bank feeds.
-   *
-   * **This replaced an invented Schroeder allpass cascade that had no basis in
-   * the code.** The kernel is `fmodsmsreverb.prx` `0x1850`:
-   *
-   * ```
-   * y      = a*prev + b*x + c*older
-   * buf[i] = x - y                     ; in place
-   * ```
-   *
-   * with the coefficients read from `[rec+0x30]`, `[rec+0x34]`, `[rec+0x38]` at
-   * `0x1828`-`0x1832` and the state at `+0x20`/`+0x24`. The eboot builds all
-   * three from one number at `v0x3fcefb`-`v0x3fcf9f`:
-   *
-   * ```
-   * r = exp(-10*PI*f)
-   * a = 2 * r * cos(2*PI*f)     ; -> +0x34, the `prev` coefficient
-   * c = -r*r                    ; -> +0x38, via a sign-flip mask
-   * b = r*r + 1 - a             ; -> +0x30, the input coefficient
-   * ```
-   *
-   * `a = 2r cos(w)` with `c = -r²` is a resonator, and subtracting a resonator
-   * from the signal is a **notch**. At the presets' 20 Hz that is a rumble
-   * filter; the preset that uses 400 Hz gets an audible highpass.
-   */
-  private readonly notch: { a: number; b: number; c: number };
-  private notchPrev = 0;
-  private notchOlder = 0;
-  /** The early field's damping state; the coefficient is the combs'. */
-  private earlyY = 0;
-  private readonly early: { delay: number; gain: number }[] = [];
-  /** `b` of the shared one-pole; `a` is `1 - b`. */
-  private readonly damp: number;
-  private readonly wet1: number;
-  private readonly wet2: number;
+class Comb {
+  private readonly buffer: Float32Array;
+  private readonly gain: number;
+  private index = 0;
+  private y = 0;
 
-  /**
-   * Whether each comb's contribution is scaled by `1 - gain`.
-   *
-   * WARNING: this factor is OURS and it is the only unmeasured thing left in
-   * the reverb. A feedback comb has DC gain `1/(1 - gain)`, so eight of them
-   * summed are about nine times unity; scaling each contribution makes it
-   * unity at DC. But on the presets in use the gains run near 0.87, so
-   * `1 - gain` is about **0.13** -- an 18 dB attenuation invented to solve a
-   * problem the engine solves some other way. A listener reported the reverb
-   * as imperceptible, and this is the one place a whole reverb could go.
-   *
-   * **Off by default now**, and the reason is that the compensation it was
-   * compensating for turned out to be a bug of ours. The send reaching the
-   * reverb was `PInstrument.reverbSend` alone; the engine multiplies that by the
-   * instrument's `Params[25]` (`0x3d38`-`0x3d50`), which on this corpus makes
-   * the send **47.8x smaller** on average. With the send too large by that much,
-   * the wet path had to be held down, and this factor was doing it.
-   *
-   * With the send measured, turning this off lands the reverb at 42.4% of the
-   * dry mix -- inside the range a listener bracketed by ear -- and leaves the
-   * allpass coefficient as the only invented number in the reverb.
-   */
-  private readonly normaliseCombs: boolean;
-
-  constructor(sampleRate: number, preset: readonly number[], normaliseCombs = true) {
-    this.normaliseCombs = normaliseCombs;
-    const ms = (v: number) => Math.max(1, Math.round((v / 1000) * sampleRate));
-    const row = preset[PRESET_SLOT.tapSet];
-    const taps = REVERB_TAP_SETS[row] ?? REVERB_TAP_SETS[0];
-    const count = REVERB_TAP_COUNTS[row] ?? taps.length;
-    const early = REVERB_EARLY_SETS[preset[PRESET_SLOT.earlySet]] ?? REVERB_EARLY_SETS[0];
-
-    const longest = Math.max(...early.slice(0, 3));
-    this.pre = new Float32Array(Math.max(1, ms(longest) + 1));
-    // WARNING: there is no pre-delay. Slot 8 was read as one, in samples, and
-    // it is the notch frequency in hertz. Nothing measured takes its place, so
-    // the late field starts from the input rather than after a delay.
-    this.preDelay = 0;
-
-    const f = Math.min(0.49, Math.max(0.0004, preset[PRESET_SLOT.notchHz] / 48000));
-    const r = Math.exp(-10 * Math.PI * f);
-    const rr = Math.exp(-20 * Math.PI * f);
-    const a = 2 * r * Math.cos(2 * Math.PI * f);
-    this.notch = { a, b: rr + 1 - a, c: -rr };
-
-    // WARNING: the early row's middle three floats run -80..+100 and are NOT
-    // levels -- reading them as decibels gives a gain of 100,000. The last
-    // three are 0..1 and behave like gains.
-    for (let i = 0; i < 3; i += 1) {
-      this.early.push({ delay: ms(early[i]), gain: early[6 + i] });
-    }
-
-    const hf = Math.min(Math.max(preset[PRESET_SLOT.hf], 500), sampleRate / 2 - 1);
-    this.damp = 1 - Math.exp((-2 * Math.PI * hf) / sampleRate);
-
-    // `powf(10, -0.003 * ms / RT60)`, with the delay in **milliseconds** and
-    // RT60 = slot5 / 10 seconds. Both halves read straight off the writing code.
-    const rt60 = Math.max(0.05, preset[PRESET_SLOT.decay] / 10);
-    const gainFor = (lengthMs: number) => 10 ** ((-0.003 * lengthMs) / rt60);
-
-    // The combs are lengths idx3..idx(count) -- indices 2..count-1 here, since
-    // these rows already have the count float stripped off the front.
-    for (let i = 2; i < Math.min(count, taps.length); i += 1) {
-      this.combs.push({
-        buffer: new Float32Array(ms(taps[i])),
-        index: 0,
-        y: 0,
-        gain: gainFor(taps[i]),
-      });
-    }
-
-    // The allpasses: idx1 and idx2 straight, then the same two scaled. Build
-    // order is the loop order -- both `0x514` loops run 0 then 1.
-    // The allpass cascade that used to be built here is gone: see `notch`.
-
-    this.wet1 = millibelToLinear(preset[PRESET_SLOT.level1]);
-    // ⚠️ **Slot 2's level is divided by 100 in the engine and NOT here**, and
-    // the reason is a measurement, not an oversight.
-    //
-    // `v0x3fce41` really does divide it (`vdivss` against a constant 100), and
-    // `fmodsmsreverb.prx` multiplies the result into the output stage's gains at
-    // `0x1f91`, `0x1faf`, `0x1ffd`, `0x201b`, `0x205a` and `0x2078` -- six
-    // sites. But those are **per-stage** gains inside a 2x2 pan matrix over
-    // several taps (`0x1368`-`0x13ab`), and this class collapses all of that
-    // into one multiply on a mono wet signal.
-    //
-    // Applying the divide to the collapsed model was tried and **falsifies the
-    // reverb**: the tail drops 100x, the early reflections become the whole
-    // wet signal, and `test/reverb.test.ts` fails on *a longer decay parameter
-    // gives a longer tail* -- the decay control stops doing anything audible.
-    // The divide is real and belongs with the stage gains it scales, which are
-    // of order 100; it cannot be moved onto a single wet level.
-    this.wet2 = millibelToLinear(preset[PRESET_SLOT.level2]);
+  constructor(lengthSamples: number, gain: number) {
+    this.buffer = new Float32Array(Math.max(1, lengthSamples));
+    this.gain = gain;
   }
 
-  /** One frame in, one frame out. Feed it the send bus; add the result to the mix. */
-  process(input: number): number {
-    this.pre[this.preIndex] = input;
-    const tap = (back: number) =>
-      this.pre[
-        (this.preIndex + this.pre.length - Math.min(back, this.pre.length - 1)) % this.pre.length
-      ];
-
-    // ⚠️ The early reflections run through the same damping one-pole as the
-    // combs. In the engine every recirculation is damped; here they were the
-    // only path that was not, and they carry **23.1% of the impulse response's
-    // energy and set its peak** -- so an undamped early field is most of what a
-    // listener hears as "too bright" and as "too much reverb" at once.
-    //
-    // Sharing the coefficient rather than inventing one keeps this to a routing
-    // choice: `a = exp(-2*PI*hf/48000)` is measured (`v0x3fce6c`), and what is
-    // unmeasured is only whether the engine's early taps pass through it.
-    let out = 0;
-    for (const e of this.early) out += tap(e.delay) * e.gain;
-    this.earlyY = this.earlyY + this.damp * (out - this.earlyY);
-    out = this.earlyY * this.wet1;
-
-    const signal = tap(this.preDelay);
-    this.preIndex = (this.preIndex + 1) % this.pre.length;
-
-    // The parallel bank: read the delay, damp it, write the input back plus the
-    // recirculated tail, and sum. This is the kernel's `acc[i] += x[i]`.
-    let wet = 0;
-    for (const comb of this.combs) {
-      const delayed = comb.buffer[comb.index];
-      comb.y = comb.y + this.damp * (delayed - comb.y);
-      comb.buffer[comb.index] = signal + comb.gain * comb.y;
-      comb.index = (comb.index + 1) % comb.buffer.length;
-      // WARNING: `1 - gain` is OURS. A feedback comb has DC gain
-      // `1/(1 - gain)`, so eight of them summed are about nine times unity, and
-      // the preset's own wet level -- the part that is measured -- stops meaning
-      // anything. Scaling each comb's *contribution* makes it unity at DC and
-      // leaves its decay untouched, unlike scaling the recirculation.
-      // ⚠️ OURS, and the last invented number in the reverb. A feedback comb has
-      // DC gain `1/(1 - gain)`; normalising by `1 - gain` makes it unity in
-      // **amplitude**, and by `sqrt(1 - gain)` unity in **power**. For a bank of
-      // decaying resonators summing incoherently, power is the apt one -- and it
-      // is what lands the wet level inside the range a listener brackets by ear:
-      // amplitude normalisation gives 8.0% of the dry mix and none at all gives
-      // 57.9%, reported as too little and too much respectively.
-      //
-      // The engine's own scaling is still unfound: the PRX never reads the three
-      // level fields at `[state+0x48]`, `[+0x4c]`, `[+0x50]`, so the eboot mixes
-      // the wet in somewhere this project has not located.
-      wet += (this.normaliseCombs ? 1 - comb.gain : 1) * comb.y;
-    }
-    // WARNING: there is no `/ sqrt(N)` here any more, and its removal is the
-    // reverb's level.
-    //
-    // It was here on the assumption that mutually incoherent taps add in power.
-    // That is a reasonable thing to believe and it was never measured, and with
-    // each comb already normalised to unity at DC it made the bank 2.83x rather
-    // than 8x -- which put the wet signal at 22% of the dry, reported as far too
-    // little. Dropping it leaves the one normalisation that has a stated reason
-    // (`1 - gain`, so a comb is unity at DC) and lands the wet level inside the
-    // range a listener bracketed by ear.
-    //
-    // Two invented factors were stacked here and the fix was to remove one, not
-    // to add a third.
-
-    // The notch, `out = x - resonator(x)`, exactly as at 0x1850.
-    const { a, b, c } = this.notch;
-    const y = a * this.notchPrev + b * wet + c * this.notchOlder;
-    this.notchOlder = this.notchPrev;
-    this.notchPrev = y;
-    wet -= y;
-
-    return out + wet * this.wet2;
+  /** Runs one sample and returns the raw delayed value to accumulate. */
+  step(send: number, a: number, b: number): number {
+    const x = this.buffer[this.index];
+    this.y = a * this.y + b * x;
+    this.buffer[this.index] = this.gain * (this.y + send);
+    this.index = this.index + 1 === this.buffer.length ? 0 : this.index + 1;
+    return x;
   }
 }
 
+/** A plain ring delay: read this sample's taps, then write the input. */
+class DelayLine {
+  private readonly buffer: Float32Array;
+  private index = 0;
+
+  constructor(lengthSamples: number) {
+    this.buffer = new Float32Array(Math.max(1, lengthSamples));
+  }
+
+  tap(back: number): number {
+    const n = this.buffer.length;
+    const d = back >= n ? n - 1 : back;
+    return this.buffer[(this.index + n - d) % n];
+  }
+
+  push(value: number): void {
+    this.buffer[this.index] = value;
+    this.index = this.index + 1 === this.buffer.length ? 0 : this.index + 1;
+  }
+}
+
+/**
+ * The game's reverb, `fmodsmsreverb.prx`.
+ *
+ * ## The signal flow, read from the block processor at `0x14e0`
+ *
+ * ```
+ *  in L,R ──┬───────────────────────────────── * dryLevel ─────────────────┐
+ *           │                                                              │
+ *           ├─► earlyLine ─┬─ tap d0 ─ *(gL,gR) ─┐                          │
+ *           │  (fed L + R) ├─ tap d1 ─ *(gL,gR) ─┼─ * earlyLevel ───────────┤
+ *           │              └─ tap d2 ─ *(gL,gR) ─┘                          │
+ *           │                                                              ▼
+ *           └─►(L+R)*0.5 ─► damp ─► notch ─┬─► comb[2..n-1] ──► accL ──┐   out
+ *                                          ├─► comb(taps[0])   ──► accL │   L,R
+ *                                          ├─► comb(0.93*t0)   ──► accL │
+ *                                          │       accR starts as a copy │
+ *                                          ├─► comb(taps[1])   ──► accR │
+ *                                          └─► comb(1.06*t1)   ──► accR │
+ *                                                                       │
+ *                                accL,accR ─► delay(slot6 ms) ─► * lateLevel
+ * ```
+ *
+ * Every arrow above is a line of the disassembly:
+ *
+ * - **the mono downmix**, `(L + R) * 0.5`, at `0x1695`-`0x173e`;
+ * - **the input damping one-pole**, `y = a*y + b*x`, at `0x1780`, with `b` at
+ *   `[state+0x14]` and `a` at `[state+0x18]` — the same pair every comb uses;
+ * - **the notch**, `out = x - (a*y1 + b*x + c*y2)`, in place at `0x1810`, gated
+ *   by `[param+0x20]`. It is on the **input**, not the output, and it is what a
+ *   long-standing "Schroeder allpass cascade" in this file was actually looking
+ *   at;
+ * - **`[state+0x510] = tapCount - 2` mono combs** on `taps[2..count-1]`, at
+ *   `0x1960`, all accumulating into one buffer;
+ * - **`[state+0x514] = 2` stereo pairs**, at `0x1b10` and `0x1c20`: pair 0 is
+ *   `taps[0]` into the left accumulator and `taps[1]` into the right, pair 1 is
+ *   `0.93*taps[0]` left and `1.06*taps[1]` right. The right accumulator is a
+ *   **copy of the left** taken at `0x1a41`, after the mono combs and before the
+ *   pairs, and that copy is the whole of the reverb's stereo width;
+ * - **the output delay**, `0x1d2a`-`0x1d90` and `0x1e0c`-`0x1e73`: each
+ *   accumulator goes into a delay line of `slot6` ms and the delayed value is
+ *   what gets `lateLevel`;
+ * - **the early reflections**, `0x1ef0`-`0x2051`: two delay lines fed by the raw
+ *   L and R input, three taps each, every tap panned by a gain pair and all of
+ *   it scaled by `earlyLevel`. Both lines have identical lengths, identical tap
+ *   offsets and identical gains, so one line fed `L + R` is exactly equivalent
+ *   and is what this uses.
+ *
+ * ## What is no longer here
+ *
+ * - **No allpass, and no allpass coefficient.** There is not one in the module.
+ * - **No `1 - gain` normalisation on the comb outputs**, and no `/ sqrt(N)`.
+ *   The kernel sums the raw delay outputs with nothing in between; the level is
+ *   set entirely by `lateLevel` and `earlyLevel`, and both are measured.
+ * - **No notch on the wet output.** It is on the input.
+ * - **No pre-delay from slot 8.** Slot 8 is the notch frequency; the delay in
+ *   the reverb is slot 6, and it sits after the combs rather than before them.
+ *
+ * ## What is still not modelled
+ *
+ * - The engine works in 256-frame blocks and rounds every delay buffer up to
+ *   1 KB, so a tap shorter than 256 samples cannot behave as a plain per-sample
+ *   delay there. Tap set 10's shortest is 5.019 ms = 241 samples, so preset 3
+ *   (`ReverbSetting` 0) is the one place this could show.
+ * - What gain, if any, the eboot puts on the connection from the sequencer DSP's
+ *   channels 2-3 into this DSP, and from this DSP's output into the master. This
+ *   class assumes unity at both ends.
+ */
+export class Reverb {
+  private readonly monoCombs: Comb[] = [];
+  private readonly leftCombs: Comb[] = [];
+  private readonly rightCombs: Comb[] = [];
+  private readonly outDelayL: DelayLine;
+  private readonly outDelayR: DelayLine;
+  private readonly outDelay: number;
+  private readonly earlyLine: DelayLine;
+  /** Tap delays in samples, and the linear-panned gain pair for each. */
+  private readonly earlyTaps: { delay: number; gainL: number; gainR: number }[] = [];
+
+  /** The shared damping one-pole: `y = a*y + b*x`, `b = 1 - a`. */
+  private readonly dampA: number;
+  private readonly dampB: number;
+  private inY = 0;
+
+  private readonly notchOn: boolean;
+  private readonly notchA: number;
+  private readonly notchB: number;
+  private readonly notchC: number;
+  private notchY1 = 0;
+  private notchY2 = 0;
+
+  readonly dryLevel: number;
+  readonly lateLevel: number;
+  readonly earlyLevel: number;
+
+  constructor(sampleRate: number, preset: readonly number[]) {
+    // 0x0ec9-0x0edb: `rate * ms/1000 + 0.5`, then truncate — round to nearest.
+    const samples = (ms: number) => Math.max(1, Math.trunc((ms / 1000) * sampleRate + 0.5));
+
+    const row = preset[PRESET_SLOT.tapSet];
+    const taps = REVERB_TAP_SETS[row] ?? REVERB_TAP_SETS[0];
+    const count = Math.min(REVERB_TAP_COUNTS[row] ?? taps.length, taps.length);
+    const early = REVERB_EARLY_SETS[preset[PRESET_SLOT.earlySet]] ?? REVERB_EARLY_SETS[0];
+
+    // `[rsi+0x38] * 0.1` at 0x0c5d, and `powf(10, -0.003 * ms / rt60)` at
+    // 0x0d30. Both halves come off the writing code; neither is a choice.
+    const rt60 = Math.max(0.05, preset[PRESET_SLOT.decay] * 0.1);
+    const gainFor = (ms: number) => 10 ** ((-0.003 * ms) / rt60);
+
+    // 0x0b65-0x0ba5: with `[param+0x24]` clear the engine stores `b = 1, a = 0`
+    // as one qword, which is a filter that does nothing.
+    if (preset[PRESET_SLOT.dampEnable]) {
+      this.dampA = Math.exp((-2 * Math.PI * preset[PRESET_SLOT.dampHz]) / ENGINE_RATE);
+      this.dampB = 1 - this.dampA;
+    } else {
+      this.dampA = 0;
+      this.dampB = 1;
+    }
+
+    // v0x3fce8e-v0x3fcf9f. `r` and `-r*r` are a resonator's pole radius and its
+    // square and `a = 2r*cos(w)`; subtracting that resonator from the signal is
+    // a notch.
+    const raw = preset[PRESET_SLOT.notchHz] / ENGINE_RATE;
+    const scaled = raw < 1 / 96 ? raw / 2.2 : raw / 3.3;
+    const f = Math.min(0.49, Math.max(0.0004, scaled));
+    const r = Math.exp(-10 * Math.PI * f);
+    const rr = Math.exp(-20 * Math.PI * f);
+    this.notchA = 2 * r * Math.cos(2 * Math.PI * f);
+    this.notchC = -rr;
+    this.notchB = rr + 1 - this.notchA;
+    this.notchOn = preset[PRESET_SLOT.notchEnable] !== 0;
+
+    // The mono bank: lengths idx3..idx(n), which are indices 2..count-1 here
+    // since these rows already have the count float stripped off the front.
+    for (let i = 2; i < count; i += 1) {
+      this.monoCombs.push(new Comb(samples(taps[i]), gainFor(taps[i])));
+    }
+    // The two stereo pairs. 0x0f70 sizes pair 0 from taps[0] and taps[1];
+    // 0x1090 sizes pair 1 from the same two scaled by REVERB_PAIR_RATIOS.
+    this.leftCombs.push(new Comb(samples(taps[0]), gainFor(taps[0])));
+    this.rightCombs.push(new Comb(samples(taps[1]), gainFor(taps[1])));
+    const leftDetuned = taps[0] * REVERB_PAIR_RATIOS[0];
+    const rightDetuned = taps[1] * REVERB_PAIR_RATIOS[1];
+    this.leftCombs.push(new Comb(samples(leftDetuned), gainFor(leftDetuned)));
+    this.rightCombs.push(new Comb(samples(rightDetuned), gainFor(rightDetuned)));
+
+    // 0x11a9-0x11d0: zero milliseconds still allocates one sample.
+    this.outDelay = Math.max(
+      1,
+      Math.trunc((preset[PRESET_SLOT.outputDelayMs] / 1000) * sampleRate),
+    );
+    this.outDelayL = new DelayLine(this.outDelay + 1);
+    this.outDelayR = new DelayLine(this.outDelay + 1);
+
+    // 0x1254-0x12a1: the fixed offsets, then `vcvttss2si` — truncation, not
+    // rounding, unlike every other length in the DSP.
+    const perMs = sampleRate / 1000;
+    const OFFSETS = [0.051, 0.151, 0.078];
+    const delays = [0, 1, 2].map((i) => Math.max(0, Math.trunc((early[i] + OFFSETS[i]) * perMs)));
+    // The pairing the sort leaves behind for an already-ascending row.
+    const PAIRING = [1, 0, 2];
+    for (let i = 0; i < 3; i += 1) {
+      const gain = early[3 + PAIRING[i]];
+      const pan = early[6 + PAIRING[i]];
+      this.earlyTaps.push({ delay: delays[i], gainL: (1 - pan) * gain, gainR: pan * gain });
+    }
+    this.earlyLine = new DelayLine(Math.max(1, ...delays) + 1);
+
+    this.dryLevel = millibelToLinear(preset[PRESET_SLOT.dryLevel]);
+    this.lateLevel = millibelToLinear(preset[PRESET_SLOT.lateLevel]);
+    this.earlyLevel = millibelToLinear(preset[PRESET_SLOT.earlyLevel]) / 100;
+  }
+
+  /**
+   * One stereo frame of the send bus in, one stereo frame of reverb out.
+   *
+   * The DSP's dry level is a hard zero on every preset the game uses, so what
+   * comes back is wet only and is meant to be added to the mix.
+   */
+  process(left: number, right: number): { left: number; right: number } {
+    // Early reflections. One line stands in for the engine's two: both are read
+    // at the same offsets with the same gains, so their taps sum to the taps of
+    // `L + R`.
+    let outL = 0;
+    let outR = 0;
+    for (let i = 0; i < 3; i += 1) {
+      const t = this.earlyTaps[i];
+      const x = this.earlyLine.tap(t.delay);
+      outL += t.gainL * x;
+      outR += t.gainR * x;
+    }
+    outL *= this.earlyLevel;
+    outR *= this.earlyLevel;
+    this.earlyLine.push(left + right);
+
+    // The late field's input: mono, damped, notched.
+    this.inY = this.dampA * this.inY + this.dampB * (left + right) * 0.5;
+    let send = this.inY;
+    if (this.notchOn) {
+      const y = this.notchA * this.notchY1 + this.notchB * send + this.notchC * this.notchY2;
+      this.notchY2 = this.notchY1;
+      this.notchY1 = y;
+      send -= y;
+    }
+
+    const a = this.dampA;
+    const b = this.dampB;
+    let accL = 0;
+    for (const comb of this.monoCombs) accL += comb.step(send, a, b);
+    let accR = accL;
+    for (const comb of this.leftCombs) accL += comb.step(send, a, b);
+    for (const comb of this.rightCombs) accR += comb.step(send, a, b);
+
+    outL += this.lateLevel * this.outDelayL.tap(this.outDelay);
+    outR += this.lateLevel * this.outDelayR.tap(this.outDelay);
+    this.outDelayL.push(accL);
+    this.outDelayR.push(accR);
+
+    // Zero on every preset the game uses, and kept because the engine has it.
+    outL += this.dryLevel * left;
+    outR += this.dryLevel * right;
+    return { left: outL, right: outR };
+  }
+}
 
 /**
  * The reverb preset table, read out of the eboot at `v0x1062620`.
@@ -507,36 +573,46 @@ export function reverbPreset(setting: number): readonly number[] {
 }
 
 /**
- * The four kernels of `sub_0x11a0`, transcribed.
+ * The four block kernels of `fmodsmsreverb.prx`, transcribed.
  *
- * Its nine loops are four distinct kernels: D, E and F are the same damped comb
- * at different buffer offsets, and the three long-span loops are the outer
- * iteration that runs the short ones once per tap. Each takes a block of
- * samples, since the engine processes 256 frames at a time.
- *
- * ⚠️ **These are the pieces, not the machine.** How they are chained -- which
- * buffer feeds which, in what order, and where the damping sits between the
- * taps -- is the topology, and that is still the one thing unread. Wiring them
- * up by taste would produce a reverb that sounds fine and is not the game's,
- * which is the failure mode this project keeps finding in its own past work.
+ * They exist out of line at `0x08f0`-`0x0a30` and again inlined in the block
+ * processor. `Reverb` runs the same arithmetic one sample at a time; these are
+ * kept because they are what a re-check should be compared against, and because
+ * each one's *role* was wrong in this file for a long time.
  */
 
-/** Loop A at `0x12f0`: `out[i] = (x[i] + x[i + offset]) * gain`. */
-export function combSum(
-  x: Float32Array, out: Float32Array, offset: number, gain: number, n: number,
+/**
+ * `0x0a30`: `out[i] = g0*a[i] + g1*b[i]`, a two-input weighted mix.
+ *
+ * The block processor uses it for the **stereo-to-mono downmix of the input**
+ * with both gains at 0.5 (`0x1695`), which is where the late field's `(L+R)/2`
+ * comes from.
+ */
+export function mixPair(
+  a: Float32Array,
+  b: Float32Array,
+  out: Float32Array,
+  g0: number,
+  g1: number,
+  n: number,
 ): void {
-  for (let i = 0; i < n; i += 1) out[i] = (x[i] + x[i + offset]) * gain;
+  for (let i = 0; i < n; i += 1) out[i] = g0 * a[i] + g1 * b[i];
 }
 
 /**
- * Loop B at `0x1340`: a one-pole written into a delayed slot.
+ * `0x0910`: a one-pole, `y = a*y + b*x`, written into a second buffer.
  *
- * `y = a*y + b*x[i]` with the result stored at `buf[i + offset]`, and the final
- * `y` written back to the state at `[r12+0x10]` — so the filter's memory
- * survives the block, as it must.
+ * The block processor uses it once per block on the mono input (`0x1780`), with
+ * the same `a`/`b` the combs damp with. The final `y` is written back to the
+ * state, so the filter's memory survives the block.
  */
 export function onePoleInto(
-  buf: Float32Array, offset: number, a: number, b: number, y0: number, n: number,
+  buf: Float32Array,
+  offset: number,
+  a: number,
+  b: number,
+  y0: number,
+  n: number,
 ): number {
   let y = y0;
   for (let i = 0; i < n; i += 1) {
@@ -547,16 +623,25 @@ export function onePoleInto(
 }
 
 /**
- * Loop C at `0x13b0`: an allpass-shaped section.
+ * `0x0960`: the notch, `out = x - (a*y1 + b*x + c*y2)`.
  *
  * ```
  * prev = y;  y = a*prev + b*buf[i] + c*older;  buf[i] = buf[i] - y;  older = prev
  * ```
  *
- * The `buf[i] - y` is what makes it allpass rather than a comb.
+ * ⚠️ This was called `allpassSection` and described as "what makes it allpass".
+ * It is not an allpass: with `a = 2r*cos(w)` and `c = -r*r` the recursion is a
+ * resonator, and subtracting a resonator from the signal is a notch. The block
+ * processor runs it in place on the **input** (`0x1810`), never on the output.
  */
-export function allpassSection(
-  buf: Float32Array, a: number, b: number, c: number, y0: number, older0: number, n: number,
+export function notchSection(
+  buf: Float32Array,
+  a: number,
+  b: number,
+  c: number,
+  y0: number,
+  older0: number,
+  n: number,
 ): { y: number; older: number } {
   let y = y0;
   let older = older0;
@@ -571,18 +656,24 @@ export function allpassSection(
 }
 
 /**
- * Loops D, E and F at `0x1500`, `0x16c0` and `0x17e0` — the same kernel three
- * times, at different offsets into the state's buffers.
+ * `0x09d0`: the damped comb, the only kernel the late field is built from.
  *
  * ```
- * acc[i] += x[i]                       ; the tap accumulates
- * y = a*y + b*x[i]                     ; damped
- * out[i] = gain * (y + send[i])
+ * acc[i] += x[i]                       ; the raw delayed sample accumulates
+ * y       = a*y + b*x[i]
+ * out[i]  = gain * (y + send[i])
  * ```
  */
 export function dampedComb(
-  x: Float32Array, acc: Float32Array, send: Float32Array, out: Float32Array,
-  a: number, b: number, gain: number, y0: number, n: number,
+  x: Float32Array,
+  acc: Float32Array,
+  send: Float32Array,
+  out: Float32Array,
+  a: number,
+  b: number,
+  gain: number,
+  y0: number,
+  n: number,
 ): number {
   let y = y0;
   for (let i = 0; i < n; i += 1) {

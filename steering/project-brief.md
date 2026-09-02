@@ -27,17 +27,22 @@ Ranked by how audible a mismatch would be. This is the fidelity budget: spend ef
 | 4 | Per-channel volume, pan, mix | **Exact** if we match FMOD's pan law | Needs one measurement (see open questions) |
 | 5 | Echo | **Effectively exact** | FMOD Ex's echo DSP is a delay line with feedback; the parameters (`EchoTime`, `EchoFeedback`, `EchoMix`, `EchoSend`) are all in the save data |
 | 6 | Resampling of pitched samples | **Very close** | FMOD Ex resamples with a selectable-quality interpolator. Matching it needs our own mixer, not the browser's — this is the main reason for AudioWorklet |
-| 7 | Reverb | **Approximate** | The one genuine risk. See below |
+| 7 | Reverb | **Exact** | Settled 2026-09-02: it is `fmodsmsreverb.prx` and the whole DSP is read |
 
-### The reverb caveat, stated up front
+### The reverb caveat, withdrawn
 
-The eboot links **two** reverb implementations: FMOD's own `FMOD_DSP_TYPE_SFXREVERB` (a Freeverb
-derivative, reproducible) and Sony's `lib/sfx/foreverb/aSfxDsp.cpp` plugin, whose algorithm is
-proprietary. We know `aSfxDsp` is called from game code (3 sites, from `v0xac67xx`) but we have
-**not** established which one `PSequencer.ReverbSetting` selects. If it turns out to be the Sony
-plugin, an exact match would require reversing a DSP algorithm — out of proportion to the payoff.
-Plan for "close, not identical" on reverb, and make it a togglable send so a purist can render dry
-and add their own.
+This section used to say the reverb was the project's one genuine risk: the eboot links both FMOD's
+`FMOD_DSP_TYPE_SFXREVERB` and Sony's proprietary `lib/sfx/foreverb/aSfxDsp.cpp`, and which one
+`ReverbSetting` selected was unknown, so the plan was "close, not identical".
+
+**Neither of them is the answer.** The sequencer's reverb is `fmodsmsreverb.prx`, a 16 KB plugin
+the game ships in `gamedata_orbis/spu/` and loads at runtime, and it has been read end to end —
+topology, coefficients, levels, sends and the path back to the master. See *6 / 14. The reverb* in
+[answered-questions.md](answered-questions.md).
+
+⚠️ The lesson is worth keeping even though the caveat is gone: the risk was declared on the
+strength of *what the eboot links*, and the answer was in a file next to it that nobody had opened.
+"Which of these two?" was the wrong question for four sessions.
 
 ## Scope
 

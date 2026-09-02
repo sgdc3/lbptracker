@@ -20,6 +20,25 @@ How to check you got it right, in one line: apply the delta to the 4222 script-b
 count how many land on a `55 48 89 e5` prologue. The correct delta gives **3559/4222**; a wrong one
 gives ~640/4222. `tools/lbpdis.py` already carries the right delta for `eboot-v128.bin`.
 
+### The audio PRXs have the same trap, and this project fell into it
+
+| file | `file = vaddr + …` |
+|---|---|
+| `gamedata_orbis/spu/fmodextinput.prx` | **`0x7e0`** |
+| `gamedata_orbis/spu/fmodsmsreverb.prx` | **`0x7c0`** |
+
+Same rule as the eboot: these are SELFs, the inner ELF's program headers are not file offsets, and
+the real offset of ELF segment `i` is the SELF entry at `0x20 + n*0x20` whose `props >> 20` is `i`.
+
+⚠️⚠️ **Every PRX address written in this project before 2026-09-02 is 0x40 too high.** `prxdis.py`
+used **0x7a0** and **0x780** — the offsets of the 32-byte *digest* blocks that precede those
+segments, not of the segments. The failure mode here is the opposite of the eboot's: it is
+completely invisible. Disassembly from `start` reads `data[start + delta]`, so a uniform delta error
+just relabels correct code, and a rip-relative target computed as `vaddr + size + disp` is read back
+at `target + delta` — the same error twice, cancelling. **No fact recorded from those disassemblies
+is wrong; every address is.** Subtract 0x40 before looking one up, and re-run it through
+`tools/prxdis.py`, which now carries the measured deltas and can print the segment table.
+
 ⚠️ **The failure mode is silent and convincing.** With the wrong delta the identifier blob is dense
 enough that you still read plausible-looking strings — just truncated by a byte or two
 (`sSlotShareable__Q6SlotID` instead of `IsSlotShareable__Q6SlotID`) — and the disassembler starts
@@ -89,7 +108,10 @@ file-offset space), `ebschema.py` (recover a serialised struct's field names and
 | generic play-sound(id, flags, volume) | `v0x3de390` |
 | VoIP audio-out port open | `v0x3f5650` |
 | FMOD code | `v0x9c5da3` … `v0xab6397` |
-| Sony reverb plugin (`aSfxDsp`) entry | `v0xab51b0` |
+| Sony reverb plugin (`aSfxDsp`) entry — **not** the sequencer's reverb | `v0xab51b0` |
+| reverb preset table (12 x 11 `int32`) / `ReverbSetting` remap | `v0x1062620` / `v0x1062830` |
+| `applyReverbPreset(dsp, setting)` | `v0x3fd4c0` |
+| reverb DSP configure — slots to parameter block | `v0x3fcd50` |
 | `PInstrument` serialiser | `v0xd36c60` |
 | `PSequencer` serialiser | `v0xd37d10` |
 | `RInstrument` serialiser | `v0xc68a70` |

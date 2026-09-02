@@ -46,7 +46,7 @@ core/           pure, no DOM, no Web Audio — unit-testable, shared with the No
 audio/
   mixer-worklet.ts   the AudioWorkletProcessor: voices, interpolation, channels, sends
   dsp/echo.ts        delay line + feedback + wet/dry, parameters from PSequencer
-  dsp/reverb.ts      Freeverb-style; explicitly an approximation (see lbp-audio-engine.md)
+  dsp/reverb.ts      the game's own DSP, ported from fmodsmsreverb.prx (see answered-questions.md)
   render.ts          OfflineAudioContext wrapper for WAV export
 io/
   bank-loader.ts     user picks their own .fsb; parse client-side, never upload

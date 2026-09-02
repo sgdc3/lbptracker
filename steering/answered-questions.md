@@ -451,108 +451,178 @@ beyond this question: the stack loop at `0x1b11` scales `Params[2]` by the same 
 start offset is a fraction of *the largest sample the instrument has loaded*, not of the one being
 played. Question 12 was reasoning about it as a per-slot length; it is not.
 
-## 14b. Where `PInstrument.reverbSend` is applied — SETTLED: it multiplies `Params[25]`
+## 6 / 14. The reverb — SETTLED: the whole DSP, read out of `fmodsmsreverb.prx`
 
-The note block carries **five floats per placement** at `+0x420 + 20i`, and they are `PInstrument`'s
-own fields in its own order:
+This entry replaces everything this project previously wrote about the reverb. Most of that was
+wrong, and the wrongness was structural rather than a detail here or there, so the old text is not
+worth keeping even as history: what is kept below is the list of *specific* wrong readings, because
+each of them was arrived at by a plausible-looking argument and could be arrived at again.
 
-| offset | field | where it is used |
+⚠️ **Addresses here are TRUE ELF vaddrs.** See the delta note in
+[eboot-re.md](eboot-re.md): every PRX address written in this project before 2026-09-02 is **0x40
+too high**, because `prxdis.py` used a segment offset 0x40 too small. The readings themselves were
+not affected — a rip-relative operand resolves through the same delta twice — but the labels do not
+match a real disassembler, and a re-check that trusts them will land mid-instruction.
+
+### Where the parts live
+
+| what | where |
+|---|---|
+| the preset table, 12 rows × 11 `int32` | eboot `v0x1062620` |
+| `ReverbSetting` → preset remap, 8 entries | eboot `v0x1062830` |
+| `applyReverbPreset` — pushes slots 1-10 into DSP parameters 1-10 | eboot `v0x3fd4c0` |
+| the configure — slots → the plugin's parameter block | eboot `v0x3fcd50` |
+| the plugin's own configure — parameter block → filter states | PRX `0x0b40` |
+| the block processor — 256 frames of audio | PRX `0x14e0` |
+| the four kernels, out of line | PRX `0x0910` (one-pole), `0x0960` (notch), `0x09d0` (comb), `0x0a30` (2-in mix) |
+
+### The eleven slots
+
+`v0x3fcd50` is the whole mapping, and it is unambiguous:
+
+| slot | → parameter block | meaning |
 |---|---|---|
-| `+0x420` | `level` | multiplied into the channel volume, `0x3b49` |
-| `+0x424` | `pan` | stored at `voice+0x18`, `0x3b69` |
-| `+0x428` | `echoSend` | `0x3cca` |
-| `+0x42c` | `reverbSend` | `0x3d38` |
-| `+0x430` | instrument index | `0x3b57`, stored as `voice+0x00` |
+| 0 | `+0x4c` | **dry** level, `10^(v/200)`. Pinned at **-800** by the constructor and never written from the table, and the conversion's floor is on `v*10 > -8000`, so it is a hard **zero**: the DSP is 100% wet |
+| 1 | `+0x48` | **late** level, `10^(v/200)` |
+| 2 | `+0x50` | **early** level, `10^(v/200)` **divided by 100** (`v0x3fce41`) |
+| 3 | `+0x30` | tap-set index |
+| 4 | `+0x34` | early-set index |
+| 5 | `+0x38` | decay; RT60 = `v * 0.1` s |
+| 6 | `+0x3c` | **output delay in milliseconds** — a delay line after the comb bank |
+| 7 | `+0x20` | notch enable |
+| 8 | `+0x28` | notch frequency: `f = v/48000`, then `/2.2` if `f < 1/96` else `/3.3`, clamped to `[0.0004, 0.49]` |
+| 9 | `+0x24` | damping enable |
+| 10 | `+0x2c` | damping: stores `-2π·v/48000`, and the PRX takes `expf` of it |
 
-and the two sends are combined with the voice's own:
+`[param+0x10]` is set to a literal **48000.0** at `v0x3fce4f` and `[param+0x40]` to a literal **2**
+at `v0x3fce57`, so the sample rate and the channel count are hard-coded, not queried.
 
-```
-0x3cca  xmm2 = [block + 20i + 0x428]     ; PInstrument.echoSend
-0x3cd4  xmm1 = [voice + 0x1c]            ; the voice's send = Params[25]
-0x3ce3  xmm0 = xmm2 * xmm1
-0x3d33  [voice + 0x20] = min(xmm0, 1)    ; the echo send, clamped
-0x3d38  xmm1 = [block + 20i + 0x42c]     ; PInstrument.reverbSend
-0x3d50  [voice + 0x24] = min(., 1)       ; the reverb send, clamped
-```
-
-⚠️ **CORRECTED, and the correction matters more than the original.** The two sends are *not* the
-same shape, and neither is a product:
+### The signal flow, from the block processor at `0x14e0`
 
 ```
-voice+0x1c = min(Params[25] + echoSend * (1 - Params[25]), 1)   ; the echo send, a BLEND
-voice+0x24 = min(reverbSend, 1)                                 ; the reverb send, DIRECT
+ in L,R ──┬────────────────────────────────── * dry (= 0) ─────────────────┐
+          │                                                               │
+          ├─► earlyLine ─┬─ tap A ─ *(gL,gR) ─┐                            │
+          │  (L and R    ├─ tap B ─ *(gL,gR) ─┼─ * earlyLevel ─────────────┤
+          │   each)      └─ tap C ─ *(gL,gR) ─┘                            │
+          │                                                               ▼
+          └─►(L+R)*0.5 ─► damp ─► notch ─┬─► comb[2..n-1] ────► accL ──┐  out L,R
+                                         ├─► comb(taps[0])  ────► accL │
+                                         ├─► comb(0.93·t0)  ────► accL │
+                                         │  accR is a COPY of accL here │
+                                         ├─► comb(taps[1])  ────► accR │
+                                         └─► comb(1.06·t1)  ────► accR │
+                                                                       │
+                              accL,accR ─► delay(slot6 ms) ─► * lateLevel
 ```
 
-The `vmulss` at `0x3ce3` that suggested a product is the **`echoSend < 0` branch**: `jbe` at
-`0x3ce1` sends every non-negative send straight past it to `0x3cf1`, so on real data it never runs.
-Reading a fragment without resolving the jump made the rare path look like the main one, and the
-resulting send was **47.8x too small** — it left the reverb inaudible and the echo silent.
+Line by line:
 
-**The echo's blend is the interesting half.** Because the send is `Params[25]` *plus* the
-placement's share of what is left, **every instrument sends at least `Params[25]` to the echo** even
-when its own `echoSend` is zero. This project sent `echoSend` alone, which is zero on 1,682 of seq
-737099's 1,690 tracks — so the echo was silent where the game has it at a few per cent.
+- **`0x1695`-`0x173e`** — the input is downmixed to mono, `(L + R) * 0.5`.
+- **`0x1780`** — a one-pole, `y = a*y + b*x`, on that mono signal. `b` is `[state+0x14]` and `a` is
+  `[state+0x18]`, built at `0x0b73`-`0x0ba5` as `a = expf([param+0x2c])`, `b = 1 - a`, or as
+  `b = 1, a = 0` when damping is disabled. **This is the same coefficient pair every comb damps
+  with**, and this project did not have this filter at all.
+- **`0x1810`** — the notch, `out = x - (a*y1 + b*x + c*y2)`, **in place on the input**, gated by
+  `[param+0x20]`. The eboot builds the three coefficients at `v0x3fcefb`-`v0x3fcf9f`:
+  `r = exp(-10πf)`, `a = 2r·cos(2πf)`, `c = -r²`, `b = r² + 1 - a`.
+- **`0x1960`** — `[state+0x510] = tapCount - 2` mono combs, on `taps[2..count-1]`, all accumulating
+  into one buffer. The kernel is `0x09d0`:
 
-### What that unlocked
+  ```
+  x       = delay.read()
+  acc[i] += x                       ; the RAW delayed sample is what accumulates
+  y       = a*y + b*x
+  delay.write( gain * (y + send) )  ; the gain multiplies the input too
+  ```
 
-The oversized send had been forcing a compensating error the other way. The comb bank carried an
-invented `1 - gain` normalisation — about **0.13** on these presets, −18 dB — and it was there to
-hold down a wet path fed 47.8x too hard. With the send measured, that factor comes out and the reverb
-lands at **42.4%** of the dry mix on the window a listener bracketed at 22%–216%.
+- **`0x1a41`** — the right accumulator is made as a **copy of the left**, after the mono combs and
+  before the pairs. That copy is the entire stereo width of the late field.
+- **`0x1b10` / `0x1c20`** — `[state+0x514] = 2` pairs of combs, the same kernel: pair 0 is `taps[0]`
+  into the left accumulator and `taps[1]` into the right, pair 1 is `0.93·taps[0]` left and
+  `1.06·taps[1]` right. The two ratios are the table at `v0x2bc8`.
+- **`0x1d2a`-`0x1d90`, `0x1e0c`-`0x1e73`** — each accumulator is written into a delay line of
+  `slot6` milliseconds and the **delayed** value is what gets `lateLevel`.
+- **`0x1ef0`-`0x2051`** — the early reflections: two delay lines fed by the **raw L and R input**,
+  three taps each, every tap panned into both outputs by a gain pair, the lot scaled by
+  `earlyLevel`. Both lines have identical lengths, identical tap offsets and identical gains, so one
+  line fed `L + R` is exactly equivalent.
 
-Two independent things improved at once, which is the sign that the change is real rather than
-tuned:
+Every comb gain is `powf(10, -0.003 * ms / rt60)` (`0x0d30`, `0x0d90`, `0x0fba`, `0x10e9`), with
+`ms` the stage's own length in milliseconds and `rt60 = slot5 * 0.1` s. Every delay length is
+`round(rate * ms / 1000)` (`0x0ec9`: multiply, add 0.5, `vcvttss2si`).
 
-| | with the invented normalisation | without it |
+### The early-reflection rows
+
+Nine floats: `[d0, d1, d2, g0, g1, g2, p0, p1, p2]` — three delays in milliseconds, three gains,
+three pan positions in 0..1 (`0x1254`-`0x136b`).
+
+- Fixed offsets are added to the delays before conversion: **+0.051, +0.151, +0.078 ms**, then
+  `vcvttss2si` — truncation, unlike every other length in the DSP, which rounds.
+- The pan law is **linear**, `L = (1 - p)·g` and `R = p·g`, applied because `[param+0x40]` is 2.
+- ⚠️ **The delay-to-gain pairing is not positional.** `0x1382`-`0x13ef` sorts the three delays and
+  permutes the gains as it goes, and the permutation is not the identity even when nothing needs
+  swapping. All seven rows are already sorted ascending, so one branch is always taken, and it pairs
+  `d0` with `g1`/`p1`, `d1` with `g0`/`p0`, `d2` with `g2`/`p2`. Do not "fix" this by reading it as
+  positional; and do not trust it for a hypothetical unsorted row, because the code there is
+  self-contradictory.
+
+### The sends, and how the wet gets back to the mix
+
+`fmodextinput.prx` `0x3b4f`-`0x3d10` fills three floats on the voice:
+
+| field | source | used for |
 |---|---|---|
-| T60 as a fraction of the preset's own RT60 | 0.40–0.61 | **0.80–1.17** |
+| `voice+0x1c` | the instrument's Params pair at `+0x5b0`/`+0x5b4`, interpolated by the note's modulation, then offset by the placement's `2·echoSend - 1`, clamped to 0..1 | the **echo** send |
+| `voice+0x20` | the instrument's Params pair at `+0x5b8`/`+0x5bc` | **nothing.** It is stored and never loaded — a grep of the whole PRX finds the store at `0x3baf` and no read |
+| `voice+0x24` | the placement's `reverbSend` at `[block+0x42c]`, clamped to 0..1 | the **reverb** send |
 
-**The decay now follows the RT60 law the preset asks for.** It did not before, and nothing about the
-decay was touched — only the gain that had been standing in for a wrong send.
-
-⚠️ **One invented number is left in the reverb**: the allpass coefficient, 0.5. Everything else —
-tap sets, early sets, the level law, the RT60 gain, the damping pole, the sends — is measured.
-
-## 6f. The allpass coefficient — SETTLED: there is no allpass
-
-Asked to find the reverb's last invented number. The answer is that the number does not exist,
-because neither does the filter it belonged to.
-
-The kernel those stages run is `fmodsmsreverb.prx` `0x1850`:
+The mixer at `0x2f00`-`0x2f8f` then writes, per frame:
 
 ```
-y      = a*prev + b*x + c*older
-buf[i] = x - y                     ; in place
+out4[4i+0] += L                 out4[4i+2] += L * voice[0x24]      ; the reverb send bus
+out4[4i+1] += R                 out4[4i+3] += R * voice[0x24]
+                                out2[2i+0] += L * voice[0x1c]      ; the echo's own input
+                                out2[2i+1] += R * voice[0x1c]
 ```
 
-with the coefficients read from `[rec+0x30]`, `[rec+0x34]`, `[rec+0x38]` (`0x1828`-`0x1832`) and the
-state at `+0x20`/`+0x24`. The eboot builds all three from **one** number at `v0x3fcefb`-`v0x3fcf9f`:
+`out4` is the DSP's own output buffer — `0x0170` asserts 4 in and 4 out channels — and `out2` is a
+stack `alloca` inside the block function, so the echo is internal and the reverb send leaves the
+plugin on channels 2-3. **The send is post-fader and post-pan**: it is the voice's finished stereo
+output, scaled.
 
-```
-r = exp(-10*PI*f)
-a = 2 * r * cos(2*PI*f)     ; [+0x94] -> the record's +0x34
-c = -r*r                    ; [+0x98] -> +0x38, applied through a sign-flip mask
-b = r*r + 1 - a             ; [+0x9c] -> +0x30
-```
+⚠️ **The echo's placement field is a bipolar offset, not a blend.** `v0x1607e9` writes
+`2*echoSend - 1` into the note block, and `0x3ca1` applies it as `v + o·v` when `o < 0` and
+`v + o·(1 - v)` when `o >= 0`. So 0.5 leaves the instrument's own send untouched, 0 mutes it and 1
+forces unity.
 
-`a = 2r cos(w)` with `c = -r²` is a **two-pole resonator**, and subtracting a resonator from the
-signal is a **notch**. At DC the resonator's gain is `b / (1 - a - c) = 1` exactly, so the notch is
-perfect there.
+### The wrong readings, and what produced each
 
-### And slot 8 is not a pre-delay
+These are worth more than the corrections, because every one of them looked reasonable:
 
-`f` comes from `v0x3fce8e`: **slot 8 divided by 48,000**, clamped to `[0.0004, 0.49]`. The presets use
-20, 100 and 400, which map to 20 Hz, 100 Hz and 400 Hz — highpass corners, which is what a reverb
-puts there. `PRESET_SLOT` called it `preDelay`, "a delay in samples at 48 kHz", and used it as one.
-There is now **no measured pre-delay at all**, and the code says so rather than inventing one.
+| the claim | why it was believed | what it actually is |
+|---|---|---|
+| a Schroeder **allpass cascade** after the combs, with a 0.5 coefficient | the kernel at `0x0960` subtracts its own output from the signal, which is the shape of an allpass | with `a = 2r·cos(w)` and `c = -r²` the recursion is a **resonator**, so `x - y` is a **notch** — and it runs on the **input**, not the output |
+| slot 8 is a **pre-delay in samples** | it is small, and reverbs have pre-delays | it is the **notch frequency in hertz**. The real delay is slot 6, in milliseconds, and it sits **after** the combs |
+| slot 1 is the early level and slot 2 the late level | both are millibel levels and there was nothing to tell them apart | slot 1 is **late**, slot 2 is **early**. Getting this backwards also moved the `/100` onto the tail, which silenced it |
+| the early rows' columns 6-8 are the gains, and 3-5 "are not levels" | 46, -60 and 21 are absurd as gains | 3-5 **are** the gains; they multiply an early level of order 0.003, because of the `/100`. Columns 6-8 are pan positions |
+| each comb's contribution needs a `1 - gain` (or `sqrt(1 - gain)`) normalisation | eight feedback combs summed are ~9x unity at DC, and the preset's own wet level then means nothing | the kernel sums the raw delay outputs with **nothing** in between. The level is `lateLevel` and `earlyLevel`, and those were being read off the wrong slots |
+| `PInstrument.reverbSend` multiplies the instrument's `Params[25]` | a `vmulss` sits next to the reverb send's clamp | that multiply is on the **echo** path, and it is the negative branch of the bipolar offset. The reverb send is the placement's field alone |
 
-### Why the engine can afford an un-normalised comb bank
+And two more that were process errors rather than misreadings:
 
-Eight feedback combs at `g ≈ 0.87` have a DC gain near **62**, and a reverb that piles up DC is what
-made a `1 - gain` normalisation look necessary. The notch is the engine's answer: it removes exactly
-that. The two belong together, and this project had neither.
+- **The renderer called `process()` twice per frame**, once per channel, through one instance. Every
+  delay line ran at twice the frame rate and both channels shared one state. `Reverb.process` is
+  stereo now.
+- **A scan for the level fields was run against the wrong PRX** (`fmodextinput` instead of
+  `fmodsmsreverb`) and concluded "the PRX never reads them", which sent the search after an
+  imaginary output matrix in the eboot.
 
-⚠️ **The RMS-against-dry number is no longer comparable across this change.** It fell from 42.4% to
-3.0% on the same window, and most of that drop is inaudible sub-20 Hz energy the notch removes.
-Judging the wet level by that ratio was measuring rumble as much as reverb.
+### What is still not modelled
 
+- The engine works in **256-frame blocks** and rounds every delay buffer up to 1 KB, so a tap
+  shorter than 256 samples cannot behave as a plain per-sample delay there. Tap set 10's shortest is
+  5.019 ms = 241 samples, so preset 3 (`ReverbSetting` 0) is the one place this could show.
+- What gain, if any, the eboot puts on the connection from the sequencer DSP's channels 2-3 into the
+  reverb, and from the reverb's output into the master. `src/audio/effects.ts` assumes unity at both
+  ends. This is the last unknown in the reverb, and it is a constant.

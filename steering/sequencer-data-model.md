@@ -520,12 +520,11 @@ the counts at 12 and 8.
 Parameters 7 and 9 are set from **bytes tested against zero** — booleans. 1 and 2 are negative in
 the hundreds, which reads as **millibels**; 10 lands on 3000–12000, which reads as **Hz**.
 
-⚠️ **The parameter meanings are still unconfirmed, and the boolean slots argue against FMOD.**
-`FMOD_DSP_SFXREVERB`'s indices 7 and 9 are `REVERBLEVEL` and `DIFFUSION`, both floats — a boolean
-there makes no sense. That is evidence the sequencer's reverb is Sony's `aSfxDsp` plugin rather
-than FMOD's, which is the case [project-brief.md](project-brief.md) flags as "close, not
-identical". The numbers above are enough to reproduce the *preset choice*; matching the algorithm
-is a separate question.
+✔ **The parameter meanings are settled, and the boolean slots were the clue that it is not FMOD.**
+`FMOD_DSP_SFXREVERB`'s indices 7 and 9 are `REVERBLEVEL` and `DIFFUSION`, both floats, so a boolean
+there ruled FMOD out — correctly. The DSP is `fmodsmsreverb.prx`, and slots 7 and 9 are the notch
+and damping enables. The full slot table, the topology and the sends are in *6 / 14. The reverb* in
+[answered-questions.md](answered-questions.md); `src/audio/effects.ts` implements it.
 
 ## The sequencer mixes itself — it is not a set of FMOD voices
 
@@ -614,9 +613,17 @@ The module that exports the read callback is
 **exactly one symbol**, `wycAbBCjLI4`, which is the FMOD read callback.
 
 Getting inside it: it is an fSELF, so the ELF program headers' offsets are not file offsets. Parse
-the SELF segment table at `0x20` (32-byte records of `{flags, offset, filesz, memsz}`, with the ELF
-segment index in `flags >> 20`); that gives **`file = vaddr + 0x7a0`** for the code segment. The
+the SELF segment table at `0x20` (32-byte records of `{props, offset, filesz, memsz}`, with the ELF
+segment index in `props >> 20`); that gives **`file = vaddr + 0x7e0`** for the code segment. The
 export's `Elf64_Sym` puts it at module vaddr **`0x170`**, 117 bytes.
+
+⚠️ **This delta was 0x7a0 in every note written before 2026-09-02, and 0x7a0 is wrong**: it is the
+offset of the 32-byte *digest* block that precedes the segment, not of the segment. **Every
+`fmodextinput.prx` address recorded in this project before that date is 0x40 too high**, and the
+same mistake put `fmodsmsreverb.prx` on 0x780 instead of 0x7c0. The readings themselves survive —
+a rip-relative target is computed as `vaddr + size + disp` and read back at `target + delta`, so
+the error cancels and the *data* those disassemblies reported was right — but the labels do not
+match a real disassembler. Subtract 0x40 before looking an old address up, and see `tools/prxdis.py`.
 
 The callback itself is trivial:
 
@@ -677,7 +684,8 @@ the same reason, and this is the first explanation that accounts for all seven.
 Everything in this section was read out of the PRX's instructions. **How to re-measure it**, since
 none of it is guessable:
 
-- `file = vaddr + 0x7a0` (the SELF segment table at `0x20`; see the section above).
+- `file = vaddr + 0x7e0` (the SELF segment table at `0x20`; see the section above, including why
+  every address written here before 2026-09-02 is 0x40 too high).
 - The module's LOAD segments are `vaddr 0x0000 filesz/memsz 0x4ab0` (code + rodata) and
   `vaddr 0x8000 filesz 0x210 memsz 0x53a0` — so everything from `0x8210` to `0xd3a0` is BSS.
 - `sub_0xab0` copies the game's block into BSS at **module vaddr `0xb850`** (`lea r14, [rip+0xad6e]`

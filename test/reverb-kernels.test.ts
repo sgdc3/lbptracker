@@ -1,13 +1,16 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
-import { allpassSection, combSum, dampedComb, onePoleInto } from '../src/audio/effects.ts';
+import { dampedComb, mixPair, notchSection, onePoleInto } from '../src/audio/effects.ts';
 
-test('combSum adds a delayed tap and scales', () => {
-  const x = Float32Array.from([1, 2, 3, 4, 5, 6]);
+test('mixPair is the stereo-to-mono downmix the late field starts from', () => {
+  // 0x0a30, used by the block processor at 0x1695 with both gains at 0.5 and
+  // the two halves of an interleaved-by-channel input buffer.
+  const left = Float32Array.from([1, 2, 3]);
+  const right = Float32Array.from([3, 4, 5]);
   const out = new Float32Array(3);
-  combSum(x, out, 2, 0.5, 3);
-  assert.deepEqual([...out], [(1 + 3) * 0.5, (2 + 4) * 0.5, (3 + 5) * 0.5]);
+  mixPair(left, right, out, 0.5, 0.5, 3);
+  assert.deepEqual([...out], [2, 3, 4]);
 });
 
 test('onePoleInto filters and carries its memory across the block', () => {
@@ -24,17 +27,20 @@ test('onePoleInto filters and carries its memory across the block', () => {
   assert.ok(Math.abs(y2 - y * 0.5) < 1e-6);
 });
 
-test('allpassSection subtracts its own output, which is what makes it allpass', () => {
+test('notchSection subtracts a resonator from the signal', () => {
+  // ⚠️ Not an allpass, which is what this test used to claim. With
+  // `a = 2r*cos(w)` and `c = -r*r` the recursion is a resonator, and `x - y` is
+  // a notch. The block processor runs it on the **input** (0x1810).
   const buf = Float32Array.from([1, 0, 0, 0]);
   const before = [...buf];
-  const { y } = allpassSection(buf, 0.5, 0.3, 0.2, 0, 0, 4);
+  const { y } = notchSection(buf, 0.5, 0.3, 0.2, 0, 0, 4);
   // First sample: y = 0.3*1 = 0.3, buf[0] = 1 - 0.3 = 0.7.
   assert.ok(Math.abs(buf[0] - 0.7) < 1e-6);
   assert.ok(Math.abs(y) < 1, 'the state stays bounded');
   assert.notDeepEqual([...buf], before);
 });
 
-test('dampedComb accumulates, damps, and mixes the send', () => {
+test('dampedComb accumulates the RAW delayed sample and gains the send too', () => {
   const x = Float32Array.from([1, 0, 0]);
   const acc = Float32Array.from([10, 20, 30]);
   const send = Float32Array.from([0, 0, 0]);

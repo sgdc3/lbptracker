@@ -79,12 +79,6 @@ const skipGuids = (process.env.LBP_SKIP ?? '').split(',').filter(Boolean).map(Nu
  */
 const noKeyTrack = process.env.LBP_NO_KEYTRACK === '1';
 /**
- * A/B for the reverb's one unmeasured factor. `LBP_REVERB_NORM=off` drops the
- * `1 - gain` scaling on each comb's contribution -- about 18 dB on the presets
- * these levels use. See `Reverb`'s `normaliseCombs`.
- */
-const reverbNorm = process.env.LBP_REVERB_NORM !== 'off';
-/**
  * How many voices the pool holds. `LBP_VOICES=off` (or 0) removes the cap.
  *
  * 📝 To be exposed in the UI -- see `VOICES_UNLIMITED` in `src/core/polyphony.ts`.
@@ -340,23 +334,32 @@ for (const [eventIndex, event] of events.entries()) {
     },
     lfos: [lfo(0), lfo(1), lfo(2)],
     automation,
-    // `fmodextinput.prx` 0x3cca-0x3d50. The note block carries five floats per
-    // placement at `+0x420 + 20i` -- level, pan, echoSend, reverbSend, instrument
-    // index -- and the two sends are treated differently:
+    // The sends, `fmodextinput.prx` 0x3c8a-0x3d10 (true vaddrs). The note block
+    // carries five floats per placement at `+0x420 + 20i` -- level, pan,
+    // echoSend, reverbSend, instrument index -- and the two sends are treated
+    // very differently:
     //
-    //   voice+0x1c = min(Params[25] + echoSend * (1 - Params[25]), 1)
-    //   voice+0x24 = min(reverbSend, 1)
+    //   voice+0x1c = clamp01( bipolar(Params[25], 2*echoSend - 1) )   the echo
+    //   voice+0x24 = clamp01( reverbSend )                            the reverb
     //
-    // ⚠️ The reverb send is `reverbSend` **alone**. A previous reading made it
-    // the product with `Params[25]`, taken from the `vmulss` at 0x3ce3 -- but
-    // `jbe` at 0x3ce1 sends every non-negative `echoSend` past it, so that
-    // multiply is the rare negative branch and never runs on real data. The
-    // product is 47.8x smaller than the truth and left the reverb inaudible.
-    echoSend: Math.min(
-      1,
-      P(OUTPUT_PARAMS.send) + track.echoSend * (1 - P(OUTPUT_PARAMS.send)),
-    ),
-    reverbSend: Math.min(1, track.reverbSend),
+    // ⚠️ The echo's placement field is a **bipolar offset**, not a blend.
+    // `v0x1607e9` writes `2*echoSend - 1` into the note block and 0x3ca1 applies
+    // it as `v + o*v` when `o < 0` and `v + o*(1 - v)` when `o >= 0`. So 0.5
+    // leaves the instrument's own send alone, 0 mutes it and 1 forces unity. A
+    // previous reading used `v + e*(1 - v)` with the raw field, which is only
+    // the upper half of that curve.
+    //
+    // ⚠️ The reverb send is `reverbSend` **alone**. The instrument's own reverb
+    // send does reach the voice, at `voice+0x20` from Params at `+0x5b8`, and
+    // then **nothing reads it** -- a grep of the whole PRX finds the store and
+    // no load.
+    echoSend: (() => {
+      const base = P(OUTPUT_PARAMS.send);
+      const offset = 2 * track.echoSend - 1;
+      const blended = offset < 0 ? base + offset * base : base + offset * (1 - base);
+      return Math.min(1, Math.max(0, blended));
+    })(),
+    reverbSend: Math.min(1, Math.max(0, track.reverbSend)),
     // Seeded, so the LFO phases are reproducible along with everything else.
     random: rand,
   };
@@ -403,14 +406,12 @@ const reverbL = new Float32Array(frames);
 const reverbR = new Float32Array(frames);
 mixer.render(left, right, { echo: [echoL, echoR], reverb: [reverbL, reverbR] });
 
-// The two sends, mixed back over the dry signal. ⚠️ The echo's topology and the
-// reverb itself are not measured -- see src/audio/effects.ts, which says which
-// parts are the game's and which are ours.
+// The two sends, mixed back over the dry signal. The reverb is the game's own
+// DSP now -- topology, levels and all -- so there is nothing to scale here.
+// ⚠️ The echo's topology is still ours; see src/audio/effects.ts.
 const echo = new Echo(RATE, seq.echoTime, framesPerStep, seq.echoFeedback, seq.echoMix);
 const preset = reverbPreset(seq.reverb);
-const reverb = new Reverb(RATE, preset, reverbNorm);
-// No extra wet gain here: the preset's own millibel levels are the wet level,
-// and multiplying them by a taste factor is how the reverb went inaudible.
+const reverb = new Reverb(RATE, preset);
 // Measured rather than assumed: how much of the finished mix each effect is.
 let dryEnergy = 0;
 let echoEnergy = 0;
@@ -419,11 +420,13 @@ for (let i = 0; i < frames; i += 1) {
   dryEnergy += left[i] ** 2 + right[i] ** 2;
   const e = echo.process(echoL[i], echoR[i]);
   echoEnergy += e.left ** 2 + e.right ** 2;
-  const rl = reverb.process(reverbL[i]);
-  const rr = reverb.process(reverbR[i]);
-  reverbEnergy += rl ** 2 + rr ** 2;
-  left[i] += e.left + rl;
-  right[i] += e.right + rr;
+  // ⚠️ One call per frame, stereo. It used to be two calls -- one per channel --
+  // through a single instance, which ran every delay line at twice the frame
+  // rate and put both channels through the same state.
+  const r = reverb.process(reverbL[i], reverbR[i]);
+  reverbEnergy += r.left ** 2 + r.right ** 2;
+  left[i] += e.left + r.left;
+  right[i] += e.right + r.right;
 }
 const rel = (x: number) => `${(100 * Math.sqrt(x / dryEnergy)).toFixed(1)}%`;
 console.log(`effect level against the dry mix — echo ${rel(echoEnergy)}, reverb ${rel(reverbEnergy)}`);
@@ -431,7 +434,8 @@ console.log(
   `echo ${seq.echoTime} = ${Math.round(seq.echoTime * 8)} steps = ` +
     `${echo.seconds.toFixed(3)}s at ${seq.tempo} BPM, ` +
     `feedback ${seq.echoFeedback}, mix ${seq.echoMix}; ` +
-    `reverb setting ${seq.reverb} -> preset [${preset.join(', ')}]`,
+    `reverb setting ${seq.reverb} -> preset [${preset.join(', ')}]; ` +
+    `reverb levels late ${reverb.lateLevel.toFixed(4)}, early ${reverb.earlyLevel.toFixed(5)}`,
 );
 
 let peak = 0;
@@ -447,7 +451,7 @@ for (let i = 0; i < frames; i += 1) {
   pcm[i * 2] = Math.max(-32768, Math.min(32767, Math.round(left[i] * norm * 32767)));
   pcm[i * 2 + 1] = Math.max(-32768, Math.min(32767, Math.round(right[i] * norm * 32767)));
 }
-const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${reverbNorm ? '-revnorm' : ''}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
+const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
 await writeFile(out, writeWav(pcm, 2, RATE));
 const elapsed = Number(process.hrtime.bigint() - started) / 1e9;
 console.log(

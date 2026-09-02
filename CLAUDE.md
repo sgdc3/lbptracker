@@ -67,10 +67,12 @@ they are the ground truth the JavaScript has to reproduce:
 
   Then `node dev/serve.mjs` and open http://127.0.0.1:8173/ to play them.
 - `lbpdis.py`, `callgraph.py`, `fmodapi.py` — eboot RE helpers (see `eboot-re.md`).
-- `prxdis.py` — the same for `fmodsmsreverb.prx` (`file = vaddr + 0x780`), resolving
-  rip-relative operands to the float/double there. The reverb's coefficients were read with
-  it. Disassemble from a **function start**, not an arbitrary address: a mid-function start
-  desynchronises the stream and prints convincing nonsense.
+- `prxdis.py` — the same for the two audio PRXs: `prxdis.py reverb|input <vaddr> [count]`,
+  resolving rip-relative operands to the float/double there. The whole reverb was read with it.
+  Disassemble from a **function start**, not an arbitrary address: a mid-function start
+  desynchronises the stream and prints convincing nonsense. ⚠️ Its file deltas were both **0x40
+  too small** until 2026-09-02, so every PRX address in a steering note older than that is 0x40
+  too high — the readings are fine, the labels are not. The script's docstring says why.
 
 Python on this machine: `C:\Users\sgdc3\AppData\Local\Programs\Python\Python314\python.exe`
 (capstone 5.0.7 is installed).
