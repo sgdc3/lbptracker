@@ -368,29 +368,91 @@ went and read the sampler. Clean was never the goal — matching the game is, an
 The table is now a statement about *how much* the mipmapping has to do, since without it linear
 would sit at 19 dB on exactly the notes that need it most.
 
-## 2b. `EchoTime`'s unit — SETTLED: eight steps per unit
+## 2 / 2b. The echo — SETTLED: a plain stereo delay, `EchoTime` in beats, and a hard clip
 
-`v0x1c5d2d`-`v0x1c5d3a` stores `EchoTime * 0.5` into the audio state at `[state+0x1a30]`, and
-`fmodextinput.prx` `0x0faa` turns that into a delay:
+The echo is not an FMOD DSP. It lives in `fmodextinput.prx`: the block function `0x0a90` sets it up
+at `0x0f6a` and calls the kernel at `0x0680`, and its ring is the 768,000-byte allocation at
+`[state+0x1b18]` — **192,000 floats**, interleaved stereo, 96,000 frames, 2.0 s at 48 kHz.
+
+⚠️ Addresses are TRUE ELF vaddrs (`file = vaddr + 0x7e0`); anything written before 2026-09-02 is
+0x40 too high. See [eboot-re.md](eboot-re.md).
+
+### The delay, and the factor of two three readings missed
 
 ```
-eax = (int)(stored * 16 + 0.5)       ; round to a whole number of steps
-ecx = (int)(720000 / tempo)          ; frames in one step
-ecx = ecx * eax
-ecx = ecx & ~0xf                     ; aligned down to 16 frames
+0x0f6a  steps  = (int)floor(stored * 16 + 0.5)      ; stored = [state+0x1a30] = EchoTime * 0.5
+0x0f8e  fps    = (int)(720000 / tempo)              ; frames in one step
+0x0fa4  len    = (steps * fps) & ~0xf
+0x0faa  len    = clamp(len, 16, 192000)
+0x0fcb  cursor = (cursor + 2*n) % len                ; n frames per block -> 2n
 ```
 
-`stored * 16` is `EchoTime * 8`, so the delay is **`round(EchoTime * 8)` steps** — eight steps, two
-beats, per unit of the field.
+`0x0680` then reads `min(2n, len - cursor)` **floats** from the ring at `cursor`, processes them as
+`[L, R, L, R, …]`, and writes them back **at the same cursor** (`0x08d3`). One cursor for read and
+write means the delay is one full trip round the ring, so:
 
-The corpus is the check and it is a clean one: `EchoTime` is **2.00 on 189 of 338 sequencers**,
-which is 16 steps — **a whole bar** — 1.00 on 95 (half a bar) and 1.50 on 47. Bar-relative delays are
-what a musician sets, and no other reading produces them.
+**delay in frames = `len / 2`**, which is `round(EchoTime * 8) / 2` steps, which at four steps to
+the beat is **`EchoTime` beats exactly**.
 
-⚠️ **Two wrong readings preceded this.** First `EchoTime * 0.5` seconds, which is
-tempo-independent and cannot be right in a tempo-locked sequencer. Then **beats**, argued from the
-corpus's musical detents — right that it was musical, wrong by a factor of four. The corpus said
-*which family* of answers was plausible; only the engine said which member.
+The decisive number is the clamp: **192,000 is the ring's float count**, not its frame count. If
+`len` were a frame count the bound would have to be 96,000. Everything else about this field is
+ambiguous and the corpus cannot break the tie — `EchoTime` is 2.00 on 189 of 338 sequencers, 1.00
+on 95 and 1.50 on 47, and two beats, two bars and half a bar are all musical detents.
+
+⚠️ **Three wrong readings, each of which looked settled.** First `EchoTime * 0.5` **seconds**, which
+is tempo-independent and cannot be right in a tempo-locked sequencer. Then **beats**, argued from
+those detents — which was the right answer for the wrong reason and was then "corrected" away. Then
+**eight steps per unit** (two beats), read off `stored * 16` at `0x0f74`, which fixed the beats
+reading by a factor of four and was itself a factor of two out. The lesson is narrow and useful:
+`stored * 16` is a *length*, and a length means nothing until you know what it counts.
+
+### The kernel, `0x07c0`
+
+```
+dL, dR = ring[2i], ring[2i+1]              ; the delayed stereo pair
+s3 += (dL - s3) * k    s2 += (dR - s2) * k ; k = 1 - [state+0x1a40]
+s1 += (s3 - s1) * k    s0 += (s2 - s0) * k ; a second, cascaded one-pole
+wL, wR = EchoMix * s1, EchoMix * s0
+out4[4i+0..3] = clamp(out4[4i+0..3] + {wL, wR, wL, wR}, -1, +1)
+ring[2i], ring[2i+1] = fb*s1 + send[2i], fb*s0 + send[2i+1]   ; fb = clamp(EchoFeedback, 0, 0.95)
+```
+
+Two things there are worth more than the delay:
+
+- **The wet is added to all four output channels** (`0x0846`-`0x0858` builds `{wL, wR, wL, wR}`),
+  and channels 2-3 are the reverb send. **The echo feeds the reverb.**
+- **The output is hard-clipped to ±1**, all four channels, once per frame (`0x0889`-`0x0891`). This
+  is the only nonlinearity in the sequencer's output stage, and the reverb is therefore fed a
+  clipped signal. On the reference render it touches 0.01% of frames, which is also a weak check
+  that our absolute level is not far off the game's.
+
+### Two features in the code that the game never reaches
+
+- **Damping.** The two cascaded one-poles above, with `k = 1 - [state+0x1a40]`, on both the output
+  and the feedback path (states at `+0x1b20`..`+0x1b2c`).
+- **Ping-pong.** When `[state+0x1a3c] > 0.5` the write-back indices become `(2i) | 1` and
+  `(2i+1) ^ 1`, so the feedback swaps L and R on every pass (`0x0866`, `0x087d`).
+
+⚠️ **Neither is reachable in the shipped game.** `0x11fd` and `0x1207` initialise both fields to
+zero and nothing writes them: a byte scan of the whole eboot finds **no store to `+0x1a3c` at all**,
+and both state-upload paths (`v0x1c5cf8` and `v0x1c62b7`) write tempo, swing, `EchoFeedback`,
+`EchoTime * 0.5` and `EchoMix` and skip these two. With `[+0x1a40] = 0` the coefficient is 1 and the
+one-poles are pass-through. So the shipped echo is a plain stereo delay with feedback and a wet
+gain — but do not "find" a filter in that loop later and wire it up.
+
+### The parameters
+
+| field | state | law |
+|---|---|---|
+| `EchoTime` | `+0x1a30`, stored as `× 0.5` | the delay, in **beats** |
+| `EchoFeedback` | `+0x1a34` | clamped to `[0, 0.95]` at `0x0793`-`0x079b` |
+| `EchoMix` | `+0x1a38` | a plain wet gain; the dry is not attenuated |
+
+Across 338 sequencers `EchoFeedback` runs 0–0.9 (median 0.45) and `EchoMix` 0–1 (median 0.5).
+
+The **send** into it is `voice+0x1c` — the instrument's own send interpolated by the note's
+modulation, then offset by the placement's `2*echoSend - 1`. See the sends table in
+*6 / 14. The reverb*.
 
 ## 3b. Swing — SETTLED: alternate steps stretch and squeeze by `swing/2`
 

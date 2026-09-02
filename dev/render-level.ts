@@ -17,7 +17,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { Echo, Reverb, reverbPreset } from '../src/audio/effects.ts';
+import { Echo, Reverb, clipToUnit, reverbPreset } from '../src/audio/effects.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from '../src/audio/mixer.ts';
 import { buildMipChain } from '../src/audio/mipmap.ts';
 import { FILTER_PARAMS } from '../src/audio/moog.ts';
@@ -78,6 +78,16 @@ const skipGuids = (process.env.LBP_SKIP ?? '').split(',').filter(Boolean).map(Nu
  * dragged down to 0.50 by a ride playing an octave low.
  */
 const noKeyTrack = process.env.LBP_NO_KEYTRACK === '1';
+/**
+ * Whether the plugin's own output clip runs. `LBP_NO_CLIP=1` removes it.
+ *
+ * `fmodextinput.prx` 0x0889 hard-clips all four output channels to +-1 once per
+ * frame, after the echo's wet has been added. It is the only nonlinearity in the
+ * sequencer's output stage. Whether it should engage on our renders depends on
+ * our absolute level being the game's, which is not independently checked --
+ * hence the switch and the reported percentage.
+ */
+const clip = process.env.LBP_NO_CLIP !== '1';
 /**
  * How many voices the pool holds. `LBP_VOICES=off` (or 0) removes the cap.
  *
@@ -406,36 +416,54 @@ const reverbL = new Float32Array(frames);
 const reverbR = new Float32Array(frames);
 mixer.render(left, right, { echo: [echoL, echoR], reverb: [reverbL, reverbR] });
 
-// The two sends, mixed back over the dry signal. The reverb is the game's own
-// DSP now -- topology, levels and all -- so there is nothing to scale here.
-// ⚠️ The echo's topology is still ours; see src/audio/effects.ts.
+// The two sends, mixed back over the dry signal. Both are the game's own now --
+// topology, levels and all -- so there is nothing to scale here.
 const echo = new Echo(RATE, seq.echoTime, framesPerStep, seq.echoFeedback, seq.echoMix);
 const preset = reverbPreset(seq.reverb);
 const reverb = new Reverb(RATE, preset);
-// Measured rather than assumed: how much of the finished mix each effect is.
+// The plugin's output stage, in the engine's order (`fmodextinput.prx` 0x07c0):
+// the echo's wet is added to ALL FOUR channels -- the dry pair and the reverb
+// send pair -- and then all four are hard-clipped to +-1. Only after that does
+// the reverb DSP see its input.
+//
+// ⚠️ The clip is measured but its effect depends on our absolute level matching
+// the game's, which nothing here verifies. The share of frames it touches is
+// reported below; `LBP_NO_CLIP=1` removes it for an A/B.
 let dryEnergy = 0;
 let echoEnergy = 0;
 let reverbEnergy = 0;
+let clipped = 0;
 for (let i = 0; i < frames; i += 1) {
   dryEnergy += left[i] ** 2 + right[i] ** 2;
   const e = echo.process(echoL[i], echoR[i]);
   echoEnergy += e.left ** 2 + e.right ** 2;
+  let dryL = left[i] + e.left;
+  let dryR = right[i] + e.right;
+  let sendL = reverbL[i] + e.left;
+  let sendR = reverbR[i] + e.right;
+  if (clip) {
+    if (dryL > 1 || dryL < -1 || dryR > 1 || dryR < -1) clipped += 1;
+    dryL = clipToUnit(dryL);
+    dryR = clipToUnit(dryR);
+    sendL = clipToUnit(sendL);
+    sendR = clipToUnit(sendR);
+  }
   // ⚠️ One call per frame, stereo. It used to be two calls -- one per channel --
   // through a single instance, which ran every delay line at twice the frame
   // rate and put both channels through the same state.
-  const r = reverb.process(reverbL[i], reverbR[i]);
+  const r = reverb.process(sendL, sendR);
   reverbEnergy += r.left ** 2 + r.right ** 2;
-  left[i] += e.left + r.left;
-  right[i] += e.right + r.right;
+  left[i] = dryL + r.left;
+  right[i] = dryR + r.right;
 }
 const rel = (x: number) => `${(100 * Math.sqrt(x / dryEnergy)).toFixed(1)}%`;
 console.log(`effect level against the dry mix — echo ${rel(echoEnergy)}, reverb ${rel(reverbEnergy)}`);
 console.log(
-  `echo ${seq.echoTime} = ${Math.round(seq.echoTime * 8)} steps = ` +
-    `${echo.seconds.toFixed(3)}s at ${seq.tempo} BPM, ` +
-    `feedback ${seq.echoFeedback}, mix ${seq.echoMix}; ` +
+  `echo ${seq.echoTime} beats = ${echo.frames} frames = ${echo.seconds.toFixed(3)}s at ` +
+    `${seq.tempo} BPM, feedback ${seq.echoFeedback}, mix ${seq.echoMix}; ` +
     `reverb setting ${seq.reverb} -> preset [${preset.join(', ')}]; ` +
-    `reverb levels late ${reverb.lateLevel.toFixed(4)}, early ${reverb.earlyLevel.toFixed(5)}`,
+    `reverb levels late ${reverb.lateLevel.toFixed(4)}, early ${reverb.earlyLevel.toFixed(5)}` +
+    (clip ? `; output clip touched ${((100 * clipped) / frames).toFixed(2)}% of frames` : '; output clip OFF'),
 );
 
 let peak = 0;
@@ -451,7 +479,7 @@ for (let i = 0; i < frames; i += 1) {
   pcm[i * 2] = Math.max(-32768, Math.min(32767, Math.round(left[i] * norm * 32767)));
   pcm[i * 2 + 1] = Math.max(-32768, Math.min(32767, Math.round(right[i] * norm * 32767)));
 }
-const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
+const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${clip ? '' : '-noclip'}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
 await writeFile(out, writeWav(pcm, 2, RATE));
 const elapsed = Number(process.hrtime.bigint() - started) / 1e9;
 console.log(

@@ -16,12 +16,12 @@ The sampler, the envelope, the scale quantiser (six rows at module vaddr `0x80c0
 destinations and the pan law are all measured; see
 [sequencer-data-model.md](sequencer-data-model.md).
 
-**What is left is mostly the echo and the remaining field semantics.** The reverb is closed as of
-2026-09-02: the whole DSP — topology, coefficients, levels, sends and the master path — is read out
-of `fmodsmsreverb.prx` and implemented, and the entry that used to live here is now
-*6 / 14. The reverb* in [answered-questions.md](answered-questions.md). Read that before touching
-`src/audio/effects.ts`: most of what this file used to say about the reverb was wrong, and the
-table of wrong readings there is the useful part.
+**The effects are closed.** Both were finished on 2026-09-02 and both are in
+[answered-questions.md](answered-questions.md): *6 / 14. The reverb* (the whole of
+`fmodsmsreverb.prx`) and *2 / 2b. The echo*. Read them before touching `src/audio/effects.ts` —
+most of what this file used to say about either was wrong, and the tables of wrong readings are the
+useful part. **What is left is the remaining field semantics**, mainly `Notes.y` / `Splitnotes`
+(question 4), which is the one that can still transpose an imported level.
 
 Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then working outward from it. That
 run closed questions 5 and 7 outright, the whole of 8's `Params`, and the triplet half of 3; it
@@ -46,31 +46,6 @@ anything; all are places where an answer stopped just short.
   ratio clamped at 0.99 and what the engine does with it is still unknown. It stays under question 3.
 - **The voice pool did not explain the density report it was found chasing.** It cuts 248 of 1,684
   notes over one window and a listener heard no difference.
-
-## 2. The echo's topology — the only effect still inferred
-
-⚠️ Two things this question used to be about are settled and are not here any more:
-`EchoTime`'s unit (eight steps per unit — *2b* in [answered-questions.md](answered-questions.md))
-and `v0x3fd4c0`, which is the **reverb**'s preset applier, not an echo setup.
-
-**The echo is not an FMOD DSP.** It is inside `fmodextinput.prx`, and its buffer is the
-768,000-byte allocation at state `+0x1b18` — **192,000 floats = 48,000 frames × 4 channels =
-exactly 1.000 s at 48 kHz**.
-
-**What is measured about its input.** The block processor accumulates into a stereo `alloca`d
-buffer, `out2[2i] += L * voice[0x1c]`, at `0x2f6b` (true vaddrs). `voice+0x1c` is the instrument's
-own send interpolated by the note's modulation, then offset by the placement's
-`2*echoSend - 1` — see the sends table in *6 / 14. The reverb*.
-
-**What is left**, and it is a job on the delay code around `0x0670` and `0x0f6a`:
-
-- the feedback path and the wet/dry law — `[state+0x1a34]` and `[state+0x1a38]` hold
-  `EchoFeedback` and `EchoMix`, but how they are applied is unread;
-- whether the four channels cross-feed, or are two independent stereo pairs.
-
-`src/audio/effects.ts` implements a plain stereo delay with feedback, which is the shape those
-parameters describe and no more. `EchoFeedback` runs 0–0.9 (median 0.45) and `EchoMix` 0–1
-(median 0.5) over 338 sequencers.
 
 ## 3. Grid resolution, swing, and triplets
 

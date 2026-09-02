@@ -212,18 +212,41 @@ test('the output delay is slot 6 in milliseconds, and it delays the late field',
   }
 });
 
-test('the echo delay is eight steps per unit of EchoTime', async () => {
-  const { Echo } = await import('../src/audio/effects.ts');
-  // v0x1c5d32 stores EchoTime * 0.5; 0x0f6a rounds `stored * 16` to a whole
-  // number of steps and multiplies by the step length, then aligns to 16
-  // frames. So the delay is round(EchoTime * 8) steps.
+test('the echo delay is EchoTime in beats, because the ring counts floats', async () => {
+  const { Echo, clipToUnit } = await import('../src/audio/effects.ts');
+  // fmodextinput.prx 0x0f6a-0x0fdb builds the length and advances the cursor:
+  //
+  //   steps  = floor(EchoTime * 8 + 0.5)
+  //   len    = clamp((steps * (int)(720000/tempo)) & ~0xf, 16, 192000)
+  //   cursor = (cursor + 2*n) % len
+  //
+  // The cursor is a FLOAT index into an interleaved-stereo ring, and 0x0680
+  // reads and writes at the same cursor, so the delay is `len / 2` frames.
+  //
+  // ⚠️ The upper clamp is 192000, which is the ring's float count exactly
+  // (768,000 bytes). If `len` were a frame count the bound would be 96000. That
+  // number is the whole proof of the halving, and three earlier readings of this
+  // field -- seconds, beats, then eight steps per unit -- all missed it.
   const fps = 4000; // 180 BPM at 48 kHz
-  for (const [field, steps] of [[1, 8], [2, 16], [1.5, 12], [4, 32]] as [number, number][]) {
+  const beat = 48000 * (60 / 180);
+  for (const field of [1, 1.5, 2, 4]) {
     const echo = new Echo(48000, field, fps, 0.5, 0.5);
-    assert.equal(echo.seconds, ((steps * fps) & ~0xf) / 48000, `EchoTime ${field}`);
+    const steps = Math.trunc(field * 8 + 0.5);
+    assert.equal(echo.frames, ((steps * fps) & ~0xf) >> 1, `EchoTime ${field}`);
+    assert.ok(
+      Math.abs(echo.frames - field * beat) < 1,
+      `EchoTime ${field} should be ${field} beats, got ${(echo.frames / beat).toFixed(3)}`,
+    );
   }
-  // ⚠️ The corpus is the sanity check: EchoTime is 2.00 on 189 of 338
-  // sequencers, which is 16 steps -- a whole bar -- and 1.00 on 95, half a bar.
-  const bar = new Echo(48000, 2, fps, 0.5, 0.5);
-  assert.equal(bar.seconds, (16 * fps) / 48000, 'a full bar at four steps to the beat');
+  // The cap is the ring itself: 192,000 floats = 96,000 frames = 2.0 s.
+  const capped = new Echo(48000, 4, 720000 / 60, 0.5, 0.5);
+  assert.equal(capped.frames, 96000);
+  assert.equal(capped.seconds, 2);
+  // vmaxss against 0 then vminss against 0.95, at 0x0793-0x079b.
+  assert.equal(new Echo(48000, 1, fps, 5, 0.5).feedback, 0.95);
+  assert.equal(new Echo(48000, 1, fps, -1, 0.5).feedback, 0);
+  // The output stage's hard clip, 0x0889-0x0891.
+  assert.equal(clipToUnit(2), 1);
+  assert.equal(clipToUnit(-2), -1);
+  assert.equal(clipToUnit(0.5), 0.5);
 });

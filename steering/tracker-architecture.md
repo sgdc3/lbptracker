@@ -45,7 +45,7 @@ core/           pure, no DOM, no Web Audio — unit-testable, shared with the No
                   steering/sequencer-data-model.md
 audio/
   mixer-worklet.ts   the AudioWorkletProcessor: voices, interpolation, channels, sends
-  dsp/echo.ts        delay line + feedback + wet/dry, parameters from PSequencer
+  dsp/echo.ts        the game's own delay, ported from fmodextinput.prx 0x0680
   dsp/reverb.ts      the game's own DSP, ported from fmodsmsreverb.prx (see answered-questions.md)
   render.ts          OfflineAudioContext wrapper for WAV export
 io/
@@ -117,7 +117,7 @@ reorder 1 and 2 — you want the asset pipeline proven before anything depends o
    So the walk needs **eight** part readers, not thirty-four, and `PSwitch` (~500 lines) is the only
    heavy one. That is a session or two, not a month. Do it against `tools/RawDump.java`'s output as
    a golden fixture — 129,696 rows of it — so every part added is checked the moment it lands.
-5. **Echo and reverb** with the real parameters — do open question 1 (the DSP indices) first.
+5. **Echo and reverb** — both are read out of the game and implemented in `src/audio/effects.ts`.
 6. **UI**.
 7. **Round-trip export** back into a game-loadable resource. The feature that makes the project
    matter to the LBP community, and it depends on step 4.

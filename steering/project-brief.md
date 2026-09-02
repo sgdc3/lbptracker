@@ -25,7 +25,7 @@ Ranked by how audible a mismatch would be. This is the fidelity budget: spend ef
 | 2 | Pitch / note mapping | **Exact** | `basenote` + `finetune` + `Splitnotes` give a closed-form playback rate; no engine state involved |
 | 3 | Timing (tempo, swing, loop, start point) | **Exact** | Integer/rational arithmetic on a fixed grid |
 | 4 | Per-channel volume, pan, mix | **Exact** if we match FMOD's pan law | Needs one measurement (see open questions) |
-| 5 | Echo | **Effectively exact** | FMOD Ex's echo DSP is a delay line with feedback; the parameters (`EchoTime`, `EchoFeedback`, `EchoMix`, `EchoSend`) are all in the save data |
+| 5 | Echo | **Exact** | Settled 2026-09-02: it is not an FMOD DSP but a delay inside `fmodextinput.prx`, and `EchoTime` is a delay in **beats** |
 | 6 | Resampling of pitched samples | **Very close** | FMOD Ex resamples with a selectable-quality interpolator. Matching it needs our own mixer, not the browser's — this is the main reason for AudioWorklet |
 | 7 | Reverb | **Exact** | Settled 2026-09-02: it is `fmodsmsreverb.prx` and the whole DSP is read |
 

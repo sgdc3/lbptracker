@@ -91,9 +91,10 @@ arithmetic, not guesswork.
 
 ## What this means for matching the sound
 
-- **Echo**: not an FMOD DSP at all — it lives inside `fmodextinput.prx`, on a stereo buffer the
-  block processor accumulates into. Its unit and its send are measured; its feedback topology is
-  the last inferred thing in the effects chain. See open question 2.
+- **Echo**: **settled** — not an FMOD DSP at all, but a delay inside `fmodextinput.prx` on a
+  192,000-float interleaved-stereo ring. `EchoTime` is a delay in **beats**, its wet is added to the
+  reverb send as well as the dry pair, and the plugin hard-clips all four output channels to ±1
+  afterwards. See *2 / 2b. The echo* in [answered-questions.md](answered-questions.md).
 - **Reverb**: **settled, and it is neither of the two candidates this file used to name.** It is
   `fmodsmsreverb.prx`, a plugin the game ships and loads, and the whole of it has been read: a mono
   downmix into a damped one-pole and a notch, a parallel bank of `tapCount - 2` damped feedback

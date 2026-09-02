@@ -35,42 +35,77 @@
  * forces it to unity.
  */
 
-/** A stereo delay with feedback, driven by the sequencer's three fields. */
+/**
+ * The game's echo, `fmodextinput.prx` `0x0680`, driven from the setup at `0x0f6a`.
+ *
+ * It is not an FMOD DSP: it lives inside the sequencer's own plugin, on a
+ * 768,000-byte ring at `[state+0x1b18]` — **192,000 floats**, and the engine
+ * clamps the delay against exactly that number, so the ring is measured in
+ * floats and holds **interleaved stereo**: 96,000 frames, 2.0 s at 48 kHz.
+ *
+ * ## The delay, and the factor of two that hid in it
+ *
+ * `0x0f6a`-`0x0fc1` builds the length and `0x0fcb`-`0x0fdb` advances the cursor:
+ *
+ * ```
+ * steps  = (int)floor(stored * 16 + 0.5)      ; stored is EchoTime * 0.5
+ * fps    = (int)(720000 / tempo)              ; frames in one step
+ * len    = (steps * fps) & ~0xf               ; FLOATS, not frames
+ * len    = clamp(len, 16, 192000)
+ * cursor = (cursor + 2 * n) % len             ; n frames -> 2n floats
+ * ```
+ *
+ * and `0x0680` reads `min(2n, len - cursor)` floats from the ring at `cursor`,
+ * processes them as `[L, R, L, R, …]`, and writes them back **at the same
+ * cursor**. Read and write at one cursor means the delay is one full trip round
+ * the ring, so:
+ *
+ * **delay in frames = `len / 2`** — and `len / 2` frames is
+ * `round(EchoTime * 8) / 2` steps, which at four steps to the beat is
+ * **`EchoTime` beats exactly.**
+ *
+ * ⚠️ Three readings preceded that, and the third was still wrong. First
+ * `EchoTime * 0.5` **seconds**, which cannot be right in a tempo-locked
+ * sequencer. Then **beats**, argued from the corpus's musical detents. Then
+ * **eight steps per unit** — two beats — from `stored * 16`, which corrected the
+ * beats reading by a factor of four and was itself a factor of two out, because
+ * `len` counts floats and every frame is two of them. The corpus never
+ * distinguished these: `EchoTime` is 2.00 on 189 of 338 sequencers, 1.00 on 95
+ * and 1.50 on 47, and two beats, two bars and half a bar are all musical. Only
+ * the unit of the cursor settles it, and the cursor is a float index.
+ *
+ * ## Two features that are in the code and off in the game
+ *
+ * The kernel at `0x07c0` also carries, on the delayed signal:
+ *
+ * - **two cascaded one-poles**, `s += (x - s) * k` with `k = 1 - [state+0x1a40]`,
+ *   feeding both the output and the feedback (states at `+0x1b20`..`+0x1b2c`);
+ * - a **ping-pong**: when `[state+0x1a3c] > 0.5` the write-back indices become
+ *   `(2i) | 1` and `(2i+1) ^ 1`, so the feedback path swaps L and R each pass.
+ *
+ * ⚠️ **Neither is reachable.** `0x11fd`/`0x1207` initialise both fields to zero
+ * and **nothing writes them**: a scan of the whole eboot finds *no* store to
+ * `+0x1a3c` at all, and both of the two state-upload paths (`v0x1c5cf8` and
+ * `v0x1c62b7`) write tempo, swing and the three echo fields and skip these. With
+ * `[+0x1a40] = 0` the coefficient is 1 and the one-poles are pass-through; with
+ * `[+0x1a3c] = 0` the ping-pong is off. So the shipped echo is a plain stereo
+ * delay, and this class does not implement either — but they are worth knowing
+ * about before someone "discovers" a filter in that loop.
+ */
 export class Echo {
   private readonly left: Float32Array;
   private readonly right: Float32Array;
   private cursor = 0;
-  private readonly delay: number;
+  /** The delay in output frames — `len / 2`, so always a multiple of 8. */
+  readonly frames: number;
   readonly feedback: number;
   readonly mix: number;
   /** The delay actually used, in seconds. Handy for reporting. */
   readonly seconds: number;
 
   /**
-   * @param echoTime the sequencer's field.
+   * @param echoTime the sequencer's field, which is a delay in **beats**.
    * @param framesPerStep the sequencer's step length in output frames.
-   *
-   * **The unit is measured.** `v0x1c5d32` stores `EchoTime * 0.5` into the audio
-   * state at `[state+0x1a30]`, and `fmodextinput.prx` `0x0faa` turns that into a
-   * delay:
-   *
-   * ```
-   * eax = (int)(stored * 16 + 0.5)       ; round to a whole number of steps
-   * ecx = (int)(720000 / tempo)          ; frames in one step
-   * ecx = ecx * eax
-   * ecx = ecx & ~0xf                     ; aligned down to 16 frames
-   * ```
-   *
-   * `stored * 16` is `EchoTime * 8`, so the delay is **`round(EchoTime * 8)`
-   * steps** -- eight steps, two beats, per unit of the field.
-   *
-   * The corpus agrees and is worth keeping as the sanity check: `EchoTime` is
-   * 2.00 on 189 of 338 sequencers, which is 16 steps, **a whole bar**; 1.00 on
-   * 95 (half a bar); 1.50 on 47. Those are bar-relative delays, which is what a
-   * musician would set.
-   *
-   * WARNING: an earlier reading called the field **beats**, which made every
-   * echo four times too fast.
    */
   constructor(
     sampleRate: number,
@@ -80,26 +115,54 @@ export class Echo {
     mix: number,
   ) {
     const steps = Math.max(0, Math.trunc(Math.max(echoTime, 0) * 0.5 * 16 + 0.5));
-    // `& ~0xf` in the engine: the delay is aligned down to a multiple of 16
-    // frames, which is its block granularity.
-    const size = Math.max(1, Math.trunc(steps * framesPerStep) & ~0xf);
-    this.seconds = size / sampleRate;
-    this.left = new Float32Array(size);
-    this.right = new Float32Array(size);
-    this.delay = size;
+    // `& ~0xf` is the engine's block granularity, and the clamp's upper bound is
+    // the ring's own float count. Both are applied to the FLOAT length.
+    const floats = Math.min(
+      192000,
+      Math.max(16, Math.trunc(steps * Math.trunc(framesPerStep)) & ~0xf),
+    );
+    this.frames = floats >> 1;
+    this.seconds = this.frames / sampleRate;
+    this.left = new Float32Array(this.frames);
+    this.right = new Float32Array(this.frames);
+    // `vmaxss` against 0 then `vminss` against 0.95, at 0x0793-0x079b.
     this.feedback = Math.min(Math.max(feedback, 0), 0.95);
     this.mix = Math.min(Math.max(mix, 0), 1);
   }
 
-  /** Process one frame, returning the wet signal to add to the mix. */
+  /**
+   * Process one frame, returning the wet signal.
+   *
+   * ⚠️ In the engine this wet is added to **all four** of the plugin's output
+   * channels (`0x0846`-`0x0858` builds `{wL, wR, wL, wR}`), and channels 2-3 are
+   * the reverb send. **The echo feeds the reverb**, and the caller has to do
+   * that; this returns one stereo pair.
+   */
   process(l: number, r: number): { left: number; right: number } {
     const wetL = this.left[this.cursor];
     const wetR = this.right[this.cursor];
     this.left[this.cursor] = l + wetL * this.feedback;
     this.right[this.cursor] = r + wetR * this.feedback;
-    this.cursor = (this.cursor + 1) % this.delay;
+    this.cursor = this.cursor + 1 === this.frames ? 0 : this.cursor + 1;
     return { left: wetL * this.mix, right: wetR * this.mix };
   }
+}
+
+/**
+ * The hard clip the sequencer's plugin puts on its own output.
+ *
+ * `0x0889`-`0x0899`: `vmaxps` against -1, `vminps` against +1, on all four
+ * channels at once, applied to the dry mix **plus** the echo's wet, once per
+ * frame. Channels 0-1 are what reaches the master and 2-3 are the reverb send,
+ * so both are clipped — the reverb is fed a clipped signal.
+ *
+ * ⚠️ This is the only nonlinearity in the sequencer's output stage, and whether
+ * it engages depends on our absolute level matching the game's, which is not
+ * independently verified. `dev/render-level.ts` reports how much of the render
+ * it touches, and `LBP_NO_CLIP=1` turns it off for an A/B.
+ */
+export function clipToUnit(v: number): number {
+  return v > 1 ? 1 : v < -1 ? -1 : v;
 }
 
 /**
