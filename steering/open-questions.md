@@ -199,10 +199,43 @@ no stride arithmetic anywhere, no per-field stores, and the PRX's only interacti
 clamp of a value that must already be there. A `setParameterData` copy into the record fits all four
 negatives at once.
 
-**Next step:** the PRX's parameter-set entry, on the FMOD DSP callback table. Four functions read
-`+0x4e4` (`0x22d7`, `0x28dc`, `0x2b12`, `0x2de6`); the one that *writes* a caller-supplied buffer
-into the record is the one to find, and what it copies will say whether `+0x78`/`+0x7c`/`+0x80` are
-what `0x3780` and `0x3035` make them look like.
+### And the blob route, followed 2026-09-02 — the eboot owns the whole state
+
+⚠️ **There is no `setParameterData` to find.** FMOD **Ex 4**'s DSP parameters are floats and
+nothing else; the data-parameter API is FMOD Studio's. So the block cannot arrive that way, and
+looking for it wastes a session.
+
+It arrives as an argument. Following the record-array pointer backwards:
+
+- The PRX does not own the array. `0x0526`-`0x0547` takes its base from a **global block at
+  `v0xb860`**, at `+0x08` or `+0x10`, selected by a byte flag at `+0x00` — two bases, so the eboot
+  is double-buffering them.
+- That global is filled by **`memcpy(v0xb860, arg3, 0x1b50)`** at `0x0abd`, inside the entry
+  `0x0a90(rdi, esi, rdx)`. `0x1b50` is **6,992** — the DSP state block, whose size steering already
+  had from the 32 voice records at `+0x28`…`+0x1a27`.
+- `0x1060` is the matching initialiser: it zeroes `+0x00`, `+0x08`, `+0x10` and `+0x18`.
+
+**So the eboot owns all 6,992 bytes and hands them over by pointer on each call**, records included
+— which is why nothing in the PRX ever initialises `+0x78`, and why the mip builder can only clamp a
+value that arrived from outside.
+
+⚠️ And the eboot never mentions `0x1b50` **anywhere in the image**, so the block is a type there,
+not a size constant. Its `0x5f0` sites are all one neighbourhood: a vector-grow at `v0x00b3a820`
+(new capacity, allocate `capacity * 0x5f0`, copy the elements) and its callers around `v0x00b37c71`.
+That is the container for the instrument records.
+
+**Next step — two concrete addresses, in that neighbourhood, found by scanning it for the slot
+offsets:**
+
+- **`v0x00b3ab0e`–`v0x00b3ab20`**: reads `[r14 + 0x78]` and `[r14 + 0x80]` as **qwords** and writes
+  them to `[rbx + 0x78]` / `[rbx + 0x80]` — a record-to-record copy of exactly the three fields in
+  question, which means the struct is being copied whole somewhere and the *source* is upstream.
+- **`v0x00b37e69`** / **`v0x00b37e7d`**: `[rax + 0x78] = 0` then `[rax + 0x7c] = rcx` as a qword — an
+  initialiser shape.
+
+⚠️ Both are in a region dense with `std::` container code, and `+0x10` alone matches 285 times in
+five pages, so **verify the object identity before believing either** — the discriminator is
+whether the same function also touches `+0x84` (the root note) or a `0x98` stride.
 
 ## 12b. The old note on `Params[2]`
 

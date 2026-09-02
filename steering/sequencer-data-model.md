@@ -1387,6 +1387,24 @@ inferred masks.
 and what the voice record's `+0x3e`/`+0x3f` pair counts — start and end of the note in thirds of a
 step. That closes the lead recorded earlier against open question 3.
 
+### Where the DSP's state comes from — measured 2026-09-02
+
+**The eboot owns it, all 6,992 bytes of it, and hands it to the PRX by pointer.**
+
+| what | where |
+|---|---|
+| the entry the eboot calls | `fmodextinput.prx` `0x0a90(rdi, esi, rdx)` |
+| what it does with `rdx` | `memcpy(v0xb860, rdx, 0x1b50)` at `0x0abd` — 6,992 bytes |
+| the instrument-record array base | inside that block, at `+0x08` **or** `+0x10`, chosen by a byte flag at `+0x00` (`0x0521`-`0x0547`) — two bases, i.e. double-buffered |
+| the block's initialiser | `0x1060`, which zeroes `+0x00`, `+0x08`, `+0x10`, `+0x18` |
+
+⚠️ This is why **nothing in the PRX ever initialises a slot's `+0x78`**: the records live in
+eboot memory and arrive filled. The mip builder at `0x12e0` can only clamp what is already there.
+
+⚠️ And **there is no `setParameterData` in this engine.** FMOD Ex 4's DSP parameters are floats;
+the data-parameter API belongs to FMOD Studio. Anything that needs a pointer goes through an
+argument like this one.
+
 ### The DSP's instrument record — measured 2026-09-02
 
 The block the eboot hands the DSP per instrument, `0x5f0` bytes (`imul rdx, rsi, 0x5f0` at
