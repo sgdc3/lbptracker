@@ -663,19 +663,51 @@ every octave band from 20 Hz to 20 kHz — so whatever it is, it is not frequenc
 - **Not the unison stack.** `a_kit_1` has `Numstack` 1, so `Params[1]`'s spread has no later layer to
   apply to.
 
-### Where to look
+### ✔ It is not the capture chain
 
-The pan reaching `0x2d19` comes from a **per-layer table** at `[rbp + rsi - 0x170]`, loaded at
-`0x2c04` and written through `r13` at `0x274f` — the same shape the gain LFO uses at `0x25a5`. That
-write is a per-block ramp: `2u - c·u` with `u = k·(t - previous)`, a Newton-refined interpolation
-toward the new value. Read what feeds `t` there, and whether anything narrows it on the way.
+The listener who made the recording also plays the game: **LBP never hard-pans, and a placement set
+to 100 is audibly not 100% right.** That is the same phenomenon from the other side, so the
+narrowing is the engine's.
 
-### ⚠️ And the one thing this cannot rule out from here
+### The flow, traced 2026-09-03 — and it is NOT in the plugin
 
-**The capture chain.** If the recording path applies any downmix or width reduction, it would look
-exactly like this — flat across frequency, a constant ratio. Before spending a session on the
-engine, confirm that the capture is a straight digital stereo tap. A recording of something known to
-be hard-panned would settle it in one take.
+| step | where | what |
+|---|---|---|
+| the placement's pan reaches the voice | `0x3b20` reads `[block + 0x424 + 20i]`, `0x3b29` writes `voice+0x18` | **unmodified** |
+| the voice's pan becomes two channel gains | `0x2d21` `1 - p`, `0x2d40` `p` | **linear, full width** |
+| our render under that law | — | 0.6 in, `R/(L+R) = 0.6000` out, to four decimals |
+
+So the plugin's dry pair **can** hard-pan, and the narrowing happens downstream of it.
+
+Three searches, all negative:
+
+- **`fmodextinput.prx` references no float near 0.58.** Sweeping every rip-relative constant the
+  module touches, between 0.2 and 0.9, gives only 0.25, 0.30, 0.3333, 0.3501, 0.5 and 0.8.
+- **The eboot's sequencer module** (`v0x1c0000`-`v0x1d0000`, 39 function starts) has only 0.25, 0.5,
+  0.75, 0.95.
+- **The CWLib audio layer** (`v0x3dd000`-`v0x3fe000`, 154 function starts) has 0.57 at `v0x3ee7be`
+  and 0.56 at `v0x3ee7f2` — tantalising, and reading them shows `|a - b|` against a threshold and
+  then `(x + c)/d`: a **distance crossfade**, positional audio rather than a pan law.
+
+⚠️ ⚠️ That last one is the hypothesis worth testing. **A music sequencer is a Thing at a
+position in the level**, and the game's audio layer places sounds in the world. If the sequencer is
+panned by where it is relative to the camera, the placement's own pan is a sub-mix inside a narrower
+window — which is a constant width scale, flat across frequency, and exactly "100 is not 100% right".
+
+### The two experiments that would settle it, both recordings
+
+1. **One instrument at pan 0 or 1.** Two interior points (0.4 and 0.6) cannot separate a linear
+   compression `0.5 + (p-0.5)k` from a cross-bleed `L' = L + bR` from a reduced-angle power law; one
+   extreme point separates all three at once.
+2. **The same sequencer recorded from two positions in the level.** If the width changes, it is
+   positional and a tracker with no world cannot reproduce it faithfully — which would itself be the
+   answer, and would make `panWidth` a legitimate user setting rather than a diagnostic.
+
+⚠️ `RenderOptions.panWidth` exists **only** as a diagnostic and defaults to 1, the file's own value.
+At 0.58 it reproduces the recording almost exactly — side/mid 0.1043 against the game's 0.1026, and
+the lone `baiyon_drums_1` hit at 0.5580 against 0.5586 — which is evidence that the *model* is a
+constant width scale, and no evidence at all about where 0.58 comes from. Do not promote it to a
+constant.
 
 ---
 

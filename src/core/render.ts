@@ -107,6 +107,24 @@ export interface RenderOptions {
   readonly reverb?: boolean;
   /** Run the echo. Default true. Same reasoning as `reverb`. */
   readonly echo?: boolean;
+  /**
+   * ⚠️ **A DIAGNOSTIC, not a setting.** Scales every placement's pan toward
+   * centre: `p' = 0.5 + (p - 0.5) * panWidth`. 1 is the file's own value and the
+   * default.
+   *
+   * It exists because the game **never hard-pans** -- a listener's observation,
+   * and measured: against a dry recording of `Ascetic`'s kits, a lone
+   * `baiyon_drums_1` voice at pan 0.60 comes out of the game at an energy ratio
+   * of **0.5586**, where this renderer gives 0.6000. Six windows at pan 0.40
+   * agree on the mirrored figure. That is a deviation scale of **~0.58**, flat
+   * across every octave band.
+   *
+   * ⚠️ **Where it comes from is unknown**, which is why this is a switch and not
+   * a constant in the pan law. `fmodextinput.prx` references no float between
+   * 0.35 and 0.5 anywhere, the pan reaches the voice unmodified at `0x3b29`, and
+   * the law at `0x2d21` is linear. See open question 22.
+   */
+  readonly panWidth?: number;
 }
 
 export interface RenderResult {
@@ -159,6 +177,7 @@ export async function renderSequencer(
     oneShot = 'gate',
     reverb: withReverb = true,
     echo: withEcho = true,
+    panWidth = 1,
     onProgress,
   } = options;
   const now = () => (typeof performance === 'undefined' ? Date.now() : performance.now());
@@ -454,7 +473,7 @@ export async function renderSequencer(
       // (`0x3cd8`-`0x3cf3`) and again to 0.95 in the block; `driveCoefficient`
       // does the second, so only the first belongs here.
       drive: Math.min(1, Math.max(0, P(OUTPUT_PARAMS.drive))),
-      pan: track.pan,
+      pan: 0.5 + (track.pan - 0.5) * panWidth,
       // Swing bends the step clock, so every frame position goes through it.
       startFrame: Math.round(swungFrame(event.step, framesPerStep, seq.swing)),
       // The note's own end -- what closes the gate. A one-shot ignores it; see
