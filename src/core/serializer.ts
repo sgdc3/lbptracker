@@ -278,6 +278,34 @@ export class Serializer {
     return out;
   }
 
+  /**
+   * A **byte-plane transposed** integer vector.
+   *
+   * ⚠️ Not an array of integers, and mistaking it for one is a silent
+   * desynchronisation: with `COMPRESSED_VECTORS` set the wire format is a count,
+   * then a *byte width*, then `width * count` bytes written plane by plane --
+   * every value's byte 0, then every value's byte 1, and so on. A width of 0
+   * means every value is zero and no bytes follow.
+   *
+   * Without the flag it degrades to a plain `i32` array. `PShape`'s polygon
+   * `loops` is the one this project met first; reading it as an array put the
+   * walk hundreds of bytes into a vertex list and the Thing marker caught it.
+   */
+  intVector(): number[] {
+    if ((this.compressionFlags & COMPRESSED_VECTORS) === 0) {
+      return this.array((self) => self.i32());
+    }
+    const count = this.i32();
+    if (count < 0) throw new SerializerError(`negative vector length ${count}`);
+    if (count === 0) return [];
+    const width = this.u8();
+    const out = new Array<number>(count).fill(0);
+    for (let plane = 0; plane < width; plane += 1) {
+      for (let i = 0; i < count; i += 1) out[i] |= this.u8() << (plane * 8);
+    }
+    return out;
+  }
+
   vector3(): [number, number, number] {
     return [this.f32(), this.f32(), this.f32()];
   }

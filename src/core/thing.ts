@@ -150,6 +150,20 @@ export function hasPart(thing: Thing, name: string): boolean {
 }
 
 /**
+ * Optional trace of what the walk is reading, and where.
+ *
+ * ⚠️ Keep this. A part that consumes the wrong number of bytes is only reported
+ * one Thing later, by the `0xAA` marker, and the byte offset alone does not say
+ * which part was wrong. The span of every part is what turns "something before
+ * byte 219" into "SHAPE ran 103..217 and should have stopped at 216".
+ */
+export type Trace = (event: string, start: number, end: number) => void;
+let trace: Trace | undefined;
+export function setTrace(fn: Trace | undefined): void {
+  trace = fn;
+}
+
+/**
  * Read one Thing.
  *
  * `readers` maps a part name to its reader; a part with no reader throws
@@ -158,6 +172,7 @@ export function hasPart(thing: Thing, name: string): boolean {
  */
 export function readThing(s: Serializer, readers: ReadonlyMap<string, PartReader>): Thing {
   const { version } = s.revision;
+  const thingStart = s.position;
 
   // `Revisions.THING_TEST_MARKER` is 0x2a1. It is a plain 0xAA and its whole job
   // is to fail loudly here rather than 200 bytes later.
@@ -221,9 +236,12 @@ export function readThing(s: Serializer, readers: ReadonlyMap<string, PartReader
     if ((BigInt(mask) & (1n << BigInt(part.index))) === 0n) continue;
     const read = readers.get(part.name);
     if (!read) throw new UnimplementedPartError(part.name);
+    const partStart = s.position;
     const value = s.reference((self) => read(self, thing));
+    trace?.(part.name, partStart, s.position);
     thing.parts.set(part.name, value);
   }
 
+  trace?.(`THING ${thing.uid}`, thingStart, s.position);
   return thing;
 }
