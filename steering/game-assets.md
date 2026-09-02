@@ -296,3 +296,47 @@ redistribute them**. The loading flow is: the user points the app at their own
 is uploaded. Build it that way from the first commit — retrofitting a "bring your own assets" flow
 onto a design that assumed bundled samples is painful, and shipping a build with the samples baked
 in even once is not something you can take back.
+
+## ⚠️ Two sample GUIDs shared one filename, and one kit played the other's kick
+
+Found 2026-09-03, and only because a listener recorded the game's own output and synced it against a
+render.
+
+`tools/ExtractGuid.java` named each extracted file after the **basename** of its FileDB path. Two
+GUIDs in `audio/music/samples` end in the same one:
+
+```
+g129030  gamedata/audio/music/samples/percussion/a_kit_1/kick.smp        45,044 bytes
+g148304  gamedata/audio/music/samples/baiyon/baiyon_drums/kick.smp       46,186 bytes
+```
+
+The second write silently clobbered the first, and `manifest.json` listed **both GUIDs pointing at
+the one survivor** — so one of the two kits played the other kit's kick, in every render this
+project has ever made. 216 manifest rows, 215 files on disk: the count was there to be noticed and
+nobody counted.
+
+**What it cost, measured against the recording.** Long-term average spectrum of `Ascetic`'s two kits,
+our render against the game's, by band:
+
+| band | before | after |
+|---|---|---|
+| 30-60 Hz | −0.81 dB | **−0.04 dB** |
+| 60-120 Hz | −1.57 dB | **−0.20 dB** |
+| 120-250 Hz | **+2.10 dB** | **−0.16 dB** |
+
+and the envelope correlation over 18 seconds went from 0.72 to **0.79**. The whole "our low end sits
+an octave too high" signature was one wrong file.
+
+**The fix** is in `ExtractGuid.java`: a name already claimed by a different GUID in the same run gets
+the GUID prefixed (`148304-kick.smp`), and the clash is printed rather than swallowed. Re-extract
+with
+
+```
+java -cp "$JAR;out" ExtractGuid <orbisguids.map> <gamedir> fixtures/smp audio/music/samples
+```
+
+⚠️ `<gamedir>` is the folder holding `base_001.farc` — `D:\PS4Games\CUSA00063`, **not** the `-patch`
+folder, which has only `patch_001.farc` and makes every row come back `MISSING`.
+
+**The general rule:** a manifest with more rows than files is a collision, and it is worth asserting.
+`fixtures/rinst` was clean (68 rows, 68 names); `fixtures/smp` was not.

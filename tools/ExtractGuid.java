@@ -52,6 +52,7 @@ public class ExtractGuid {
             }
         }
 
+        java.util.Map<String, String> claimed = new java.util.HashMap<>();
         for (int i = 3; i < args.length; ++i) {
             String query = args[i];
             List<FileDBRow> rows = new ArrayList<>();
@@ -88,11 +89,26 @@ public class ExtractGuid {
                     continue;
                 }
                 String name = row.getPath().replaceAll(".*[/\\\\]", "");
+                // ⚠️ Two GUIDs can share a basename, and this used to let the
+                // second silently overwrite the first while the manifest listed
+                // both pointing at the one survivor. `audio/music/samples` has
+                // exactly one such pair -- a_kit_1's kick (g129030) and
+                // baiyon_drums_1's (g148304), both `kick.smp` -- so one of the
+                // two kits played the other kit's kick, and it took a recording
+                // of the game to notice. Disambiguate rather than clobber.
+                String guid = row.getGUID().toString().replaceAll("[^0-9]", "");
+                String claimedBy = claimed.get(name);
+                if (claimedBy != null && !claimedBy.equals(guid)) {
+                    name = guid + "-" + name;
+                    System.out.printf("NAME CLASH  %s also wanted by g%s -> writing %s%n",
+                        row.getPath(), claimedBy, name);
+                }
+                claimed.put(name, guid);
                 Path out = outDir.toPath().resolve(name);
                 Files.write(out, data);
                 manifest.add(String.format(
                     "  {\"guid\": %s, \"file\": \"%s\", \"path\": \"%s\", \"size\": %d}",
-                    row.getGUID().toString().replaceAll("[^0-9]", ""), name,
+                    guid, name,
                     row.getPath().replace("\\", "/"), data.length));
                 System.out.printf("g%-10s %-64s %7d bytes from %-20s magic %s%n",
                     row.getGUID(), row.getPath(), data.length, from, magic(data));
