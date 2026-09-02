@@ -521,6 +521,13 @@ export class Mixer {
   /**
    * Render one block. `left` and `right` are cleared first, so callers get the
    * mix rather than an accumulation across blocks.
+   *
+   * `onVoice` is called after each voice is mixed in. It exists because an
+   * offline render of a whole song is one call that runs for many seconds, and
+   * a progress bar that only tracks the phases *around* it is worse than none:
+   * it fills, then freezes for most of the wait. The callback must be cheap and
+   * synchronous -- a worker's `postMessage` is, and reaches the main thread
+   * without this loop yielding.
    */
   render(
     left: Float32Array,
@@ -529,6 +536,7 @@ export class Mixer {
       readonly echo?: readonly [Float32Array, Float32Array];
       readonly reverb?: readonly [Float32Array, Float32Array];
     },
+    onVoice?: (done: number, total: number) => void,
   ): void {
     const frames = Math.min(left.length, right.length);
     left.fill(0);
@@ -547,7 +555,11 @@ export class Mixer {
     const scratchL = needsSends ? new Float32Array(frames) : left;
     const scratchR = needsSends ? new Float32Array(frames) : right;
 
+    const total = this.voices.length;
+    let done = 0;
     for (const voice of this.voices) {
+      if (onVoice && (done & 0xff) === 0) onVoice(done, total);
+      done += 1;
       const echo = voice.spec.echoSend ?? 0;
       const reverb = voice.spec.reverbSend ?? 0;
       if (!needsSends || (echo === 0 && reverb === 0)) {
@@ -574,6 +586,7 @@ export class Mixer {
       scratchL.fill(0, span.begin, span.end);
       scratchR.fill(0, span.begin, span.end);
     }
+    onVoice?.(total, total);
     // A voice that ran out mid-block has already written what it had.
     this.voices = this.voices.filter((v) => !v.finished);
   }

@@ -11,8 +11,8 @@
  * ⚠️ **The pipeline itself is not here.** It lives in `src/core/render.ts`, so
  * that the browser runs the same code; this file is the Node half of the
  * wrapper -- argument parsing, file loading, reporting -- and
- * `dev/render-worker.ts` is the browser half. `test/render.test.ts` asserts the
- * two agree bit for bit.
+ * `dev/render-worker.ts` is the browser half. They were measured agreeing bit
+ * for bit on 2026-09-02 -- see the header of `src/core/render.ts`.
  *
  * Needs the corpus dump at fixtures/levels/sequencers.jsonl (tools/RawDump.java)
  * and the extracted instruments at fixtures/rinst and fixtures/smp
@@ -261,7 +261,9 @@ console.log(
   `${result.played} notes played, ${result.skipped} skipped (instrument not extracted), ` +
     `peak ${result.peak.toFixed(3)}${norm !== 1 ? ` (normalised by ${norm.toFixed(3)})` : ''} -> ${out}`,
 );
+const { voicesMs, mixMs, effectsMs } = result.timings;
 console.log(
   `render took ${elapsed.toFixed(2)}s for ${result.seconds.toFixed(1)}s of audio ` +
-    `(${(result.seconds / elapsed).toFixed(1)}x realtime)`,
+    `(${(result.seconds / elapsed).toFixed(1)}x realtime) — voices ${(voicesMs / 1000).toFixed(2)}s, ` +
+    `mix ${(mixMs / 1000).toFixed(2)}s, effects ${(effectsMs / 1000).toFixed(2)}s`,
 );

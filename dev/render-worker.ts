@@ -5,7 +5,9 @@
  * It is deliberately thin. Everything musical happens in `renderSequencer`,
  * which is the same function `dev/render-level.ts` calls under Node, so a
  * browser render is not a reimplementation — it is the same arithmetic with a
- * different way of reading files. `test/render.test.ts` pins that.
+ * different way of reading files. On 2026-09-02 a browser render and a Node
+ * render of the same level came out byte-identical; see the header of
+ * `src/core/render.ts`.
  *
  * ⚠️ **The corpus dump is 81 MB.** Parsing all 129,696 rows in a browser tab is
  * possible but wasteful, so this keeps the text and parses only the lines of the
@@ -183,6 +185,9 @@ self.onmessage = async (event: MessageEvent) => {
             elapsed,
             echoSeconds: result.echo.seconds,
             reverbPreset: result.preset,
+            voicesMs: result.timings.voicesMs,
+            mixMs: result.timings.mixMs,
+            effectsMs: result.timings.effectsMs,
           },
         },
         [result.left.buffer, result.right.buffer, wav.buffer],

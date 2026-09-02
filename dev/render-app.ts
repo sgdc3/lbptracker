@@ -1,11 +1,11 @@
 /**
  * The level-render page.
  *
- * All it does is drive `dev/render-worker.ts` and show what comes back. The
- * audio arrives as two finished `Float32Array`s at 48 kHz; the page hands them
- * to an `AudioContext` created **at 48 kHz** so the browser has nothing to
- * resample, and offers the same WAV bytes `dev/render-level.ts` would have
- * written.
+ * All it does is drive `dev/render-worker.ts` and show what comes back: the
+ * finished samples for the waveform, and the same 48 kHz WAV bytes
+ * `dev/render-level.ts` would have written, handed to an `<audio>` element as a
+ * blob. Playback is the browser's only job here -- no resampling, no
+ * `playbackRate`, nothing that could differ between engines.
  */
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -31,6 +31,21 @@ const setStatus = (text: string, bad = false) => {
 };
 const setBar = (fraction: number) => {
   barFill.style.width = `${Math.max(0, Math.min(1, fraction)) * 100}%`;
+};
+
+/**
+ * How much of a render each phase is worth.
+ *
+ * ⚠️ **Measured, not guessed.** `renderSequencer` returns per-phase timings, and
+ * on the 368-second reference render they are voices 0.33 s, mix 15.88 s,
+ * effects 1.25 s -- so the mix is **92%** of the wait. Weighting the phases
+ * equally, or tracking only the phases around the mix, is what made the bar run
+ * to the top and then sit still for fifteen seconds.
+ */
+const WEIGHTS: Record<string, { start: number; span: number; label: string }> = {
+  voices: { start: 0, span: 0.02, label: 'scheduling voices' },
+  mix: { start: 0.02, span: 0.92, label: 'mixing voices' },
+  effects: { start: 0.94, span: 0.06, label: 'echo and reverb' },
 };
 
 /** A cheap peak envelope, so a finished render is visible as well as audible. */
@@ -63,12 +78,17 @@ worker.onmessage = (event: MessageEvent) => {
   if (message.type === 'progress') {
     const done = Number(message.done);
     const total = Number(message.total);
-    setBar(total > 0 ? done / total : 0);
-    if (message.phase === 'dump') {
+    const phase = String(message.phase);
+    if (phase === 'dump') {
+      setBar(total > 0 ? done / total : 0);
       setStatus(`fetching the corpus dump… ${(done / 1048576).toFixed(0)} MB`);
-    } else if (message.phase === 'voices') {
-      setStatus(`scheduling voices… ${done} of ${total}`);
+      return;
     }
+    const weight = WEIGHTS[phase];
+    if (!weight) return;
+    const within = total > 0 ? done / total : 0;
+    setBar(weight.start + weight.span * within);
+    setStatus(`${weight.label}… ${(within * 100).toFixed(0)}%`);
     return;
   }
 
@@ -120,6 +140,7 @@ worker.onmessage = (event: MessageEvent) => {
       ['peak / RMS', `${Number(stats.peak).toFixed(3)} / ${Number(stats.rms).toFixed(5)}` +
         (Number(stats.norm) !== 1 ? ` (normalised by ${Number(stats.norm).toFixed(3)})` : '')],
       ['render time', `${Number(stats.elapsed).toFixed(2)} s — ${(seconds / Number(stats.elapsed)).toFixed(1)}x realtime`],
+      ['  of which', `voices ${(Number(stats.voicesMs) / 1000).toFixed(2)} s, mix ${(Number(stats.mixMs) / 1000).toFixed(2)} s, effects ${(Number(stats.effectsMs) / 1000).toFixed(2)} s`],
     ];
     statsTable.innerHTML = rows
       .map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`)

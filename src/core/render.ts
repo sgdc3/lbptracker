@@ -103,6 +103,13 @@ export interface RenderResult {
   readonly echo: Echo;
   readonly reverb: Reverb;
   readonly preset: readonly number[];
+  /**
+   * How long each phase took, in milliseconds.
+   *
+   * Not decoration: a progress bar has to weight the phases by their real cost
+   * or it lies, and these are where `dev/render-app.ts`'s weights come from.
+   */
+  readonly timings: { readonly voicesMs: number; readonly mixMs: number; readonly effectsMs: number };
 }
 
 /** Render one sequencer end to end. */
@@ -124,6 +131,8 @@ export async function renderSequencer(
     pitchShift = new Map<number, number>(),
     onProgress,
   } = options;
+  const now = () => (typeof performance === 'undefined' ? Date.now() : performance.now());
+  const voicesStarted = now();
   // ⚠️ That claim used to be false: `VoiceSpec.random` was never set, so the LFO
   // phases came from `Math.random` and two runs of the same build produced
   // different files. It surfaced when a hash was used to check that an
@@ -344,11 +353,20 @@ export async function renderSequencer(
     played += 1;
   }
 
+  const voicesMs = now() - voicesStarted;
+
   const echoL = new Float32Array(frames);
   const echoR = new Float32Array(frames);
   const reverbL = new Float32Array(frames);
   const reverbR = new Float32Array(frames);
-  mixer.render(left, right, { echo: [echoL, echoR], reverb: [reverbL, reverbR] });
+  const mixStarted = now();
+  mixer.render(
+    left,
+    right,
+    { echo: [echoL, echoR], reverb: [reverbL, reverbR] },
+    onProgress && ((done, total) => void onProgress('mix', done, total)),
+  );
+  const mixMs = now() - mixStarted;
 
   // The two sends, mixed back over the dry signal. Both are the game's own now --
   // topology, levels and all -- so there is nothing to scale here.
@@ -367,7 +385,9 @@ export async function renderSequencer(
   let echoEnergy = 0;
   let reverbEnergy = 0;
   let clipped = 0;
+  const effectsStarted = now();
   for (let i = 0; i < frames; i += 1) {
+    if (onProgress && (i & 0x3ffff) === 0) void onProgress('effects', i, frames);
     dryEnergy += left[i] ** 2 + right[i] ** 2;
     const e = echo.process(echoL[i], echoR[i]);
     echoEnergy += e.left ** 2 + e.right ** 2;
@@ -416,6 +436,7 @@ export async function renderSequencer(
     echo,
     reverb,
     preset,
+    timings: { voicesMs, mixMs, effectsMs: now() - effectsStarted },
   };
 }
 
