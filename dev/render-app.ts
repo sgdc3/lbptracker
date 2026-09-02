@@ -152,17 +152,6 @@ worker.onmessage = (event: MessageEvent) => {
     return;
   }
 
-  if (message.type === 'needFile') {
-    // The normal case on a static host: there is no dump to serve, so ask for
-    // one. `steering/game-assets.md` is the reason -- levels and samples are
-    // other people's work and the game's, and they are read from the visitor's
-    // own disk rather than shipped in a bucket.
-    dropZone.hidden = false;
-    setBar(0);
-    setStatus('open your sequencers.jsonl to begin');
-    return;
-  }
-
   if (message.type === 'error') {
     goButton.disabled = false;
     setStatus('failed', true);
@@ -217,7 +206,9 @@ dropZone.addEventListener('drop', (e) => {
   if (file) loadFrom(file);
 });
 
-// Ask the server first: under `dev/serve.mjs` the fixtures are on the same disk
-// and there is no reason to make anyone pick a file. On a static host the fetch
-// 404s, the worker answers `needFile`, and the picker appears.
-worker.postMessage({ type: 'load' });
+// ⚠️ Nothing is loaded until the user opens a file. The page does **not** try
+// the server first: level data is other people's work, this app is meant to be a
+// static site, and a page that quietly pulls 81 MB of levels off its own host is
+// the thing `steering/game-assets.md` rules out. Ask, always.
+setStatus('open a level dump to begin');
+setBar(0);

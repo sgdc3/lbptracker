@@ -65,12 +65,16 @@
     in a worker. No <code>OfflineAudioContext</code>, no <code>AudioBufferSourceNode.playbackRate</code>:
     every sample is resampled, filtered and mixed by this project's own arithmetic, and the browser
     is only asked to play back a finished 48&nbsp;kHz buffer.
-    The level dump is <strong>opened from your own disk</strong>, not served.
+    Levels are <strong>opened from your own disk</strong>; nothing is served and nothing is uploaded.
   </p>
 
-  <div id="drop" hidden>
-    <strong>Open your <code>sequencers.jsonl</code></strong>
-    <span>Click or drop it here. The file is read in this tab and never uploaded.</span>
+  <div id="drop">
+    <strong>Open a level dump</strong>
+    <span>
+      Click or drop your <code>sequencers.jsonl</code> here. It is read in this tab and never
+      uploaded. <em>A raw level <code>.bin</code> is not readable yet — that is the Thing-graph
+      walk, build order step&nbsp;4.</em>
+    </span>
     <input id="file" type="file" accept=".jsonl,.json,.txt">
   </div>
 
@@ -87,7 +91,7 @@
     <button id="save" disabled>Download WAV</button>
   </div>
 
-  <div id="status">starting…</div>
+  <div id="status">open a level dump to begin</div>
   <div id="bar"><div></div></div>
 
   <canvas id="wave" width="1200" height="90"></canvas>

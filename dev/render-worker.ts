@@ -9,13 +9,15 @@
  * render of the same level came out byte-identical; see the header of
  * `src/core/render.ts`.
  *
- * ⚠️ **The dump is opened by the user, not served.** The page hands this worker
- * a `File` and it reads that; nothing about the levels travels over the network.
- * That is not a preference, it is what lets the whole thing be a static site --
- * a bucket cannot host other people's levels or the game's samples, and
- * `steering/game-assets.md` says it must not try. The `fetch` path is still here
- * for `dev/serve.mjs`, where the fixtures are on the same disk anyway, and it
- * reports back rather than throwing when they are not.
+ * ⚠️ **The dump is opened by the user, and only by the user.** The page hands
+ * this worker a `File` and it reads that; there is no fetch path and no fallback
+ * to a copy on the host. That is not a preference, it is what lets the whole
+ * thing be a static site -- a bucket cannot host other people's levels, and
+ * `steering/game-assets.md` says it must not try.
+ *
+ * ❗ The game's own instrument definitions and samples (`fixtures/rinst`,
+ * `fixtures/smp`) are **still fetched**, and they are the same class of asset.
+ * They have to move to the same footing before this can be deployed anywhere.
  *
  * ⚠️ **The dump is 81 MB.** Parsing all 129,696 rows in a browser tab is
  * possible but wasteful, so this keeps the text and parses only the lines of the
@@ -83,40 +85,6 @@ async function readDump(file: File): Promise<string> {
   return decode(bytes);
 }
 
-/**
- * Fetch the dump from the dev server, with progress.
- *
- * Returns null when it is not there, which is the normal case for a static
- * host: the page then asks the user to open their own copy.
- */
-async function fetchDump(): Promise<string | null> {
-  let response: Response;
-  try {
-    response = await fetch(asset('fixtures/levels/sequencers.jsonl'));
-  } catch {
-    return null;
-  }
-  if (!response.ok || !response.body) return null;
-  const total = Number(response.headers.get('content-length') ?? 0);
-  const chunks: Uint8Array[] = [];
-  let read = 0;
-  const reader = response.body.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    read += value.length;
-    post({ type: 'progress', phase: 'dump', done: read, total });
-  }
-  const bytes = new Uint8Array(read);
-  let at = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, at);
-    at += chunk.length;
-  }
-  return decode(bytes);
-}
-
 /** The sequencer list, without parsing 129,696 JSON objects. */
 function index(text: string) {
   const seen = new Map<number, { uid: number; name: string; rows: number }>();
@@ -173,17 +141,9 @@ self.onmessage = async (event: MessageEvent) => {
   };
   try {
     if (message.type === 'load') {
-      if (message.file) {
-        say(`reading ${message.file.name}…`);
-        dumpText = await readDump(message.file);
-      } else {
-        say('looking for a dump on the server…');
-        dumpText = await fetchDump();
-        if (dumpText === null) {
-          post({ type: 'needFile' });
-          return;
-        }
-      }
+      if (!message.file) throw new Error('load needs a file');
+      say(`reading ${message.file.name}…`);
+      dumpText = await readDump(message.file);
       say('indexing…');
       const list = index(dumpText);
       [rinstIndex, smpIndex] = await Promise.all([manifest('fixtures/rinst'), manifest('fixtures/smp')]);
