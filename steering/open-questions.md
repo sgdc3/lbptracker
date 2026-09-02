@@ -462,11 +462,29 @@ Recovered as names, sizes and defaults only:
   | `Params[15..23]` | three **LFOs**, as (rate, depth, layer phase spread) triples |
   | `Params[24..26]` | output: **level**, **send**, **drive** |
 
-  **This question is closed.** The evidence and the formulas are in
-  [sequencer-data-model.md](sequencer-data-model.md), the names in `src/core/params.ts`. What
-  remains is not naming but **implementing**: the three LFOs and the two-bus output are recovered
-  and not yet in the mixer, and **what each LFO modulates is only partly established** — LFO 2's
-  gain target is measured, LFO 1's pitch target is a natural reading, LFO 3's was not traced.
+  **This question is closed, and so is the implementing.** ⚠️ This entry used to end "what remains
+  is not naming but implementing: the three LFOs and the two-bus output are recovered and not yet in
+  the mixer" — stale. All three LFOs, both sends, the unison stack, the ladder, both ADSRs and
+  (2026-09-02) the drive are in `src/audio/mixer.ts`.
+
+  ✔ **And what each LFO modulates is now measured, all three**, where this used to say "only
+  partly established":
+
+  | LFO | the instruction that names it | destination |
+  |---|---|---|
+  | 1 (`Params[15..17]`) | `0x2788`/`0x281a` scale the depth by **0.05** — the constant the stack detune also uses, at `0x1b59` | the playback **rate** |
+  | 2 (`Params[18..20]`) | `0x255c`-`0x2574`: `sin * depth`, then **`+ 1`**, then it multiplies a level | the **gain** |
+  | 3 (`Params[21..23]`) | `0x26cb`-`0x2713`: abs, halve, `floor`, `frac * 2`, and `2 - t` above 1 | a **triangle fold** into `0..1` |
+
+  ⚠️ LFO 3's *fold* is measured instruction for instruction and `src/audio/lfo.ts` reproduces it
+  line for line. What stays a reading is only the **destination**: `t` is broadcast and written
+  through a pointer in the same shape LFO 2's gain uses, and the last hop into the two per-channel
+  factors was not read end to end. Pan is the reading because `t` lands in `0..1` and `panGains` —
+  which is measured — is this voice's only consumer of one.
+
+  ⚠️ **18 of the 68 instruments use at least one LFO**, including `square_wave`, `saw_wave`,
+  `sine_wave`, `triangle_wave`, `pulse_wave`, `ray_gun` and `robot` — the corpus's most-played
+  instruments — so a wrong destination here would not have been a corner case.
   The oscillator at stub `0x130` is **identified** — it is libc's sine/cosine, `ZtjspkJQ+vw`, with
   an integer selector in `edi` — so what is left is following each LFO's result to its destination,
   not naming the function. The parse that pinned it, and the `PT_SCE_DYNLIBDATA` type mix-up that

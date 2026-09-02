@@ -89,12 +89,24 @@ export class Lfo {
  * stack -- the same `0.05` scale carries both, which is what identified this
  * target. At full depth the swing is ±5% of the rate, a little under a
  * semitone.
+ *
+ * ✔ **The 0.05 is measured on this LFO's own path**, not borrowed from the
+ * detune: `fmodextinput.prx` `0x2788` and `0x281a` both multiply `Params[16]` --
+ * interpolated by the modulation -- by `0.05` before use. It is the same
+ * constant the stack detune applies at `0x1b59`, which is what made "pitch" the
+ * reading in the first place and now makes it the measurement.
  */
 export function pitchFactor(osc: number, depth: number, detune = 1): number {
   return detune + 0.05 * depth * osc;
 }
 
-/** LFO 2: a multiplier on the gain. Depth 0 leaves it at exactly 1. */
+/**
+ * LFO 2: a multiplier on the gain. Depth 0 leaves it at exactly 1.
+ *
+ * ✔ **Measured**, `0x255c`-`0x2574`: the oscillator is multiplied by the
+ * interpolated `Params[19]`, **1 is added**, and the result multiplies a level.
+ * `1 + depth * osc` is the instruction sequence, not a shape chosen to be tidy.
+ */
 export function gainFactor(osc: number, depth: number): number {
   return 1 + depth * osc;
 }
@@ -107,9 +119,27 @@ export function gainFactor(osc: number, depth: number): number {
  * factor. The fold makes a triangle: it rises to 1, turns, and comes back,
  * where a raw sine would sit still at the extremes.
  *
- * ⚠️ The destination is the **strong reading, not a measurement** — the last
- * hop into the two per-channel factors was followed through register moves
- * rather than read end to end. See steering/sequencer-data-model.md.
+ * ✔ **The fold is measured instruction for instruction**, `0x26cb`-`0x2713`:
+ *
+ * ```
+ * 0x26cb  s = sin * depth
+ * 0x26db  s = base + s
+ * 0x26df  s = |s|                  ; vandps against the sign mask
+ * 0x26e7  s = s * 0.5
+ * 0x26ef  f = floor(s)             ; vroundss, mode 1
+ * 0x26f5  t = s - f
+ * 0x26f9  t = t + t
+ * 0x26fd  if (t > 1) t = 2 - t     ; the triangle
+ * ```
+ *
+ * which is this function, line for line.
+ *
+ * ⚠️ **What stays a reading is only the destination.** The fold's `t` is
+ * broadcast to four lanes at `0x272b` and written through a pointer, in the same
+ * shape the gain LFO uses at `0x2578`-`0x25a5`; the last hop into the two
+ * per-channel factors was not read end to end. Pan is the reading because `t` is
+ * in `0..1` and `panGains` — which *is* measured — is the only consumer of a
+ * `0..1` in this voice.
  */
 export function panFold(osc: number, depth: number, base = 0): number {
   const v = Math.abs(osc * depth + base) * 0.5;
