@@ -286,6 +286,96 @@ test('a sample with no loop is a one-shot and outlives its note', async () => {
   assert.equal(left[320], 0, 'then it ends, because the sample does');
 });
 
+/**
+ * ⚠️ The bound on that exemption, and why there is one.
+ *
+ * Unbounded, "plays to the end of the sample" grants the **stretched** length,
+ * and a note far below the sample's base note stretches without limit.
+ * `mime_artist` is a 0.19 s pluck played 68 semitones down in `Ascetic`: 9.02 s
+ * of sound, five stack layers deep, from a note written 0.12 s. `holdFrames`
+ * bounds the exemption at the sample's own duration at its own rate.
+ */
+test('a one-shot stops at its hold, not at the end of a stretched sample', async () => {
+  const { Mixer } = await import('../src/audio/mixer.ts');
+  const rate = 48000;
+  const mixer = new Mixer(rate);
+  // A 300-frame sample at a quarter speed would sound for 1,200 frames. The
+  // hold is the sample's own length, so it stops at 300.
+  mixer.play({
+    sample: { channels: [new Float32Array(300).fill(1)], sampleRate: rate },
+    playbackRate: 0.25,
+    gain: 1,
+    pan: 0.5,
+    endFrame: 100,
+    holdFrames: 300,
+  });
+  const left = new Float32Array(1400);
+  mixer.render(left, new Float32Array(1400));
+  assert.ok(left[99] !== 0, 'sounding during the note');
+  assert.ok(left[250] !== 0, 'and past it, up to the hold');
+  assert.equal(left[400], 0, 'but not to 1,200, which is where the stretch ends');
+});
+
+/**
+ * The default has to depend on the sample. A flat `Infinity` holds a LOOPED
+ * voice's gate open for ever, which silently breaks `endFrame` for every caller
+ * that has never heard of one-shots -- it did, and two tests above caught it.
+ */
+test('holdFrames left out keeps each kind of voice behaving as it did', async () => {
+  const { Mixer } = await import('../src/audio/mixer.ts');
+  const rate = 48000;
+  const mixer = new Mixer(rate);
+  const looped = new Float32Array(600);
+  mixer.play({
+    sample: {
+      channels: [new Float32Array(300).fill(1)],
+      sampleRate: rate,
+      loop: { start: 0, end: 300 },
+    },
+    playbackRate: 1,
+    gain: 1,
+    pan: 0.5,
+    endFrame: 100,
+  });
+  mixer.render(looped, new Float32Array(600));
+  assert.ok(looped[99] !== 0, 'a looped voice sounds during its note');
+  assert.equal(looped[200], 0, 'and is gated by it');
+
+  const shot = new Float32Array(600);
+  const other = new Mixer(rate);
+  other.play({
+    sample: { channels: [new Float32Array(300).fill(1)], sampleRate: rate },
+    playbackRate: 1,
+    gain: 1,
+    pan: 0.5,
+    endFrame: 100,
+  });
+  other.render(shot, new Float32Array(600));
+  assert.ok(shot[200] !== 0, 'a one-shot is not');
+});
+
+/**
+ * The allocator handing a record to a later note. Separate from `endFrame`
+ * because a one-shot ignores the gate and must not ignore this.
+ */
+test('cutFrame stops a one-shot that is ignoring its note', async () => {
+  const { Mixer } = await import('../src/audio/mixer.ts');
+  const rate = 48000;
+  const mixer = new Mixer(rate);
+  mixer.play({
+    sample: { channels: [new Float32Array(300).fill(1)], sampleRate: rate },
+    playbackRate: 1,
+    gain: 1,
+    pan: 0.5,
+    endFrame: 100,
+    cutFrame: 150,
+  });
+  const left = new Float32Array(400);
+  mixer.render(left, new Float32Array(400));
+  assert.ok(left[149] !== 0, 'sounding right up to the cut');
+  assert.equal(left[150], 0, 'and gone at it, mid-sample, with no release');
+});
+
 // --------------------------------------------------------- the whole block
 
 test('all 27 Params are named, once each, and the sections agree', async () => {

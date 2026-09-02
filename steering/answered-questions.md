@@ -799,6 +799,12 @@ what the engine does, since the caller simply overwrites the record it was hande
 | 12 s | 4.90 s | 1.47 s |
 | 24 s | 14.88 s | 2.98 s |
 
+⚠️ Those "after" figures are with the **unbounded** one-shot rule still in place, so the pool
+was busy stealing 2,276 of the song's 14,499 notes to make room for a drone that should never have
+existed. Bounding the exemption (question 10, refuted the same day) took the same 24 s to **0.97 s**
+and the stealing to **zero**. The accounting fix below is right either way; it is what made the
+other bug visible instead of merely audible.
+
 ⚠️ Read the **shape**, not the ratio. Before, the cost per second of audio was 0.155, 0.408, 0.620 —
 rising, because every extra second added notes whose voices never went away, so the work grew with
 the square of the length. After: 0.080, 0.123, 0.124 — flat. The whole 339-second song now renders

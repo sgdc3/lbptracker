@@ -268,27 +268,59 @@ engine has available, and the corpus statistics say gating cannot be what happen
 that acts on it has not been found**. It should be in `sub_0x38e0`'s note-off path, near the voice
 record's `+0x3e`/`+0x3f` start/end pair.
 
-### The evidence that the rule reaches further than percussion — 2026-09-02
+### The unbounded form of the rule is REFUTED — 2026-09-02
 
-The rule is stated over *loopless samples*, and the instruments it was reasoned about are drum kits,
-whose samples are under a second. `mime_artist` is not a drum kit and is caught by it too:
+The rule was stated over *loopless samples* and reasoned about on drum kits, whose samples are under
+a second and which play at a rate near 1. Stated that way it grants a voice the **stretched**
+length, and a note far below the sample's base note stretches without limit.
 
-- four loopless samples of **9,142 frames** (0.19 s) at base notes 81, 69, 57, 45, `Numstack` **5**;
-- one `Splitnotes` bound, so all four are stack layers rather than zones and every note resolves to
-  the base-81 slot;
-- `Ascetic` plays it at notes 9–24, i.e. **57 to 72 semitones below that base**, so the playback
-  rate is 0.016–0.037 and the 0.19-second sample becomes **5 to 12 seconds** of sound.
+`mime_artist` is where that shows. It is four **plucks** — `pluck_a6`, `pluck_a5`, `pluck_a4`,
+`pluck_a3`, 9,142 frames each, and none of them carries a `smpl` chunk, so they are genuinely
+loopless — at base notes 81, 69, 57, 45, with `Numstack` 5. `Splitnotes` is `[87,0,0,…]`: one
+bound, so every note resolves to the base-81 slot. `Ascetic` plays it at notes 13–24, **57 to 68
+semitones below that base**, so the rate is 0.020–0.037 and a **0.19-second pluck becomes 9.02
+seconds**, five layers deep, from notes the composer wrote **0.12 seconds** long.
 
-Ungated, that is five voices held for around 9.5 seconds by a note written two steps long. It is a
-low, smeared drone, and it is what a listener reported as *"note basse incasinate"*. Whether the
-engine really lets a **pitched, non-percussive** loopless sample run past its note is exactly this
-question, and `mime_artist` is a far sharper test case than a kick drum: the difference there is a
-tenth of a second, here it is nine seconds.
+Measured over that one sequencer:
 
-⚠️ Do not "fix" this by gating it without an answer. The 32-voice pool now accounts for the real
-occupancy (see *17. What a voice occupies* in `answered-questions.md`), so the drone is cut by voice
-stealing rather than left to pile up — the render is right about the engine's pool either way, and
-wrong about this note's length only if the one-shot rule is wrong.
+| | |
+|---|---|
+| peak simultaneous voice demand | **216**, against a pool of 32 |
+| of which `mime_artist` | **200** |
+| its share of all voice-time in the song | **82.1%** |
+| its allocator score | 0.57–0.75, the **highest** in the piece |
+
+The score is what makes it fatal rather than merely wasteful: the allocator steals the *quietest*,
+so the drone never loses and everything else is taken instead. A listener reported exactly that —
+first *"note basse incasinate"*, then, once the pool was made to account for the real occupancy,
+*"le note basse saturano le 32 voci mutando tutto il resto"*. **A published level cannot sound like
+that**, so the unbounded rule is wrong independently of anything about the pool.
+
+### What replaced it, and what is still open
+
+`holdFramesFor` in `src/core/render.ts`: the exemption grants the sample **its own duration at its
+own rate**, `sampleFrames * RATE / sampleRate` output frames, rather than the stretched one. A
+sample's length is a property of the sample; the stretch is a property of the note, and the note
+already has a gate.
+
+- **Percussion is untouched.** A kit plays at rate 0.45–1.33, so natural and stretched are nearly
+  the same. Rendering `Ascetic`'s drums alone under both rules: `a_kit_1` RMS 0.03886 → 0.03883 and
+  the same peak 0.379; `baiyon_drums_1` identical to five figures. Every drum measurement above
+  stands.
+- **`Ascetic` stops eating itself.** Voice stealing over the whole song goes from 2,276 notes cut to
+  **0 of 14,499**, and the render from 26 s to 13 s.
+
+⚠️ **The bound is still an inference, and this question is still open.** `options.oneShot` is the
+A/B — `'full'` is the old unbounded rule, `'gate'` no exemption at all, `'natural'` the default —
+and `LBP_ONESHOT` exposes it on `dev/render-level.ts`. What would settle it is the engine's note-off
+path, `sub_0x38e0` near the voice record's `+0x3e`/`+0x3f` start/end pair.
+
+⚠️ **A second thing this turned up and did not resolve.** `mime_artist`'s four samples are an
+octave apart — 81, 69, 57, 45 — which is the shape of key **zones**, not of stack layers, but
+`Splitnotes` names only one bound so `zoneCount` gives 1 and every note lands on the base-81 sample.
+`e_guitar_distorted` has the same disagreement (two samples, three bounds). Whether the engine
+derives the missing bounds from the base notes is worth knowing: for a note at 13 it is the
+difference between transposing 68 semitones down and 32.
 
 ⚠️ **A second oddity found on the way, and left alone.** `a_kit_1`'s ride sits in slot 1, whose
 zone is notes 60..72 (`Splitnotes` `87,72,60,54,...`) but whose `baseNote` is **78** — outside its

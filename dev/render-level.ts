@@ -123,6 +123,17 @@ const unpitchedGuids = (process.env.LBP_UNPITCHED ?? '')
   .filter(Boolean)
   .map(Number);
 
+/**
+ * ⚠️ A/B switch for open question 10. `LBP_ONESHOT=full|natural|gate`.
+ *
+ * `natural` (the default) lets a loopless sample ignore the note's gate for its
+ * own duration at its own rate; `full` is the old unbounded rule, which on
+ * `Ascetic` turns a 0.19 s pluck into a nine-second drone; `gate` gives a
+ * one-shot no exemption at all and clips the drums. See `holdFramesFor` in
+ * `src/core/render.ts`.
+ */
+const oneShot = (process.env.LBP_ONESHOT ?? 'natural') as 'full' | 'natural' | 'gate';
+
 const manifest = async (dir: string) =>
   new Map<number, { file: string }>(
     (JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8')) as {
@@ -221,6 +232,7 @@ const result = await renderSequencer(seq, loadInstrument, {
   voiceLimit,
   clip,
   pitchShift,
+  oneShot,
 });
 
 console.log(
@@ -258,7 +270,7 @@ console.log(
 console.log(`pre-normalisation RMS ${result.rms.toFixed(5)}`);
 
 const { pcm, norm } = toPcm16(result.left, result.right);
-const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${clip ? '' : '-noclip'}${
+const out = `fixtures/level-seq${seq.uid}${oneShot === 'natural' ? '' : `-${oneShot}`}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${clip ? '' : '-noclip'}${
   pitchShift.size ? `-pitch${[...pitchShift.keys()].join('_')}` : ''
 }${unpitchedPercussion ? '-unpitched' : ''}.wav`;
 await writeFile(out, writeWav(pcm, 2, RATE));

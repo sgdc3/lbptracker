@@ -99,6 +99,16 @@ export interface VoiceSpec {
    */
   readonly cutFrame?: number;
   /**
+   * Frames for which a one-shot's gate is held open regardless of the note.
+   *
+   * ⚠️ This is the whole of question 10, made into a number. `Infinity` is the
+   * rule as it was first written -- a loopless sample is never gated and plays
+   * to its end -- and the corpus refutes that as a universal rule; see
+   * `holdFramesFor` in `src/core/render.ts` for the measurement and for what
+   * this is set to instead. 0 gates a one-shot like anything else.
+   */
+  readonly holdFrames?: number;
+  /**
    * Frames of linear fade before `endFrame`.
    *
    * Needed for looping samples: they never run out on their own, so a voice
@@ -204,6 +214,8 @@ class Voice {
   life: number;
   /** Frames until the allocator takes this voice away; Infinity if it never does. */
   cut: number;
+  /** Frames of forced gate left on a one-shot. */
+  hold: number;
   /** Frames of linear fade at the end of that life. */
   readonly release: number;
   /** Per-frame multiplier for the optional decay, or 1. */
@@ -235,6 +247,11 @@ class Voice {
     cut: number,
     outputRate: number,
   ) {
+    // ⚠️ The default has to depend on the sample, not be a flat Infinity: a
+    // LOOPED voice with no `holdFrames` must still be gated by its note, and
+    // holding its gate open forever is what a flat default did -- it broke
+    // `endFrame` for every caller that had never heard of one-shots.
+    this.hold = spec.holdFrames ?? (spec.sample.loop === undefined ? Infinity : 0);
     this.spec = spec;
     this.delay = delay;
     this.life = life;
@@ -274,7 +291,7 @@ class Voice {
    * question 10.
    */
   private get oneShot(): boolean {
-    return this.spec.sample.loop === undefined;
+    return this.spec.sample.loop === undefined && this.hold > 0;
   }
 
   /**
@@ -367,13 +384,12 @@ class Voice {
     // known before the loop and never moves.
     const last = Number.isFinite(this.cut) ? Math.min(frames, begin + this.cut) : frames;
 
-    const oneShot = this.oneShot;
-
     let i = begin;
     for (; i < last; i += 1) {
       // A one-shot is never released: it is held until the sample runs out.
-      const held = oneShot || this.life > 0;
+      const held = this.hold > 0 || this.life > 0;
       if (!envelope && !held) break;
+      this.hold -= 1;
 
       if (loop) {
         const span = loop.end - loop.start;

@@ -83,6 +83,12 @@ export interface RenderOptions {
   /** The PRNG seed. Fixed by default, so a render is reproducible. */
   readonly seed?: number;
   readonly onProgress?: RenderProgress;
+  /**
+   * How long a **one-shot** -- a slot whose sample has no loop -- ignores the
+   * note's gate. See `holdFramesFor`; `'natural'` is the default and the other
+   * two are the A/B ends of open question 10.
+   */
+  readonly oneShot?: 'full' | 'natural' | 'gate';
 }
 
 export interface RenderResult {
@@ -132,6 +138,7 @@ export async function renderSequencer(
     voiceLimit = VOICE_POOL_SIZE,
     clip = true,
     pitchShift = new Map<number, number>(),
+    oneShot = 'natural',
     onProgress,
   } = options;
   const now = () => (typeof performance === 'undefined' ? Date.now() : performance.now());
@@ -170,6 +177,55 @@ export async function renderSequencer(
     .filter((e) => (onlyGuids.length === 0 || onlyGuids.includes(e.guid)))
     .filter((e) => !skipGuids.includes(e.guid));
 
+  /**
+   * How long a one-shot's gate is held open, in output frames.
+   *
+   * ## The rule this replaces, and why the corpus refutes it
+   *
+   * Question 10 established that percussion cannot be gated by its note: 89.4%
+   * of the corpus's 673,037 percussion notes last two steps or fewer, and
+   * `a_kit_1`'s amplitude envelope is a bare gate, so gating clips a 0.806 s
+   * kick to 0.083 s. The rule written from that was **a loopless sample is
+   * never gated and plays to the end of the sample**, and it is unbounded.
+   *
+   * ⚠️ Unbounded is where it breaks, because the length it grants is the
+   * *stretched* one. `mime_artist` is four **plucks** (`pluck_a6`..`pluck_a3`,
+   * 9,142 frames each, no `smpl` chunk) at base notes 81, 69, 57, 45, with
+   * `Numstack` 5. `Ascetic` plays it at notes 13-24 -- 57 to 68 semitones under
+   * the base -- so a 0.19 s pluck becomes **9.02 s**, five voices at a time,
+   * against notes the composer wrote **0.12 s** long. Measured over that
+   * sequencer: peak demand **216 voices, 200 of them `mime_artist`**, against a
+   * pool of 32, and its notes score highest so the allocator steals everything
+   * else first. A published level cannot sound like that, so the rule is wrong
+   * before the pool ever gets involved.
+   *
+   * ## What it is instead
+   *
+   * The exemption grants the sample **its own duration**, at its own rate --
+   * `sampleFrames * RATE / sampleRate` output frames -- rather than however long
+   * the note's pitch happens to stretch it to. A sample's length is a property
+   * of the sample; the stretch is a property of the note, and the note already
+   * has a gate.
+   *
+   * For percussion this changes nothing: a kit plays at rate 0.45-1.33, so the
+   * natural duration and the stretched one are the same thing, and question 10's
+   * drum measurements stand. For `mime_artist` at rate 0.02 it is the difference
+   * between a 0.12 s thud -- a pluck's attack at a fiftieth speed, which is what
+   * a composer reaching for the bottom octave of a pluck is after -- and a nine
+   * second drone.
+   *
+   * ⚠️ **Still an inference, and still question 10.** `options.oneShot` is the
+   * A/B: `'full'` is the old unbounded rule and `'gate'` is no exemption at all.
+   * What would settle it is the engine's note-off path, `sub_0x38e0` near the
+   * voice record's `+0x3e`/`+0x3f`.
+   */
+  const holdFramesFor = (sample: SampleBuffer): number => {
+    if (sample.loop !== undefined) return 0;
+    if (oneShot === 'gate') return 0;
+    if (oneShot === 'full') return Infinity;
+    return (sample.channels[0].length * RATE) / sample.sampleRate;
+  };
+
   // ## Resolving every note before the pool runs, and why
   //
   // The pool has to be told how long a voice actually holds a record, and that
@@ -190,6 +246,8 @@ export async function renderSequencer(
     readonly note: number;
     readonly zone: number;
     readonly playbackRate: number;
+    /** Output frames for which this voice's gate is forced open. */
+    readonly holdFrames: number;
     readonly layers: number;
     /** Steps this voice occupies a pool record, gate or no gate. */
     readonly occupancySteps: number;
@@ -222,16 +280,18 @@ export async function renderSequencer(
       (pitchShift.get(event.guid) ?? 1);
     // ⚠️ A looped voice is counted at its written length, which understates it
     // by the envelope's release. That tail is bounded and small; a one-shot's
-    // overrun is neither, and it is the one measured here.
-    const oneShotSteps =
-      slot.wav.loop === undefined && playbackRate > 0
-        ? slot.wav.channels[0].length / playbackRate / framesPerStep
-        : 0;
+    // overrun is neither, and it is the one measured here. A one-shot stops at
+    // whichever comes first: the end of its sample, or the end of its hold.
+    const hold = holdFramesFor(slot.wav);
+    const stretched =
+      playbackRate > 0 ? slot.wav.channels[0].length / playbackRate : Infinity;
+    const oneShotSteps = hold > 0 ? Math.min(stretched, hold) / framesPerStep : 0;
     prepared.push({
       loaded,
       note,
       zone,
       playbackRate,
+      holdFrames: hold,
       layers: Math.max(1, loaded.inst.numStack),
       occupancySteps: Math.max(event.durationSteps, oneShotSteps),
     });
@@ -337,6 +397,7 @@ export async function renderSequencer(
     const spec: VoiceSpec = {
       sample: slot.wav,
       playbackRate: prep.playbackRate,
+      holdFrames: prep.holdFrames,
       gain:
         velocityGain(event.volume) *
         track.level *
