@@ -585,6 +585,414 @@ export function readPhysicsTweak(s: Serializer): void {
   if (subVersion > 0x98) s.vector3(); // gridGoal
 }
 
+/** `SwitchType` values this reader has to branch on. */
+const SWITCH_STICKER = 5;
+const SWITCH_MICROCHIP = 36;
+const SWITCH_POCKET_ITEM = 50;
+const SWITCH_DATA_SAMPLER = 65;
+const SWITCH_GAME_LIVE_STREAMING_CHOICE = 75;
+
+/** `SwitchSignal`: an activation level, a ternary state and a player index. */
+function readSwitchSignal(s: Serializer): void {
+  const { version } = s.revision;
+  s.f32(); // activation
+  if (version >= 0x310) s.s32(); // ternary
+  if (version >= 0x2a3) s.i32(); // player
+}
+
+/** `SwitchTarget`: one Thing a switch drives, and which port on it. */
+function readSwitchTarget(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  s.reference((self) => readThing(self, readers)); // thing
+  if (s.revision.version > 0x326) s.i32(); // port
+}
+
+/** `SwitchOutput`: one output port and everything wired to it. */
+function readSwitchOutput(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  readSwitchSignal(s);
+  const count = s.i32();
+  for (let i = 0; i < count; i += 1) readSwitchTarget(s, readers);
+  if (s.revision.version >= 0x34d) s.wstr(); // userDefinedName
+}
+
+/**
+ * `PSwitch`: the logic behind every switch, sensor and gate on a circuit board.
+ *
+ * The longest part in the format, and the one with the most branches that depend
+ * on **data rather than revision**: `stickerPlan` appears or not according to
+ * the switch's own `type` (and, for a microchip, on the value of
+ * `includeTouching` read a few fields earlier), and a data sampler carries an
+ * extra block. Reading `type` and then ignoring it works on every level that
+ * happens to use no stickers.
+ */
+export function readSwitch(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const { version, subVersion } = s.revision;
+  s.bool(); // inverted
+  s.f32(); // radius
+  if (version >= 0x382) s.f32(); // minRadius
+  s.s32(); // colorIndex
+  if (version >= 0x2dc) s.wstr(); // name
+  if (version >= 0x38f) s.bool(); // crappyOldLbp1Switch
+  s.s32(); // behaviorOld
+
+  if (version < 0x329) {
+    s.f32(); // the single output's activation
+    if (version > 0x2a2) s.i32(); // player
+    const targets = s.i32();
+    for (let i = 0; i < targets; i += 1) readSwitchTarget(s, readers);
+  } else {
+    const count = s.i32();
+    for (let i = 0; i < count; i += 1) {
+      s.reference((self) => readSwitchOutput(self, readers));
+    }
+  }
+
+  if (version < 0x398 && version >= 0x140) s.resource(true); // stickerPlan
+
+  if (version > 0x197) s.bool(); // hideInPlayMode
+  let type = 0;
+  if (version > 0x1a4) {
+    type = s.i32(); // enum32, forced fixed-width
+    s.reference((self) => readThing(self, readers)); // referenceThing
+    readSwitchSignal(s); // manualActivation
+  }
+
+  // ⚠️ Data-dependent: only a sticker switch (or a pocket item, above subVersion
+  // 0x10) carries a plan here.
+  if (
+    version >= 0x398 &&
+    (type === SWITCH_STICKER || (type === SWITCH_POCKET_ITEM && subVersion > 0x10))
+  ) {
+    s.resource(true);
+  }
+
+  if (version > 0x1a4 && version < 0x368) s.f32(); // platformVisualFactor
+  if (version > 0x1a4) s.s32(); // activationHoldTime
+  if (version > 0x1a4) s.bool(); // requireAll
+
+  let includeTouching = 0;
+  if (version > 0x23d) {
+    s.f32(); // angleRange
+    includeTouching = s.s32();
+    if (version >= 0x398 && type === SWITCH_MICROCHIP && includeTouching === 1) {
+      s.resource(true); // stickerPlan
+    }
+  }
+
+  if (subVersion > 0x165 && type === SWITCH_GAME_LIVE_STREAMING_CHOICE) {
+    throw new SerializerError(
+      'a live-streaming-choice switch carries fields cwlib does not implement either',
+    );
+  }
+
+  if (version > 0x243) s.s32(); // bulletsRequired
+  if (version === 0x244) s.i32();
+  if (version > 0x244) s.s32(); // bulletsDetected
+  if (version > 0x245 && version < 0x398) s.i32(); // bulletPlayerNumber
+  if (version > 0x248) s.i32(); // bulletRefreshTime
+  if (version >= 0x2f5) s.bool(); // resetWhenFull
+  if (version > 0x24a && version < 0x327) s.bool(); // hideConnectors
+  if (version > 0x272 && version < 0x398) s.i32(); // logicType
+  if (version > 0x272 && version < 0x369) s.i32(); // updateFrame
+  if (version > 0x272) things(s, readers); // inputList
+  if (version > 0x276 && version < 0x327) s.reference((self) => readThing(self, readers));
+  if (version > 0x283) s.bool(); // includeRigidConnectors
+  if (version > 0x284 && version < 0x327) {
+    s.vector4(); // customPortOffset
+    s.vector4(); // customConnectorOffset
+  }
+  if (version > 0x28c) {
+    s.f32(); // timerCount
+    if (version < 0x2c4) s.u8(); // timerAutoCount
+  }
+  if (version > 0x2ad && subVersion < 0x100) s.i32(); // teamFilter
+  if (version > 0x2c3) s.i32(); // behavior, enum32
+  if (version < 0x329 && version > 0x2c3) s.s32();
+  if (version > 0x2c3) {
+    s.i32(); // randomBehavior
+    s.i32(); // randomPattern
+    s.i32(); // randomOnTimeMin
+    s.i32(); // randomOnTimeMax
+    s.i32(); // randomOffTimeMin
+    s.i32(); // randomOffTimeMax
+    if (version < 0x3ad) {
+      s.u8(); // randomPhaseOn
+      s.s32(); // randomPhaseTime
+    }
+    s.bool(); // retardedOldJoint
+  }
+  if (version > 0x30f) s.i32(); // keySensorMode
+  if (version > 0x34c) {
+    s.i32(); // userDefinedColour
+    s.bool(); // wiresVisible
+  }
+  if (version > 0x34f) s.u8(); // bulletTypes
+  if (version > 0x390) s.bool(); // detectUnspawnedPlayers
+  if (subVersion > 0x216) s.u8(); // unspawnedBehavior
+  if (version > 0x3a4) s.bool(); // playSwitchAudio
+  if (version > 0x3ec) s.u8(); // playerMode
+
+  // ⚠️ Data-dependent again, and the block is not small.
+  if (version > 0x3ee && type === SWITCH_DATA_SAMPLER) {
+    s.i32(); // labelIndex
+    s.bytes(16); // creatorID.data
+    s.u8(); // creatorID.term
+    s.bytes(3); // creatorID.dummy
+    s.wstr(); // labelName
+    s.array((self) => self.f32()); // analogue
+    s.array((self) => self.u8()); // ternary
+  }
+
+  if (subVersion > 0x21) s.bool(); // relativeToSequencer
+  if (subVersion > 0x2f) s.u8(); // layerRange
+  if (subVersion > 0x7a) {
+    s.bool(); // breakSound
+    s.s32(); // colorTimer
+  }
+  if (subVersion > 0x67) s.bool(); // isLbp3Switch
+  if (subVersion > 0x68) s.bool(); // randomNonRepeating
+  if (subVersion > 0x102) s.i32(); // stickerSwitchMode
+}
+
+/** One component placed on a circuit board: which Thing, and where on the grid. */
+export interface Component {
+  readonly thing?: Thing;
+  readonly x: number;
+  readonly y: number;
+}
+
+/** What a `MICROCHIP` part yields: the board's name and what is on it. */
+export interface Microchip {
+  readonly name: string;
+  readonly components: readonly Component[];
+}
+
+/**
+ * `PMicrochip`: a circuit board.
+ *
+ * This is the part the whole level parse exists for — a music sequencer is a
+ * `SEQUENCER` on a Thing whose `MICROCHIP` holds one component per instrument,
+ * and the component's `x`/`y` are the board cell that `project.ts` turns into a
+ * track's step offset and row.
+ */
+export function readMicrochip(
+  s: Serializer,
+  readers: ReadonlyMap<string, PartReader>,
+): Microchip {
+  const { version, subVersion } = s.revision;
+  s.reference((self) => readThing(self, readers)); // circuitBoardThing
+  if (version >= 0x283) s.bool(); // hideInPlayMode
+  if (version >= 0x2b8) s.bool(); // wiresVisible
+  if (version >= 0x2e4) s.s32(); // lastTouched
+  if (version >= 0x2e9) s.vector4(); // offset
+
+  let name = '';
+  const components: Component[] = [];
+  if (version >= 0x34d) {
+    name = s.wstr();
+    const count = s.i32();
+    for (let i = 0; i < count; i += 1) {
+      const thing = s.reference((self) => readThing(self, readers));
+      const x = s.f32();
+      const y = s.f32();
+      s.f32(); // angle
+      s.f32(); // scaleX
+      s.f32(); // scaleY
+      s.bool(); // flipped
+      components.push({ thing, x, y });
+    }
+    s.f32(); // circuitBoardSizeX
+    s.f32(); // circuitBoardSizeY
+  }
+
+  if (subVersion >= 0x1d) s.bool(); // keepVisualVertical
+  if (subVersion >= 0x2d) s.u8(); // broadcastType
+  return { name, components };
+}
+
+/** `CameraNode`: one framing in a camera zone's list. */
+function readCameraNode(s: Serializer): void {
+  s.vector4(); // targetBox
+  s.vector3(); // pitchAngle
+  s.f32(); // zoomDistance
+  s.bool(); // localSpaceRoll
+}
+
+/** `PCameraTweak`: a camera zone and its cut-scene settings. */
+export function readCameraTweak(s: Serializer): void {
+  const { version, subVersion } = s.revision;
+  if (version < 0x37e) {
+    s.vector3(); // pitchAngle
+    s.vector4(); // targetBox
+  }
+  s.vector4(); // triggerBox
+  if (subVersion >= 0x1b) {
+    s.u8(); // triggerLayerOffset
+    s.u8(); // triggerLayerDepth
+    if (subVersion >= 0x3d) s.bool(); // isCameraZRelative
+  }
+  if (version < 0x37e) s.f32(); // zoomDistance
+  s.f32(); // positionFactor
+  if (version >= 0x1f5) s.i32(); // photoBoothTimerLength
+  s.s32(); // cameraType -- a u8 below 0x1d7
+  if (version > 0x196 && version < 0x2c4) s.f32(); // activationLimit
+  if (version >= 0x1ff) s.bool(); // disableZoomMode
+  if (version >= 0x26a) s.bool(); // requireAll
+  if (version >= 0x2ba) s.bool(); // motionControllerZone
+  if (version >= 0x2c4) s.i32(); // behavior
+  if (version >= 0x2f8 && version < 0x37e) s.u8();
+  if (version >= 0x2eb) {
+    s.u8(); // cutSceneTransitionType
+    s.i32(); // cutSceneHoldTime
+    s.bool(); // cutSceneSkippable
+  }
+  if (subVersion >= 0x9f) s.bool(); // cutSceneUseHoldTime
+  if (version > 0x2ed) {
+    s.u8(); // cutSceneTimeSinceUsed
+    s.i32(); // cutSceneTransitionTime
+    if (version < 0x35a) s.bool();
+  }
+  if (version > 0x359) s.i32(); // cutSceneColour
+  if (version > 0x2ed) s.bool(); // cutSceneMovieMode
+  if (version > 0x2f7) {
+    s.f32(); // cutSceneDepthOfField
+    s.f32(); // cutSceneFog
+  }
+  if (version > 0x2f8) s.f32(); // cutSceneFOV
+  if (version > 0x315) s.f32(); // cutSceneShake
+  if (version > 0x318) s.bool(); // fadeAudio
+  if (version > 0x33e) s.bool(); // oldStyleCameraZone
+  if (version > 0x369) s.bool(); // cutSceneTrackPlayer
+  if (version > 0x395) s.bool(); // cutSceneSendsSignalOnCancelled
+  if (version > 0x396) s.bool(); // cutSceneWasActiveLastFrame
+  if (version > 0x37d) {
+    const count = s.i32();
+    for (let i = 0; i < count; i += 1) readCameraNode(s);
+  }
+  if (subVersion > 0x7d) s.f32(); // frontDOF
+  if (subVersion > 0x79) s.f32(); // sackTrackDOF
+  if (subVersion > 0x7f) s.bool(); // allowSmoothZTransition
+}
+
+/** What an `INSTRUMENT` part yields — one placement on a sequencer's board. */
+export interface InstrumentPart {
+  /** The `RInstrument` GUID, or 0 when the placement is empty. */
+  readonly guid: number;
+  readonly name: string;
+  readonly loops: number;
+  readonly key: number;
+  readonly scale: number;
+  readonly level: number;
+  readonly pan: number;
+  readonly echoSend: number;
+  readonly reverbSend: number;
+  /** The note records, four bytes each, exactly as they sit on disk. */
+  readonly notes: Uint8Array;
+}
+
+/**
+ * `PInstrument`: one instrument placed on a music sequencer's board.
+ *
+ * The note list comes back as raw bytes rather than decoded notes, because
+ * `src/core/notes.ts` already decodes that record and is the measured reader for
+ * it. Four bytes each: `x | triplet<<7`, `y | end<<7`, volume, timbre.
+ */
+export function readInstrumentPart(s: Serializer): InstrumentPart {
+  const { version } = s.revision;
+  const resource = s.resource();
+  const name = version >= 0x35b ? s.wstr() : '';
+  s.i32(); // color
+  const loops = s.i32();
+  const key = s.i32();
+  const scale = s.i32();
+  const level = s.f32();
+  const pan = s.f32();
+  const echoSend = s.f32();
+  const reverbSend = s.f32();
+  if (version >= 0x389) {
+    s.i16(); // scrollX
+    s.i16(); // scrollY
+    s.i16(); // cursorX
+    s.i16(); // cursorY
+  }
+  const count = s.i32();
+  const notes = s.bytes(count * 4).slice();
+  if (version >= 0x379) s.resource(); // icon
+  return {
+    guid: resource?.guid ?? 0,
+    name,
+    loops,
+    key,
+    scale,
+    level,
+    pan,
+    echoSend,
+    reverbSend,
+    notes,
+  };
+}
+
+/** What a `SEQUENCER` part yields. */
+export interface SequencerPart {
+  readonly tempo: number;
+  readonly swing: number;
+  readonly echoFeedback: number;
+  readonly echoTime: number;
+  readonly echoMix: number;
+  readonly reverbSettings: number;
+  readonly loop: boolean;
+  readonly startPoint: number;
+  readonly numChannels: number;
+  readonly volumes: readonly number[];
+  /** False for an animation or logic sequencer — those carry no music. */
+  readonly musicSequencer: boolean;
+}
+
+/**
+ * `PSequencer`: the music sequencer itself.
+ *
+ * ⚠️ `volume` is a **fixed six floats**, not a length-prefixed array. Six is the
+ * channel count the UI exposes; `numChannels` says how many are in use and is
+ * read separately.
+ */
+export function readSequencerPart(s: Serializer, readers: ReadonlyMap<string, PartReader>): SequencerPart {
+  const { version, subVersion } = s.revision;
+  const tempo = s.f32();
+  const swing = s.f32();
+  const echoFeedback = s.f32();
+  const echoTime = s.f32();
+  const echoMix = s.f32();
+  const reverbSettings = version > 0x370 ? s.i32() : 0;
+  const loop = version > 0x36e ? s.bool() : false;
+  const startPoint = s.f32();
+  const numChannels = s.i32();
+  const volumes: number[] = [];
+  for (let i = 0; i < 6; i += 1) volumes.push(s.f32());
+  if (version > 0x369) {
+    s.f32(); // playHead
+    s.bool(); // isPlaying
+  }
+  const musicSequencer = version > 0x36c ? s.bool() : false;
+  if (subVersion > 0x28) s.bool(); // animationSequencer
+  if (version > 0x371) s.i32(); // behavior
+  if (version > 0x3a0) {
+    s.i32(); // triggerPlayer
+    s.reference((self) => readThing(self, readers)); // previewThing
+  }
+  return {
+    tempo,
+    swing,
+    echoFeedback,
+    echoTime,
+    echoMix,
+    reverbSettings,
+    loop,
+    startPoint,
+    numChannels,
+    volumes,
+    musicSequencer,
+  };
+}
+
 /** Everything implemented so far, ready to hand to `readLevel`. */
 export function partReaders(): Map<string, PartReader> {
   const readers = new Map<string, PartReader>();
@@ -605,6 +1013,11 @@ export function partReaders(): Map<string, PartReader> {
   bind('STICKERS', readStickers);
   bind('CHECKPOINT', readCheckpoint);
   bind('PHYSICS_TWEAK', readPhysicsTweak);
+  bind('SWITCH', readSwitch);
+  bind('MICROCHIP', readMicrochip);
+  bind('CAMERA_TWEAK', readCameraTweak);
+  readers.set('INSTRUMENT', (s) => readInstrumentPart(s));
+  bind('SEQUENCER', readSequencerPart);
   return readers;
 }
 
