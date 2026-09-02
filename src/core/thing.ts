@@ -194,7 +194,7 @@ function fillThing(
   thing: Thing,
   readers: ReadonlyMap<string, PartReader>,
 ): Thing {
-  const { version } = s.revision;
+  const { version, subVersion } = s.revision;
   const thingStart = s.position;
 
   // `Revisions.THING_TEST_MARKER` is 0x2a1. It is a plain 0xAA and its whole job
@@ -225,14 +225,18 @@ function fillThing(
   if (version >= 0x341) {
     if (version >= 0x254) thing.planGuid = s.guid();
     thing.flags = s.u8();
-    // ⚠️ cwlib gates this byte on `subVersion >= 0x110`, and **the corpus says
-    // otherwise**. Every level here reports a head of `0x000003xx` -- subVersion
-    // 0 -- and every one of them still carries the byte: on `5aa77945` the world
-    // Thing's part mask only decodes to `BODY,WORLD,POS,SCRIPT,EFFECTOR,
-    // GAMEPLAY_DATA` (which is exactly what `RLevel`'s constructor builds) when
-    // one byte is consumed here first. Reading it unconditionally is what the
-    // data supports; the gate is left recorded rather than obeyed.
-    thing.extraFlags = s.u8();
+    // ⚠️ **One byte cwlib does not account for**, and it is here on every file.
+    // The evidence is the part mask, which is self-checking: on `5aa77945`
+    // (subVersion 0) it only decodes to `BODY,WORLD,POS,SCRIPT,EFFECTOR,
+    // GAMEPLAY_DATA` -- exactly what `RLevel`'s constructor builds -- when one
+    // byte is consumed after `flags`, and on `50ea1369` (subVersion 0x213) the
+    // same mask needs **two**, which is that byte plus the `extraFlags` cwlib
+    // does describe. So the unknown byte is unconditional and `extraFlags` keeps
+    // its gate, rather than `extraFlags` being read unconditionally -- which was
+    // the earlier reading here and happened to work only because every other
+    // file has subVersion 0.
+    s.u8();
+    if (subVersion >= 0x110) thing.extraFlags = s.u8();
   } else {
     if (version > 0x21a) s.bool(); // isStamping
     if (version >= 0x254) thing.planGuid = s.guid();

@@ -18,8 +18,8 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { readLevel } from '../src/core/level.ts';
-import { partReaders, type InstrumentPart, type Microchip, type SequencerPart } from '../src/core/parts.ts';
+import { musicSequencers, readLevel } from '../src/core/level.ts';
+import { partReaders } from '../src/core/parts.ts';
 import { nodeInflate } from '../src/platform/node.ts';
 
 const DIR = process.argv[2] ?? 'C:/Users/sgdc3/Desktop/LBP/toolkit/tools/sequencerdump/data';
@@ -74,43 +74,33 @@ for (const entry of await readdir(DIR, { withFileTypes: true })) {
   }
   filesChecked += 1;
 
-  for (const thing of things) {
-    if (!thing) continue;
-    const sequencer = thing.parts.get('SEQUENCER') as SequencerPart | undefined;
-    const chip = thing.parts.get('MICROCHIP') as Microchip | undefined;
-    if (!sequencer || !chip || !sequencer.musicSequencer) continue;
-
-    const rows = expected.get(thing.uid);
+  for (const sequencer of musicSequencers(things)) {
+    const rows = expected.get(sequencer.uid);
     if (!rows) {
-      problems.push(`${entry.name.slice(0, 8)} seq ${thing.uid} is not in the dump`);
+      problems.push(`${entry.name.slice(0, 8)} seq ${sequencer.uid} is not in the dump`);
       continue;
     }
-
-    const ours = chip.components
-      .map((c) => c.thing?.parts.get('INSTRUMENT') as InstrumentPart | undefined)
-      .filter((i): i is InstrumentPart => i !== undefined);
-
+    const ours = sequencer.placements.map((p) => p.instrument);
     if (ours.length !== rows.length) {
       problems.push(
-        `${entry.name.slice(0, 8)} seq ${thing.uid}: ${ours.length} placements, dump has ${rows.length}`,
+        `${entry.name.slice(0, 8)} seq ${sequencer.uid}: ${ours.length} placements, dump has ${rows.length}`,
       );
       continue;
     }
-
     let ok = true;
     for (const [i, mine] of ours.entries()) {
       const theirs = rows[i];
       const guid = mine.guid ? `g${mine.guid}` : '';
       if (guid !== theirs.guid || mine.notes.length / 4 !== theirs.noteCount) {
         problems.push(
-          `${entry.name.slice(0, 8)} seq ${thing.uid} #${i}: ${guid}/${mine.notes.length / 4} ` +
+          `${entry.name.slice(0, 8)} seq ${sequencer.uid} #${i}: ${guid}/${mine.notes.length / 4} ` +
             `vs ${theirs.guid}/${theirs.noteCount}`,
         );
         ok = false;
         break;
       }
       if (hex(mine.notes) !== theirs.notes) {
-        problems.push(`${entry.name.slice(0, 8)} seq ${thing.uid} #${i}: note bytes differ`);
+        problems.push(`${entry.name.slice(0, 8)} seq ${sequencer.uid} #${i}: note bytes differ`);
         ok = false;
         break;
       }

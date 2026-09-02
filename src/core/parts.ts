@@ -767,6 +767,16 @@ export interface Component {
 export interface Microchip {
   readonly name: string;
   readonly components: readonly Component[];
+  /**
+   * The board Thing.
+   *
+   * ⚠️ Needed because `components` is **empty while the board is open in the
+   * editor**: the game promotes the components to real Things parented to the
+   * board and stops maintaining the compact list. `musicSequencers` in
+   * `level.ts` rebuilds it from the Thing graph in that case, which is what
+   * `RawDump.java` does too.
+   */
+  readonly board?: Thing;
 }
 
 /**
@@ -782,7 +792,7 @@ export function readMicrochip(
   readers: ReadonlyMap<string, PartReader>,
 ): Microchip {
   const { version, subVersion } = s.revision;
-  readThingRef(s, readers); // circuitBoardThing
+  const board = readThingRef(s, readers); // circuitBoardThing
   if (version >= 0x283) s.bool(); // hideInPlayMode
   if (version >= 0x2b8) s.bool(); // wiresVisible
   if (version >= 0x2e4) s.s32(); // lastTouched
@@ -809,7 +819,7 @@ export function readMicrochip(
 
   if (subVersion >= 0x1d) s.bool(); // keepVisualVertical
   if (subVersion >= 0x2d) s.u8(); // broadcastType
-  return { name, components };
+  return { name, components, board };
 }
 
 /** `CameraNode`: one framing in a camera zone's list. */
@@ -1801,6 +1811,67 @@ export function readCostume(s: Serializer): void {
   }
 }
 
+/** `NpcJumpSolver`: where a sackbot is jumping to. */
+function readNpcJumpSolver(s: Serializer): void {
+  if (s.revision.version > 0x2cd) {
+    s.bool(); // isCurrentJumpFlipped
+    s.vector3(); // curSource
+    s.vector3(); // curTarget0
+    s.vector3(); // curTarget1
+    s.s32(); // currentJump
+    s.i32(); // currentJumpPos
+  }
+}
+
+/** `PNpc`: a sackbot's runtime state. */
+export function readNpc(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const { version, subVersion } = s.revision;
+  if (version < 0x273) return;
+  readNpcJumpSolver(s);
+  if (subVersion < 0x118) s.bytes(s.i32()); // soundRecording
+  s.intVector(); // soundRecordingDataNbytes
+  s.i32(); // soundRecordingPacket
+  s.i32(); // soundRecordingPacketOffset
+  s.intVector(); // sackbotRecordingTimes
+  if (version > 0x2da || (version < 0x29b && version > 0x294)) {
+    s.reference((self) => readNpcBehavior(self, readers));
+  }
+  if (version > 0x2ac) {
+    s.i32(); // flags
+    if (version < 0x2ce) s.s32();
+  }
+  if (version > 0x29a) readThingRef(s, readers); // behaviorThing
+  if (version > 0x2d5) readThingRef(s, readers); // rootBehaviorThing
+  if (version > 0x2cd && version < 0x36e) {
+    s.i32();
+    s.i32();
+    s.i32();
+  }
+  if (version > 0x2ac) {
+    s.vector3(); // moveTarget
+    if (version < 0x36e) s.vector3(); // lookAt
+    if (version > 0x2d6 && version < 0x2e6) s.vector3();
+    if (version < 0x2ce) s.s32();
+    s.s32(); // waitTime
+    if (version < 0x2ce) s.f32();
+  }
+  if (version > 0x2ae) s.i32(); // playerNumber
+  if (version > 0x2aa && version < 0x2d5) s.i32();
+  if (version > 0x338) s.wstr(); // actorName
+  if (version > 0x353) {
+    if (version === 0x354 || version === 0x355) {
+      s.f32();
+      s.f32();
+    } else {
+      s.i32(); // lastTimeThrown
+      s.i32(); // lastTimeHitTheGround
+    }
+    s.i32(); // lastThrower
+  }
+  if (version > 0x391) s.u8(); // costumeToCopy
+  if (subVersion > 0x1a5) s.bool(); // copyFormAsWell
+}
+
 /** Everything implemented so far, ready to hand to `readLevel`. */
 export function partReaders(): Map<string, PartReader> {
   const readers = new Map<string, PartReader>();
@@ -1837,6 +1908,7 @@ export function partReaders(): Map<string, PartReader> {
   bind('ENEMY', readEnemy);
   bind('CREATURE', readCreature);
   readers.set('COSTUME', (s) => readCostume(s));
+  bind('NPC', readNpc);
   return readers;
 }
 

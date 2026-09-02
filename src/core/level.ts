@@ -24,6 +24,7 @@
 
 import { loadResource, type Inflate } from './resource.ts';
 import { Serializer, SerializerError, requireLbp3, type RevisionInfo } from './serializer.ts';
+import type { InstrumentPart, Microchip, SequencerPart } from './parts.ts';
 import { readThingRef, type PartReader, type Thing } from './thing.ts';
 
 /** Thrown once `PWorld.things` is in hand, to stop reading the rest. */
@@ -158,4 +159,65 @@ export async function readLevel(
     throw error;
   }
   throw new SerializerError('the world Thing carried no WORLD part');
+}
+
+/** One music sequencer found in a level, with its board resolved. */
+export interface Placement {
+  readonly x: number;
+  readonly y: number;
+  readonly instrument: InstrumentPart;
+}
+
+export interface FoundSequencer {
+  /** The Thing's UID — what `RawDump` calls `seqUID`. */
+  readonly uid: number;
+  readonly settings: SequencerPart;
+  readonly name: string;
+  /** One entry per instrument placed on the board, in board order. */
+  readonly placements: readonly Placement[];
+}
+
+/**
+ * Every music sequencer in a parsed level.
+ *
+ * ⚠️ **The component list is not always where you would look for it.** While a
+ * circuit board is open in the editor the game promotes its components to real
+ * Things parented to the board and leaves `PMicrochip.components` empty, so
+ * reading only that list finds a sequencer with no instruments at all. On one
+ * corpus level that is five sequencers and 1,030 placements silently missing.
+ * The fallback here is the one `RawDump.java` uses: scan the Thing list for
+ * children of the board that carry an `INSTRUMENT`.
+ *
+ * The rebuilt order is the Thing list's order, which is what `RawDump` numbers
+ * as `instIdx`; the compact list's order is its own.
+ */
+export function musicSequencers(things: readonly (Thing | undefined)[]): FoundSequencer[] {
+  const out: FoundSequencer[] = [];
+  for (const thing of things) {
+    if (!thing) continue;
+    const settings = thing.parts.get('SEQUENCER') as SequencerPart | undefined;
+    const chip = thing.parts.get('MICROCHIP') as Microchip | undefined;
+    if (!settings || !chip || !settings.musicSequencer) continue;
+
+    const placements: Placement[] = [];
+    if (chip.components.length > 0) {
+      for (const component of chip.components) {
+        const instrument = component.thing?.parts.get('INSTRUMENT') as InstrumentPart | undefined;
+        if (instrument) placements.push({ x: component.x, y: component.y, instrument });
+      }
+    } else if (chip.board) {
+      for (const child of things) {
+        if (!child || child.parent !== chip.board) continue;
+        const instrument = child.parts.get('INSTRUMENT') as InstrumentPart | undefined;
+        // ⚠️ The board cell is the child's position *relative to the board*, and
+        // this reader does not compute it: `PPos` is stepped over rather than
+        // kept. Until it is, an open board yields its instruments in order with
+        // no coordinates, which is enough to read the music and not enough to
+        // lay it out.
+        if (instrument) placements.push({ x: NaN, y: NaN, instrument });
+      }
+    }
+    out.push({ uid: thing.uid, settings, name: chip.name, placements });
+  }
+  return out;
 }
