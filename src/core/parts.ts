@@ -993,6 +993,65 @@ export function readSequencerPart(s: Serializer, readers: ReadonlyMap<string, Pa
   };
 }
 
+/**
+ * `EggLink`: the prize a bubble hands out.
+ *
+ * ⚠️ The painting at the end is behind a **bool it reads first**, not a
+ * revision gate — `hasPainting` decides whether a resource follows.
+ */
+function readEggLink(s: Serializer): void {
+  const { version } = s.revision;
+  s.resource(); // plan
+  if (version > 0x23b) s.bool(); // shareable
+  if (version > 0x3e0 && s.bool()) s.resource(true); // painting
+}
+
+/** `PGameplayData`: what a Thing is worth when collected. */
+export function readGameplayData(s: Serializer): void {
+  const { version, subVersion } = s.revision;
+  if (subVersion >= 0xef && version > 0x2d0) s.i32(); // gameplayType
+  s.s32(); // fluffCost
+  s.reference(readEggLink);
+  s.reference((self) => {
+    self.i32(); // SlotID.slotType
+    self.u32(); // SlotID.slotNumber
+  });
+  if (version >= 0x2d1 && subVersion < 0xef) s.i32(); // gameplayType
+  if (subVersion >= 0xf3) {
+    s.i32(); // treasureType
+    s.i16(); // treasureCount
+  }
+}
+
+/** `PAudioWorld`: a sound object. */
+export function readAudioWorld(s: Serializer): void {
+  const { version, subVersion } = s.revision;
+  s.str(); // soundName
+  s.f32(); // initialVolume
+  s.f32(); // initialPitch
+  s.f32(); // initialParam1
+  s.f32(); // maxFalloff
+  s.f32(); // impactTolerance
+  if (version < 0x2c4) {
+    s.bool(); // triggerByFalloff
+    s.bool(); // triggerByImpact
+    s.bool(); // triggerBySwitch
+    if (version >= 0x1ad) s.bool(); // triggerByDestroy
+  } else s.i32(); // playMode, enum32
+  s.bool(); // paramAffectVol
+  s.bool(); // paramAffectPitch
+  s.bool(); // paramAffectParam
+  if (version >= 0x165) s.bool(); // isLocal
+  if (version >= 0x198) s.bool(); // hideInPlayMode
+  if (version >= 0x2c4) s.i32(); // behavior
+  if (version >= 0x380) {
+    s.guid(); // soundNames
+    s.i32(); // meshColor
+  }
+  if (subVersion >= 0x178) s.i32(); // categoryGUID
+  if (subVersion >= 0x191) s.bool(); // activatedLastFrame
+}
+
 /** Everything implemented so far, ready to hand to `readLevel`. */
 export function partReaders(): Map<string, PartReader> {
   const readers = new Map<string, PartReader>();
@@ -1018,6 +1077,8 @@ export function partReaders(): Map<string, PartReader> {
   bind('CAMERA_TWEAK', readCameraTweak);
   readers.set('INSTRUMENT', (s) => readInstrumentPart(s));
   bind('SEQUENCER', readSequencerPart);
+  readers.set('GAMEPLAY_DATA', (s) => readGameplayData(s));
+  readers.set('AUDIO_WORLD', (s) => readAudioWorld(s));
   return readers;
 }
 
