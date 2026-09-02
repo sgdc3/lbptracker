@@ -95,11 +95,12 @@ reorder 1 and 2 — you want the asset pipeline proven before anything depends o
 3. ~~**`RInstrument` reading**~~ — **done**. `SampleGuids` resolve through the FileDB
    (`output/orbisguids.map`) to plain RIFF/WAV `.smp` files in the FARC archives, at 48 kHz 16-bit.
    All 68 of the game's instruments parse exactly, and `dev/` plays them.
-4. **Level import** — **the interpretation half is done, the in-browser extraction is not.**
+4. ~~**Level import**~~ — **done, both halves.**
    `src/core/project.ts` turns a dump into sequencers, tracks and a scheduled event list, and it
    imports the whole corpus: **19 files, 338 sequencers, 129,696 tracks, 2,027,633 notes, zero
-   records falling outside a note.** Tempos run 30–240, grid cells 0–334, rows 0–24. What still
-   comes from Java is only the extraction — `tools/RawDump.java` — and the boundary is one function.
+   records falling outside a note.** Tempos run 30–240, grid cells 0–334, rows 0–24. The
+   extraction is `src/core/thing.ts` + `level.ts` + `parts.ts`; `tools/RawDump.java` is now only
+   the golden fixture the walk is checked against.
 
    **The Thing-graph walk, scoped by measurement rather than by feel** (`tools/PartCensus.java`):
 
@@ -122,9 +123,20 @@ reorder 1 and 2 — you want the asset pipeline proven before anything depends o
 
    Done, 2026-09-02, in 30 part readers. `dev/walk-levels.ts` was the loop — it names the next
    missing part rather than throwing a stack trace — and `dev/verify-levels.ts` is the check against
-   the Java dump. What remains before Java can be dropped entirely is the board **coordinates** for
-   an open circuit board: `PPos` is stepped over rather than kept, so a rebuilt placement has no
-   cell. See `musicSequencers` in `level.ts`.
+   the Java dump:
+
+   ```
+   10 levels parsed, 149 music sequencers matched the dump exactly,
+   62158 instrument placements byte for byte, 62158 board cells whole and distinct
+   ```
+
+   62,158 is exactly the `INSTRUMENT` count `PartCensus.java` reports for those ten files.
+
+   ⚠️ **A component on an open circuit board has no stored cell**, and that was the last thing
+   holding the walk to Java. See `boardCell` in `level.ts` and the measurement in
+   `dev/board-probe.ts`: the cell is the world-space delta expressed in the **board's** basis —
+   three dot products, no quaternion — and a bare delta gets only 78.93% of the corpus's 1,030
+   open-board placements onto a cell at all.
 5. **Echo and reverb** — both are read out of the game and implemented in `src/audio/effects.ts`.
 6. **UI**.
 7. **Round-trip export** back into a game-loadable resource. The feature that makes the project
@@ -133,8 +145,8 @@ reorder 1 and 2 — you want the asset pipeline proven before anything depends o
 Steps 1–3 and 5 are done. Step 4 plays a real level end to end, and **the render itself is now in
 the browser**: `src/core/render.ts` holds the pipeline, `dev/render-level.ts` is the Node wrapper and
 `dev/render-worker.ts` the browser one, and on 2026-09-02 the two produced the *same file* — 368
-seconds of `This Is Halloween`, 70,704,044 bytes, one SHA-256. What still needs Java is the
-*extraction*: the eight part readers that would replace `tools/RawDump.java`. Steps 6–7 follow.
+seconds of `This Is Halloween`, 70,704,044 bytes, one SHA-256. **Nothing in the pipeline needs Java
+any more**: `tools/RawDump.java` stays as the golden fixture, not as a step. Steps 6–7 follow.
 See
 [open-questions.md](open-questions.md) — none of what remains blocks the build, it only affects
 fidelity.

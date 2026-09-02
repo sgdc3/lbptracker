@@ -161,6 +161,58 @@ export async function readLevel(
   throw new SerializerError('the world Thing carried no WORLD part');
 }
 
+/**
+ * Where a Thing sits on the circuit board it is parented to.
+ *
+ * ## Why a frame change is needed at all
+ *
+ * A closed board stores each component as a `CompactComponent` with a flat
+ * `x, y` in board units. An **open** board has none of that: the components are
+ * real Things in the world, and all that survives is a 4x4 per Thing. The cell
+ * has to come back out of those two matrices.
+ *
+ * It is tempting to just subtract the two translations, since a circuit board is
+ * usually hanging square on the screen. **Measured, that is wrong on real
+ * levels**: `dev/board-probe.ts` finds that a bare delta puts only 78.93% of the
+ * corpus's 1,030 open-board placements on a cell at all. One of the seven open
+ * sequencer boards is attached to something rotated, and its components come out
+ * on fractional cells. Expressing the delta in the board's own frame puts
+ * **100%** of them on a cell.
+ *
+ * ## Why there is no quaternion here
+ *
+ * The board's frame is its matrix's three basis columns, so "the delta in board
+ * space" is three dot products — one per axis, divided by the column's own
+ * squared length so a scaled board still lands on integers. That is the whole
+ * transform. `tools/RawDump.java` spells it as
+ * `getNormalizedRotation().invert()` and rotates by a quaternion, which scores
+ * the same 100% here for a reason worth knowing: it uses the **child's**
+ * rotation rather than the board's, and those agree only because a component
+ * lies flat against its board. It is right by accident, and it would part
+ * company with the engine the moment a component were turned on the board.
+ *
+ * ## What says the units and the origin are right
+ *
+ * Nothing needs calibrating, and the corpus says so. All 61,128 stored
+ * `CompactComponent.x` on closed boards are exact multiples of 52.5 and all
+ * 61,128 stored `y` are **odd** multiples of it -- steps are 52.5 apart so an
+ * instrument sits on any multiple, rows are twice that and a component sits at
+ * the row's centre. Run this over the open boards and 1,030 of 1,030 come out
+ * with the same signature, worst fractional part 0.0004 of a cell. A wrong
+ * origin or a wrong scale could not reproduce that, so the result feeds
+ * `boardToGrid` exactly as a stored pair would.
+ */
+export function boardCell(board: Float32Array, child: Float32Array): { x: number; y: number } {
+  // Column-major: 12..14 is the translation, and column `i` is 4*i..4*i+2.
+  const d = [child[12] - board[12], child[13] - board[13], child[14] - board[14]];
+  const axis = (i: number) => {
+    const c = [board[i * 4], board[i * 4 + 1], board[i * 4 + 2]];
+    const squared = c[0] * c[0] + c[1] * c[1] + c[2] * c[2];
+    return squared === 0 ? 0 : (c[0] * d[0] + c[1] * d[1] + c[2] * d[2]) / squared;
+  };
+  return { x: axis(0), y: axis(1) };
+}
+
 /** One music sequencer found in a level, with its board resolved. */
 export interface Placement {
   readonly x: number;
@@ -206,15 +258,16 @@ export function musicSequencers(things: readonly (Thing | undefined)[]): FoundSe
         if (instrument) placements.push({ x: component.x, y: component.y, instrument });
       }
     } else if (chip.board) {
+      // The board's own matrix. Without it there is no frame to measure in, so
+      // the placements would have to be dropped rather than guessed at.
+      const boardPos = chip.board.parts.get('POS') as Float32Array | undefined;
       for (const child of things) {
         if (!child || child.parent !== chip.board) continue;
         const instrument = child.parts.get('INSTRUMENT') as InstrumentPart | undefined;
-        // ⚠️ The board cell is the child's position *relative to the board*, and
-        // this reader does not compute it: `PPos` is stepped over rather than
-        // kept. Until it is, an open board yields its instruments in order with
-        // no coordinates, which is enough to read the music and not enough to
-        // lay it out.
-        if (instrument) placements.push({ x: NaN, y: NaN, instrument });
+        if (!instrument) continue;
+        const childPos = child.parts.get('POS') as Float32Array | undefined;
+        const cell = boardPos && childPos ? boardCell(boardPos, childPos) : { x: NaN, y: NaN };
+        placements.push({ x: cell.x, y: cell.y, instrument });
       }
     }
     out.push({ uid: thing.uid, settings, name: chip.name, placements });

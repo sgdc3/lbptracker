@@ -43,11 +43,22 @@ export function readBody(s: Serializer, readers: ReadonlyMap<string, PartReader>
   readThingRef(s, readers); // editingPlayer
 }
 
-/** `PPos`: where the Thing is, and whose bone it is. */
-export function readPos(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+/**
+ * `PPos`: where the Thing is, and whose bone it is.
+ *
+ * Returns `worldPosition`, so `thing.parts.get('POS')` is the 4x4 itself. It is
+ * kept rather than stepped over because a component on an **open** circuit board
+ * has no stored board cell -- see `boardCell` below, which is how one is
+ * recovered.
+ *
+ * Column-major, as cwlib's `m44` hands the 16 floats straight to JOML's
+ * `Matrix4f.set(float[])`: element 12..14 is the translation, and 0..2 / 4..6 /
+ * 8..10 are the basis columns.
+ */
+export function readPos(s: Serializer, readers: ReadonlyMap<string, PartReader>): Float32Array {
   readThingRef(s, readers); // thingOfWhichIAmABone
   s.i32(); // animHash
-  s.matrix(); // worldPosition; localPosition is regenerated above 0x341
+  return s.matrix(); // worldPosition; localPosition is regenerated above 0x341
 }
 
 /** `PJoint`: the connector between two Things. Long, and all of it fixed-width. */

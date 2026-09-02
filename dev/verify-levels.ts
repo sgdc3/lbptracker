@@ -9,10 +9,10 @@
  *
  * ⚠️ It compares what both sides genuinely know: the sequencer's UID, and for
  * each instrument placement the GUID, the note count and **the note bytes**.
- * Board coordinates are deliberately left out — `RawDump` rebuilds them from the
- * Thing graph when the circuit board is open and takes them from the component
- * record otherwise, and reproducing that choice is a separate question from
- * whether the bytes were read correctly.
+ * Board coordinates are not in the dump, so they are checked here against the
+ * shape they have to have instead: every cell a whole number of steps, and no
+ * two components in one cell. `dev/board-probe.ts` is where the formula itself
+ * is measured.
  */
 
 import { readdir, readFile } from 'node:fs/promises';
@@ -55,7 +55,11 @@ let filesChecked = 0;
 let sequencersMatched = 0;
 let placementsMatched = 0;
 let emptySequencers = 0;
+let cellsChecked = 0;
 const problems: string[] = [];
+
+/** One horizontal step; rows are twice it. See `boardToGrid` in project.ts. */
+const CELL = 52.5;
 
 for (const entry of await readdir(DIR, { withFileTypes: true })) {
   if (!entry.isFile()) continue;
@@ -97,6 +101,30 @@ for (const entry of await readdir(DIR, { withFileTypes: true })) {
       );
       continue;
     }
+    // A board cell holds one component, and a component sits on a cell -- true
+    // whether the pair was stored or recovered from the matrices, so it catches
+    // a wrong frame without needing the dump to carry coordinates.
+    const seen = new Set<string>();
+    for (const placement of sequencer.placements) {
+      const cx = placement.x / CELL;
+      const cy = placement.y / CELL;
+      if (!Number.isFinite(cx) || Math.abs(cx - Math.round(cx)) > 1e-3) {
+        problems.push(`${entry.name.slice(0, 8)} seq ${sequencer.uid}: x ${placement.x} is not a cell`);
+        break;
+      }
+      if (!Number.isFinite(cy) || Math.abs(cy - Math.round(cy)) > 1e-3 || Math.abs(Math.round(cy)) % 2 !== 1) {
+        problems.push(`${entry.name.slice(0, 8)} seq ${sequencer.uid}: y ${placement.y} is not a row centre`);
+        break;
+      }
+      const key = `${Math.round(cx)},${Math.round(cy)}`;
+      if (seen.has(key)) {
+        problems.push(`${entry.name.slice(0, 8)} seq ${sequencer.uid}: two components in cell ${key}`);
+        break;
+      }
+      seen.add(key);
+      cellsChecked += 1;
+    }
+
     let ok = true;
     for (const [i, mine] of ours.entries()) {
       const theirs = rows[i];
@@ -122,7 +150,8 @@ for (const entry of await readdir(DIR, { withFileTypes: true })) {
 
 console.log(
   `\n${filesChecked} levels parsed, ${sequencersMatched} music sequencers matched the dump ` +
-    `exactly, ${placementsMatched} instrument placements byte for byte` +
+    `exactly, ${placementsMatched} instrument placements byte for byte, ` +
+    `${cellsChecked} board cells whole and distinct` +
     (emptySequencers ? `; ${emptySequencers} empty sequencers the dump cannot express` : ''),
 );
 for (const problem of problems.slice(0, 20)) console.log(`  ${problem}`);

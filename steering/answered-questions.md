@@ -688,3 +688,76 @@ And two more that were process errors rather than misreadings:
 - What gain, if any, the eboot puts on the connection from the sequencer DSP's channels 2-3 into the
   reverb, and from the reverb's output into the master. `src/audio/effects.ts` assumes unity at both
   ends. This is the last unknown in the reverb, and it is a constant.
+
+---
+
+## 16. The board cell of a component on an **open** circuit board — SETTLED: the delta in the board's basis
+
+A closed circuit board stores each component as a `CompactComponent`: a Thing reference and a flat
+`x, y, angle, scaleX, scaleY, flipped`. An **open** one stores none of that. While the board is
+open in the editor the game promotes its components to real Things parented to the board, leaves
+`PMicrochip.components` empty, and the only thing left of the layout is a 4×4 per Thing. Reading
+just the compact list therefore finds a sequencer with **no instruments at all** — on one corpus
+level that is five sequencers and 1,030 placements silently missing.
+
+`boardCell` in `src/core/level.ts` recovers the pair; `dev/board-probe.ts` is the measurement.
+
+### What the answer is
+
+The cell is the world-space translation delta **expressed in the board's own basis**. The board
+matrix is column-major, so that is three dot products — column *i* against the delta, divided by
+that column's squared length so a scaled board still lands on integers. No quaternion appears
+anywhere.
+
+### Why a frame change is needed at all, since it looks unnecessary
+
+A circuit board normally hangs square on the screen, so subtracting the two translations looks like
+it should be enough, and it is tempting to conclude that the engine cannot be doing anything as
+baroque as inverting a transform just to lay out a sequencer. **Measured, the bare delta is
+wrong**: it puts only **78.93%** of the corpus's 1,030 open-board placements on a cell. One of the
+seven open sequencer boards is attached to something rotated in the world, and every component on
+it comes out on a fractional cell. In the board's basis: **100.00%**, worst fractional part 0.0004
+of a cell.
+
+So the frame change is not decoration — but it is also not a quaternion. A board is a Thing in the
+world and can be turned with whatever it is stuck to; expressing a child's offset in its parent's
+axes is the cheapest possible way to say that, and it is what the columns of the parent's matrix
+already are.
+
+### What pins the units and the origin — nothing had to be calibrated
+
+Over all 61,128 instrument placements on **closed** sequencer boards:
+
+- every stored `x` is an exact multiple of **52.5** — 100.00%
+- every stored `y` is an **odd** multiple of 52.5 — 100.00%
+
+The asymmetry is the layout itself: steps are 52.5 apart so an instrument can sit on any multiple,
+rows are 105 (`CELL_HEIGHT`) and a component sits at the row's *centre*, which is always odd. That
+pair of properties is a fingerprint, and it is what makes the open-board result checkable without
+any ground truth to compare against: run the formula over the 1,030 recovered placements and
+**1,030 of 1,030** carry the same signature. A wrong origin, or a wrong scale, could not.
+
+`dev/verify-levels.ts` now also asserts the stronger structural property across the whole corpus —
+**62,158 board cells whole and distinct**, stored and recovered alike. A board cell holds one
+component, so two components landing in one cell would mean the frame was wrong.
+
+### The wrong turn, kept
+
+`tools/RawDump.java` computes this as
+
+```java
+thing.getTranslation().sub(container.getTranslation())
+     .rotate(thing.getNormalizedRotation(new Quaternionf()).invert())
+```
+
+which scores the same 100.00% on this corpus — and is wrong twice over. It rotates by the
+**child's** rotation rather than the board's; those agree only because a component lies flat
+against its board, so it is right by accident and would part company with the engine the moment a
+component were turned on the board. And it normalises the rotation instead of undoing the scale, so
+a scaled board would come out scaled. Both are invisible on the ten levels available, which is
+exactly why the property test above matters more than the agreement does.
+
+⚠️ The instinct that produced this entry was *"it seems absurd that the game transforms rotations
+just to work out the sequencer's structure"* — and it was half right in a useful way. The
+quaternion round-trip is indeed absurd; the frame change is not, and the corpus is what separated
+the two in about ten minutes.
