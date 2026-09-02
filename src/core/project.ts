@@ -205,6 +205,9 @@ export function trackFrom(row: DumpRow): Track {
   };
 }
 
+/** How many rows the last `importLevel` dropped as re-emitted duplicates. */
+export let duplicateRowsDropped = 0;
+
 /**
  * Group a level's dump rows into sequencers.
  *
@@ -212,10 +215,44 @@ export function trackFrom(row: DumpRow): Track {
  * sequencer's own settings are repeated on every row of it. Order within a
  * sequencer follows `instIdx`, which is the order the circuit board lists its
  * components.
+ *
+ * ## Why this deduplicates
+ *
+ * ⚠️ **`RawDump` can emit a whole sequencer twice.** Its outer loop walks
+ * `world.things` and dumps every Thing carrying a music `PSequencer`; when the
+ * same Thing is reachable twice, every component of that sequencer is written
+ * out again with the same `seqUID` and the same `instIdx`, byte for byte.
+ *
+ * It is not a rare corner. **60 of the corpus's 338 sequencers are affected**,
+ * and the pattern is all-or-nothing: a sequencer's cells are either all single
+ * or all doubled, never mixed. In `This Is Halloween` the file is literally
+ * `instIdx` 0..844 followed by 0..844 again, with identical note bytes.
+ *
+ * Left in, it does two things, and the second is what makes it a bug rather
+ * than a curiosity:
+ *
+ * - every note is rendered twice, so the whole sequencer is 6 dB loud —
+ *   invisible under a normalising render;
+ * - **every note costs two of the engine's 32 voices**, so a passage that fits
+ *   comfortably in the pool overflows it and the allocator starts stealing.
+ *   At step 2176 of `This Is Halloween` that is 42 simultaneous notes against a
+ *   real 21, and the four voices carrying the sustained lead are the quietest
+ *   in the pool, so they are the first to go: the lead vanishes for two bars.
+ *
+ * A board cell holds one component, so two rows with the same `instIdx` in the
+ * same sequencer cannot be authored content. Dropping the repeat is exact.
  */
 export function importLevel(rows: readonly DumpRow[]): LevelProject[] {
   const byFile = new Map<string, Map<number, DumpRow[]>>();
+  const seen = new Set<string>();
+  duplicateRowsDropped = 0;
   for (const row of rows) {
+    const key = `${row.file}|${row.seqUID}|${row.instIdx}`;
+    if (seen.has(key)) {
+      duplicateRowsDropped += 1;
+      continue;
+    }
+    seen.add(key);
     let seqs = byFile.get(row.file);
     if (!seqs) byFile.set(row.file, (seqs = new Map()));
     const list = seqs.get(row.seqUID);

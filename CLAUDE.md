@@ -51,6 +51,9 @@ they are the ground truth the JavaScript has to reproduce:
 - `RawDump.java` — the exception to the Python rule: walks a level's Thing graph via the external
   toolkit jar and dumps every music sequencer's note records as raw bytes. It is what makes the
   corpus statistics in `sequencer-data-model.md` reproducible. Build/run notes in its header.
+  ⚠️ It used to emit some sequencers **twice**; `fixtures/levels/sequencers.jsonl` still contains
+  those 23,911 duplicate rows and `importLevel` drops them. See *The `RawDump` duplication* in
+  `steering/lbp-modding-toolchain.md` before trusting a raw row count.
 - `PartCensus.java` — which Thing parts a level corpus actually uses, overall and on the Things
   carrying a `SEQUENCER` or an `INSTRUMENT`. This is what scoped the Thing-graph walk from
   "34 part serialisers" down to eight; see `steering/tracker-architecture.md`.

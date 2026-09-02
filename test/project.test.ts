@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   STEPS_PER_CELL,
   boardToGrid,
+  duplicateRowsDropped,
   importLevel,
   schedule,
   trackFrom,
@@ -139,8 +140,18 @@ test('every sequencer in the corpus imports, and the notes survive it', async (t
     }
   }
 
-  // Nothing may be lost: every row must become a track.
-  assert.equal(tracks, rows.length, 'every dump row becomes a track');
+  // Nothing may be lost except the rows `RawDump` emitted twice.
+  //
+  // ⚠️ It re-emits a whole sequencer when its Thing is reachable twice in
+  // `world.things`, and 60 of the corpus's 338 sequencers come out that way --
+  // `instIdx` 0..N followed by 0..N again, byte for byte. `importLevel` drops
+  // the repeat; this pins the count so a change in either direction is visible.
+  assert.equal(
+    tracks + duplicateRowsDropped,
+    rows.length,
+    'every dump row becomes a track or is a counted duplicate',
+  );
+  assert.equal(duplicateRowsDropped, 23911, 'the corpus carries 23,911 duplicate rows');
   assert.ok(sequencers > 100, `expected many sequencers, got ${sequencers}`);
   assert.ok(notes > 10_000, `expected many notes, got ${notes}`);
 
@@ -227,7 +238,8 @@ test('the corpus resolves to real instrument GUIDs', async (t) => {
   }
   console.log(`    ${resolved} tracks resolve to ${guids.size} distinct instrument GUIDs, ${unresolved} do not`);
   // If this ever drops to zero again, the descriptor format has changed.
-  assert.ok(resolved > rows.length * 0.9, `only ${resolved} of ${rows.length} resolved`);
+  const kept = rows.length - duplicateRowsDropped;
+  assert.ok(resolved > kept * 0.9, `only ${resolved} of ${kept} resolved`);
 });
 
 // ------------------------------------------------------------------ triplets

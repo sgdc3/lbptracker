@@ -32,6 +32,7 @@ import { swungFrame } from '../src/core/swing.ts';
 import { LFO_PARAMS, OUTPUT_PARAMS, STACK_PARAMS } from '../src/core/params.ts';
 import {
   channelVolume,
+  duplicateRowsDropped,
   importLevel,
   schedule,
   type DumpRow,
@@ -136,8 +137,22 @@ const candidates = importLevel(rows)
   .filter((c) => c.seq.tracks.length >= 3 && c.seq.lengthSteps > 32)
   .sort((a, b) => b.seq.tracks.length - a.seq.tracks.length);
 
-const chosen = candidates[Math.min(seqIndex, candidates.length - 1)];
-if (!chosen) throw new Error('no sequencer with enough notes in the dump');
+if (duplicateRowsDropped) {
+  console.log(
+    `⚠ dropped ${duplicateRowsDropped} duplicate dump rows -- RawDump re-emits whole ` +
+      `sequencers; see importLevel`,
+  );
+}
+// `LBP_UID` picks a sequencer by its own UID, which is stable; the positional
+// index is not -- it is a rank in a list sorted by track count, so anything that
+// changes a track count reshuffles it. Deduplicating the dump changed it once.
+const wantUid = Number(process.env.LBP_UID ?? 0);
+const chosen = wantUid
+  ? candidates.find((c) => c.seq.uid === wantUid)
+  : candidates[Math.min(seqIndex, candidates.length - 1)];
+if (!chosen) {
+  throw new Error(wantUid ? `no sequencer with uid ${wantUid}` : 'no sequencer in the dump');
+}
 const { seq } = chosen;
 console.log(
   `${chosen.level} seq ${seq.uid} "${seq.name}" — ${seq.tracks.length} tracks, ` +

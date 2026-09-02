@@ -17,8 +17,10 @@ import toolkit.tools.sequencerdump.utils.PositionUtils;
 import java.io.File;
 import java.io.PrintStream;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Structural dump of every music sequencer in a level, with the note records
@@ -85,12 +87,26 @@ public class RawDump {
             return;
         }
 
+        // A world's Thing list can carry the same music sequencer twice, and
+        // without this guard the whole sequencer is emitted twice -- instIdx
+        // 0..N, then 0..N again, byte for byte. It is not rare: 60 of the 338
+        // sequencers in this project's corpus came out doubled, and because
+        // every note then costs two of the engine's 32 voices, dense passages
+        // lose notes the game keeps. Dedupe by UID, and by identity for the
+        // case where UIDs are not unique.
+        Set<Integer> seenUid = new HashSet<>();
+        Set<Thing> seenThing = new HashSet<>();
         for (Thing thing : things) {
             if (thing == null) continue;
             PMicrochip chip = thing.getPart(Part.MICROCHIP);
             if (chip == null) continue;
             PSequencer seq = thing.getPart(Part.SEQUENCER);
             if (seq == null || !seq.musicSequencer) continue;
+            if (!seenThing.add(thing) || !seenUid.add(thing.UID)) {
+                System.err.println("DUPLICATE sequencer UID " + thing.UID + " in " + file
+                                   + " -- skipping the repeat");
+                continue;
+            }
 
             // The open-circuit-board case: Components is unreliable, rebuild it
             // from the Thing graph.

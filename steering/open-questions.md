@@ -172,14 +172,23 @@ The code now applies **all three** of `Params[0..2]` only to layers after the fi
 that a per-layer randomisation exists to decorrelate stacked layers and one layer has nothing to
 decorrelate.
 
-⚠️ **The detune had to follow, and the second symptom is the more instructive one.** Fixing only
-the start offset put an audible **phaser** over the same kit, because
-`a_kit_1`'s `Params[0]` is 0.030 and `1 + 0.05 * detune * U(-1,1)` gave every hit a random ±0.15%
-pitch. That is inaudible on one voice — but **this level plays every drum hit on two board
-components at once**: in the 25-second window, 140 of 140 distinct `(step, pitch)` slots are doubled,
-across 146 components carrying `a_kit_1`. Two coherent copies a hair apart in pitch is a comb filter,
-and it sweeps. The random start had been hiding it by making the copies incoherent; repairing one
-bug exposed the other.
+⚠️ **The detune had to follow, and the second symptom turned out to be a third bug.** Fixing only
+the start offset put an audible **phaser** over the same kit, because `a_kit_1`'s `Params[0]` is
+0.030 and `1 + 0.05 * detune * U(-1,1)` gave every hit a random ±0.15% pitch. That is inaudible on
+one voice, and the note here used to say the level plays every drum hit on two board components at
+once — 140 of 140 `(step, pitch)` slots doubled.
+
+**It does not. The dump did.** `RawDump` was emitting 60 of the corpus's 338 sequencers twice, so
+every note in them was rendered twice and the "doubling" was ours. See *The `RawDump` duplication*
+in [lbp-modding-toolchain.md](lbp-modding-toolchain.md). Two coherent copies a hair apart in pitch
+really is a comb filter and really does sweep, so the phaser was real — but its cause was the
+duplication, and confining the detune to layers after the first only hid it. The detune change
+still stands on its own reasoning; it just was not what fixed the phaser.
+
+⚠️ **The method failure worth keeping**: a doubling was observed, an explanation was invented
+that fitted it ("the composer placed everything twice"), and it was written into steering as a fact
+about the level. Nobody asked whether every cell being doubled was plausible as authored content.
+One query — are the two components at the same board cell? — would have shown they were.
 
 ⚠️ **That is a repair, not an explanation.** It does not say why six kits set the value at all,
 and a parameter that is meaningless on 18 of the 27 instruments that set it is probably not the

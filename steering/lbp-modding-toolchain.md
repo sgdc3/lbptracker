@@ -64,6 +64,34 @@ in the sample slot).
   question 2 stands. What it does settle is the *kind* of reference: `serializer.guid()`, i.e. an
   ordinary LBP GUID into the game's file database — not an FSB bank index.
 - **No audio at all.** No FSB reader, no decoder, no playback. `tools/fsb.py` remains ours.
+### The `RawDump` duplication — found 2026-09-02, and it cost a rendered note
+
+⚠️ **`RawDump`'s outer loop can emit the same sequencer twice.** It walks `world.things` and dumps
+every Thing carrying a music `PSequencer`; a world's Thing list can carry the same sequencer twice,
+and when it does, every component is written again with the same `seqUID` **and the same `instIdx`**,
+byte for byte — `instIdx` 0..N, then 0..N again.
+
+**60 of the corpus's 338 sequencers came out that way**, and the pattern is all-or-nothing: a
+sequencer's cells are either all single or all doubled, never mixed. Corpus-wide it is 23,911
+duplicate rows out of 129,696.
+
+Why it matters more than a factor of two on the level:
+
+- every note is rendered twice, so the sequencer is 6 dB loud — invisible under a normalising render;
+- **every note costs two of the engine's 32 voices.** At step 2176 of `This Is Halloween` that is 42
+  simultaneous notes against a real 21; the pool overflows, the allocator steals the quietest, and
+  the four voices carrying the sustained lead are the quietest. A listener reported the lead
+  vanishing for two bars, which is exactly what it was.
+
+Both ends are fixed: `RawDump` dedupes by Thing UID and identity, and `importLevel` drops any row
+repeating a `(file, seqUID, instIdx)` it has already seen and counts what it dropped. A board cell
+holds one component, so two rows with the same `instIdx` cannot be authored content.
+
+**The general rule this earns:** a structural regularity in *our* extraction is a bug until proven
+otherwise. This one was written into steering as a fact about the level ("the composer plays every
+hit on two components") and stood for a session, because nobody asked whether the two components
+were at the same board cell. They were.
+
 - **No synthesis model.** Nothing about pitch ratios, key splits at playback time, echo, reverb,
   or the FMOD side. Everything in [lbp-audio-engine.md](lbp-audio-engine.md) is still ours to work
   out.
