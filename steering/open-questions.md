@@ -707,14 +707,44 @@ sequencer's own path and applies wherever the sequencer sits.
 | the mixer-channel records carrying a pan | **no** — `0x10b7`-`0x10cb` fill them `{0.75, 0, 0}` and `0x3adf`/`0x3ae9` read the second and third as **integer flags**, `or`-ed with a global |
 | the level position | **no** — the listener plays the game and says so |
 
-### What is left
+### ✔ The plugin is NOT an FMOD DSP, and that collapses the search
 
-**What FMOD does with the plugin's four output channels.** That is the one link in the chain nobody
-has read: it is neither in `fmodextinput.prx` nor in the game's own code, but in the FMOD library
-compiled into the eboot (`fmod_dspi.cpp`, `fmod_channelgroupi.cpp` — `tools/fmodapi.py` locates
-both). A 4-to-2 downmix with the usual −3 dB coefficient is the shape that fits: adding a component
-at `1/(2√2) = 0.3536` of the mono sum to both channels reproduces the measured 1.2654 from 0.4/0.6
-to three decimals, and `1/(2√2)` is not a number one invents.
+Read 2026-09-03. `fmodextinput.prx` exports **exactly one function**, and its whole API is this:
+
+```
+0x0170  render(rdi = ctx, rsi = inBuf, rdx = outBuf, ecx = frames, r8d = inCh, r9d = outCh)
+0x0184  cmp r8d, 4 ; jne trap        ; inCh MUST be 4
+0x018a  cmp r9d, 4 ; jne trap        ; outCh MUST be 4
+0x0190  int 0x41                     ; anything else is an assertion failure
+0x0194  memset(outBuf, 0, frames * 16)        ; 4 channels x 4 bytes
+0x01c0  rdx = [ctx + 8]                       ; the state block
+0x01cc  call 0xa90(outBuf + i*0x1000, 256, state)
+0x01d1  outBuf += 0x1000                      ; 256 frames x 4 ch x 4 bytes
+```
+
+The export is the NID `f7uOxY9mM1U#A#B` at value `0x170`; everything else in the module's symbol
+table is an **import** from `libkernel`/`libc`. `rsi` is never read — it is a generator, not an
+effect.
+
+⚠️ **So there is no FMOD DSP description, no `FMOD_DSP_READCALLBACK`, and no FMOD downmix to
+blame.** The game hands the plugin a four-channel buffer and takes it back; whatever mixes those four
+channels to stereo is **the game's own code**, and it is one import call site away. The four are the
+dry pair and the reverb-send pair, which the arity assertion now confirms rather than assumes.
+
+### The next step, and it is bounded
+
+Find the eboot's call site of that import:
+
+1. `f7uOxY9mM1U` appears in the eboot at vaddr **`0x10d0828`**, in its dynamic string table.
+2. Its offset there gives the symbol index; the `JMPREL` entry for that index gives the GOT slot.
+3. The `call qword ptr [rip + …]` that resolves to that slot is the call — there will be one or two.
+4. Read what the caller does with `rdx` (the four-channel buffer) afterwards. That is where the
+   width goes.
+
+The shape to expect: adding `1/(2√2) = 0.3536` of the mono sum to both channels reproduces the
+measured 1.2654 from 0.4/0.6 to three decimals, and `1/(2√2)` is not a number one invents — but it
+is a *fit*, and the call site is a *reading*. Do not write the constant down until the call site
+says it.
 
 ### ⚠️ The one recording that would narrow this fast
 
