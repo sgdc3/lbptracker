@@ -201,6 +201,44 @@ the name.
 without once checking what values the game's own instruments carry. Reading the corpus first — one
 query — would have shown 1.000 against `Numstack` 1 and stopped the change.
 
+## 15. `robot` sounds thin, and the numbers say why — but not whether it should
+
+A listener reports the lead synth in `This Is Halloween` as **thin, short of low end and short of
+resonance** against the game. The instrument is `robot` (GUID 129082) — the report first named
+`ghost`, which is not in that level at all.
+
+What the data says, all of it consistent:
+
+| instrument | sample | `baseNote` | notes it plays here |
+|---|---|---|---|
+| `robot` | `rude_bass_c3.smp` | **36** | 61, 69, 71, 78, 85 |
+| `square_wave` | `kenny_square_a4.smp` | 57 | the same line |
+| `pulse_wave` | `kenny_pulse_a5.smp` | 69 | |
+| `saw_wave` / `sine_wave` | `kenny_saw_a4` / `kenny_sine_a4` | 57 | |
+
+The sample names carry their own pitch and **every one of them agrees with its `baseNote`** under one
+convention (C3 = 36, A4 = 57, A5 = 69). So the `baseNote` reading is not in doubt. It does mean
+`robot` plays a **bass** sample **+25 to +49 semitones**, which is a thin sound by construction.
+
+And the resonance is zero, for a measured reason. `robot`'s `Params` are
+`cutoff 0.710..0.230`, `resonance 0.000..0.709` — a one-knob filter sweep — and **every one of its
+1,696 note records in this level carries timbre 0**, so the interpolation lands on `x`: cutoff 0.71,
+resonance 0. `square_wave` is the same story (`resonance 0.000..0.830`, all notes at 0). Corpus-wide
+20.9% of records carry a non-zero timbre, so zero here is the composer's choice, not a parse failure.
+
+**What is not settled** is whether the game sounds the same. Two things could still be wrong on our
+side and neither is checked:
+
+- the direction of the `x`/`y` interpolation (`v = x + f*(y - x)` is measured on the *sends* at
+  `0x3b64`, and assumed for the rest);
+- the octave, which is why `LBP_PITCH=<guid>:<semitones>` exists in `dev/render-level.ts` —
+  `LBP_PITCH=129082:-12` renders `robot` an octave down, scaling only the playback rate so the key
+  zone and the filter's key-tracking do not move with it.
+
+⚠️ One thing was ruled out on the way: byte 3 of a note record only ever holds `0x00`, `0x40` or a
+low nibble — bits 4 and 5 are never set corpus-wide, and `0x40` is bit 30, which the engine already
+uses for the triplet sub-step. There is no unread per-note flag hiding there.
+
 ## 10. One-shots — percussion is not gated by its note, and the reason is inferred
 
 A listener reported the drums as far too quiet, and the ride cymbal at 5:17 of one level as barely

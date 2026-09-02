@@ -63,6 +63,27 @@ const fromArg = Number(process.env.LBP_FROM ?? 0);
  * down is exactly what a cymbal that sounds too quiet would be doing.
  */
 const unpitchedPercussion = process.env.LBP_UNPITCHED_PERCUSSION === '1';
+/**
+ * ⚠️ A/B switch. `LBP_PITCH=<guid>:<semitones>[,...]` scales one instrument's
+ * playback rate by `2^(semitones/12)`.
+ *
+ * It answers exactly one question: **is a sample mapped to the wrong octave?**
+ * It multiplies the rate and leaves the note, the key-zone walk and the filter's
+ * key-tracking alone, so what changes is the sample's pitch and nothing else.
+ * Transposing the note instead would move the zone and the cutoff too, and the
+ * result would not be readable.
+ *
+ * `LBP_PITCH=129082:-12` is `robot` an octave down.
+ */
+const pitchShift = new Map<number, number>(
+  (process.env.LBP_PITCH ?? '')
+    .split(',')
+    .filter(Boolean)
+    .map((entry) => {
+      const [guid, semis] = entry.split(':');
+      return [Number(guid), 2 ** (Number(semis) / 12)] as [number, number];
+    }),
+);
 /** Comma-separated instrument GUIDs to keep (`LBP_ONLY`) or drop (`LBP_SKIP`). */
 const onlyGuids = (process.env.LBP_ONLY ?? '').split(',').filter(Boolean).map(Number);
 const skipGuids = (process.env.LBP_SKIP ?? '').split(',').filter(Boolean).map(Number);
@@ -329,7 +350,8 @@ for (const [eventIndex, event] of events.entries()) {
       unpitchedGuids.includes(event.guid)
         ? 1
         : pitchRatio(definition, note, seq.tempo)) *
-      (slot.wav.sampleRate / RATE),
+      (slot.wav.sampleRate / RATE) *
+      (pitchShift.get(event.guid) ?? 1),
     gain:
       velocityGain(event.volume) *
       track.level *
@@ -494,7 +516,9 @@ for (let i = 0; i < frames; i += 1) {
   pcm[i * 2] = Math.max(-32768, Math.min(32767, Math.round(left[i] * norm * 32767)));
   pcm[i * 2 + 1] = Math.max(-32768, Math.min(32767, Math.round(right[i] * norm * 32767)));
 }
-const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${clip ? '' : '-noclip'}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
+const out = `fixtures/level-seq${seq.uid}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${clip ? '' : '-noclip'}${
+  pitchShift.size ? `-pitch${[...pitchShift.keys()].join('_')}` : ''
+}${unpitchedPercussion ? '-unpitched' : ''}.wav`;
 await writeFile(out, writeWav(pcm, 2, RATE));
 const elapsed = Number(process.hrtime.bigint() - started) / 1e9;
 console.log(
