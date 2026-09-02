@@ -106,17 +106,23 @@ reorder 1 and 2 — you want the asset pipeline proven before anything depends o
    - The stream is strictly sequential. References are inline ids and parts carry no lengths, so
      nothing can be skipped: reading a `PSequencer` means parsing every part before it on that
      Thing.
-   - Across the corpus: **34 distinct part types over 172,139 Things** — roughly 5,500 lines of
-     serialiser in cwlib's terms. That is the number that made this look like a month.
-   - But **only nine part types ever share a Thing with a `SEQUENCER`**, in **eight** combinations
-     across all 1,169 of them. In serialisation order: `RENDER_MESH`, `POS`, `TRIGGER`, `STICKERS`,
-     `DECORATIONS`, `SWITCH`, `GROUP`, `MICROCHIP`, `SEQUENCER`.
-   - And **128,666 of 129,696 instrument Things carry `INSTRUMENT` alone**; 1,030 add `POS` and/or
-     `RENDER_MESH`.
+   - Across the corpus: **34 distinct part types over 172,139 Things**; over the 10 level files that
+     load, **33 types over 81,946 Things**. Roughly 5,500 lines of serialiser in cwlib's terms.
+   - Only nine part types ever share a Thing with a `SEQUENCER`, in eight combinations across all
+     1,169 of them, and **128,666 of 129,696 instrument Things carry `INSTRUMENT` alone**.
 
-   So the walk needs **eight** part readers, not thirty-four, and `PSwitch` (~500 lines) is the only
-   heavy one. That is a session or two, not a month. Do it against `tools/RawDump.java`'s output as
-   a golden fixture — 129,696 rows of it — so every part added is checked the moment it lands.
+   ⚠️ **This file used to conclude from that second bullet that the walk needs eight part
+   readers. It needs all 33, and the mistake is worth keeping.** The nine-types figure answers
+   "what sits on a sequencer's Thing", which would matter if a Thing could be reached directly. It
+   cannot: parts carry no length, references expand inline at their first mention, and
+   `PWorld.things` is an array of them, so reaching the 443rd Thing means having fully read the 442
+   before it. `PartCensus.java`'s own header said as much — "a TypeScript walk cannot skip
+   anything" — so the tool was right and the inference drawn from its output was not. Two
+   sessions of planning were done against a number that was answering a different question.
+
+   Do it against `tools/RawDump.java`'s output as a golden fixture — 129,696 rows — so every part
+   added is checked the moment it lands. `dev/walk-levels.ts` is the loop: it names the next
+   missing part rather than throwing a stack trace.
 5. **Echo and reverb** — both are read out of the game and implemented in `src/audio/effects.ts`.
 6. **UI**.
 7. **Round-trip export** back into a game-loadable resource. The feature that makes the project
