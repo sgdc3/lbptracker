@@ -590,10 +590,20 @@ and carries a relocation of type **`R_X86_64_GLOB_DAT`** (`info = 0x200000006`) 
 symbol 2, **`wycAbBCjLI4#C#D`** — a PS4 NID imported from library id 2. So the read callback is
 provided by a shared module, while `create` is ours.
 
-**What that implies, and it is good news.** A library-provided read callback cannot know anything
-about notes or instruments. It can only be a generic "drain this buffer" reader — which fits the
-768 KB buffer at `[state+0x1b18]` exactly. **The synthesis is still game code**: it is whatever
-*fills* that buffer, and the DSP merely hands the result to FMOD.
+❌ **~~What that implies, and it is good news.~~ The inference drawn here was wrong, and later work
+refuted it.** It read: *"A library-provided read callback cannot know anything about notes or
+instruments. It can only be a generic 'drain this buffer' reader — which fits the 768 KB buffer at
+`[state+0x1b18]` exactly. The synthesis is still game code."*
+
+It is the other way round. `wycAbBCjLI4#C#D` resolves to `fmodextinput.prx` `0x170`, and **that
+module is the synthesiser**: the voice pool, the pan, the envelope, the ladder filter, the drive and
+the LFOs are all inside it, read instruction by instruction elsewhere in this file. The module does
+know about notes and instruments — it is handed the instrument record and walks it.
+
+⚠️ **The rule:** "a shared library cannot know about our types" is an argument from architecture,
+not a reading, and the module was on disk the whole time. The 768 KB buffer is real and the three
+writers are real; what was wrong was deciding what the callback *could* be instead of disassembling
+it.
 
 ### The writers of the buffer: there are none
 

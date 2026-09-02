@@ -66,6 +66,11 @@ they are the ground truth the JavaScript has to reproduce:
 
   Then `node dev/serve.mjs` and open http://127.0.0.1:8173/ to play them.
 - `lbpdis.py`, `callgraph.py`, `fmodapi.py` — eboot RE helpers (see `eboot-re.md`).
+- `ebdyn.py` — the eboot's dynamic imports: `ebdyn.py modules` lists the modules a NID's `#L#M`
+  suffix indexes, `ebdyn.py <nid>` resolves one to its module, GOT slot and every reference to it.
+  ⚠️ **Run this before building anything on a NID.** Matching a NID against the string table alone
+  once turned libc into "the sequencer plugin's only export"; the module suffix settles it in one
+  query. Its docstring has the story.
 - `prxdis.py` — the same for the two audio PRXs: `prxdis.py reverb|input <vaddr> [count]`,
   resolving rip-relative operands to the float/double there. The whole reverb was read with it.
   Disassemble from a **function start**, not an arbitrary address: a mid-function start
