@@ -52,16 +52,34 @@ export const ADSR_PARAMS_B = { attack: 7, decay: 8, sustain: 9, release: 10 } as
 /**
  * Seconds per unit of the engine's envelope clock.
  *
- * ⚠️ **Derived, not measured.** The renderer passes `frames * 5.20833e-06` as
- * `dt`, and `5.20833e-06` is `1/192000` = `1/(4 x 48000)`, so one unit is four
- * seconds at the 48 kHz the samples are recorded at. Everything this produces
- * is musically sensible -- a piano decay of `0.527^2 x 4` = 1.11 s, a choir
- * attack of `0.013^2 x 4` = 0.68 ms, a `strings_ensemble` swell up to 0.95 s --
- * which is support, not proof. The other `dt` constant in the same code
- * (`1/48,000,000`, 250x smaller) is read here as sampling the current level
- * rather than advancing it; if that reading is wrong, this constant is wrong
- * with it. Check both against a recording before trusting stage times to the
- * millisecond.
+ * ✔ **Measured, 2026-09-02.** This used to say "derived, not measured", with
+ * the other `dt` constant in the same code (`1/48,000,000`, 250x smaller) named
+ * as the thing that could overturn it. Reading both in context settles it:
+ *
+ * ```
+ * 0x1ff8  the amplitude ADSR's four Params, interpolated
+ * 0x201f  dt = xmm5   * 1/48,000,000        -> the block's START
+ * 0x203f  call 0x16b0                        ; the envelope, with `held` in edi
+ * 0x204c  dt = frames * 1/192,000            -> the block's END
+ * 0x2089  call 0x16b0                        ; and again
+ * ```
+ *
+ * The envelope is evaluated **twice per block**, once at each end, and the two
+ * results are ramped across it -- which is the same shape the filter block uses
+ * with two modulations. The second call's `dt` closes the arithmetic:
+ * `frames / 192,000` units x **4 seconds per unit** = `frames / 48,000` seconds,
+ * which is exactly the block's duration at 48 kHz. The unit is four seconds
+ * because that is the only value that makes the engine's own `dt` equal real
+ * time.
+ *
+ * ⚠️ The 250x-smaller constant is the block *start*, i.e. a thousandth of a
+ * block -- "where the envelope is now" -- which is the reading this comment
+ * already had, now with the second call beside it to compare against.
+ *
+ * ⚠️ **This project still evaluates the envelope once per frame, not twice per
+ * block with a ramp between.** For an envelope that is a straight line in each
+ * stage the two agree; where they differ is at a stage boundary inside a block,
+ * by at most one block of 256 frames -- 5.3 ms.
  */
 export const ENVELOPE_SECONDS_PER_UNIT = 4;
 

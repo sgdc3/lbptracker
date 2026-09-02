@@ -646,8 +646,16 @@ fills such a record, from the runtime `PInstrument` at `rdi`:
 and `v0x1c450e` then multiplies `[block+0x420]` by **0.25 or 1.0** depending on a stack flag.
 
 ⚠️ **`v0x1607c0` fills record 0 only**, so what puts anything in records 1-3 — and therefore what
-the note's two-bit selector is selecting between — is still unread. Do not assume the selector is
-always zero; assume nothing, and read the writer.
+the note's two-bit selector is selecting between — is still unread.
+
+✔ **But the selector is 0 on every note anyone has ever written.** Measured 2026-09-02 over the 18
+levels that parse, **2,879,331 note records**: bits 28..29 are `0` on **100.0000%** of them, 1, 2 and
+3 on none. Byte 3 takes only **32 distinct values, maximum `0x4f`** — bit 6 (the triplet sub-step)
+and the low nibble (the modulation), and nothing else; bits 4 and 5 are never set.
+
+So records 1-3 are unreachable from authored content, and rendering as though the selector were
+always zero is exact for every level in the corpus. ⚠️ That is a fact about the *corpus*, not about
+the format: if the editor can set those bits, a level that does would take a path nobody has read.
 
 ⚠️ **Two different `+0x04`s.** The one this question is about is in the **16-byte** array at
 `[state+0x1b00]`; the one `v0x1607c0` writes is in the **0x470-byte note block**. They are not the
@@ -708,3 +716,57 @@ What works instead, in order of preference:
 ⚠️ A negative result from a pattern scan is only as strong as the pattern.
 
 
+
+---
+
+## 10b. ⚠️ The engine gates EVERY voice — read 2026-09-02, and it contradicts question 10
+
+This is the sharpest the one-shot question has ever been, and it now points the *other* way from the
+rule this project implements. It needs a listener to settle, not more disassembly.
+
+### What the code says
+
+```
+0x1f65  r15d = [voice + 0x10]          ; the gate flag: 1 once the note's records end
+0x1f6a  test r15d, r15d
+0x1f6d  sete al                        ; al = "still held"
+0x2037  ebx = al
+0x203a  edi = ebx                      ; -> the FIRST argument to the envelope
+0x203f  call 0x16b0                    ; the amplitude envelope
+```
+
+**There is no branch on the loop, the slot, or anything else.** Every voice's amplitude envelope is
+called with the gate, and `0x3093` frees the voice (`[voice+0x00] = 0xff`, which is what the
+allocator scans for) when the envelope is done.
+
+`0x3035` — the stop this project reads as "a one-shot plays to the end of the sample" — is an
+**additional** stop, not an exemption: a loopless voice *also* ends when its position passes
+`[slot+0x78]`. Both can be true at once, and reading it as an exemption is what question 10 did.
+
+So the engine's model appears to be: **every voice is gated, and a loopless voice additionally stops
+at the end of its sample.** That is exactly `options.oneShot: 'gate'`.
+
+### What the ear says, and the numbers behind it
+
+Question 10 exists because a listener reported the drums as far too quiet, and the arithmetic
+supports them. With gating, using the measured envelope clock:
+
+| kit | note length | amp release | sounds for | longest sample |
+|---|---|---|---|---|
+| `a_kit_1` | 0.083 s (1 step at 120 BPM: 0.125 s) | **0.068 s** | ~0.15-0.19 s | 0.732 s |
+| `baiyon_drums_1` | the same | **0.003 s** | ~the note | 0.479 s |
+
+`baiyon_drums_1` releasing in **three milliseconds** means a gated kit is cut to the written note and
+nothing more. 89.4% of the corpus's 673,037 percussion notes are two steps or fewer.
+
+### So one of these is wrong, and it is not obvious which
+
+- the disassembly at `0x1f65` (no exemption exists), or
+- the listener's "the start of the sample skipped, only the cut tail" and the 11.6 dB, or
+- something upstream: the note **durations** (a percussion note might not end where its record chain
+  ends), or the release **shape** (this project's is linear; the engine's was not read).
+
+⚠️ **`LBP_ONESHOT=gate` renders the disassembly's reading** and `natural` the current one. This is
+the one open question in the project that a recording settles faster than a disassembler: play a
+single kick in-game, record it, and measure how long it sounds. Until then the default stays
+`natural`, because it is the one a listener has actually endorsed.
