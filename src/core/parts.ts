@@ -1052,6 +1052,381 @@ export function readAudioWorld(s: Serializer): void {
   if (subVersion >= 0x191) s.bool(); // activatedLastFrame
 }
 
+/** `InputRecording`: a captured controller performance. */
+function readInputRecording(s: Serializer): void {
+  const { version } = s.revision;
+  if (version > 0x28f) {
+    s.bytes(s.i32()); // inputBuffer
+    s.intVector(); // offsetBuffer
+  }
+  if (version > 0x2a5) s.intVector(); // absoluteExpressionBuffer
+  if (version > 0x2dd) {
+    s.matrix(); // startWorldTransform
+    const count = s.i32();
+    for (let i = 0; i < count; i += 1) s.matrix(); // startLocalSceneGraph
+  }
+  if (version > 0x2df) s.vector3(); // startFootPos
+  if (version > 0x2e0) {
+    const count = s.i32();
+    for (let i = 0; i < count; i += 1) s.vector3(); // startVelocities
+  }
+  if (version > 0x3c4) s.bool(); // recordingContainsMoveData
+}
+
+/** `ActingData`: what a sackbot is performing. */
+function readActingData(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const { version, subVersion } = s.revision;
+  const thing = () => s.reference((self) => readThing(self, readers));
+  if (version > 0x2d9) {
+    s.i32(); // state
+    thing(); // recordingNpc
+  }
+  if (version > 0x295) {
+    readInputRecording(s);
+    thing(); // recordingPlayer
+    s.i32(); // currentFrame
+  }
+  if (version > 0x2a5) s.s32(); // recordingCountdown
+  if (version >= 0x33e) s.resource(); // VoIPRecording
+  if (subVersion >= 0xb6) s.bool(); // transformOnRestart
+  if (subVersion >= 0xbd) s.u8(); // previousState
+}
+
+/** `NpcBehavior`: how a sackbot patrols, follows or acts. */
+function readNpcBehavior(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const { version, subVersion } = s.revision;
+  if (version <= 0x293) return;
+  const thing = () => s.reference((self) => readThing(self, readers));
+  thing(); // npc
+  thing(); // targetThing
+  s.s32(); // type
+  s.i32(); // attributes
+  s.f32(); // maxMoveSpeed
+  s.s32(); // maxWaitTime
+  if (version > 0x2e5) s.wstr(); // waypointKeyName
+  if (version > 0x2d4) s.s32(); // waypointKeyColorIndex
+  if (version > 0x2e5) {
+    s.wstr(); // poiKeyName
+    s.s32(); // poiKeyColorIndex
+  }
+  if (version > 0x295) s.reference((self) => readActingData(self, readers));
+  if (version > 0x2ac) {
+    s.f32(); // awarenessRadius
+    s.i32(); // sharedStateTimer
+    s.vector3(); // idleLookAtPos
+  }
+  if (version > 0x2d7) s.vector3(); // lastGoodPosition
+  if (version > 0x2d8) s.bool(); // lastPositionValid
+  if (version > 0x2ce) {
+    s.vector3(); // patrolDirection
+    for (let i = 0; i < 8; i += 1) s.s32(); // the patrol grid counters
+  }
+  if (version > 0x2e6) s.s32(); // animSet
+  if (version > 0x371) {
+    s.u8(); // expressionType
+    s.u8(); // expressionLevel
+  }
+  if (version > 0x375) s.bool(); // willRecordAudio
+  if (subVersion > 0xc6) s.i32(); // awarenessRange
+  if (subVersion > 0x10e) s.f32(); // lookAtSpeed
+  if (subVersion > 0x175) s.bool(); // showAdvancedOptions
+}
+
+/** `PSwitchInput`: an input port on a circuit board. */
+export function readSwitchInput(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const { version } = s.revision;
+  const thing = () => s.reference((self) => readThing(self, readers));
+  if (version < 0x2c4) {
+    readSwitchSignal(s);
+    s.i32(); // updateFrame
+  }
+  thing(); // dataSource
+  if (version > 0x273) s.i32(); // updateType
+  if (version > 0x274) s.i32(); // lethalType
+  if (version > 0x277 && version < 0x327) thing(); // portThing
+  if (version > 0x287) s.bool(); // includeRigidConnectors
+  if (version > 0x28a) {
+    s.i32(); // lethalActivationFrame
+    s.bool(); // lethalInverted
+  }
+  if (version > 0x297) s.bool(); // hideInPlayMode
+  if (version > 0x298 && version < 0x2c4) s.bool(); // oneShot
+  if (version > 0x38f) s.bool(); // disableLethalAudio
+  if (version > 0x29a) s.reference((self) => readNpcBehavior(self, readers));
+  if (version > 0x2aa && version < 0x2d5) s.i32(); // sackbotColor
+  if (version > 0x2d4) s.s32(); // sackbotObjectColorIndex
+  if (version > 0x2c3) s.i32(); // behavior
+  if (version > 0x308) s.i32(); // effectDestroy
+  if (version > 0x3ec) s.u8(); // playerMode
+}
+
+/** `PControlinator`: the controller seat. */
+export function readControlinator(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const { version, subVersion } = s.revision;
+  const thing = () => s.reference((self) => readThing(self, readers));
+  thing(); // attachedPlayer
+  thing(); // lastAttachedPlayer
+  thing(); // prompt
+  thing(); // promptPlayer
+  s.i32(); // colorIndex
+  s.f32(); // radius
+  s.bool(); // sideMode
+  s.i32(); // remoteControlState
+  s.bool(); // disablePoppetControls
+  s.bool(); // autoDock
+  s.bool(); // overrideSackbot
+  if (subVersion > 0x6e) s.bool(); // killRiderOnCreatureDeath
+  thing(); // padSwitch
+  if (subVersion > 0x4b) {
+    s.i32(); // parentBoneIndex
+    s.matrix(); // parentBoneOffset
+  }
+  if (version > 0x3ec) s.u8(); // playerMode
+  if (subVersion > 0x189) s.u8(); // layerRange
+}
+
+/** `EmittedObjectSource`: what an emitter emits. */
+function readEmittedObjectSource(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  things(s, readers);
+  s.resource(); // plan
+  if (s.revision.subVersion > 0xcc) {
+    for (let i = 0; i < 6; i += 1) s.f32();
+    s.u8();
+  }
+}
+
+/**
+ * `PEmitter`: the object emitter.
+ *
+ * ⚠️ Seven of its booleans are written **twice over** in cwlib — once under a
+ * `version >= n && subVersion < 0x64` gate and again under `subVersion > 0x64`.
+ * Only one of the two can fire for any given revision, so each is exactly one
+ * byte; writing both conditions out is the only way to keep that true across the
+ * corpus, and collapsing them to an unconditional read would break the older
+ * files.
+ */
+export function readEmitter(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const { version, subVersion } = s.revision;
+  /** One of the doubled booleans described above. */
+  const doubled = (since: number) => {
+    if ((version >= since && subVersion < 0x64) || subVersion > 0x64) s.bool();
+  };
+
+  if (version < 0x368) s.vector3(); // posVel
+  s.f32(); // angVel
+  s.i32(); // frequency
+  s.i32(); // phase
+  s.i32(); // lifetime
+  doubled(0x2fe); // recycleEmittedObjects
+  s.resource(); // plan
+  s.i32(); // maxEmitted
+  if (version >= 0x1c8) s.i32(); // maxEmittedAtOnce
+  s.f32(); // speedScaleStartFrame
+  s.f32(); // speedScaleDeltaFrames
+  readSwitchSignal(s); // speedScale
+  if (version < 0x2c4) s.f32(); // lastUpdateFrame
+  if (version >= 0x137) {
+    if (version < 0x314) {
+      s.vector4(); // worldOffset
+      s.f32(); // worldRotation
+    }
+    if (version >= 0x38e) s.f32(); // worldRotationForEditorEmitters
+    s.f32(); // emitScale
+    s.f32(); // linearVel
+    if (version < 0x314) s.reference((self) => readThing(self, readers));
+  }
+  if (version >= 0x13f) s.i32(); // currentEmitted
+  doubled(0x144); // emitFlip
+  if (version >= 0x1ce) {
+    s.vector4(); // parentRelativeOffset
+    s.f32(); // parentRelativeRotation
+    s.f32(); // worldZ
+    s.f32(); // zOffset
+    s.f32(); // emitFrontZ
+    s.f32(); // emitBackZ
+  }
+  doubled(0x226); // hideInPlayMode
+  if (version >= 0x230 && version < 0x2c4) s.bool(); // modScaleActive
+  if (version >= 0x2c4) s.i32(); // behavior
+  if (version >= 0x308) {
+    if (version >= 0x38d) {
+      s.u8(); // effectCreate
+      s.u8(); // effectDestroy
+    } else {
+      s.i32();
+      s.i32();
+    }
+  }
+  doubled(0x32e); // ignoreParentsVelocity
+  if (version >= 0x340) s.reference((self) => readEmittedObjectSource(self, readers));
+  doubled(0x361); // editorEmitter
+  doubled(0x38d); // isLimboFlippedForGunEmitter
+  if (version >= 0x3ae) s.f32(); // the z offset cwlib names less politely
+  if (subVersion >= 0x18e) s.bool();
+  if ((subVersion >= 0x31 && subVersion < 0x65) || subVersion >= 0x65) s.bool(); // soundEnabled
+  if (subVersion >= 0x41 && subVersion < 0x1a7) s.bool();
+  if (subVersion > 0x64) s.bool(); // emitByReferenceInPlayMode
+  if (subVersion > 0x75) s.bool(); // emitToNearestRearLayer
+}
+
+/** `PSpriteLight`: a light. */
+export function readSpriteLight(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const { version, subVersion } = s.revision;
+  s.vector4(); // color
+  if (version >= 0x2fd) s.vector4(); // colorOff
+  s.f32(); // multiplier
+  if (version >= 0x30a) s.f32(); // multiplierOff
+  s.f32(); // glowRadius
+  s.f32(); // farDist
+  s.f32(); // sourceSize
+  s.resource(); // falloffTexture
+  s.reference((self) => readThing(self, readers)); // lookAt
+  s.bool(); // spotlight
+  if (version < 0x337) {
+    s.bool(); // enableFogShadows
+    s.bool(); // enableFog
+  }
+  if (version >= 0x139) s.f32(); // fogAmount
+  if (version >= 0x13a) {
+    if (version < 0x2c4) s.f32(); // onDest
+    s.f32(); // onSpeed
+    s.f32(); // offSpeed
+    s.f32(); // flickerProb
+    s.f32(); // flickerAmount
+  }
+  if (version >= 0x2c4) s.i32(); // behavior
+  if (subVersion >= 0x113) s.bool(); // highBeam
+  if (subVersion >= 0x146) s.bool(); // tracker
+  if (subVersion >= 0x14a) s.u8(); // trackerType
+  if (subVersion >= 0x151) {
+    s.f32(); // causticStrength
+    s.f32(); // causticWidth
+  }
+  if (subVersion >= 0x16f) {
+    s.f32(); // trackingLimit
+    s.f32(); // trackingAccel
+    s.f32(); // trackingSpeed
+    s.s32(); // movementInput
+    s.s32(); // lightingInput
+    s.vector3(); // beamDir
+    s.vector3(); // azimuth
+  }
+}
+
+/** `MachineType`: how a script field's value is stored. */
+const MACHINE_BOOL = 0x1;
+const MACHINE_CHAR = 0x2;
+const MACHINE_S32 = 0x3;
+const MACHINE_F32 = 0x4;
+const MACHINE_V4 = 0x5;
+const MACHINE_M44 = 0x6;
+const MACHINE_OBJECT_REF = 0xb;
+const MACHINE_SAFE_PTR = 0xa;
+
+/** `ModifierType.DIVERGENT` is bit 0xc of the modifier flags. */
+const MODIFIER_DIVERGENT = 1 << 0xc;
+
+interface FieldLayout {
+  readonly machineType: number;
+  readonly divergent: boolean;
+}
+
+/** `FieldLayoutDetails`: the name, type and modifiers of one script field. */
+function readFieldLayout(s: Serializer): FieldLayout {
+  const { version } = s.revision;
+  s.str(); // name
+  // ⚠️ The modifier flags narrow from 32 to 16 bits at 0x3d9, which is inside
+  // the corpus.
+  const flags = version >= 0x3d9 ? s.i16() : s.i32();
+  const machineType = s.i32();
+  if (version >= 0x145) s.i32(); // fishType
+  s.u8(); // dimensionCount
+  s.i32(); // arrayBaseMachineType
+  s.i32(); // instanceOffset
+  return { machineType, divergent: (flags & MODIFIER_DIVERGENT) !== 0 };
+}
+
+/**
+ * `ScriptInstance`: a script and the values of its reflected fields.
+ *
+ * ⚠️ **This is the only part of the format that is genuinely self-describing,
+ * and it is the only one where the layout is data.** The stream carries a field
+ * table — name, modifiers, machine type — and then one value per field, sized by
+ * that type. There is no way to read the values without having read the table,
+ * and no way to skip a field whose type is unknown.
+ *
+ * ⚠️ The layout is behind a **pointer**, not a reference: the id is read raw and
+ * a repeat means "the same layout as before", which for a level full of copies
+ * of one script is most of them. Treating it as a plain inline struct would
+ * re-read a table that is not there.
+ *
+ * `DIVERGENT` fields are in the table but **not** in the value stream unless the
+ * `reflectDivergent` flag that precedes it says so.
+ */
+function readScriptInstance(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const { version } = s.revision;
+  s.resource(); // script
+
+  let serialize = true;
+  if (version > 0x1a0) serialize = s.bool();
+  if (!serialize) return;
+
+  const pointer = s.i32();
+  if (pointer === 0) return;
+
+  let layout = s.pointers.get(pointer) as FieldLayout[] | undefined;
+  if (layout === undefined) {
+    const fields: FieldLayout[] = [];
+    const count = s.i32();
+    for (let i = 0; i < count; i += 1) fields.push(readFieldLayout(s));
+    s.i32(); // instanceSize
+    layout = fields;
+    s.pointers.set(pointer, layout);
+  }
+
+  const reflectDivergent = version > 0x19c ? s.bool() : false;
+  for (const field of layout) {
+    if (field.divergent && !reflectDivergent) continue;
+    switch (field.machineType) {
+      case MACHINE_BOOL:
+        s.bool();
+        break;
+      case MACHINE_CHAR:
+        s.i16();
+        break;
+      case MACHINE_S32:
+        s.i32();
+        break;
+      case MACHINE_F32:
+        s.f32();
+        break;
+      case MACHINE_V4:
+        s.vector4();
+        break;
+      case MACHINE_M44:
+        s.matrix();
+        break;
+      case MACHINE_SAFE_PTR:
+        s.reference((self) => readThing(self, readers));
+        break;
+      case MACHINE_OBJECT_REF:
+        throw new SerializerError(
+          'a script field of machine type OBJECT_REF needs ScriptObject, which no ' +
+            'level in the corpus exercised',
+        );
+      default:
+        throw new SerializerError(
+          `script field machine type 0x${field.machineType.toString(16)} has no reader`,
+        );
+    }
+  }
+}
+
+/** `PScript`: a script attached to a Thing. */
+export function readScript(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  readScriptInstance(s, readers);
+}
+
 /** Everything implemented so far, ready to hand to `readLevel`. */
 export function partReaders(): Map<string, PartReader> {
   const readers = new Map<string, PartReader>();
@@ -1079,6 +1454,11 @@ export function partReaders(): Map<string, PartReader> {
   bind('SEQUENCER', readSequencerPart);
   readers.set('GAMEPLAY_DATA', (s) => readGameplayData(s));
   readers.set('AUDIO_WORLD', (s) => readAudioWorld(s));
+  bind('SWITCH_INPUT', readSwitchInput);
+  bind('CONTROLINATOR', readControlinator);
+  bind('EMITTER', readEmitter);
+  bind('SPRITE_LIGHT', readSpriteLight);
+  bind('SCRIPT', readScript);
   return readers;
 }
 

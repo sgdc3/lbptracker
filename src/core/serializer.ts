@@ -85,6 +85,16 @@ export class Serializer {
   position = 0;
   /** Reference id → the object built for it. */
   readonly referenced = new Map<number, unknown>();
+  /**
+   * Pointer id → the object at it, for the one structure that uses pointers
+   * rather than references.
+   *
+   * ⚠️ `ScriptInstance`'s field layout is shared this way: the id is a raw `i32`
+   * with no inline expansion rule, and a repeat means "the layout you already
+   * have". It is a separate table from `referenced` because the id spaces are
+   * separate.
+   */
+  readonly pointers = new Map<number, unknown>();
 
   constructor(data: Uint8Array, revision: RevisionInfo, compressionFlags: number) {
     this.data = data;
