@@ -265,7 +265,8 @@ Found by re-scanning the PRX for **indexed** addressing. The first scan looked o
 `[rdx + rax*4 + 0x4c4]`, so it was invisible. **A negative result from a pattern scan is only as
 strong as the pattern.**
 
-The array's home in the PRX block comes from the eboot's builder at `v0x2a1190`, which maps the
+The array's home in the PRX block comes from the eboot's builder — whose entry is `v0x2a1144`;
+`v0x2a1190` is mid-function and disassembles as garbage — which maps the
 `RInstrument` onto the block the DSP receives:
 
 ```

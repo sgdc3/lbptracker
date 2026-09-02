@@ -169,13 +169,40 @@ and hat of six kits at a uniformly random point inside its own sample. A listene
 start of the sample skipped, only the cut tail, with a click", and confining the three
 randomisations to layers 1+ was worth **11.6 dB** of drum kit. **Both cannot be true.**
 
-**Next step — and it is no longer in this module.** `+0x78` is never *initialised* in the PRX, only
-clamped downward by the mip builder, and the eboot's record builder at `v0x2a1190` starts copying at
-`+0x84`. So something else fills `+0x78`, `+0x7c` and `+0x80` when a sample is bound to a slot, and
-until that is found the possibility remains that they are not what `0x3780` and `0x3035` make them
-look like. Look for the sample-binding path on the eboot side: it must also fill the three mip
-pointers at `+0x10`, `+0x38` and `+0x60`, so search for a writer with the `0x98` stride — there are
-candidates around `v0x441044`, which zeroes `[r12 + 0x78 + 0x98i]` as qwords.
+### Who writes `+0x78` on the eboot side — SEARCHED 2026-09-02, NOT FOUND, and that is informative
+
+`+0x78` is never *initialised* in the PRX, only clamped downward by the mip builder, so something
+else must fill it. Four searches, all negative, and together they rule out the obvious shape of the
+answer:
+
+- **The record builder does not.** It is at **`v0x2a1144`**, not `v0x2a1190` — that address is
+  mid-function and disassembling from it prints garbage; the constructor above it starts at
+  `v0x2a0e80` and reaches the builder through a vtable, so it has no direct callers. Read in full,
+  the builder writes **only** `+0x5c0`…`+0x5e4`, `+0x4e8` (`Params`, a `memcpy` of `0xd8`),
+  `+0x4c0`…`+0x4e4` (the nine `Splitnotes` and `Numstack`), and per slot `+0x84` (qword), `+0x8c`
+  (dword), `+0x90` (word). **Nothing below `+0x84` in any slot**, so it never touches the mip
+  pointers, the lengths, or these three fields.
+- **Nothing in the eboot indexes a slot by its stride.** A disassembly of the whole image,
+  `v0x100000`–`v0x1180000`, finds **zero** `imul ..., 0x98` sites. Every slot access in the eboot is
+  unrolled, which is why the builder above has eight copies of the same three stores.
+- **Searching the unrolled offsets does not discriminate.** `+0x78 + 0x98i` for i in 0..7 gives 196
+  store sites image-wide, `+0x7c` 112 and `+0x80` 220, and the ones inspected are all unrelated
+  structures — `0x78`, `0x110` and `0x240` are ordinary offsets in a 18 MB binary.
+- **`0x5f0` is a stride in exactly one place**, `v0x00b3a820`, and that is a vector-grow: compute a
+  new capacity, allocate `capacity * 0x5f0`, copy the old elements. The container for the records,
+  not a filler.
+
+⚠️ **So the shape of the answer is probably not "eboot code writes the field".** The fields below
+`+0x84` — the three mip pointers at `+0x10`/`+0x38`/`+0x60`, their lengths, and `+0x78`/`+0x7c`/
+`+0x80` — are the *sample* side, and everything about the search says they arrive as a **blob**:
+no stride arithmetic anywhere, no per-field stores, and the PRX's only interaction with `+0x78` is a
+clamp of a value that must already be there. A `setParameterData` copy into the record fits all four
+negatives at once.
+
+**Next step:** the PRX's parameter-set entry, on the FMOD DSP callback table. Four functions read
+`+0x4e4` (`0x22d7`, `0x28dc`, `0x2b12`, `0x2de6`); the one that *writes* a caller-supplied buffer
+into the record is the one to find, and what it copies will say whether `+0x78`/`+0x7c`/`+0x80` are
+what `0x3780` and `0x3035` make them look like.
 
 ## 12b. The old note on `Params[2]`
 

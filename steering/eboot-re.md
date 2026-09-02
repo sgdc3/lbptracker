@@ -3,6 +3,23 @@
 Read before opening the binary. The address conventions here have already cost one session several
 hours; the rest is a map of what has been found so far.
 
+
+## ⚠️ `v0x2a1190` is mid-function — the DSP-record builder starts at `v0x2a1144`
+
+Recorded 2026-09-02, because it cost time twice. Steering named the builder that fills the DSP's
+instrument record as `v0x2a1190`; that is the `lea rdi, [r14 + 0x4e8]` **inside** it, and
+disassembling from there opens with `add byte ptr [rax], al`, which is what a desynchronised stream
+looks like rather than an error.
+
+The entry is `v0x2a1144` (`push r14 ; mov r14, rsi`). It has **no direct callers** — it is reached
+through a vtable, so the usual "scan for `E8` landing here" finds nothing and the constructor above
+it, `v0x2a0e80`, is what the call graph shows instead.
+
+The general rule: in this eboot, **find the function start before disassembling**, by taking the
+largest `E8` target at or below the address of interest. When that returns something implausibly far
+away, suspect an indirect call rather than a long function.
+
+
 ## The files
 
 | file | size | `file = vaddr + …` |
