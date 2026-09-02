@@ -815,3 +815,76 @@ reported as "estremamente lento".
 it is being told the truth before concluding the engine is generous. "0 of 934 notes cut short by
 voice stealing" on a passage with 1,760 sounding voices should have been read as an accusation
 against the accounting, not as a fact about the music.
+
+---
+
+## 18. `Notes.y`, `Key` and `Splitnotes` — SETTLED: one numbering, and `Key` really transposes
+
+This was open question 4, ranked as the one still able to transpose an entire imported level. It
+was. Three separate things, two measured from the corpus and one from the binaries.
+
+### `y` and `basenote` are the same numbering
+
+The toolkit annotates `basenote` as MIDI note numbers and `Splitnotes` as **piano key** numbers —
+20 apart — and this project compared them directly, so one annotation had to give.
+
+`dev/pitch-probe.ts` asks the corpus two questions:
+
+| | |
+|---|---|
+| zones whose own sample's base note falls inside them | **188 of 249 (75.5%)** |
+| the same with `Splitnotes` shifted by +20 | **48 of 249 (19.3%)** |
+| median of (note played − base note of the slot it resolves to), over **953,221 notes** on 44 instruments | **0** (mean 0.14) |
+
+The 24.5% of zones that do not contain their own base note are all one shape — `piano`,
+`honky_tonk_piano`, `space_piano` and friends put every base note *above* its zone, i.e. they are
+voiced to always transpose downward, which steering already recorded as a voicing style rather than
+an error. And the per-instrument medians scatter from −18 (`square_wave`) to +28 (`robot`): a
+numbering mismatch would be the **same constant on every instrument**, and it is not. It is
+composers choosing where to play.
+
+### `Key` transposes by `key mod 12`, and 0 is the untouched default
+
+The DSP half was already in `sequencer-data-model.md`: `voice.pitch = quantise(note, scale) +
+blockRoot − 12`, at `fmodextinput.prx` `0x3c4e` and `0x3db5`, both spelled
+`lea eax, [rax + rcx - 0xc]`. On its own that only says there is a root. **What fills it is the
+eboot**, at `v0x160806`:
+
+```
+mov    eax, [rdi + 0x28]     ; PInstrument.Key
+lea    ecx, [rax + 0xc]      ; key + 12
+cmp    eax, 0xc
+cmovae ecx, eax              ; ... unless the key is already >= 12
+mov    [rsi + 0x10], ecx     ; -> the block's root
+mov    ecx, [rdi + 0x2c]     ; PInstrument.Scale
+mov    [rsi + 0xc], ecx      ; -> the block's scale
+```
+
+The struct is pinned rather than guessed: the four fields after `+0x28`/`+0x2c` — `+0x30`, `+0x34`,
+`+0x38`, `+0x3c` — are copied to the block as level, pan, echo send and reverb send, in
+`PInstrument`'s own declaration order.
+
+So the transposition is `(key < 12 ? key + 12 : key) − 12`, which over the range the corpus uses is
+exactly **`key mod 12`**. The corpus uses 0 and 12..23 and nothing else, so `Key` is a note within
+one octave with **C at 12**, and **0 is the untouched default** — which is what the `< 12` branch
+exists to turn into C. Reading 0 as "no key" and 0 as "C" happen to agree; reading it as a literal
+root would drop 96.7% of all placements by an octave.
+
+**What this cost while it was unread:** 2,461 of the corpus's 129,696 placements (1.90%) and
+**75,073 of its 3,199,788 notes (2.35%)** were being played in the wrong key — up to 11 semitones
+out. Most common are +3 (1,003 placements), +2, +4 and +11.
+
+⚠️ The order is fixed by the instruction: the scale snaps **first**, then the key adds. Quantising
+after the transposition would put the note back on a root-0 scale degree, which is a different note.
+
+### And the quantiser is at 0x240, not 0x250
+
+`sub_0x250` in older notes is wrong by **0x10** — not by the usual 0x40 PRX delta, so it is not that
+mistake. `0x250` is inside the function, at the `mov rdx, rcx` of the divide-by-12, and
+disassembling from there prints convincing nonsense. The entry is a direct-call target of `0x3c4e`
+and `0x3db5` and takes exactly two arguments, `edi` = note and `esi` = scale: **no key reaches the
+quantiser at all**, which is why the eboot has to add it afterwards.
+
+**The general rule this earns:** when a formula has a term supplied from outside the module you are
+reading, the module cannot tell you what that term means. `blockRoot` sat in steering for a session
+as a named unknown, and the answer was two instructions away in the *other* binary.

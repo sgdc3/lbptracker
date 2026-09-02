@@ -1387,13 +1387,20 @@ inferred masks.
 and what the voice record's `+0x3e`/`+0x3f` pair counts — start and end of the note in thirds of a
 step. That closes the lead recorded earlier against open question 3.
 
-### The pitch goes through a scale quantiser — `sub_0x250`, decoded
+### The pitch goes through a scale quantiser — `sub_0x240`, decoded
+
+⚠️ **The address here was `0x250` and is wrong by 0x10, not by the usual 0x40.** The function
+starts at `0x240`; `0x250` is inside it, at the `mov rdx, rcx` of the divide-by-12. Disassembling
+from `0x250` prints convincing nonsense, which is exactly what the header of `tools/prxdis.py`
+warns about.
 
 The 7-bit note field is **snapped to a scale** before it becomes a pitch:
 
 ```
 voice.pitch = quantise(note, scale) + blockRoot - 12          ; scale from the note block's +0x0c,
                                                               ; root from its +0x10
+blockRoot   = key < 12 ? key + 12 : key                       ; the eboot, v0x160806, from
+                                                              ; PInstrument.Key at [rdi+0x28]
 quantise(n, s):
     if (unsigned)(s - 1) > 4:  return n                       ; out of range -> chromatic
     octave = n / 12                                           ; signed division

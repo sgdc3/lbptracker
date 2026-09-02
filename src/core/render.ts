@@ -34,7 +34,7 @@ import { LFO_PARAMS, OUTPUT_PARAMS, STACK_PARAMS } from './params.ts';
 import { VOICE_POOL_SIZE, allocateVoices } from './polyphony.ts';
 import { channelVolume, schedule, type Sequencer } from './project.ts';
 import { type RInstrument } from './rinstrument.ts';
-import { quantise } from './scale.ts';
+import { blockRoot, notePitch } from './scale.ts';
 import { swungFrame } from './swing.ts';
 import { pitchRatio, samplesPerStep, velocityGain } from './voice.ts';
 
@@ -261,10 +261,10 @@ export async function renderSequencer(
       continue;
     }
     const track = seq.tracks[event.track];
-    // ⚠️ The scale quantiser is applied; the key/root offset is not. Which field
-    // supplies the engine's root is open question 4, and getting it wrong
-    // transposes rather than detunes -- so it is left off rather than guessed.
-    const note = quantise(event.pitch, track.scale);
+    // The scale snap and then the key, in that order: `quantise(note, scale) +
+    // blockRoot - 12` at `fmodextinput.prx` 0x3c4e, with the root filled from
+    // `PInstrument.Key` by the eboot at `v0x160806`. See `keyOffset`.
+    const note = notePitch(event.pitch, track.scale, blockRoot(track.key));
     // ⚠️ The slot comes from the RAW note, not the quantised one: the engine's
     // walk at 0x05a0 takes bits 8..14 of the note word with `bextr` and compares
     // that. The quantiser applies to the pitch below, not to the choice of sample.
@@ -381,7 +381,7 @@ export async function renderSequencer(
         swungFrame(event.step + p.step, framesPerStep, seq.swing) -
           swungFrame(event.step, framesPerStep, seq.swing),
       ),
-      pitch: quantise(p.pitch, track.scale) - note,
+      pitch: notePitch(p.pitch, track.scale, blockRoot(track.key)) - note,
       gain: base.volume > 0 ? p.volume / base.volume : 1,
     }));
 

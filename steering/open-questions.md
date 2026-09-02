@@ -20,8 +20,10 @@ destinations and the pan law are all measured; see
 [answered-questions.md](answered-questions.md): *6 / 14. The reverb* (the whole of
 `fmodsmsreverb.prx`) and *2 / 2b. The echo*. Read them before touching `src/audio/effects.ts` —
 most of what this file used to say about either was wrong, and the tables of wrong readings are the
-useful part. **What is left is the remaining field semantics**, mainly `Notes.y` / `Splitnotes`
-(question 4), which is the one that can still transpose an imported level.
+useful part. ~~**What is left is the remaining field semantics**, mainly `Notes.y` / `Splitnotes`
+(question 4)~~ — **answered 2026-09-02**, and it *was* transposing imported levels: `Key` is a real
+transposition and this project ignored it. See *18. `Notes.y`, `Key` and `Splitnotes`* in
+[answered-questions.md](answered-questions.md).
 
 Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then working outward from it. That
 run closed questions 5 and 7 outright, the whole of 8's `Params`, and the triplet half of 3; it
@@ -82,19 +84,6 @@ All three feed the same conversion in the scheduler
 (`samplesPerStep = rate * 60 / (Tempo * stepsPerBeat)`). Answerable from the sequencer module, or
 empirically by recording the game's output and measuring inter-onset intervals at a known tempo —
 which has the advantage of validating the whole timing chain at once.
-
-## 4. What `Notes.y` actually means
-
-`sequencerdump` feeds `y` straight into a MIDI `NOTE_ON` as an absolute note number and gets usable
-MIDI out, and in the corpus `Key` is 0 in 101,536 of 105,785 instruments and `Scale` is 0 in
-105,680 — while pitches span 0–95. That points at `y` being absolute pitch with `Key`/`Scale`
-constraining only what the *editor* lets you place. It is not proof: `Key = 0` may simply mean C.
-If it is wrong, every imported melody is transposed, so confirm it: place a note in-game, change
-`Key`, save, and see whether the note record changes.
-
-Related and unresolved: **`basenote` and `Splitnotes` may not use the same numbering.** The toolkit
-annotates `basenote` as MIDI note numbers and `Splitnotes` as piano key numbers — 20 apart. Our
-key-split logic compares them directly, so one of those annotations has to give.
 
 ## 12. `Params[2]` — the formula is now READ, and it contradicts our repair
 

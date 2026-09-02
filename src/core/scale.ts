@@ -77,6 +77,63 @@ export function quantise(note: number, scale: number): number {
 }
 
 /**
+ * How far `Key` transposes a placement, in semitones.
+ *
+ * **Measured, both ends of it, 2026-09-02.**
+ *
+ * The DSP adds a root and subtracts an octave -- `voice.pitch =
+ * quantise(note, scale) + blockRoot - 12`, at `fmodextinput.prx` `0x3c4e` and
+ * `0x3db5`, both spelled `lea eax, [rax + rcx - 0xc]` with `rcx` from the note
+ * block's `+0x10`. What that entry says on its own is only "there is a root".
+ *
+ * What fills it is the eboot, at `v0x160806`:
+ *
+ * ```
+ * v0x160806  mov    eax, [rdi + 0x28]     ; PInstrument.Key
+ * v0x160809  lea    ecx, [rax + 0xc]      ; key + 12
+ * v0x16080c  cmp    eax, 0xc
+ * v0x16080f  cmovae ecx, eax              ; ... unless the key is already >= 12
+ * v0x160819  mov    [rsi + 0x10], ecx     ; -> the block's root
+ * v0x16081c  mov    ecx, [rdi + 0x2c]     ; PInstrument.Scale
+ * v0x16081f  mov    [rsi + 0xc], ecx      ; -> the block's scale
+ * ```
+ *
+ * `[rdi+0x28]` and `[rdi+0x2c]` are `Key` and `Scale`: the four fields after
+ * them, `+0x30`, `+0x34`, `+0x38` and `+0x3c`, are copied to the block as
+ * level, pan, echo send and reverb send, in `PInstrument`'s own declaration
+ * order, so the struct is pinned rather than guessed.
+ *
+ * So the root is `key < 12 ? key + 12 : key` and the transposition is that
+ * minus 12 -- which over the range the corpus uses is exactly **`key mod 12`**.
+ * The corpus uses 0 and 12..23 and nothing else: `Key` is a note within one
+ * octave with **C at 12**, and **0 is the untouched default**, which the
+ * `< 12` branch exists to turn into C.
+ *
+ * ⚠️ **This project ignored `Key` entirely until it was read.** It is 0 on
+ * 125,447 of the corpus's 129,696 placements, so the 4,249 that set it were
+ * transposed by up to 11 semitones -- a wrong key, not a detune.
+ */
+export function blockRoot(key: number): number {
+  return key < 12 ? key + 12 : key;
+}
+
+/**
+ * The net transposition `Key` applies, in semitones: `blockRoot(key) - 12`.
+ *
+ * Over the range the corpus uses -- 0, and 12..23 -- that is exactly
+ * `key mod 12`. Kept as its own function because the two halves it composes were
+ * measured in different binaries and either could be re-checked alone.
+ *
+ * ⚠️ Only the **pitch** goes through this. The key-zone walk at `0x05a0` takes
+ * the raw 7-bit note field, so the slot a note plays on is chosen before either
+ * the quantiser or the key touches it. Feeding a transposed note to
+ * `resolveSlot` would move notes between samples at key boundaries.
+ */
+export function keyOffset(key: number): number {
+  return blockRoot(key) - 12;
+}
+
+/**
  * A note word's 7-bit field to the pitch the voice actually plays.
  *
  * `root` is the note block's `+0x10`. The `- 12` is the engine's, at `0x3c20`

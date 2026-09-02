@@ -28,6 +28,45 @@ function rec(
   };
 }
 
+// ------------------------------------------------------------------ the key
+
+test('Key transposes, and 0 is the untouched default rather than C', async () => {
+  const { blockRoot, keyOffset, notePitch } = await import('../src/core/scale.ts');
+
+  // v0x160806: `lea ecx, [rax + 0xc]` then `cmovae ecx, eax` on `cmp eax, 0xc`.
+  assert.equal(blockRoot(0), 12, 'an untouched key becomes C');
+  assert.equal(blockRoot(11), 23);
+  assert.equal(blockRoot(12), 12, 'a key at or above 12 passes straight through');
+  assert.equal(blockRoot(23), 23);
+
+  // ⚠️ The net transposition is `key mod 12` over the whole range the corpus
+  // uses, and the two halves of that come from different binaries: the `+ 12`
+  // from the eboot, the `- 12` from the DSP at fmodextinput 0x3c4e.
+  for (let key = 0; key <= 23; key += 1) {
+    assert.equal(keyOffset(key), key % 12, `key ${key}`);
+  }
+
+  // 0 must not drop an octave. 125,447 of the corpus's 129,696 placements carry
+  // it, so getting this branch wrong transposes almost every level ever made.
+  assert.equal(notePitch(60, 0, blockRoot(0)), 60);
+  assert.equal(notePitch(60, 0, blockRoot(12)), 60);
+  assert.equal(notePitch(60, 0, blockRoot(15)), 63);
+  assert.equal(notePitch(60, 0, blockRoot(3)), 63, 'a key below 12 means the same thing');
+});
+
+test('the scale snaps before the key transposes, not after', async () => {
+  const { blockRoot, notePitch, quantise } = await import('../src/core/scale.ts');
+  // `lea eax, [rax + rcx - 0xc]` takes rax from the call to the quantiser, so
+  // the order is fixed by the instruction. Snapping after would put a
+  // transposed note back on a root-0 scale degree, which is a different note.
+  const scale = 1; // major
+  const note = 61; // a black key: the table sends it to 60
+  assert.equal(quantise(note, scale), 60);
+  assert.equal(notePitch(note, scale, blockRoot(15)), 63, 'snap to 60, then +3');
+  // Doing it the other way round would give quantise(61 + 3) = quantise(64) = 64.
+  assert.notEqual(quantise(note + 3, scale), 63);
+});
+
 test('decodeRecord splits the flag bits off the step and pitch', () => {
   // Byte 3 is 0x40, so bit 30 is set: the sub-step is `1 << 1` = two thirds.
   const r = decodeRecord(new Uint8Array([0x85, 0xa5, 0x60, 0x40]));
