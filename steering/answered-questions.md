@@ -480,16 +480,20 @@ not assumed, and it is measured at a 48 kHz output rate.
 
 ## 5b. How the ÷2 and ÷4 copies are produced — SETTLED: an int16 pair average
 
-The builder is `fmodextinput.prx` **`0x1320`** — a function with no frame pointer, which is why
+The builder is `fmodextinput.prx` **`0x12e0`** — a function with no frame pointer, which is why
 earlier prologue scans walked past it. It was found by aligning a disassembly on a known instruction
-(`cmp dword ptr [rdi + 0x78], r8d` at `0x1325`) and stepping the start offset until it decoded, which
-is the technique in the method note.
+(`cmp dword ptr [rdi + 0x78], r8d`, at `0x12e5`) and stepping the start offset until it decoded, which
+is the technique in the method note. ⚠️ Its addresses were recorded 0x40 high, like every PRX
+address from before 2026-09-02; they are corrected here.
 
 ```
-0x1322  r8d = [rdi]                          ; the sample's length
-0x1325  cmp [rdi + 0x78], r8d ; jle          ; keep the running maximum
-0x1340  len/2 -> [rdi+0x28], [rdi+0x40]      ; the halved copy's length
-0x134d  len/4 -> [rdi+0x50], [rdi+0x68]      ; and the quartered one's
+0x12e2  r8d = [rdi]                          ; the decoded sample's length
+0x12e5  cmp [rdi + 0x78], r8d ; jle          ; CLAMP the stored length down to it
+0x12eb  [rdi+0x78] = r8d                     ; ... and when that fires,
+0x12ef  [rdi+0x7c] = 0                       ;     drop the loop start
+0x12f6  [rdi+0x80] = 0                       ;     and the loop length
+0x1300  len/2 -> [rdi+0x28], [rdi+0x40]      ; the halved copy's length
+0x130d  len/4 -> [rdi+0x50], [rdi+0x68]      ; and the quartered one's
 0x13ae  esi = (int16)src[2i]
 0x13b9  edx = (int16)src[2i | 2]             ; the next frame of that channel
 0x13bd  edx += esi
@@ -508,10 +512,14 @@ refinements come out of the code:
   back on the sample grid. `(a + b) * 0.5` in floats differs by under an LSB — still a difference the
   brief cares about, and `decimateBy2` now does it the engine's way.
 
-⚠️ **`[rdi + 0x78]` is a running maximum of sample lengths, not one sample's length.** That matters
-beyond this question: the stack loop at `0x1b11` scales `Params[2]` by the same field, so the random
-start offset is a fraction of *the largest sample the instrument has loaded*, not of the one being
-played. Question 12 was reasoning about it as a per-slot length; it is not.
+⚠️ **This entry used to say `[rdi + 0x78]` was a "running maximum of sample lengths, not one
+sample's length". Both halves were wrong**, and the correction is in *12b* below. It is one slot's
+own length, and the update is a **minimum** — `jle` skips the store when the field is already the
+smaller, so it can only be lowered. `rdi` is a single slot record throughout this function and the
+value it is compared against is that same slot's `[rdi+0x00]`, so nothing accumulates across slots.
+
+The wrong reading had a real consequence: question 12 was corrected *away* from "a per-slot length",
+which is what it is.
 
 ## 6 / 14. The reverb — SETTLED: the whole DSP, read out of `fmodsmsreverb.prx`
 
@@ -966,3 +974,82 @@ single counter-example was `e_guitar_distorted` — bounds `[87,60,1,0,…]`, sa
 base 52 — where it sent note 65 to the *lower* sample. **A disassembly that contradicts a
 million-note corpus is a misread disassembly**, and the corpus is what caught it before the change
 could ship.
+
+---
+
+## 12b. `[slot + 0x78]` — SETTLED: the sample length, with the loop beside it
+
+The named next step of question 12 was "find what writes `[slot + 0x78]`". It is written in the
+PRX, not the eboot, and the three fields around it read each other, so naming one names all three.
+
+### What writes it
+
+`fmodextinput.prx` `0x12e0`, the mipmap builder, and **nothing else in the module** — a sweep from
+every function start for any instruction touching a `+0x78` field finds exactly this write, the read
+in the stack loop at `0x1ad1`, the stop condition at `0x304d` and the wrap at `0x3784`.
+
+```
+0x12e2  r8d = [rdi]                  ; the decoded sample's length
+0x12e5  cmp [rdi + 0x78], r8d
+0x12e9  jle skip                     ; already <= it? leave it alone
+0x12eb  [rdi + 0x78] = r8d           ; else clamp down to what actually decoded
+0x12ef  [rdi + 0x7c] = 0             ; and drop the loop, because it cannot be
+0x12f6  [rdi + 0x80] = 0             ; inside a buffer that turned out shorter
+```
+
+⚠️ A **minimum**, not the maximum this project recorded for a session. `jle` skips the store when
+the field is already the smaller one, so the value can only ever be lowered, and `rdi` is one slot
+throughout.
+
+### What reads it, and what that names
+
+`0x3780`, the sample read, wraps the position:
+
+```
+0x3784  ecx = [rdi + 0x78]           ; > 0 or there is nothing to play
+0x379d  esi = [rdi + 0x80]           ; the LOOP LENGTH; <= 0 means no loop
+0x37a7  r8d = [rdi + 0x7c]           ; the LOOP START
+0x37ab  eax = r8d + esi              ; loop start + length = loop end
+0x37af  cmp edx, eax ; jle           ; past it?
+0x37b3  edx -= r8d                   ; then wrap by the loop start
+```
+
+and `0x3035` stops the voice:
+
+```
+0x303f  rax = [r14 + 0xcc]           ; the voice's zone
+0x3046  imul rcx, rax, 0x98
+0x304d  eax = [r8 + rcx + 0x78]      ; slot[zone]'s sample length
+0x3056  vucomiss xmm0, xmm1 ; jbe    ; position past it?
+0x305c  cmp [r8 + rcx + 0x80], 0     ; and no loop?
+0x3067  test eax, eax ; jle          ; and a real length?
+0x306b  [r14 + 4] = 0                ; -> the voice is done
+```
+
+| offset | field |
+|---|---|
+| `+0x00` | the decoded length, mip 0 |
+| `+0x10`, `+0x38`/`+0x30`, `+0x60`/`+0x58` | the three mip buffers |
+| `+0x28`/`+0x40`, `+0x50`/`+0x68` | the /2 and /4 lengths |
+| **`+0x78`** | **the sample length** the player uses, clamped to `+0x00` |
+| **`+0x7c`** | **the loop start** |
+| **`+0x80`** | **the loop length**, 0 when there is no loop |
+| `+0x84` | the root note, and the first field the eboot's builder copies (`v0x2a1220`) |
+| `+0x94` | a flag the mip builder branches on |
+
+### What it settles, and what it does not
+
+- **`Params[2]` scales the playing slot's own sample length.** `src/core/render.ts` already used
+  `slot.wav.channels[0].length`, so the code was right for a reason it did not have.
+- **The old reconciliation stays ruled out.** "If that field is the loop length it is zero for
+  loopless percussion and the offset vanishes" was the tidy way out of question 12, and `0x3780`
+  kills it: the loop length is `+0x80`, a different field. `a_kit_1`'s kick would still start
+  anywhere inside its own 0.8 seconds.
+- **So question 12's contradiction stands**, unchanged: the engine runs the random start from layer
+  0, and doing that destroys the drums by the ear's account. What has changed is that there is no
+  longer a plausible misreading left to hide behind.
+- ⚠️ **`0x3035` is direct code evidence for question 10** — a voice whose position passes the
+  sample length **with no loop** is stopped, which is "a loopless sample plays to the end of the
+  sample" written in the engine rather than inferred from a corpus. It says nothing about whether a
+  gate can stop it *earlier*, which is the half question 10 still turns on, and it is in tension with
+  the bound `holdFramesFor` puts on that rule. Read both before touching either.

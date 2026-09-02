@@ -120,25 +120,62 @@ which is precisely what `Params[2] = 1.000` with `Numstack` 1 produces, and six 
 set exactly that. The repair is worth **11.6 dB** of drum kit and is not in doubt as a description of
 what sounds right; it is in doubt as a description of the engine.
 
-**`[slot + 0x78]` is now known, and it is not what question 12 assumed.** `0x1325` keeps it as a
-**running maximum of sample lengths** (`cmp` then `jle`, updating only upward), written by the mipmap
-builder at `0x1320` — see *5b* in [answered-questions.md](answered-questions.md). So `Params[2]`
-scales a fraction of *the largest sample the instrument has loaded*, not of the one being played.
-That is stranger than a per-slot length, and it does not by itself rescue the drums: `a_kit_1`'s
-largest sample is 35,128 frames, so a `Params[2]` of 1.000 would still start a kick anywhere inside
-three quarters of a second.
+~~**Next step: find what writes `[slot + 0x78]`.**~~ **Done, 2026-09-02 — see *12b* in
+[answered-questions.md](answered-questions.md).** It is the **sample length**, written by the mipmap
+builder at `0x12e0`, with the **loop start at `+0x7c`** and the **loop length at `+0x80`** beside it;
+all three are named from the wrap at `0x3780` and the voice-stop at `0x3035`.
 
-**The old reconciliation, now ruled out.** If that field is the *loop* length rather than the
-sample length, it is zero for the loopless percussion samples and the offset vanishes for exactly the
-instruments that would otherwise break -- and the code and the ear agree again. What is known: the
-slot record is `0x98` bytes and starts at `+0x78`, twelve bytes before the `+0x84` that the eboot's
-builder at `v0x2a1190` fills from the `RInstrument`; so `+0x78` is **not** copied from the
-instrument, it is written by whatever loads the sample. Against that, `0x3086` compares the playback
-position with the same field and stops the voice when it is past and `[slot+0x80]` is zero, which
-reads more like a sample end than a loop end.
+That closes the field but **not the question**, and it closes off the escape route:
 
-**Next step:** find what writes `[slot + 0x78]`. It is in the block the eboot hands the DSP, so the
-writer is on the eboot side, near whatever resolves a sample GUID to its decoded frames.
+- ⚠️ The earlier reading, "a running maximum of sample lengths", was wrong in both halves — it is
+  one slot's own length and the update is a **minimum**. `src/core/render.ts` scales `Params[2]` by
+  `slot.wav.channels[0].length`, which is now right for a reason rather than by luck.
+- ⚠️ **The tidy reconciliation is dead.** "If that field is the loop length it is zero for the
+  loopless percussion samples and the offset vanishes" was the way out that let the code and the ear
+  agree. `0x3780` reads the loop length from `+0x80`, a different field, so it is not available.
+  `a_kit_1`'s kick would still start anywhere inside its own 0.8 seconds.
+
+### The contradiction is now bare, and three escapes are closed
+
+The stack loop was read a third time, in full, on 2026-09-02. `0x1a70`-`0x1bd5`:
+
+```
+0x1a80  edx &= 7 ; [voice+0xcc] = edx           ; the voice remembers its zone
+0x1a8a  if (int)[inst+0x4e4] <= 0: skip         ; Numstack
+0x1a98  ebx = 0 ; jmp body                      ; <- THE LOOP ENTERS AT LAYER 0
+body:
+  p2 = Params[2].x + mod*(y-x)                  ; +0x4f8 / +0x4fc
+  p2 *= (float)slot[zone].sampleLength          ; +0x78
+  [voice + ebx*8 + 0x40] = (double)(p2 * U(0,1))    ; the layer's start position
+  p0 = Params[0].x + mod*(y-x)                  ; +0x4e8 / +0x4ec
+  [voice + ebx*4 + 0x68] = 1 + U(-p0,p0)*0.05   ; the layer's pitch factor
+  p1 = Params[1].x + mod*(y-x)                  ; +0x4f0 / +0x4f4
+  [voice + ebx*4 + 0x7c] = U(-p1,p1)*0.5        ; the layer's pan offset
+  ebx++
+```
+
+Closed on the way, so nobody re-opens them:
+
+- **The layer index really does start at 0**, unconditionally — `xor ebx, ebx` then a `jmp` straight
+  into the body, with no guard on `Numstack == 1`.
+- **`voice+0x28` really is the note's modulation.** `0x057a`: `bextr` with `0x418` takes bits 24..27
+  of the note word and scales by `1/15` before `0x19e0` stores it at `+0x28`.
+- **The modulation cannot rescue the kits.** All six set `Params[2]` to **`1.000 .. 1.000`** — flat,
+  so `x + mod*(y - x)` is 1.000 at every modulation. (`baiyon_drums_1`, by contrast, is
+  `0.000 .. 0.194` and is harmless at modulation 0, which is where 89% of drum notes sit.)
+
+So: the formula is read, every input is named, and applying it as written starts every kick, snare
+and hat of six kits at a uniformly random point inside its own sample. A listener called that "the
+start of the sample skipped, only the cut tail, with a click", and confining the three
+randomisations to layers 1+ was worth **11.6 dB** of drum kit. **Both cannot be true.**
+
+**Next step — and it is no longer in this module.** `+0x78` is never *initialised* in the PRX, only
+clamped downward by the mip builder, and the eboot's record builder at `v0x2a1190` starts copying at
+`+0x84`. So something else fills `+0x78`, `+0x7c` and `+0x80` when a sample is bound to a slot, and
+until that is found the possibility remains that they are not what `0x3780` and `0x3035` make them
+look like. Look for the sample-binding path on the eboot side: it must also fill the three mip
+pointers at `+0x10`, `+0x38` and `+0x60`, so search for a writer with the `0x98` stride — there are
+candidates around `v0x441044`, which zeroes `[r12 + 0x78 + 0x98i]` as qwords.
 
 ## 12b. The old note on `Params[2]`
 
