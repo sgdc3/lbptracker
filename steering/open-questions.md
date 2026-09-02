@@ -623,3 +623,86 @@ What works instead, in order of preference:
    because the scan only matched `[reg + disp]` and the walk is `[rdx + rax*4 + 0x4c4]`.
 
 ⚠️ A negative result from a pattern scan is only as strong as the pattern.
+
+---
+
+## 22. Our stereo is ~1.75x wider than the game's — measured against a dry recording
+
+Opened 2026-09-03 from the cleanest comparison this project has had: a listener recorded the game's
+own output for one drum section **with the reverb off**, level-matched it and handed both files back.
+Residual alignment **0.0 ms**, envelope correlation 0.838.
+
+### The measurement
+
+`Ascetic`'s two kits carry two dominant placements: `a_kit_1` at **pan 0.40** (1,494 notes) and
+`baiyon_drums_1` at **pan 0.60** (1,206 notes). At t = 4.995 s and t = 12.995 s a single
+`baiyon_drums_1` voice sounds alone — our render reads **exactly** `R/(L+R) = 0.6000`, which is the
+linear law on the file's own value, and both occurrences agree to four decimals, so there is no
+contamination.
+
+| | R/(L+R) | R/L |
+|---|---|---|
+| ours, pan 0.60 | 0.6000 | 1.5000 |
+| **the game, same instant** | **0.5586** | **1.2654** |
+
+and at pan 0.40, over six windows, the game reads 0.442-0.457 — a deviation ratio of **0.57-0.58**,
+the same magnitude mirrored.
+
+So the game's effective pan is about `0.5 + (p − 0.5) × 0.58`. Equivalently a **26% cross-bleed**:
+`L' = L + 0.26·R`, `R' = R + 0.26·L` reproduces 1.2654 from 0.4/0.6 exactly.
+
+Whole-file: side/mid is **0.1026** for the game and **0.1798** for us, and the ratio is flat across
+every octave band from 20 Hz to 20 kHz — so whatever it is, it is not frequency-dependent.
+
+### What it is not
+
+- **Not the pan law.** `0x2d21`'s `1 - p` / `p` is linear and our render reproduces the file's pan
+  under it exactly. The law is right; the `p` reaching it is not what we think.
+- **Not stereo samples.** Every kit sample is mono, 48 kHz.
+- **Not the LFO.** Neither kit sets any LFO depth, so the pan fold never runs.
+- **Not the unison stack.** `a_kit_1` has `Numstack` 1, so `Params[1]`'s spread has no later layer to
+  apply to.
+
+### Where to look
+
+The pan reaching `0x2d19` comes from a **per-layer table** at `[rbp + rsi - 0x170]`, loaded at
+`0x2c04` and written through `r13` at `0x274f` — the same shape the gain LFO uses at `0x25a5`. That
+write is a per-block ramp: `2u - c·u` with `u = k·(t - previous)`, a Newton-refined interpolation
+toward the new value. Read what feeds `t` there, and whether anything narrows it on the way.
+
+### ⚠️ And the one thing this cannot rule out from here
+
+**The capture chain.** If the recording path applies any downmix or width reduction, it would look
+exactly like this — flat across frequency, a constant ratio. Before spending a session on the
+engine, confirm that the capture is a straight digital stereo tap. A recording of something known to
+be hard-panned would settle it in one take.
+
+---
+
+## 23. A flat ~1 dB deficit above 315 Hz
+
+From the same comparison, and independent of question 22 — it is present in the **total** energy
+`L² + R²`, which does not care about stereo width.
+
+| band | ours − game |
+|---|---|
+| 20-40 Hz | −0.39 dB |
+| 40-80 | −0.54 |
+| 80-160 | **+0.27** |
+| 160-315 | **+0.07** |
+| 315-630 | **−1.43** |
+| 630-1250 | −0.99 |
+| 1250-2500 | −0.89 |
+| 2500-5000 | −0.75 |
+| 5000-10000 | −0.79 |
+| 10000-20000 | −1.41 |
+
+**The bass is exact** — within 0.5 dB, and 0.07 dB at 160-315. Everything from 315 Hz up is quiet by
+roughly a decibel, with the worst at either end of that range.
+
+Candidates, none checked: the mipmap chain's crossover (a mip taken too early loses highs); the
+interpolator (linear interpolation is a lowpass whose loss grows with frequency, and the engine's
+own is measured, so this would have to be a bug rather than a difference); the ladder's coefficient
+solve at low cutoffs; or the capture chain again. ⚠️ It is suspiciously *flat* for a filter — a
+resampling or interpolation error would tilt with frequency rather than sit at −1 dB across five
+octaves, which argues for something gain-like that this project applies to part of the signal.
