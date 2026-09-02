@@ -827,11 +827,22 @@ that looks like an init -- `v0x3e780c`, `esi = 0x10000`, `edx = 8` -- is `setStr
 `FMOD_TIMEUNIT_RAWBYTES`. So FMOD takes the driver's default and the answer is in the output
 plugin's caps. Attack it there:
 
-1. `v0xa577a0` is that plugin's `Init` and takes the speaker count in `ebx`. It is reached through a
-   pointer table built at runtime, **not** a static `FMOD_OUTPUT_DESCRIPTION` -- searched, and no
-   qword and no `R_X86_64_RELATIVE` addend equal to `0xa577a0` exists anywhere in the image. So find
-   the writer, or read the caps function in the same file: its `__FILE__` sites bound the file to
-   about `v0xa57000`-`v0xa579ff`, small enough to read end to end.
+1. ❌ **Not from the output plugin.** `v0xa577a0` is its `Init`, and `ebx` is `r8d` -- the
+   `outputchannels` **argument**, not a decision the plugin makes. The whole FMOD Ex signature
+   checks out against the code and pins every other field at the same time:
+
+   ```
+   Init(state, driver, flags, int *rate, int channels, FMOD_SOUND_FORMAT *fmt, buflen, numbuf, extra)
+        rdi    esi     edx    rcx        r8d           r9                      [rbp+0x18] [rbp+0x20]
+                              [rcx]=48000 -> ebx        [r9]=5 (PCMFLOAT)       grain      count
+   ```
+
+   So the count is chosen by **FMOD core** from the speaker mode and merely handed down. Reading the
+   rest of the file is a dead end for this: `v0xa570f0`, which looked like a caps callback, is a
+   plain `read()` retry loop -- the `__FILE__` attribution span in `fmodapi.py` is coarser than the
+   file. Go at `System::init`'s speaker-mode negotiation in `fmod_systemi.cpp` instead, or at the
+   `FMOD_OUTPUT_DESCRIPTION` that carries `v0xa577a0`, which is built at runtime (searched: no qword
+   and no `R_X86_64_RELATIVE` addend equal to `0xa577a0` exists anywhere in the image).
 2. Stereo => FMOD downmixes 4->2 itself and the matrix is in `fmod_dspi.cpp` /
    `fmod_dsp_connectionpool.cpp`. That matrix is then the entire answer.
 3. 7.1 => FMOD spreads 4->8 and the fold to stereo is the **console's**, downstream of the game --
