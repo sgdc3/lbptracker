@@ -337,9 +337,16 @@ and the `envAmount === 0` shortcut no longer fires for a voice whose rate moves.
 engine feeds that term is still this question**, and `LBP_NO_KEYTRACK` still exists because the term
 may be inert altogether -- what is not in doubt is that between the opening rate and the current one,
 only the current one lets a glide sweep.
-- the octave, which is why `LBP_PITCH=<guid>:<semitones>` exists in `dev/render-level.ts` —
-  `LBP_PITCH=129082:-12` renders `robot` an octave down, scaling only the playback rate so the key
-  zone and the filter's key-tracking do not move with it.
+- ~~the octave~~ — **REFUTED 2026-09-02 by the corpus.** `robot` is one looped sample,
+  `rude_bass_c3` at base note 36, and across the 18 levels that parse it carries **49,447 notes**
+  spread from **−12 to +30 semitones** relative to that base, smooth, peaking at +24…+28 — with
+  **624 notes on the base note itself** and 242 an octave below it. A systematic octave error cannot
+  produce that shape; it would move the whole distribution, not put a fat middle at +26 and a tail at
+  −1. Composers simply use it as a lead. `LBP_PITCH` stays as a diagnostic, but there is nothing here
+  for it to fix, and the thinness has to be explained by something that is not the pitch.
+
+  ⚠️ `Key` was ruled out on the way: 49,270 of those 49,447 notes carry `Key = 0`, so question 4's
+  transposition changes almost nothing for this instrument.
 
 ⚠️ One thing was ruled out on the way: byte 3 of a note record only ever holds `0x00`, `0x40` or a
 low nibble — bits 4 and 5 are never set corpus-wide, and `0x40` is bit 30, which the engine already
@@ -657,3 +664,74 @@ What works instead, in order of preference:
 
 ⚠️ A negative result from a pattern scan is only as strong as the pattern.
 
+
+---
+
+## 21. `Params[26]` is a **drive**, it is consumed, and this project implements none of it
+
+Opened 2026-09-02, while refuting `robot`'s octave. It is the largest unmodelled thing left in the
+synth, and it corrects a "settled" statement that was wrong twice over.
+
+### ⚠️ What steering used to say, and why it is wrong
+
+The reverb entry records: *"The instrument's own reverb send does reach the voice, at `voice+0x20`
+from Params at `+0x5b8`, and then **nothing reads it** — a grep of the whole PRX finds the store and
+no load."*
+
+Both halves are wrong. `+0x5b8` is **`Params[26]`**, which `src/core/params.ts` names `drive`, not a
+reverb send — the send is `Params[25]` at `+0x5b0`. And it **is** read. The earlier grep looked for
+`vmovss` and the load is a **`vbroadcastss`**.
+
+### What it is
+
+```
+0x3b93  xmm1 = Params[26].x ; xmm2 = Params[26].y
+0x3ba3  xmm0 = x + mod*(y - x)
+0x3baf  [voice + 0x20] = xmm0                 ; the drive, per note
+0x3cd8  [voice + 0x20] = clamp(that, 0, 1)    ; clamped before use
+```
+
+and the consumer, in the block DSP:
+
+```
+0x1ee0  d  = broadcast([voice + 0x20])
+0x1ee7  d  = min(d,  0.95)
+0x1eef  d  = max(d, -0.95)
+0x1ef7  a  = d * 2
+0x1eff  b  = 1 - d
+0x1f0b  r  = vrcpps(b), refined by one Newton step: r' = 2r - b*r*r   (0x1f0f-0x1f1b)
+0x1f1f  k1 = a * r          = 2d / (1 - d)     -> [rbp-0xa20]
+0x1f2f  k2 = (b * r) * k1                       -> [rbp-0x9e0]
+```
+
+`k = 2d/(1 − d)`, with `d` clamped at 0.95, is the coefficient of the standard soft-clip
+waveshaper `f(x) = (1 + k)·x / (1 + k·|x|)`. The clamp at 0.95 is what keeps `1 − d` away from
+zero, which is exactly what that form needs.
+
+### Why it matters more than one instrument
+
+**Nine of the game's 68 instruments set a non-zero drive**, and for two of them it is the entire
+character:
+
+| instrument | drive | output level |
+|---|---|---|
+| `e_guitar_power` | 0.731 | 0.088 |
+| `e_guitar_distorted` | 0.570 … 0.700 | 0.161 … 0.294 |
+| `space_piano` | 0.510 | 0.202 … 0.446 |
+| `electric_harpsichord` | 0.390 … 0.000 | 0.239 … 0.830 |
+| `baiyon_bass_01` | 0.000 … 0.431 | 0.494 … 0.619 |
+| `baiyon_city_kyoto`, `baiyon_drums_1`, `baiyon_shiny_01`, `baiyon_tinkle_01` | up to 0.256 | |
+
+Rendering a distortion patch clean is not a subtle error, and it is on by default for anyone whose
+level uses the electric guitars. ⚠️ Note the pairing: the two guitars carry the **lowest output
+levels in the table**, 0.088 and 0.161, which is what you would expect if the drive is adding a lot
+of level that has to be taken back out. Implementing the level without the drive therefore makes
+them quiet *and* clean — two errors that partly hide each other.
+
+### Next step
+
+Trace `[rbp-0xa20]` and `[rbp-0x9e0]` to the per-sample arithmetic and confirm the transfer
+function before implementing anything. ⚠️ Those two stack slots are **reused elsewhere in the same
+function** for unrelated values, so follow the dataflow forward from `0x1f23`/`0x1f33` rather than
+grepping the slot — a grep finds 15 and 18 references respectively and most of them are something
+else.

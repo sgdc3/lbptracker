@@ -645,7 +645,7 @@ three pan positions in 0..1 (`0x1254`-`0x136b`).
 | field | source | used for |
 |---|---|---|
 | `voice+0x1c` | the instrument's Params pair at `+0x5b0`/`+0x5b4`, interpolated by the note's modulation, then offset by the placement's `2·echoSend - 1`, clamped to 0..1 | the **echo** send |
-| `voice+0x20` | the instrument's Params pair at `+0x5b8`/`+0x5bc` | **nothing.** It is stored and never loaded — a grep of the whole PRX finds the store at `0x3baf` and no read |
+| `voice+0x20` | the instrument's Params pair at `+0x5b8`/`+0x5bc`, i.e. **`Params[26]`, the drive** — not a reverb send, which is `Params[25]` at `+0x5b0` | ⚠️ **This row used to read "nothing, it is stored and never loaded". Wrong.** It is read at `0x1ee0`, by a `vbroadcastss` — which is why a grep for `vmovss` missed it — and drives a soft-clip waveshaper. See *21* in [open-questions.md](open-questions.md) |
 | `voice+0x24` | the placement's `reverbSend` at `[block+0x42c]`, clamped to 0..1 | the **reverb** send |
 
 The mixer at `0x2f00`-`0x2f8f` then writes, per frame:

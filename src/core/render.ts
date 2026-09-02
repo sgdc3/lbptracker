@@ -458,10 +458,15 @@ export async function renderSequencer(
       // previous reading used `v + e*(1 - v)` with the raw field, which is only
       // the upper half of that curve.
       //
-      // ⚠️ The reverb send is `reverbSend` **alone**. The instrument's own reverb
-      // send does reach the voice, at `voice+0x20` from Params at `+0x5b8`, and
-      // then **nothing reads it** -- a grep of the whole PRX finds the store and
-      // no load.
+      // ⚠️ The reverb send is `reverbSend` **alone**. The instrument's own
+      // `Params` do not contribute one.
+      //
+      // ⚠️ This comment used to add that `Params[26]` at `+0x5b8` reaches
+      // `voice+0x20` and that nothing reads it. Both halves were wrong:
+      // `Params[26]` is the **drive**, not a reverb send, and `0x1ee0` reads it
+      // with a `vbroadcastss` -- which is how a grep for `vmovss` missed it --
+      // into a soft-clip waveshaper this project does not implement. Nine of the
+      // game's instruments set it. See open question 21.
       echoSend: (() => {
         const base = P(OUTPUT_PARAMS.send);
         const offset = 2 * track.echoSend - 1;
