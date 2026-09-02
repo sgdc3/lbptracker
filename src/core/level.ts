@@ -184,12 +184,13 @@ export async function readLevel(
  * The board's frame is its matrix's three basis columns, so "the delta in board
  * space" is three dot products — one per axis, divided by the column's own
  * squared length so a scaled board still lands on integers. That is the whole
- * transform. `tools/RawDump.java` spells it as
- * `getNormalizedRotation().invert()` and rotates by a quaternion, which scores
- * the same 100% here for a reason worth knowing: it uses the **child's**
+ * transform. The Java tool this walk replaced spelled it as
+ * `getNormalizedRotation().invert()` and rotated by a quaternion, which scores
+ * the same 100% here for a reason worth knowing: it used the **child's**
  * rotation rather than the board's, and those agree only because a component
- * lies flat against its board. It is right by accident, and it would part
- * company with the engine the moment a component were turned on the board.
+ * lies flat against its board. It was right by accident, and it would have
+ * parted company with the engine the moment a component were turned on the
+ * board. See *16. The board cell* in `steering/answered-questions.md`.
  *
  * ## What says the units and the origin are right
  *
@@ -221,7 +222,7 @@ export interface Placement {
 }
 
 export interface FoundSequencer {
-  /** The Thing's UID — what `RawDump` calls `seqUID`. */
+  /** The Thing's UID — what the golden dump calls `seqUID`. */
   readonly uid: number;
   readonly settings: SequencerPart;
   readonly name: string;
@@ -237,11 +238,11 @@ export interface FoundSequencer {
  * Things parented to the board and leaves `PMicrochip.components` empty, so
  * reading only that list finds a sequencer with no instruments at all. On one
  * corpus level that is five sequencers and 1,030 placements silently missing.
- * The fallback here is the one `RawDump.java` uses: scan the Thing list for
- * children of the board that carry an `INSTRUMENT`.
+ * The fallback here is to scan the Thing list for children of the board that
+ * carry an `INSTRUMENT`, and `boardCell` above recovers where each one sits.
  *
- * The rebuilt order is the Thing list's order, which is what `RawDump` numbers
- * as `instIdx`; the compact list's order is its own.
+ * The rebuilt order is the Thing list's order, which is what the golden dump
+ * numbers as `instIdx`; the compact list's order is its own.
  */
 export function musicSequencers(things: readonly (Thing | undefined)[]): FoundSequencer[] {
   const out: FoundSequencer[] = [];

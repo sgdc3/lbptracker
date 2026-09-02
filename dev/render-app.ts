@@ -31,7 +31,7 @@ const worker = new Worker(new URL('./render-worker.ts', import.meta.url), { type
 
 let wavUrl: string | null = null;
 let wavName = 'render.wav';
-/** The dump currently loaded, so the drop zone can say what it is holding. */
+/** The level currently loaded, so the drop zone can say what it is holding. */
 let loadedName = '';
 
 const setStatus = (text: string, bad = false) => {
@@ -137,9 +137,9 @@ worker.onmessage = (event: MessageEvent) => {
     const done = Number(message.done);
     const total = Number(message.total);
     const phase = String(message.phase);
-    if (phase === 'dump') {
+    if (phase === 'level') {
       setBar(total > 0 ? done / total : 0);
-      setStatus(`fetching the corpus dump… ${(done / 1048576).toFixed(0)} MB`);
+      setStatus(`reading the level… ${(done / 1048576).toFixed(1)} MB`);
       return;
     }
     const weight = WEIGHTS[phase];
@@ -151,22 +151,22 @@ worker.onmessage = (event: MessageEvent) => {
   }
 
   if (message.type === 'loaded') {
-    const list = message.list as { uid: number; name: string; rows: number }[];
+    const list = message.list as { uid: number; name: string; tracks: number }[];
     seqSelect.innerHTML = '';
     for (const item of list) {
       const option = document.createElement('option');
       option.value = String(item.uid);
-      option.textContent = `${item.name || '(untitled)'} — ${item.rows} rows, uid ${item.uid}`;
+      option.textContent = `${item.name || '(untitled)'} — ${plural(item.tracks, 'instrument')}`;
       seqSelect.append(option);
     }
-    // This Is Halloween, if it is in the dump: the one every render is judged on.
+    // This Is Halloween, if it is in this level: the one every render is judged on.
     const halloween = list.find((item) => item.uid === 737099);
     if (halloween) seqSelect.value = String(halloween.uid);
     seqSelect.disabled = false;
     goButton.disabled = false;
     setBusy(false);
     setBar(1);
-    // ⚠️ The zone stays. Swapping one dump for another without reloading the
+    // ⚠️ The zone stays. Swapping one level for another without reloading the
     // page is the first thing anyone tries, and hiding the picker after the
     // first load made it impossible.
     dropZone.classList.add('loaded');
@@ -297,7 +297,7 @@ dropZone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
   const file = fileInput.files?.[0];
   // Cleared so that picking the *same* file again still fires `change`, which
-  // is how you re-read a dump you have just regenerated.
+  // is how you re-read a level you have just re-exported from the game.
   fileInput.value = '';
   if (file) loadFrom(file);
 });

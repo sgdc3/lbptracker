@@ -178,7 +178,7 @@ the start offset put an audible **phaser** over the same kit, because `a_kit_1`'
 one voice, and the note here used to say the level plays every drum hit on two board components at
 once — 140 of 140 `(step, pitch)` slots doubled.
 
-**It does not. The dump did.** `RawDump` was emitting 60 of the corpus's 338 sequencers twice, so
+**It does not. The dump did.** The old Java dump emitted 60 of the corpus's 338 sequencers twice, so
 every note in them was rendered twice and the "doubling" was ours. See *The `RawDump` duplication*
 in [lbp-modding-toolchain.md](lbp-modding-toolchain.md). Two coherent copies a hair apart in pitch
 really is a comb filter and really does sweep, so the phaser was real — but its cause was the

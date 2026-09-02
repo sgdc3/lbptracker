@@ -58,7 +58,7 @@ const CANDIDATES: Record<string, (b: Float32Array, c: Float32Array) => { x: numb
   },
   "the board's basis — what boardCell does": (b, c) => boardCell(b, c),
   "the board's basis, scale kept": (b, c) => inBasis(b, sub(tr(c), tr(b)), true),
-  "the child's basis — RawDump.java": (b, c) => inBasis(c, sub(tr(c), tr(b)), true),
+  "the child's basis — the old Java tool": (b, c) => inBasis(c, sub(tr(c), tr(b)), true),
 };
 
 /** Is `v` a multiple of one cell, and an odd one if `odd` is asked for? */

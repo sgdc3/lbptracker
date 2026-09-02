@@ -8,7 +8,10 @@ import cwlib.types.data.GUID;
  * archives, so this is the first half of the chain that open question 1 is
  * about: RInstrument.SampleGuids -> audio.
  *
- * Build and run (see tools/RawDump.java for the JDK note):
+ * Build and run. Use the JDK 25 `java`, not whatever is first on PATH -- a
+ * Java 8 runtime is installed on this machine and fails with
+ * UnsupportedClassVersionError:
+ *   "C:\Program Files\Eclipse Adoptium\jdk-25.0.3.9-hotspot\bin\java"
  *
  *   javac -cp "$JAR" -d out tools/GuidLookup.java
  *   java  -cp "$JAR;out" GuidLookup <orbisguids.map> [guid|substring ...]

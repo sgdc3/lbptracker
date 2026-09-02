@@ -68,9 +68,10 @@ test('a rotated board gives the same cell as an unrotated one', () => {
 });
 
 /**
- * `RawDump.java` rotates by the *child's* inverse rotation, which agrees only
- * while a component lies flat against its board. Turn the component and the two
- * part company — the board's frame is the one that stays right.
+ * The Java tool this walk replaced rotated by the *child's* inverse rotation,
+ * which agrees only while a component lies flat against its board. Turn the
+ * component and the two part company -- the board's frame is the one that stays
+ * right.
  */
 test('the board decides the frame, not the component', () => {
   const board = transform(IDENTITY, [0, 0, 0]);

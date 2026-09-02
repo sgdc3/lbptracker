@@ -1,55 +1,97 @@
 import { strict as assert } from 'node:assert';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
   STEPS_PER_CELL,
   boardToGrid,
-  duplicateRowsDropped,
   importLevel,
+  readLevelProject,
   schedule,
   trackFrom,
-  type DumpRow,
+  type LevelProject,
 } from '../src/core/project.ts';
+import type { InstrumentPart, SequencerPart } from '../src/core/parts.ts';
+import type { Thing } from '../src/core/thing.ts';
+import { nodeInflate } from '../src/platform/node.ts';
 
 /**
- * The corpus dump is other people's levels and is never committed. Regenerate
- * with tools/RawDump.java; see src/core/project.ts for why the extraction is
- * still Java.
+ * Real levels are other people's work and are never committed. Point
+ * `LBP_LEVELS` at a directory of them; the corpus tests skip without it.
  */
-const DUMP = process.env.LBP_DUMP ?? 'fixtures/levels/sequencers.jsonl';
+const LEVELS =
+  process.env.LBP_LEVELS ?? 'C:/Users/sgdc3/Desktop/LBP/toolkit/tools/sequencerdump/data';
 
-const row = (over: Partial<DumpRow> = {}): DumpRow => ({
-  file: 'test',
-  seqUID: 1,
-  seqName: 'seq',
+// ------------------------------------------------------------------ fixtures
+
+const CELL = 52.5;
+
+function instrument(over: Partial<InstrumentPart> = {}): InstrumentPart {
+  return {
+    guid: 129085,
+    name: '',
+    loops: 1,
+    key: 0,
+    scale: 0,
+    level: 1,
+    pan: 0.5,
+    echoSend: 0,
+    reverbSend: 0,
+    notes: new Uint8Array(),
+    ...over,
+  };
+}
+
+function thing(uid: number, parts: [string, unknown][]): Thing {
+  return { uid, planGuid: 0, flags: 0, extraFlags: 0, parts: new Map(parts) };
+}
+
+const settings = (over: Partial<SequencerPart> = {}): SequencerPart => ({
   tempo: 120,
   swing: 0,
   echoFeedback: 0,
   echoTime: 0,
   echoMix: 0,
-  reverb: 0,
+  reverbSettings: 0,
   loop: false,
   startPoint: 0,
   numChannels: 6,
   volumes: [1, 1, 1, 1, 1, 1],
-  instIdx: 0,
-  boardX: 0,
-  boardY: 0,
-  instRes: '0',
-  instName: '',
-  level: 1,
-  pan: 0.5,
-  echoSend: 0,
-  reverbSend: 0,
-  loops: 1,
-  key: 0,
-  scale: 0,
-  noteCount: 0,
-  notes: '',
+  musicSequencer: true,
   ...over,
 });
+
+/**
+ * A world holding one music sequencer with its board closed.
+ *
+ * A closed board is the common case — 1,306 of the corpus's 1,367 microchips —
+ * and it is the one that can be written by hand: the components are a compact
+ * list on the chip rather than Things scattered through the world.
+ */
+function world(
+  uid: number,
+  name: string,
+  placements: { x: number; y: number; instrument: InstrumentPart }[],
+  over: Partial<SequencerPart> = {},
+): Thing[] {
+  const components = placements.map((p, i) => ({
+    thing: thing(uid * 1000 + i, [['INSTRUMENT', p.instrument]]),
+    x: p.x,
+    y: p.y,
+  }));
+  return [
+    thing(uid, [
+      ['SEQUENCER', settings(over)],
+      ['MICROCHIP', { name, components, board: undefined }],
+    ]),
+    ...components.map((c) => c.thing),
+  ];
+}
+
+/** Note records, four bytes each: `x | triplet<<7`, `y | end<<7`, volume, timbre. */
+const records = (...bytes: number[]) => new Uint8Array(bytes);
 
 // ------------------------------------------------------------- board geometry
 
@@ -71,7 +113,7 @@ test('board position maps to a grid cell, with the engine’s half-cell bias', (
 });
 
 test('a track’s step offset is its cell times the cell length', () => {
-  const t = trackFrom(row({ boardX: 78.75, boardY: -105 }));
+  const t = trackFrom({ x: 78.75, y: -105, instrument: instrument() });
   assert.equal(t.gridX, 1);
   assert.equal(t.gridY, 1);
   assert.equal(t.stepOffset, STEPS_PER_CELL);
@@ -79,25 +121,48 @@ test('a track’s step offset is its cell times the cell length', () => {
 
 // --------------------------------------------------------------- the grouping
 
-test('rows are grouped by sequencer and ordered by board index', () => {
-  const rows = [
-    row({ seqUID: 7, instIdx: 2, instName: 'c' }),
-    row({ seqUID: 7, instIdx: 0, instName: 'a' }),
-    row({ seqUID: 9, instIdx: 0, instName: 'x' }),
-    row({ seqUID: 7, instIdx: 1, instName: 'b' }),
+test('a level’s sequencers come back with their components as tracks', () => {
+  const things = [
+    ...world(7, 'seven', [
+      { x: 0, y: -CELL, instrument: instrument({ name: 'a' }) },
+      { x: CELL, y: -CELL, instrument: instrument({ name: 'b' }) },
+    ]),
+    ...world(9, 'nine', [{ x: 0, y: -CELL, instrument: instrument({ name: 'x' }) }]),
   ];
-  const [level] = importLevel(rows);
+  const level = importLevel('test', things);
   assert.equal(level.sequencers.length, 2);
   const seven = level.sequencers.find((s) => s.uid === 7)!;
-  assert.deepEqual(seven.tracks.map((t) => t.name), ['a', 'b', 'c']);
+  assert.equal(seven.name, 'seven');
+  assert.deepEqual(
+    seven.tracks.map((t) => t.name),
+    ['a', 'b'],
+  );
+});
+
+/**
+ * ⚠️ An animation or logic sequencer carries a `PSequencer` too, and it has no
+ * music in it. `musicSequencer` is the flag that separates them; without it a
+ * level's logic shows up as silent tracks.
+ */
+test('only music sequencers are imported', () => {
+  const things = [
+    ...world(7, 'music', [{ x: 0, y: -CELL, instrument: instrument() }]),
+    ...world(8, 'logic', [{ x: 0, y: -CELL, instrument: instrument() }], {
+      musicSequencer: false,
+    }),
+  ];
+  assert.deepEqual(
+    importLevel('test', things).sequencers.map((s) => s.uid),
+    [7],
+  );
 });
 
 test('a note lands at its cell offset plus its own step', () => {
-  // One note: a single record at step 3, pitch 60, with the end flag.
-  const notes = ((3 & 0x7f) | 0).toString(16).padStart(2, '0')
-    + ((60 & 0x7f) | 0x80).toString(16).padStart(2, '0')
-    + '60' + '40';
-  const [level] = importLevel([row({ boardX: 78.75, notes, noteCount: 1 })]);
+  // One record: step 3, pitch 60, with the end flag.
+  const things = world(1, 'seq', [
+    { x: 78.75, y: -CELL, instrument: instrument({ notes: records(3, 60 | 0x80, 0x60, 0x40) }) },
+  ]);
+  const level = importLevel('test', things);
   const events = schedule(level.sequencers[0]);
   assert.equal(events.length, 1);
   assert.equal(events[0].step, STEPS_PER_CELL + 3);
@@ -107,20 +172,30 @@ test('a note lands at its cell offset plus its own step', () => {
 
 // ------------------------------------------------------------- the real corpus
 
+/** Every level under `LEVELS`, imported. */
+async function corpus(): Promise<LevelProject[] | null> {
+  if (!existsSync(LEVELS)) return null;
+  const out: LevelProject[] = [];
+  for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    out.push(
+      await readLevelProject(
+        entry.name,
+        new Uint8Array(await readFile(path.join(LEVELS, entry.name))),
+        nodeInflate,
+      ),
+    );
+  }
+  return out;
+}
+
 test('every sequencer in the corpus imports, and the notes survive it', async (t) => {
-  if (!existsSync(DUMP)) {
-    t.skip(`no ${DUMP} (regenerate with tools/RawDump.java, or set LBP_DUMP)`);
+  const levels = await corpus();
+  if (!levels) {
+    t.skip(`no ${LEVELS} — set LBP_LEVELS to a directory of levels`);
     return;
   }
-  // The dump carries creator-authored names, which are not always valid UTF-8.
-  const text = await readFile(DUMP, 'latin1');
-  const rows: DumpRow[] = [];
-  for (const line of text.split('\n')) {
-    if (line.startsWith('{')) rows.push(JSON.parse(line));
-  }
-  assert.ok(rows.length > 1000, `expected a real corpus, got ${rows.length} rows`);
 
-  const levels = importLevel(rows);
   let sequencers = 0;
   let tracks = 0;
   let notes = 0;
@@ -140,18 +215,17 @@ test('every sequencer in the corpus imports, and the notes survive it', async (t
     }
   }
 
-  // Nothing may be lost except the rows `RawDump` emitted twice.
-  //
-  // ⚠️ It re-emits a whole sequencer when its Thing is reachable twice in
-  // `world.things`, and 60 of the corpus's 338 sequencers come out that way --
-  // `instIdx` 0..N followed by 0..N again, byte for byte. `importLevel` drops
-  // the repeat; this pins the count so a change in either direction is visible.
-  assert.equal(
-    tracks + duplicateRowsDropped,
-    rows.length,
-    'every dump row becomes a track or is a counted duplicate',
+  console.log(
+    `    ${levels.length} files, ${sequencers} sequencers, ${tracks} tracks, ` +
+      `${notes} notes, longest ${longest} steps, ${emptyGuid} tracks with no instrument`,
   );
-  assert.equal(duplicateRowsDropped, 23911, 'the corpus carries 23,911 duplicate rows');
+
+  // ⚠️ `tools/PartCensus.java` counted 62,158 `INSTRUMENT` parts across these
+  // ten files, and the walk finds exactly that many placements. It is the one
+  // number here produced by an implementation nobody in this project wrote, so
+  // pin it: a walk that visited a Thing twice, or missed a board, would move it.
+  assert.equal(levels.length, 10, 'the corpus is ten level files');
+  assert.equal(tracks, 62158, 'every INSTRUMENT part in the corpus becomes a track');
   assert.ok(sequencers > 100, `expected many sequencers, got ${sequencers}`);
   assert.ok(notes > 10_000, `expected many notes, got ${notes}`);
 
@@ -159,87 +233,72 @@ test('every sequencer in the corpus imports, and the notes survive it', async (t
   // is wrong. The corpus should be clean; if this ever trips, do not raise the
   // bound -- go and find out which.
   assert.equal(trailing, 0, `${trailing} records fell outside a note`);
-
-  console.log(
-    `    ${levels.length} files, ${sequencers} sequencers, ${tracks} tracks, ` +
-      `${notes} notes, longest ${longest} steps, ${emptyGuid} tracks with no instrument`,
-  );
 });
 
 test('the corpus’s tempos and grid cells are in sane ranges', async (t) => {
-  if (!existsSync(DUMP)) {
-    t.skip(`no ${DUMP}`);
+  const levels = await corpus();
+  if (!levels) {
+    t.skip(`no ${LEVELS}`);
     return;
   }
-  const text = await readFile(DUMP, 'latin1');
-  const rows: DumpRow[] = [];
-  for (const line of text.split('\n')) if (line.startsWith('{')) rows.push(JSON.parse(line));
-  const levels = importLevel(rows);
 
   let minTempo = Infinity;
   let maxTempo = -Infinity;
   let minCell = Infinity;
   let maxCell = -Infinity;
-  const rows2 = new Set<number>();
+  const rows = new Set<number>();
   for (const level of levels) {
     for (const seq of level.sequencers) {
+      if (seq.tracks.length === 0) continue;
       minTempo = Math.min(minTempo, seq.tempo);
       maxTempo = Math.max(maxTempo, seq.tempo);
       for (const track of seq.tracks) {
         minCell = Math.min(minCell, track.gridX);
         maxCell = Math.max(maxCell, track.gridX);
-        rows2.add(track.gridY);
+        rows.add(track.gridY);
       }
     }
   }
   console.log(
     `    tempo ${minTempo}..${maxTempo}, gridX ${minCell}..${maxCell}, ` +
-      `${rows2.size} distinct rows: ${[...rows2].sort((a, b) => a - b).join(',')}`,
+      `${rows.size} distinct rows: ${[...rows].sort((a, b) => a - b).join(',')}`,
   );
-  // A negative cell would mean the half-cell bias or the sign is wrong.
+  // ⚠️ A negative cell would mean the half-cell bias or the sign is wrong -- and
+  // for a board recovered from world matrices, that the frame change in
+  // `boardCell` is wrong. One of the corpus's open boards is rotated 90°, which
+  // without it swaps the time axis with the row axis. See dev/board-probe.ts.
   assert.ok(minCell >= 0, `gridX went negative: ${minCell}`);
   assert.ok(minTempo > 0, 'tempos are positive');
 });
 
-// ------------------------------------------------------- resource descriptors
-
-test('an instrument reference is a descriptor, not a number', async () => {
-  const { parseResourceGuid } = await import('../src/core/project.ts');
-  // ⚠️ This is the whole bug that made a first import play nothing: every real
-  // value is `g` + digits, `Number('g129085')` is NaN, and NaN became 0, so
-  // every instrument looked missing and 1,642 notes were silently skipped.
-  assert.equal(parseResourceGuid('g129085'), 129085);
-  assert.equal(parseResourceGuid(' g122737 '), 122737);
-  assert.equal(parseResourceGuid(''), 0);
-  // A bare SHA1 means the level carries its own instrument -- a real case, and
-  // not resolvable against the game's FileDB, so 0 rather than a guess.
-  assert.equal(parseResourceGuid('5aa779456cf3407f2ed16251f461eb2dd5970f3f'), 0);
-  assert.equal(parseResourceGuid('129085'), 0, 'a bare number is not a descriptor');
-});
-
 test('the corpus resolves to real instrument GUIDs', async (t) => {
-  if (!existsSync(DUMP)) {
-    t.skip(`no ${DUMP}`);
+  const levels = await corpus();
+  if (!levels) {
+    t.skip(`no ${LEVELS}`);
     return;
   }
-  const text = await readFile(DUMP, 'latin1');
-  const rows: DumpRow[] = [];
-  for (const line of text.split('\n')) if (line.startsWith('{')) rows.push(JSON.parse(line));
-  const levels = importLevel(rows);
   let resolved = 0;
   let unresolved = 0;
   const guids = new Set<number>();
   for (const level of levels) {
     for (const seq of level.sequencers) {
       for (const track of seq.tracks) {
-        if (track.guid > 0) { resolved += 1; guids.add(track.guid); } else unresolved += 1;
+        if (track.guid > 0) {
+          resolved += 1;
+          guids.add(track.guid);
+        } else unresolved += 1;
       }
     }
   }
-  console.log(`    ${resolved} tracks resolve to ${guids.size} distinct instrument GUIDs, ${unresolved} do not`);
-  // If this ever drops to zero again, the descriptor format has changed.
-  const kept = rows.length - duplicateRowsDropped;
-  assert.ok(resolved > kept * 0.9, `only ${resolved} of ${kept} resolved`);
+  console.log(
+    `    ${resolved} tracks resolve to ${guids.size} distinct instrument GUIDs, ` +
+      `${unresolved} do not`,
+  );
+  // ⚠️ A placement with no instrument is a real case -- an empty cell, or a
+  // level shipping its own `RInstrument` as an embedded resource, which has a
+  // SHA1 and no GUID. What is not real is *all* of them: that is what a broken
+  // resource descriptor looks like, and it happened once, silently.
+  assert.ok(resolved > (resolved + unresolved) * 0.9, `only ${resolved} resolved`);
 });
 
 // ------------------------------------------------------------------ triplets
@@ -247,11 +306,9 @@ test('the corpus resolves to real instrument GUIDs', async (t) => {
 test('a triplet lands on its third of a step, not on the beat', () => {
   // Three records at step 4, sub-steps 0, 1 and 2, each its own one-record
   // note. Byte 3 carries bit 30, which is what turns sub-step 1 into 2.
-  const rec = (b0: number, b3: number) =>
-    b0.toString(16).padStart(2, '0') + '80' + '60' + b3.toString(16).padStart(2, '0');
-  const notes = rec(0x04, 0x00) + rec(0x84, 0x00) + rec(0x84, 0x40);
-  const [level] = importLevel([row({ notes, noteCount: 3, boardX: 26.25 })]);
-  const events = schedule(level.sequencers[0]);
+  const notes = records(0x04, 0x80, 0x60, 0x00, 0x84, 0x80, 0x60, 0x00, 0x84, 0x80, 0x60, 0x40);
+  const things = world(1, 'seq', [{ x: 26.25, y: -CELL, instrument: instrument({ notes }) }]);
+  const events = schedule(importLevel('test', things).sequencers[0]);
   assert.equal(events.length, 3);
   assert.deepEqual(
     events.map((e) => e.step),
@@ -260,33 +317,40 @@ test('a triplet lands on its third of a step, not on the beat', () => {
 });
 
 test('the corpus’s sub-steps are the two balanced thirds, not a flag', async (t) => {
-  if (!existsSync(DUMP)) {
-    t.skip(`no ${DUMP}`);
+  if (!existsSync(LEVELS)) {
+    t.skip(`no ${LEVELS}`);
     return;
   }
+  // ⚠️ The *records*, not the grouped notes: `subStep` is a field of the
+  // four-byte record and grouping consumes it into a fractional start. Reading
+  // it back off a `Note` would be measuring this module rather than the corpus.
   const { decodeRecords } = await import('../src/core/notes.ts');
-  const text = await readFile(DUMP, 'latin1');
+  const { readLevel, musicSequencers } = await import('../src/core/level.ts');
+  const { partReaders } = await import('../src/core/parts.ts');
   const counts = [0, 0, 0];
-  let records = 0;
-  for (const line of text.split('\n')) {
-    if (!line.startsWith('{')) continue;
-    const r = JSON.parse(line) as DumpRow;
-    if (!r.notes) continue;
-    const bytes = new Uint8Array(r.notes.length / 2);
-    for (let i = 0; i < bytes.length; i += 1) {
-      bytes[i] = parseInt(r.notes.slice(i * 2, i * 2 + 2), 16);
-    }
-    for (const rec of decodeRecords(bytes)) {
-      counts[rec.subStep] += 1;
-      records += 1;
+  let total = 0;
+  for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const { things } = await readLevel(
+      new Uint8Array(await readFile(path.join(LEVELS, entry.name))),
+      nodeInflate,
+      partReaders(),
+    );
+    for (const seq of musicSequencers(things)) {
+      for (const placement of seq.placements) {
+        for (const record of decodeRecords(placement.instrument.notes)) {
+          counts[record.subStep] += 1;
+          total += 1;
+        }
+      }
     }
   }
-  console.log(
-    `    sub-steps: 0 ${counts[0]}, 1 ${counts[1]}, 2 ${counts[2]} of ${records} records`,
-  );
+  console.log(`    sub-steps: 0 ${counts[0]}, 1 ${counts[1]}, 2 ${counts[2]} of ${total} records`);
   // ⚠️ Nothing may decode to a fourth value: `bit7 << bit30` cannot produce one,
   // so a non-zero count here would mean the field boundaries moved.
-  assert.ok(counts[1] > 10_000 && counts[2] > 10_000, 'both thirds are used');
+  // The ten-file corpus has ~4,600 and ~4,200 of them; the 19-file dump this
+  // used to read had over 10,000 of each, hence the lower bound.
+  assert.ok(counts[1] > 1_000 && counts[2] > 1_000, 'both thirds are used');
   // A triplet group puts one note on each third, so the two are comparable.
   // Wildly unbalanced counts would mean bit 30 is being read from the wrong byte.
   const ratio = counts[1] / counts[2];
@@ -317,5 +381,8 @@ test('a track’s channel is its board row modulo eight', async () => {
   assert.equal(at(7), CHANNEL_HEADROOM);
   // ⚠️ Even an all-ones sequencer is not unity: the headroom is always there.
   const flat = { numChannels: 1, volumes: [1, 1, 1, 1, 1, 1] } as never as typeof seq;
-  assert.equal(channelVolume(flat, { gridY: 3 } as never as Parameters<typeof channelVolume>[1]), 0.75);
+  assert.equal(
+    channelVolume(flat, { gridY: 3 } as never as Parameters<typeof channelVolume>[1]),
+    0.75,
+  );
 });

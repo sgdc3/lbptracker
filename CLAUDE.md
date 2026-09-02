@@ -48,15 +48,11 @@ they are the ground truth the JavaScript has to reproduce:
 - `fsb.py` — FSB4 bank reader + IMA ADPCM decoder + WAV writer. **Verified working.**
 - `lbpres.py` — LBP serialised-resource container reader (`LVLb`/`PLNb`: revision, branch, zlib
   chunk table). **Verified working** on 18 real levels.
-- `RawDump.java` — the exception to the Python rule: walks a level's Thing graph via the external
-  toolkit jar and dumps every music sequencer's note records as raw bytes. It is what makes the
-  corpus statistics in `sequencer-data-model.md` reproducible. Build/run notes in its header.
-  ⚠️ It used to emit some sequencers **twice**; `fixtures/levels/sequencers.jsonl` still contains
-  those 23,911 duplicate rows and `importLevel` drops them. See *The `RawDump` duplication* in
-  `steering/lbp-modding-toolchain.md` before trusting a raw row count.
 - `PartCensus.java` — which Thing parts a level corpus actually uses, overall and on the Things
-  carrying a `SEQUENCER` or an `INSTRUMENT`. This is what scoped the Thing-graph walk from
-  "34 part serialisers" down to eight; see `steering/tracker-architecture.md`.
+  carrying a `SEQUENCER` or an `INSTRUMENT`. Its `INSTRUMENT` count for the ten-level corpus,
+  62,158, is what `test/project.test.ts` pins the TypeScript walk against. ⚠️ The "eight part
+  readers" its output was once read as scoping the walk down to was a misreading — 30 were needed;
+  see `steering/tracker-architecture.md`.
 - `GuidLookup.java` — resolve a GUID (or a path substring) against the game's FileDB
   `output/orbisguids.map`. This is how you find where any resource actually lives.
 - `ExtractGuid.java` — GUID → FileDB → SHA1 → FARC → bytes, plus a `manifest.json` the browser can
@@ -76,6 +72,15 @@ they are the ground truth the JavaScript has to reproduce:
   desynchronises the stream and prints convincing nonsense. ⚠️ Its file deltas were both **0x40
   too small** until 2026-09-02, so every PRX address in a steering note older than that is 0x40
   too high — the readings are fine, the labels are not. The script's docstring says why.
+
+⚠️ **`RawDump.java` is gone**, deleted 2026-09-02. It walked a level's Thing graph through the
+external toolkit jar and dumped every music sequencer's note records; `src/core/level.ts` does
+that now, in TypeScript, and nothing in the pipeline needs Java. What it leaves behind is
+`fixtures/levels/sequencers.jsonl` — 129,696 rows over 22 levels, produced by cwlib rather than
+by us, and the golden fixture `dev/verify-levels.ts` still checks the walk against. **That file
+can no longer be regenerated**, so it covers its own corpus and nothing newer, and it still
+contains the 23,911 duplicate rows the tool used to emit — see *The `RawDump` duplication* in
+`steering/lbp-modding-toolchain.md` before trusting a raw row count.
 
 Python on this machine: `C:\Users\sgdc3\AppData\Local\Programs\Python\Python314\python.exe`
 (capstone 5.0.7 is installed).

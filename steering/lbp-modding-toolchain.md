@@ -66,7 +66,12 @@ in the sample slot).
 - **No audio at all.** No FSB reader, no decoder, no playback. `tools/fsb.py` remains ours.
 ### The `RawDump` duplication — found 2026-09-02, and it cost a rendered note
 
-⚠️ **`RawDump`'s outer loop can emit the same sequencer twice.** It walks `world.things` and dumps
+⚠️ **This is history now** — `tools/RawDump.java` was deleted the same day, once
+`src/core/level.ts` replaced it — but it is kept for the rule at the end, and because
+`fixtures/levels/sequencers.jsonl`, the golden fixture `dev/verify-levels.ts` still reads, **was
+produced before the fix and still contains the duplicates**.
+
+⚠️ **`RawDump`'s outer loop could emit the same sequencer twice.** It walked `world.things` and dumped
 every Thing carrying a music `PSequencer`; a world's Thing list can carry the same sequencer twice,
 and when it does, every component is written again with the same `seqUID` **and the same `instIdx`**,
 byte for byte — `instIdx` 0..N, then 0..N again.
@@ -83,9 +88,15 @@ Why it matters more than a factor of two on the level:
   the four voices carrying the sustained lead are the quietest. A listener reported the lead
   vanishing for two bars, which is exactly what it was.
 
-Both ends are fixed: `RawDump` dedupes by Thing UID and identity, and `importLevel` drops any row
-repeating a `(file, seqUID, instIdx)` it has already seen and counts what it dropped. A board cell
-holds one component, so two rows with the same `instIdx` cannot be authored content.
+Both ends were fixed at the time: the tool deduped by Thing UID and identity, and `importLevel`
+dropped any row repeating a `(file, seqUID, instIdx)` it had already seen. A board cell holds one
+component, so two rows with the same `instIdx` cannot be authored content — that is what makes the
+drop exact rather than a heuristic. `dev/verify-levels.ts` still applies it, because the fixture on
+disk predates the fix.
+
+The TypeScript walk cannot produce this at all: it reads `PWorld.things` once, in order, and visits
+each Thing once. The number that says so is 62,158 placements over the ten-level corpus — exactly
+`PartCensus.java`'s `INSTRUMENT` count for those files, pinned in `test/project.test.ts`.
 
 **The general rule this earns:** a structural regularity in *our* extraction is a bug until proven
 otherwise. This one was written into steering as a fact about the level ("the composer plays every

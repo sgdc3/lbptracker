@@ -790,8 +790,7 @@ export interface Microchip {
    * ⚠️ Needed because `components` is **empty while the board is open in the
    * editor**: the game promotes the components to real Things parented to the
    * board and stops maintaining the compact list. `musicSequencers` in
-   * `level.ts` rebuilds it from the Thing graph in that case, which is what
-   * `RawDump.java` does too.
+   * `level.ts` rebuilds it from the Thing graph in that case.
    */
   readonly board?: Thing;
 }

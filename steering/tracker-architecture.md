@@ -99,8 +99,10 @@ reorder 1 and 2 — you want the asset pipeline proven before anything depends o
    `src/core/project.ts` turns a dump into sequencers, tracks and a scheduled event list, and it
    imports the whole corpus: **19 files, 338 sequencers, 129,696 tracks, 2,027,633 notes, zero
    records falling outside a note.** Tempos run 30–240, grid cells 0–334, rows 0–24. The
-   extraction is `src/core/thing.ts` + `level.ts` + `parts.ts`; `tools/RawDump.java` is now only
-   the golden fixture the walk is checked against.
+   extraction is `src/core/thing.ts` + `level.ts` + `parts.ts`, and the Java tool that used to do
+   it is deleted. Its output survives as `fixtures/levels/sequencers.jsonl`, the golden fixture
+   `dev/verify-levels.ts` checks the walk against — unregenerable, so it covers its own 22 levels
+   and nothing newer.
 
    **The Thing-graph walk, scoped by measurement rather than by feel** (`tools/PartCensus.java`):
 
@@ -146,7 +148,7 @@ Steps 1–3 and 5 are done. Step 4 plays a real level end to end, and **the rend
 the browser**: `src/core/render.ts` holds the pipeline, `dev/render-level.ts` is the Node wrapper and
 `dev/render-worker.ts` the browser one, and on 2026-09-02 the two produced the *same file* — 368
 seconds of `This Is Halloween`, 70,704,044 bytes, one SHA-256. **Nothing in the pipeline needs Java
-any more**: `tools/RawDump.java` stays as the golden fixture, not as a step. Steps 6–7 follow.
+any more**. Steps 6–7 follow.
 See
 [open-questions.md](open-questions.md) — none of what remains blocks the build, it only affects
 fidelity.
@@ -218,11 +220,12 @@ without bundling. That was the risky part of the design and it works.
 The server serves only files inside the repository. Game assets never pass through it — the page
 reads the user's bank through a file picker, in the tab, as the licensing story requires.
 
-⚠️ **The Thing walk is the big one.** Reaching a `PInstrument` means deserialising every Thing and
-every part that precedes it in the stream, because parts are variable-length and cannot be skipped
-without being understood. `tools/RawDump.java` sidesteps this by borrowing the toolkit's ~55 part
-serialisers. Doing it in TypeScript is a real port, not an afternoon — budget for it, and use
-`RawDump`'s JSONL output as the golden reference while it is being written.
+~~**The Thing walk is the big one.**~~ Done, and it was a real port rather than an afternoon:
+reaching a `PInstrument` means deserialising every Thing and every part that precedes it in the
+stream, because parts are variable-length and cannot be skipped without being understood. The Java
+tool sidestepped that by borrowing the toolkit's ~55 part serialisers; `src/core/parts.ts` has 30
+of its own, and the tool's JSONL output stayed the golden reference the whole time it was being
+written — which is exactly how to do the next port of this kind.
 
 ## Testing against the corpus
 

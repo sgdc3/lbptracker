@@ -743,14 +743,14 @@ component, so two components landing in one cell would mean the frame was wrong.
 
 ### The wrong turn, kept
 
-`tools/RawDump.java` computes this as
+The Java tool this walk replaced computed it as
 
 ```java
 thing.getTranslation().sub(container.getTranslation())
      .rotate(thing.getNormalizedRotation(new Quaternionf()).invert())
 ```
 
-which scores the same 100.00% on this corpus — and is wrong twice over. It rotates by the
+which scored the same 100.00% on this corpus — and was wrong twice over. It rotated by the
 **child's** rotation rather than the board's; those agree only because a component lies flat
 against its board, so it is right by accident and would part company with the engine the moment a
 component were turned on the board. And it normalises the rotation instead of undoing the scale, so

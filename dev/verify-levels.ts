@@ -1,11 +1,19 @@
 /**
- * Check the TypeScript level walk against `tools/RawDump.java`'s output.
+ * Check the TypeScript level walk against a frozen dump of the same levels.
  *
  *   node --experimental-strip-types dev/verify-levels.ts [dir]
  *
- * This is the golden-fixture test steering asked for: the Java dump is 129,696
- * rows produced by a reader nobody in this project wrote, so agreeing with it is
- * evidence the walk is right rather than merely self-consistent.
+ * This is the golden-fixture test steering asked for: `fixtures/levels/sequencers.jsonl`
+ * is 129,696 rows produced by a reader nobody in this project wrote -- cwlib's,
+ * driven by a small Java tool -- so agreeing with it is evidence the walk is
+ * right rather than merely self-consistent.
+ *
+ * ⚠️ **The fixture can no longer be regenerated.** The Java tool that produced
+ * it was deleted on 2026-09-02 once the TypeScript walk replaced it everywhere,
+ * so this checks the corpus it was built from and nothing else: point it at a
+ * level that is not in the dump and it will simply skip the file. That is the
+ * price of the deletion, and it is worth knowing before trusting a clean run on
+ * new data. `steering/lbp-modding-toolchain.md` records what the tool did.
  *
  * ⚠️ It compares what both sides genuinely know: the sequencer's UID, and for
  * each instrument placement the GUID, the note count and **the note bytes**.
@@ -41,8 +49,10 @@ for (const line of (await readFile(DUMP, 'latin1')).split('\n')) {
   if (!byUid) dump.set(row.file, (byUid = new Map()));
   let rows = byUid.get(row.seqUID);
   if (!rows) byUid.set(row.seqUID, (rows = []));
-  // ⚠️ `RawDump` re-emits some sequencers wholesale; `instIdx` repeating is how
-  // that shows. Keep the first pass only, as `importLevel` does.
+  // ⚠️ The dump re-emits some sequencers wholesale -- its outer loop could
+  // reach one Thing twice -- and `instIdx` repeating is how that shows. Keep the
+  // first pass only. The TypeScript walk reads `PWorld.things` once and cannot
+  // produce it.
   if (rows.length === row.instIdx) {
     rows.push({ guid: row.instRes, noteCount: row.noteCount, notes: row.notes });
   }
@@ -82,7 +92,7 @@ for (const entry of await readdir(DIR, { withFileTypes: true })) {
   for (const sequencer of musicSequencers(things)) {
     const rows = expected.get(sequencer.uid);
     if (!rows) {
-      // ⚠️ Not a mismatch when the sequencer is empty: `RawDump` writes one row
+      // ⚠️ Not a mismatch when the sequencer is empty: the dump writes one row
       // per instrument placement, so a sequencer with none produces no rows at
       // all and cannot appear in the dump. 5aa77945's uid 2470000 is one --
       // zero placements, default tempo. The walk reports something the dump's

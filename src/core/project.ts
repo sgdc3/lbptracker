@@ -1,77 +1,36 @@
 /**
  * A level's music sequencers, turned into something a tracker can play.
  *
- * ## Why this takes a dump rather than a level file
+ * The input is a level file. `level.ts` walks the Thing graph and hands back
+ * `PSequencer` settings and `PInstrument` placements; this module turns those
+ * into tracks, a step timeline and a schedulable event list.
  *
- * The Thing graph is sequential and has no length prefixes: references are
- * inline ids and parts follow each other with nothing to skip past, so reading
- * a `PSequencer` out of a level means being able to parse **every part that
- * precedes it on the same Thing**. Measured across the 22-level corpus with
- * `tools/PartCensus.java`: 34 distinct part types across 172,139 Things, about
- * 5,500 lines of serialiser in cwlib's terms.
+ * ⚠️ **This used to take a JSON dump produced by a Java tool**, because
+ * the Thing graph is sequential and has no length prefixes -- references are
+ * inline ids and parts follow each other with nothing to skip past, so reading a
+ * `PSequencer` means being able to parse **every part that precedes it on the
+ * same Thing**. That turned out to be 30 part readers rather than the eight this
+ * file once predicted; see `steering/tracker-architecture.md` for why the
+ * smaller number was answering a different question. The walk exists now and the
+ * Java is gone.
  *
- * The census also says the job is far smaller than that number suggests, and
- * that is what makes it worth doing later rather than never:
- *
- * - **128,666 of 129,696 instrument Things carry `INSTRUMENT` and nothing
- *   else.** Another 1,030 add `POS` and/or `RENDER_MESH`.
- * - Only **nine** part types ever share a Thing with a `SEQUENCER`, in **eight**
- *   distinct combinations across all 1,169 of them. In serialisation order:
- *   `RENDER_MESH`, `POS`, `TRIGGER`, `STICKERS`, `DECORATIONS`, `SWITCH`,
- *   `GROUP`, `MICROCHIP`, `SEQUENCER`.
- *
- * So the in-browser walk needs **eight** part readers, not thirty-four, and the
- * heavy one is `PSwitch`. Until those exist, `tools/RawDump.java` does the
- * extraction and this module does everything after it. The boundary is
- * deliberate: nothing below depends on where the rows came from, so replacing
- * the Java step later changes one function and no logic.
+ * One consequence worth keeping, because it was a real bug and the new path is
+ * only free of it by construction: that tool could emit a **whole sequencer
+ * twice**, and `importLevel` used to deduplicate. Every note then cost two of
+ * the engine's 32 voices, so a passage that fits comfortably in the pool
+ * overflowed it and the allocator started stealing -- at step 2176 of
+ * `This Is Halloween` that was 42 simultaneous notes against a real 21, and the
+ * lead vanished for two bars. This walk reads `PWorld.things` once, in order, so
+ * a Thing is visited once: 62,158 placements across the ten-level corpus,
+ * exactly the `INSTRUMENT` count `tools/PartCensus.java` reports for those
+ * files.
  */
 
+import { musicSequencers, readLevel, type Placement } from './level.ts';
+import { partReaders } from './parts.ts';
+import type { Inflate } from './resource.ts';
+import type { Thing } from './thing.ts';
 import { groupNotes, decodeRecords, type Note } from './notes.ts';
-
-/**
- * One row of `tools/RawDump.java`'s output: one instrument on one sequencer.
- *
- * Field names are the dump's, verbatim, so the two can be diffed.
- */
-export interface DumpRow {
-  readonly file: string;
-  readonly seqUID: number;
-  readonly seqName: string;
-  readonly tempo: number;
-  readonly swing: number;
-  readonly echoFeedback: number;
-  readonly echoTime: number;
-  readonly echoMix: number;
-  readonly reverb: number;
-  readonly loop: boolean;
-  readonly startPoint: number;
-  readonly numChannels: number;
-  readonly volumes: readonly number[];
-  readonly instIdx: number;
-  /** Position on the microchip's circuit board, in world units. */
-  readonly boardX: number;
-  readonly boardY: number;
-  /**
-   * The `RInstrument` reference as the toolkit prints a `ResourceDescriptor`:
-   * **`g` followed by the GUID** (`"g129085"`), or a 40-character SHA1 for a
-   * resource carried inside the level, or empty for none. Parse it with
-   * `parseResourceGuid`, not with `Number` -- which returns `NaN` for every
-   * real value and silently imports a level with no instruments at all.
-   */
-  readonly instRes: string;
-  readonly instName: string;
-  readonly level: number;
-  readonly pan: number;
-  readonly echoSend: number;
-  readonly reverbSend: number;
-  readonly loops: number;
-  readonly key: number;
-  readonly scale: number;
-  readonly noteCount: number;
-  /** The note records as raw bytes, hex, four bytes each. */
-  readonly notes: string;
-}
 
 /** Cell geometry, measured at `v0x1c4ad0`-`v0x1c4b23`. */
 export const CELL_WIDTH = 105 / 2;
@@ -164,136 +123,79 @@ export interface LevelProject {
   readonly sequencers: readonly Sequencer[];
 }
 
-/**
- * The GUID out of a `ResourceDescriptor` string, or 0 when there is not one.
- *
- * A descriptor is `g<guid>` when the resource lives in the game's own FileDB
- * and a bare SHA1 when it is embedded in the level. Only the first kind can be
- * resolved against `fixtures/rinst`; a hash means the level ships its own
- * instrument, which is a real case and is reported as 0 rather than guessed at.
- */
-export function parseResourceGuid(descriptor: string): number {
-  const match = /^g(\d+)$/.exec(descriptor.trim());
-  return match ? Number(match[1]) : 0;
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const n = hex.length >> 1;
-  const out = new Uint8Array(n);
-  for (let i = 0; i < n; i += 1) out[i] = Number.parseInt(hex.substr(i * 2, 2), 16);
-  return out;
-}
-
-/** Turn one dump row into a track. */
-export function trackFrom(row: DumpRow): Track {
-  const { gridX, gridY } = boardToGrid(row.boardX, row.boardY);
-  const grouped = groupNotes(decodeRecords(hexToBytes(row.notes)));
+/** Turn one board placement into a track. */
+export function trackFrom(placement: Placement): Track {
+  const { gridX, gridY } = boardToGrid(placement.x, placement.y);
+  const instrument = placement.instrument;
+  const grouped = groupNotes(decodeRecords(instrument.notes));
   return {
-    guid: parseResourceGuid(row.instRes),
-    name: row.instName,
+    guid: instrument.guid,
+    name: instrument.name,
     gridX,
     gridY,
     stepOffset: gridX * STEPS_PER_CELL,
-    level: row.level,
-    pan: row.pan,
-    echoSend: row.echoSend,
-    reverbSend: row.reverbSend,
-    key: row.key,
-    scale: row.scale,
+    level: instrument.level,
+    pan: instrument.pan,
+    echoSend: instrument.echoSend,
+    reverbSend: instrument.reverbSend,
+    key: instrument.key,
+    scale: instrument.scale,
     notes: grouped.notes,
     trailingRecords: grouped.trailing.length,
   };
 }
 
-/** How many rows the last `importLevel` dropped as re-emitted duplicates. */
-export let duplicateRowsDropped = 0;
+/**
+ * Every music sequencer in one parsed level.
+ *
+ * Track order is the order the circuit board lists its components -- the compact
+ * list's own order when the board is closed, and the Thing list's when it is
+ * open. Neither is the timeline: `stepOffset` is, and it comes from the cell.
+ */
+export function importLevel(file: string, things: readonly (Thing | undefined)[]): LevelProject {
+  const sequencers: Sequencer[] = [];
+  for (const found of musicSequencers(things)) {
+    const tracks = found.placements.map(trackFrom);
+    let lengthSteps = 0;
+    for (const track of tracks) {
+      for (const note of track.notes) {
+        lengthSteps = Math.max(lengthSteps, track.stepOffset + note.endStep + 1);
+      }
+    }
+    const settings = found.settings;
+    sequencers.push({
+      uid: found.uid,
+      name: found.name,
+      tempo: settings.tempo,
+      swing: settings.swing,
+      echoFeedback: settings.echoFeedback,
+      echoTime: settings.echoTime,
+      echoMix: settings.echoMix,
+      reverb: settings.reverbSettings,
+      loop: settings.loop,
+      startPoint: settings.startPoint,
+      numChannels: settings.numChannels,
+      volumes: settings.volumes,
+      tracks,
+      lengthSteps,
+    });
+  }
+  return { file, sequencers };
+}
 
 /**
- * Group a level's dump rows into sequencers.
+ * A level file straight to its sequencers -- bytes in, playable project out.
  *
- * Rows arrive one per instrument; `seqUID` is what ties them together, and the
- * sequencer's own settings are repeated on every row of it. Order within a
- * sequencer follows `instIdx`, which is the order the circuit board lists its
- * components.
- *
- * ## Why this deduplicates
- *
- * ⚠️ **`RawDump` can emit a whole sequencer twice.** Its outer loop walks
- * `world.things` and dumps every Thing carrying a music `PSequencer`; when the
- * same Thing is reachable twice, every component of that sequencer is written
- * out again with the same `seqUID` and the same `instIdx`, byte for byte.
- *
- * It is not a rare corner. **60 of the corpus's 338 sequencers are affected**,
- * and the pattern is all-or-nothing: a sequencer's cells are either all single
- * or all doubled, never mixed. In `This Is Halloween` the file is literally
- * `instIdx` 0..844 followed by 0..844 again, with identical note bytes.
- *
- * Left in, it does two things, and the second is what makes it a bug rather
- * than a curiosity:
- *
- * - every note is rendered twice, so the whole sequencer is 6 dB loud —
- *   invisible under a normalising render;
- * - **every note costs two of the engine's 32 voices**, so a passage that fits
- *   comfortably in the pool overflows it and the allocator starts stealing.
- *   At step 2176 of `This Is Halloween` that is 42 simultaneous notes against a
- *   real 21, and the four voices carrying the sustained lead are the quietest
- *   in the pool, so they are the first to go: the lead vanishes for two bars.
- *
- * A board cell holds one component, so two rows with the same `instIdx` in the
- * same sequencer cannot be authored content. Dropping the repeat is exact.
+ * This is the whole boundary the Java used to sit on. `inflate` is the only
+ * thing that differs between Node and the browser; see `src/platform/`.
  */
-export function importLevel(rows: readonly DumpRow[]): LevelProject[] {
-  const byFile = new Map<string, Map<number, DumpRow[]>>();
-  const seen = new Set<string>();
-  duplicateRowsDropped = 0;
-  for (const row of rows) {
-    const key = `${row.file}|${row.seqUID}|${row.instIdx}`;
-    if (seen.has(key)) {
-      duplicateRowsDropped += 1;
-      continue;
-    }
-    seen.add(key);
-    let seqs = byFile.get(row.file);
-    if (!seqs) byFile.set(row.file, (seqs = new Map()));
-    const list = seqs.get(row.seqUID);
-    if (list) list.push(row);
-    else seqs.set(row.seqUID, [row]);
-  }
-
-  const out: LevelProject[] = [];
-  for (const [file, seqs] of byFile) {
-    const sequencers: Sequencer[] = [];
-    for (const [uid, group] of seqs) {
-      const head = group[0];
-      const tracks = [...group]
-        .sort((a, b) => a.instIdx - b.instIdx)
-        .map(trackFrom);
-      let lengthSteps = 0;
-      for (const track of tracks) {
-        for (const note of track.notes) {
-          lengthSteps = Math.max(lengthSteps, track.stepOffset + note.endStep + 1);
-        }
-      }
-      sequencers.push({
-        uid,
-        name: head.seqName,
-        tempo: head.tempo,
-        swing: head.swing,
-        echoFeedback: head.echoFeedback,
-        echoTime: head.echoTime,
-        echoMix: head.echoMix,
-        reverb: head.reverb,
-        loop: head.loop,
-        startPoint: head.startPoint,
-        numChannels: head.numChannels,
-        volumes: head.volumes,
-        tracks,
-        lengthSteps,
-      });
-    }
-    out.push({ file, sequencers });
-  }
-  return out;
+export async function readLevelProject(
+  file: string,
+  bytes: Uint8Array,
+  inflate: Inflate,
+): Promise<LevelProject> {
+  const { things } = await readLevel(bytes, inflate, partReaders());
+  return importLevel(file, things);
 }
 
 /**

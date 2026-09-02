@@ -1,10 +1,10 @@
 /**
  * Render one sequencer from a real level to a WAV, under Node.
  *
- * This is the end-to-end proof for level import: dump row -> notes -> key
- * splits -> pitch formula -> mipmapped linear sampler -> ADSR -> Moog ladder ->
- * LFOs -> mixer -> echo -> reverb -> file. Everything the project has
- * recovered, in one pass over somebody's actual composition.
+ * This is the end-to-end proof for level import: level file -> Thing graph ->
+ * notes -> key splits -> pitch formula -> mipmapped linear sampler -> ADSR ->
+ * Moog ladder -> LFOs -> mixer -> echo -> reverb -> file. Everything the
+ * project has recovered, in one pass over somebody's actual composition.
  *
  *   node --experimental-strip-types dev/render-level.ts [seqIndex] [seconds]
  *
@@ -14,13 +14,13 @@
  * `dev/render-worker.ts` is the browser half. They were measured agreeing bit
  * for bit on 2026-09-02 -- see the header of `src/core/render.ts`.
  *
- * Needs the corpus dump at fixtures/levels/sequencers.jsonl (tools/RawDump.java)
- * and the extracted instruments at fixtures/rinst and fixtures/smp
- * (tools/ExtractGuid.java). All of that is the user's own game data and none of
- * it is committed.
+ * Reads the level files themselves -- `LBP_LEVELS` is the directory, and every
+ * file in it that parses is used. Needs the extracted instruments at
+ * fixtures/rinst and fixtures/smp (tools/ExtractGuid.java). All of that is the
+ * user's own game data and none of it is committed.
  */
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { buildMipChain } from '../src/audio/mipmap.ts';
@@ -32,13 +32,9 @@ import {
   type LoadedInstrument,
 } from '../src/core/render.ts';
 import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
-import {
-  duplicateRowsDropped,
-  importLevel,
-  type DumpRow,
-} from '../src/core/project.ts';
+import { readLevelProject, type LevelProject } from '../src/core/project.ts';
 import { readInstrument, usedSlots } from '../src/core/rinstrument.ts';
-import { loadResourceFile } from '../src/platform/node.ts';
+import { loadResourceFile, nodeInflate } from '../src/platform/node.ts';
 import { readWav, writeWav, loopRegion } from '../src/core/wav.ts';
 
 const seqIndex = Number(process.argv[2] ?? 0);
@@ -138,33 +134,43 @@ const manifest = async (dir: string) =>
 const rinstIndex = await manifest('fixtures/rinst');
 const smpIndex = await manifest('fixtures/smp');
 
-// The dump carries creator-authored names, which are not always valid UTF-8.
-const rows: DumpRow[] = [];
-for (const line of (await readFile('fixtures/levels/sequencers.jsonl', 'latin1')).split('\n')) {
-  if (line.startsWith('{')) rows.push(JSON.parse(line));
+const LEVELS = process.env.LBP_LEVELS ?? 'C:/Users/sgdc3/Desktop/LBP/toolkit/tools/sequencerdump/data';
+
+// `LBP_UID` picks a sequencer by its own UID, which is stable; the positional
+// index is not -- it is a rank in a list sorted by track count, so anything that
+// changes a track count reshuffles it.
+const wantUid = Number(process.env.LBP_UID ?? 0);
+
+type Seq = LevelProject['sequencers'][number];
+
+// Every level in the directory, parsed here rather than in Java. A file that
+// does not parse is named rather than swallowed: the walk is meant to read all
+// of them, so a failure is news.
+const candidates: { level: string; seq: Seq }[] = [];
+for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
+  if (!entry.isFile()) continue;
+  try {
+    const project = await readLevelProject(
+      entry.name,
+      new Uint8Array(await readFile(path.join(LEVELS, entry.name))),
+      nodeInflate,
+    );
+    for (const seq of project.sequencers) candidates.push({ level: project.file, seq });
+  } catch (error) {
+    console.log(`  ${entry.name}: ${String((error as Error).message).slice(0, 70)}`);
+  }
 }
 
 // Pick a sequencer with enough going on to be worth listening to.
-const candidates = importLevel(rows)
-  .flatMap((level) => level.sequencers.map((s) => ({ level: level.file, seq: s })))
+const playable = candidates
   .filter((c) => c.seq.tracks.length >= 3 && c.seq.lengthSteps > 32)
   .sort((a, b) => b.seq.tracks.length - a.seq.tracks.length);
 
-if (duplicateRowsDropped) {
-  console.log(
-    `⚠ dropped ${duplicateRowsDropped} duplicate dump rows -- RawDump re-emits whole ` +
-      `sequencers; see importLevel`,
-  );
-}
-// `LBP_UID` picks a sequencer by its own UID, which is stable; the positional
-// index is not -- it is a rank in a list sorted by track count, so anything that
-// changes a track count reshuffles it. Deduplicating the dump changed it once.
-const wantUid = Number(process.env.LBP_UID ?? 0);
 const chosen = wantUid
   ? candidates.find((c) => c.seq.uid === wantUid)
-  : candidates[Math.min(seqIndex, candidates.length - 1)];
+  : playable[Math.min(seqIndex, playable.length - 1)];
 if (!chosen) {
-  throw new Error(wantUid ? `no sequencer with uid ${wantUid}` : 'no sequencer in the dump');
+  throw new Error(wantUid ? `no sequencer with uid ${wantUid}` : `no sequencer under ${LEVELS}`);
 }
 const { seq } = chosen;
 console.log(

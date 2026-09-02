@@ -366,11 +366,17 @@ Box), `132205` (Electric Guitar), `129080` (Pulse Wave).
 
 ### How the arrays were obtained
 
-`tools/RawDump.java` walks the real Thing graph — `RLevel` → `PWorld.things` → Things carrying both
-`PMicrochip` and a `PSequencer` with `MusicSequencer` set → circuit-board components → `PInstrument`
-— and emits the note records as raw bytes, one JSON line per instrument. It uses only the
-extraction half of the toolkit and none of its musical interpretation, so the statistics above are
-independent of any prior reading of the format. 22 levels, zero load or walk failures.
+They were produced by a small Java tool over cwlib, `tools/RawDump.java`, which walked the real
+Thing graph — `RLevel` → `PWorld.things` → Things carrying both `PMicrochip` and a `PSequencer`
+with `MusicSequencer` set → circuit-board components → `PInstrument` — and emitted the note
+records as raw bytes, one JSON line per instrument. It used only the extraction half of the toolkit
+and none of its musical interpretation, so the statistics above are independent of any prior
+reading of the format. 22 levels, zero load or walk failures.
+
+⚠️ **That tool was deleted on 2026-09-02**, when `src/core/level.ts` took over the extraction. Its
+output survives as `fixtures/levels/sequencers.jsonl`, which `dev/verify-levels.ts` still checks the
+TypeScript walk against, but it cannot be re-run: to recount any of this over new levels, walk them
+with `readLevel` + `musicSequencers` instead.
 
 We searched the sequencer module (`v0x1c3000`–`v0x1c8000`) and the CWLib audio layer
 (`v0x3dd000`–`v0x3fe000`) for the unpacking idiom — `and`/`test`/`shr` against `0x7f`, `0x80` and 7,

@@ -9,7 +9,7 @@
  * render of the same level came out byte-identical; see the header of
  * `src/core/render.ts`.
  *
- * ⚠️ **The dump is opened by the user, and only by the user.** The page hands
+ * ⚠️ **The level is opened by the user, and only by the user.** The page hands
  * this worker a `File` and it reads that; there is no fetch path and no fallback
  * to a copy on the host. That is not a preference, it is what lets the whole
  * thing be a static site -- a bucket cannot host other people's levels, and
@@ -19,10 +19,10 @@
  * `fixtures/smp`) are **still fetched**, and they are the same class of asset.
  * They have to move to the same footing before this can be deployed anywhere.
  *
- * ⚠️ **The dump is 81 MB.** Parsing all 129,696 rows in a browser tab is
- * possible but wasteful, so this keeps the text and parses only the lines of the
- * sequencer being rendered, found by a substring match on `"seqUID":<uid>,`.
- * The index the page picks from is built with one regex pass instead.
+ * The file it opens is a **level**, parsed here by `src/core/level.ts`. It used
+ * to be an 81 MB JSON dump produced by a Java tool, indexed by regex and parsed
+ * line by line to stay affordable in a tab; the whole level walk turns out to be
+ * cheaper than that was.
  */
 
 import { buildMipChain } from '../src/audio/mipmap.ts';
@@ -34,7 +34,7 @@ import {
   toPcm16,
   type LoadedInstrument,
 } from '../src/core/render.ts';
-import { importLevel, type DumpRow } from '../src/core/project.ts';
+import { readLevelProject, type LevelProject } from '../src/core/project.ts';
 import { readInstrument, usedSlots } from '../src/core/rinstrument.ts';
 import { readWav, writeWav, loopRegion } from '../src/core/wav.ts';
 import { webInflate } from '../src/platform/web.ts';
@@ -52,7 +52,7 @@ type Manifest = Map<number, { file: string }>;
  */
 const asset = (p: string) => new URL(`../${p}`, import.meta.url).href;
 
-let dumpText: string | null = null;
+let project: LevelProject | null = null;
 let rinstIndex: Manifest | null = null;
 let smpIndex: Manifest | null = null;
 
@@ -67,35 +67,6 @@ async function manifest(dir: string): Promise<Manifest> {
     file: string;
   }[];
   return new Map(rows.map((r) => [r.guid, r]));
-}
-
-/**
- * ⚠️ latin1, not UTF-8: the dump carries creator-authored names that are not
- * always valid UTF-8, and the Node renderer reads it the same way. It only
- * affects the display name -- every field the audio depends on is ASCII.
- */
-const decode = (bytes: AllowSharedBufferSource) =>
-  new TextDecoder('windows-1252').decode(bytes);
-
-/** Read a dump the user opened. Nothing leaves the browser. */
-async function readDump(file: File): Promise<string> {
-  post({ type: 'progress', phase: 'dump', done: 0, total: file.size });
-  const bytes = await file.arrayBuffer();
-  post({ type: 'progress', phase: 'dump', done: file.size, total: file.size });
-  return decode(bytes);
-}
-
-/** The sequencer list, without parsing 129,696 JSON objects. */
-function index(text: string) {
-  const seen = new Map<number, { uid: number; name: string; rows: number }>();
-  const re = /"seqUID":(\d+),"seqName":"((?:[^"\\]|\\.)*)"/g;
-  for (let m = re.exec(text); m; m = re.exec(text)) {
-    const uid = Number(m[1]);
-    const hit = seen.get(uid);
-    if (hit) hit.rows += 1;
-    else seen.set(uid, { uid, name: m[2], rows: 1 });
-  }
-  return [...seen.values()].sort((a, b) => b.rows - a.rows);
 }
 
 async function loaderFor(): Promise<(guid: number) => Promise<LoadedInstrument | null>> {
@@ -143,10 +114,18 @@ self.onmessage = async (event: MessageEvent) => {
   try {
     if (message.type === 'load') {
       if (!message.file) throw new Error('load needs a file');
-      say(`reading ${message.file.name}…`);
-      dumpText = await readDump(message.file);
-      say('indexing…');
-      const list = index(dumpText);
+      const file = message.file;
+      say(`reading ${file.name}…`);
+      post({ type: 'progress', phase: 'level', done: 0, total: file.size });
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      post({ type: 'progress', phase: 'level', done: file.size, total: file.size });
+      say('reading the level…');
+      project = await readLevelProject(file.name, bytes, webInflate);
+      // Busiest first: a sequencer with one instrument in it is rarely the one
+      // somebody opened the file to hear.
+      const list = project.sequencers
+        .map((seq) => ({ uid: seq.uid, name: seq.name, tracks: seq.tracks.length }))
+        .sort((a, b) => b.tracks - a.tracks);
       [rinstIndex, smpIndex] = await Promise.all([manifest('fixtures/rinst'), manifest('fixtures/smp')]);
       post({ type: 'loaded', list, instruments: rinstIndex.size, samples: smpIndex.size });
       return;
@@ -154,15 +133,7 @@ self.onmessage = async (event: MessageEvent) => {
 
     if (message.type === 'render') {
       const uid = message.uid!;
-      say('parsing the sequencer…');
-      const needle = `"seqUID":${uid},`;
-      const rows: DumpRow[] = [];
-      for (const line of dumpText!.split('\n')) {
-        if (line.startsWith('{') && line.includes(needle)) rows.push(JSON.parse(line));
-      }
-      const seq = importLevel(rows)
-        .flatMap((level) => level.sequencers)
-        .find((s) => s.uid === uid);
+      const seq = project?.sequencers.find((s) => s.uid === uid);
       if (!seq) throw new Error(`no sequencer with uid ${uid}`);
 
       const started = performance.now();

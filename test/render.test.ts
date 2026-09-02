@@ -1,19 +1,20 @@
 import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
 import { existsSync as exists } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
 import { buildMipChain } from '../src/audio/mipmap.ts';
 import { type SampleBuffer } from '../src/audio/mixer.ts';
 import { RATE, renderSequencer, toPcm16, type LoadedInstrument } from '../src/core/render.ts';
-import { importLevel, type DumpRow, type Sequencer } from '../src/core/project.ts';
+import { readLevelProject, type Sequencer } from '../src/core/project.ts';
 import { readInstrument, usedSlots } from '../src/core/rinstrument.ts';
-import { loadResourceFile } from '../src/platform/node.ts';
+import { loadResourceFile, nodeInflate } from '../src/platform/node.ts';
 import { loopRegion, readWav } from '../src/core/wav.ts';
 
-const DUMP = process.env.LBP_DUMP ?? 'fixtures/levels/sequencers.jsonl';
+const LEVELS =
+  process.env.LBP_LEVELS ?? 'C:/Users/sgdc3/Desktop/LBP/toolkit/tools/sequencerdump/data';
 const RINST = 'fixtures/rinst';
 const SMP = 'fixtures/smp';
 
@@ -33,7 +34,7 @@ async function fixture(): Promise<{
   seq: Sequencer;
   load: (guid: number) => Promise<LoadedInstrument | null>;
 } | null> {
-  if (!exists(DUMP) || !exists(RINST) || !exists(SMP)) return null;
+  if (!exists(LEVELS) || !exists(RINST) || !exists(SMP)) return null;
   const manifest = async (dir: string) =>
     new Map<number, { file: string }>(
       (JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8')) as {
@@ -44,12 +45,22 @@ async function fixture(): Promise<{
   const rinstIndex = await manifest(RINST);
   const smpIndex = await manifest(SMP);
 
-  const rows: DumpRow[] = [];
-  for (const line of (await readFile(DUMP, 'latin1')).split('\n')) {
-    if (line.startsWith('{')) rows.push(JSON.parse(line));
+  const all: Sequencer[] = [];
+  for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    try {
+      const project = await readLevelProject(
+        entry.name,
+        new Uint8Array(await readFile(path.join(LEVELS, entry.name))),
+        nodeInflate,
+      );
+      all.push(...project.sequencers);
+    } catch {
+      // A file that is not a level, or one this walk cannot read yet.
+      // `dev/verify-levels.ts` is where that is a failure; here it is noise.
+    }
   }
-  const seq = importLevel(rows)
-    .flatMap((level) => level.sequencers)
+  const seq = all
     .filter((s) => s.tracks.length >= 3 && s.lengthSteps > 32)
     .sort((a, b) => b.tracks.length - a.tracks.length)[0];
   if (!seq) return null;
@@ -92,7 +103,7 @@ const sha = (pcm: Int16Array) =>
 test('the pipeline is deterministic, which is what makes a cross-platform hash mean anything', async (t) => {
   const f = await fixture();
   if (!f) {
-    t.skip(`no ${DUMP} / ${RINST} / ${SMP} — see the header of dev/render-level.ts`);
+    t.skip(`no ${LEVELS} / ${RINST} / ${SMP} — see the header of dev/render-level.ts`);
     return;
   }
   const options = { secondsArg: 4 };
@@ -110,7 +121,7 @@ test('the pipeline is deterministic, which is what makes a cross-platform hash m
 test('the seed is actually used', async (t) => {
   const f = await fixture();
   if (!f) {
-    t.skip(`no ${DUMP}`);
+    t.skip(`no ${LEVELS}`);
     return;
   }
   // ⚠️ 20 seconds, not 2. The PRNG only reaches the output through an LFO phase
@@ -126,7 +137,7 @@ test('the seed is actually used', async (t) => {
 test('the effects reach the mix, and turning the clip off changes the output', async (t) => {
   const f = await fixture();
   if (!f) {
-    t.skip(`no ${DUMP}`);
+    t.skip(`no ${LEVELS}`);
     return;
   }
   const withClip = await renderSequencer(f.seq, f.load, { secondsArg: 4 });

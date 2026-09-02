@@ -9,7 +9,7 @@
  * of every file too, because the part list and half the field gates hang off it.
  *
  * The levels are the user's own and are not in the repository; the default path
- * is where `tools/RawDump.java` was pointed.
+ * is the corpus the golden fixture was built from.
  */
 
 import { readdir, readFile } from 'node:fs/promises';
