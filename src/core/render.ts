@@ -372,17 +372,32 @@ export async function renderSequencer(
       spread: P(LFO_PARAMS[n].spread),
     });
 
-    // The note's control points as mixer automation: semitones and gain relative
-    // to the first point, at frame offsets. A one-point note gives one entry and
-    // the voice stays flat.
-    const base = event.points[0];
+    // The note's control points as mixer automation, at frame offsets: pitch in
+    // semitones relative to the first point, and gain **absolute**. A one-point
+    // note gives one entry and the voice stays flat at that gain.
+    //
+    // ⚠️ **The gain used to be relative to the first point, and a note that
+    // opens at volume 0 has no first point to be relative to.** `p.volume /
+    // base.volume` divides by zero, so the old code forced the whole envelope
+    // flat to 1 -- and, worse, `velocityGain(event.volume)` was baked into the
+    // static voice gain from that same opening volume, making it exactly 0. A
+    // note written as a fade-in from silence therefore rendered as **silence**,
+    // not as a wrong shape.
+    //
+    // That is not an edge case. In `Northern Lights` (`2bc7d95a`, uid 16629) all
+    // 96 notes of the electric harpsichord open at 0 and all 96 carry volume
+    // automation, so the part was simply missing; `pulse_wave` loses 932 of its
+    // 3,869 notes and `square_wave` 800 of 3,151. The engine has no such
+    // problem: volume is one of its three linear ramps, stored as a
+    // (value, rate) pair at `voice+0x2c`, so each control point sets an absolute
+    // level and the ramp runs between them. Opening at zero is just a fade-in.
     const automation = event.points.map((p) => ({
       frame: Math.round(
         swungFrame(event.step + p.step, framesPerStep, seq.swing) -
           swungFrame(event.step, framesPerStep, seq.swing),
       ),
       pitch: notePitch(p.pitch, track.scale, blockRoot(track.key)) - note,
-      gain: base.volume > 0 ? p.volume / base.volume : 1,
+      gain: velocityGain(p.volume),
     }));
 
     // The unison stack. `Numstack` layers of the same sample, each with its own
@@ -399,7 +414,10 @@ export async function renderSequencer(
       playbackRate: prep.playbackRate,
       holdFrames: prep.holdFrames,
       gain:
-        velocityGain(event.volume) *
+        // ⚠️ The note's own volume is NOT here. It is per control point and it
+        // lives in `automation` above, because a note can start at zero and ramp
+        // up -- see the note there. What stays is everything that is constant
+        // for the whole voice.
         track.level *
         channelVolume(seq, track) *
         2 *

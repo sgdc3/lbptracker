@@ -486,3 +486,40 @@ test('a single-layer voice starts at the beginning of its sample', async () => {
   withOffset.render(shifted, new Float32Array(16));
   assert.ok(shifted[0] > 0.2, 'an explicit startPosition is still honoured');
 });
+
+/**
+ * ⚠️ A note may open at volume 0 and ramp up — that is a fade-in, not a silent
+ * note, and the automation's gain has to be **absolute** for it to work.
+ *
+ * The gain used to be built as `p.volume / points[0].volume`, relative to the
+ * opening point, and the opening point's volume was also baked into the static
+ * voice gain. A note starting at zero therefore came out silent rather than
+ * merely wrongly shaped. Across the 18-level corpus that is **38,413 of
+ * 1,842,515 notes (2.08%), in 222 of 359 sequencers** — in `Northern Lights`
+ * (`2bc7d95a`, uid 16629) all 96 notes of the electric harpsichord, so the part
+ * was missing entirely.
+ */
+test('a voice whose automation opens at zero fades in rather than staying silent', async () => {
+  const { Mixer } = await import('../src/audio/mixer.ts');
+  const rate = 48000;
+  const mixer = new Mixer(rate);
+  mixer.play({
+    sample: { channels: [new Float32Array(400).fill(1)], sampleRate: rate },
+    playbackRate: 1,
+    gain: 1,
+    pan: 0.5,
+    endFrame: 300,
+    automation: [
+      { frame: 0, pitch: 0, gain: 0 },
+      { frame: 200, pitch: 0, gain: 1 },
+    ],
+  });
+  const left = new Float32Array(400);
+  mixer.render(left, new Float32Array(400));
+
+  assert.equal(left[0], 0, 'silent at the note-on');
+  assert.ok(left[100] > 0, 'sounding partway up');
+  assert.ok(left[199] > left[100], 'and still rising');
+  // The ramp is linear in the gain, so halfway up is half the level.
+  assert.ok(Math.abs(left[100] / left[199] - 0.5) < 0.02, `ratio ${left[100] / left[199]}`);
+});
