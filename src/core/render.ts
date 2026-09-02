@@ -41,6 +41,50 @@ import { pitchRatio, samplesPerStep, velocityGain } from './voice.ts';
 /** The output rate. The engine's own is hard-coded to this too. */
 export const RATE = 48000;
 
+/**
+ * How much of a written pan actually survives to the game's stereo output:
+ * **`2 - Math.SQRT2` = 0.5857864**, applied as `p' = 0.5 + (p - 0.5) * PAN_WIDTH`.
+ *
+ * ✔ **Measured against the game's own output at four pan values**, and the last
+ * two were a *prediction* confirmed out of sample. Two placements at pan 0.40
+ * and 0.60 in `Ascetic` gave a channel ratio of 0.5586 where this renderer gave
+ * 0.6000; that fixed a one-parameter family, which predicted **0.261204** for a
+ * hard-panned voice. A recording of one instrument at pan 0 and another at pan 1
+ * then measured, by least squares over the whole file:
+ *
+ * ```
+ *                        pan 0      pan 1     predicted
+ *   opposite / dominant  0.261202   0.261202  0.261204
+ *   residual / rms       0.0008     0.0008
+ *   correlation, lag     1.000000, 0 samples
+ * ```
+ *
+ * Six significant figures on both files. **A constant-power law over a reduced
+ * angle -- the one candidate that is not affine -- predicts 0.198 and is
+ * refuted.** The residual and the unit correlation say the quiet channel is the
+ * loud one times a constant: no delay, no decorrelation, no reverb of its own.
+ *
+ * The same numbers in the other two forms, all one law: a mono copy of the voice
+ * added to both channels at `c = 2^-1.5 = 0.3535534`, or a cross-bleed of
+ * `b = 1 / (1 + 2*sqrt2) = 0.2612039`. `2^-1.5` is `0.5 / sqrt2` -- the mono
+ * average of a stereo pair folded back in at the textbook -3 dB, which is what a
+ * **centre channel** does.
+ *
+ * ⚠️ **The effect is measured; the mechanism is not.** Nothing in the sequencer
+ * produces this: the plugin's pan law is exactly `1-p` / `p` (`0x2d21`/`0x2d40`),
+ * the pan reaches the voice unmodified (`0x3b29`), and its four output channels
+ * are one image plus a scaled copy, which cannot cross-feed. It enters in FMOD's
+ * mixdown of the 4-channel DSP or in the console's downmix below it -- see
+ * question 22 in steering/open-questions.md, which is now about *where*, not
+ * *whether*.
+ *
+ * ⚠️ **Width, not gain.** The recordings were level-matched, so they fix the
+ * ratio between the channels and say nothing about the absolute level. This
+ * scales the pan and leaves `(left + right)` at 1 exactly as before, changing
+ * only the quantity that was measured.
+ */
+export const PAN_WIDTH = 2 - Math.SQRT2;
+
 /** One instrument, with its samples decoded and mipmapped. */
 export interface LoadedInstrument {
   readonly inst: RInstrument;
@@ -108,21 +152,12 @@ export interface RenderOptions {
   /** Run the echo. Default true. Same reasoning as `reverb`. */
   readonly echo?: boolean;
   /**
-   * ⚠️ **A DIAGNOSTIC, not a setting.** Scales every placement's pan toward
-   * centre: `p' = 0.5 + (p - 0.5) * panWidth`. 1 is the file's own value and the
-   * default.
+   * Scales every placement's pan toward centre: `p' = 0.5 + (p - 0.5) * width`.
+   * Defaults to {@link PAN_WIDTH}, which is measured. Pass `1` to render the
+   * file's own pan values untouched.
    *
-   * It exists because the game **never hard-pans** -- a listener's observation,
-   * and measured: against a dry recording of `Ascetic`'s kits, a lone
-   * `baiyon_drums_1` voice at pan 0.60 comes out of the game at an energy ratio
-   * of **0.5586**, where this renderer gives 0.6000. Six windows at pan 0.40
-   * agree on the mirrored figure. That is a deviation scale of **~0.58**, flat
-   * across every octave band.
-   *
-   * ⚠️ **Where it comes from is unknown**, which is why this is a switch and not
-   * a constant in the pan law. `fmodextinput.prx` references no float between
-   * 0.35 and 0.5 anywhere, the pan reaches the voice unmodified at `0x3b29`, and
-   * the law at `0x2d21` is linear. See open question 22.
+   * The game **never hard-pans**: at a written pan of 1.0 its opposite channel
+   * comes back at -11.66 dB, not silence. See {@link PAN_WIDTH} for the numbers.
    */
   readonly panWidth?: number;
 }
@@ -177,7 +212,7 @@ export async function renderSequencer(
     oneShot = 'gate',
     reverb: withReverb = true,
     echo: withEcho = true,
-    panWidth = 1,
+    panWidth = PAN_WIDTH,
     onProgress,
   } = options;
   const now = () => (typeof performance === 'undefined' ? Date.now() : performance.now());

@@ -26,6 +26,7 @@ import path from 'node:path';
 import { buildMipChain } from '../src/audio/mipmap.ts';
 import { type SampleBuffer } from '../src/audio/mixer.ts';
 import {
+  PAN_WIDTH,
   RATE,
   renderSequencer,
   toPcm16,
@@ -141,8 +142,8 @@ const oneShot = (process.env.LBP_ONESHOT ?? 'gate') as 'full' | 'natural' | 'gat
  * non-linearity is and taking it out would change the dry path too.
  */
 const withReverb = process.env.LBP_NO_REVERB !== '1';
-/** `LBP_PAN_WIDTH=0.58` narrows every pan toward centre. See `panWidth`. */
-const panWidth = Number(process.env.LBP_PAN_WIDTH ?? 1);
+/** `LBP_PAN_WIDTH=1` renders the file's own pans untouched. See `PAN_WIDTH`. */
+const panWidth = Number(process.env.LBP_PAN_WIDTH ?? PAN_WIDTH);
 const withEcho = process.env.LBP_NO_ECHO !== '1';
 
 const manifest = async (dir: string) =>
@@ -284,7 +285,7 @@ console.log(
 console.log(`pre-normalisation RMS ${result.rms.toFixed(5)}`);
 
 const { pcm, norm } = toPcm16(result.left, result.right);
-const out = `fixtures/level-seq${seq.uid}${oneShot === 'gate' ? '' : `-${oneShot}`}${withReverb ? '' : '-noreverb'}${withEcho ? '' : '-noecho'}${panWidth === 1 ? '' : `-pan${panWidth}`}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${clip ? '' : '-noclip'}${
+const out = `fixtures/level-seq${seq.uid}${oneShot === 'gate' ? '' : `-${oneShot}`}${withReverb ? '' : '-noreverb'}${withEcho ? '' : '-noecho'}${panWidth === PAN_WIDTH ? '' : `-pan${panWidth}`}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${clip ? '' : '-noclip'}${
   pitchShift.size ? `-pitch${[...pitchShift.keys()].join('_')}` : ''
 }${unpitchedPercussion ? '-unpitched' : ''}.wav`;
 await writeFile(out, writeWav(pcm, 2, RATE));

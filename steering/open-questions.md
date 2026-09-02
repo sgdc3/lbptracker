@@ -626,72 +626,18 @@ What works instead, in order of preference:
 
 ---
 
-## 22. Our stereo is ~1.75x wider than the game's — measured against a dry recording
+## 22. WHERE the stereo narrowing enters -- the effect is settled, the mechanism is not
 
-Opened 2026-09-03 from the cleanest comparison this project has had: a listener recorded the game's
-own output for one drum section **with the reverb off**, level-matched it and handed both files back.
-Residual alignment **0.0 ms**, envelope correlation 0.838.
+⚠️ **Read [answered-questions.md](answered-questions.md) entry 22 first.** What the game does is
+measured to six significant figures and implemented: every pan is narrowed to `PAN_WIDTH = 2-sqrt2`,
+confirmed by a prediction that held at a new operating point. **This question is no longer about
+fidelity** -- the renderer matches the game -- it is about the one thing still unread: *where in the
+chain the narrowing happens*, and therefore whether it is FMOD's or the console's.
 
-### The measurement
-
-`Ascetic`'s two kits carry two dominant placements: `a_kit_1` at **pan 0.40** (1,494 notes) and
-`baiyon_drums_1` at **pan 0.60** (1,206 notes). At t = 4.995 s and t = 12.995 s a single
-`baiyon_drums_1` voice sounds alone — our render reads **exactly** `R/(L+R) = 0.6000`, which is the
-linear law on the file's own value, and both occurrences agree to four decimals, so there is no
-contamination.
-
-| | R/(L+R) | R/L |
-|---|---|---|
-| ours, pan 0.60 | 0.6000 | 1.5000 |
-| **the game, same instant** | **0.5586** | **1.2654** |
-
-and at pan 0.40, over six windows, the game reads 0.442-0.457 — a deviation ratio of **0.57-0.58**,
-the same magnitude mirrored.
-
-So the game's effective pan is about `0.5 + (p − 0.5) × 0.58`. Equivalently a **26% cross-bleed**:
-`L' = L + 0.26·R`, `R' = R + 0.26·L` reproduces 1.2654 from 0.4/0.6 exactly.
-
-Whole-file: side/mid is **0.1026** for the game and **0.1798** for us, and the ratio is flat across
-every octave band from 20 Hz to 20 kHz — so whatever it is, it is not frequency-dependent.
-
-### What it is not
-
-- **Not the pan law.** `0x2d21`'s `1 - p` / `p` is linear and our render reproduces the file's pan
-  under it exactly. The law is right; the `p` reaching it is not what we think.
-- **Not stereo samples.** Every kit sample is mono, 48 kHz.
-- **Not the LFO.** Neither kit sets any LFO depth, so the pan fold never runs.
-- **Not the unison stack.** `a_kit_1` has `Numstack` 1, so `Params[1]`'s spread has no later layer to
-  apply to.
-
-### ✔ It is not the capture chain
-
-The listener who made the recording also plays the game: **LBP never hard-pans, and a placement set
-to 100 is audibly not 100% right.** That is the same phenomenon from the other side, so the
-narrowing is the engine's.
-
-### The flow, traced 2026-09-03 — and it is NOT in the plugin
-
-| step | where | what |
-|---|---|---|
-| the placement's pan reaches the voice | `0x3b20` reads `[block + 0x424 + 20i]`, `0x3b29` writes `voice+0x18` | **unmodified** |
-| the voice's pan becomes two channel gains | `0x2d21` `1 - p`, `0x2d40` `p` | **linear, full width** |
-| our render under that law | — | 0.6 in, `R/(L+R) = 0.6000` out, to four decimals |
-
-So the plugin's dry pair **can** hard-pan, and the narrowing happens downstream of it.
-
-Three searches, all negative:
-
-- **`fmodextinput.prx` references no float near 0.58.** Sweeping every rip-relative constant the
-  module touches, between 0.2 and 0.9, gives only 0.25, 0.30, 0.3333, 0.3501, 0.5 and 0.8.
-- **The eboot's sequencer module** (`v0x1c0000`-`v0x1d0000`, 39 function starts) has only 0.25, 0.5,
-  0.75, 0.95.
-- **The CWLib audio layer** (`v0x3dd000`-`v0x3fe000`, 154 function starts) has 0.57 at `v0x3ee7be`
-  and 0.56 at `v0x3ee7f2` — tantalising, and reading them shows `|a - b|` against a threshold and
-  then `(x + c)/d`: a **distance crossfade**, positional audio rather than a pan law.
-
-⚠️ Those two constants read as a **distance crossfade**, and the listener has ruled the whole idea
-out anyway: **the level position has nothing to do with it.** So the narrowing is intrinsic to the
-sequencer's own path and applies wherever the sequencer sits.
+It matters for exactly one reason. If the fold is FMOD's, it is inside the game and applies to every
+listener. If it is the console's 7.1->stereo downmix, then it is what a **stereo** listener hears and
+the tracker is right to bake it in, but someone playing in 7.1 hears something wider -- and the
+constant would not belong to LBP at all.
 
 ### What has been eliminated, with the address that eliminated it
 
@@ -707,174 +653,47 @@ sequencer's own path and applies wherever the sequencer sits.
 | the mixer-channel records carrying a pan | **no** — `0x10b7`-`0x10cb` fill them `{0.75, 0, 0}` and `0x3adf`/`0x3ae9` read the second and third as **integer flags**, `or`-ed with a global |
 | the level position | **no** — the listener plays the game and says so |
 
-### ❌ ~~The plugin is NOT an FMOD DSP~~ -- **WRONG, retracted 2026-09-03, the day after it was written**
+### What the measurement says the mechanism has to look like
 
-That claim came from reading `f7uOxY9mM1U#A#B` as the module's export. **It is libc, not the
-plugin**: the eboot imports that same NID from **`libkernel`** (module id 24, `Y`) and loads its GOT
-slot `v0x10cbfa8` from **18,094** sites. A single rarely-called plugin entry point referenced
-eighteen thousand times should have been the tell, and that count was on screen before the
-conclusion was written.
+A mono copy of the sequencer bus at `c = 2^-1.5 = 0.3535534` added to both channels. Because the
+plugin's pan law sums to 1, that copy is exactly `(L+R)/2` -- **a centre channel, folded back at the
+textbook `1/sqrt2`**. Whatever is found has to produce that and nothing else: the recordings put the
+residual at 0.0008 and the correlation at 1.000000, so there is no delay, no decorrelation and no
+second path.
 
-⚠️ **The general rule this earns:** a symbol read out of a *string table* is a guess about which
-table it is in. The module list is one dynamic tag away -- `DT_SCE_NEEDED_MODULE` (`0x6100000f`)
-gives id -> name, and the `#lib#mod` suffix on every NID indexes it with the base64 alphabet
-`A-Za-z0-9+-`. Ask *which module* before building anything on a NID.
+### The two branches, and how to tell them apart
 
-Worse: `sequencer-data-model.md` **already had the right answer**, found in an earlier session and
-still on disk -- the descriptor at `v0x3e65a0`, `channels = 4`, the import `wycAbBCjLI4#C#D`. The
-retracted section contradicted a measured note in this same repository.
+Everything before FMOD is excluded by reading (see the table above and entry 22): the plugin's pan
+law is exactly `1-p` / `p`, the pan reaches the voice unmodified, and the DSP's four output channels
+are one image plus a scaled copy, which cannot cross-feed. So:
 
-### ✔ It is an FMOD DSP named "Sequencer" -- re-derived, and the whole play path read
+1. **Output is stereo** => FMOD downmixes the 4-channel DSP itself, and the matrix is in
+   `fmod_dspi.cpp` / `fmod_dsp_connectionpool.cpp`. A quad source mapped by speaker angle into a
+   stereo field would cross-feed; that matrix is then the whole answer.
+2. **Output is 7.1** => FMOD spreads 4->8 and the fold is the console's, downstream of the game. The
+   constant is then not in the eboot at all.
 
-Each FMOD plugin module exports the eboot **exactly one** symbol, and they are symmetric:
-
-| symbol | module | GOT slot |
-|---|---|---|
-| `wycAbBCjLI4#C#D` | FMODExtInput | `v0x10cc3f8` |
-| `iO5jJEuFaSo#D#E` | FMODSmsReverb | `v0x10cc3f0` |
-| `-UZ0JwaglR8#E#F` | FMODSmsWaveHammer | `v0x10cc3e8` |
-| `Kx23RuISciY#F#G` | FMODVoIPMixer | `v0x10cc408` |
-
-Each is stored at **`+0x40` of an `FMOD_DSP_DESCRIPTION`** built on the stack -- the `read` callback
--- and passed to `System::createDSP`. The layout is confirmed three times over, because the reverb
-and the WaveHammer are built by the same code at `v0x3e5730` with the same field offsets (`+0x24`
-channels, `+0x28` create, `+0x30` release, `+0x40` read, `+0x50` numparameters, `+0x58` paramdesc,
-`+0x60`/`+0x68` set/getparameter).
-
-⚠️ **The one asymmetry is the answer to why there are four channels at all:** reverb and
-WaveHammer declare `channels = 0` -- FMOD Ex's "process whatever is in the network" -- while the
-Sequencer declares **4**. In FMOD Ex that field forces the unit's width and is documented for units
-that *generate* rather than filter. So the 4 is the game's deliberate choice for this DSP alone, and
-the PRX's `cmp r8d, 4` / `cmp r9d, 4` is that same 4 asserted from the other side.
-
-The rest of the path from `v0x3e65a0`, with each FMOD class named from its callee's `__FILE__`
-attribution rather than guessed:
+The speaker count decides it and is still unread. ✔ **Not from the output plugin** -- `v0xa577a0` is
+its `Init` and `ebx` is `r8d`, the `outputchannels` **argument**, so the value is handed down by FMOD
+core. The full FMOD Ex signature checks out and pins the neighbours at the same time:
 
 ```
-createDSP(system, &desc, &dsp)                  ; v0xa48b90  fmod_systemi.cpp
-setDefaults(dsp, freq, 1.0f, 0.0f, 0)           ; v0xa23b00  fmod_dspi.cpp    -- pan = 0.0
-playDSP(system, FMOD_CHANNEL_FREE, dsp, 1, &ch) ; v0xa48d80  fmod_systemi.cpp -- paused
-setMode(ch, 8)                                  ; v0xa07e20  fmod_channelgroupi.cpp
-setPaused(ch, 0)                                ; v0xa07610  fmod_channelgroupi.cpp
-setChannelGroup(ch, group)                      ; v0xa07c70  fmod_channelgroupi.cpp
+Init(state, driver, flags, int *rate, int channels, FMOD_SOUND_FORMAT *fmt, buflen, numbuf, extra)
+     rdi    esi     edx    rcx        r8d           r9                      [rbp+0x18] [rbp+0x20]
+                           [rcx]=48000 -> ebx        [r9]=5 (PCMFLOAT)       grain      count
 ```
 
-✔ **`setMode(8)` is `FMOD_2D`, which kills the positional hypothesis from the code side** -- the
-listener had already killed it from the game side. There is **no `setSpeakerMix` and no
-`setSpeakerLevels` call on this channel**: pan `0.0`, volume `1.0`, and nothing else about its
-stereo placement is ever set.
+Reading the rest of that file is a dead end too: `v0xa570f0`, which had the shape of a caps callback,
+is a plain `read()` retry loop -- `fmodapi.py`'s `__FILE__` attribution span is coarser than the file
+it names. Go at `System::init`'s speaker-mode negotiation in `fmod_systemi.cpp`, or at the
+`FMOD_OUTPUT_DESCRIPTION` carrying `v0xa577a0`, which is built at runtime (searched: no qword and no
+`R_X86_64_RELATIVE` addend equal to `0xa577a0` exists anywhere in the image).
 
-### ✔ What the plugin actually writes into the four channels
+⚠️ **A cheap experiment beats all of this.** The console's downmix is not the game's: **record the
+game once with the PS4 set to stereo output and once set to 7.1**, on the same hard-panned
+instrument. If the ratio moves, the fold is the console's and branch 2 is settled without reading a
+byte of FMOD.
 
-Read at `0x2f00`-`0x2f9b` in `fmodextinput.prx` -- the per-frame store loop, `r10` = the four-channel
-FMOD buffer (four floats per frame), the internal mix buffer indexed two floats per frame:
-
-```
-out[4i+0] += mixL                     ; channel 0 = L
-out[4i+1] += mixR                     ; channel 1 = R
-out[4i+2] += mixL * [voice+0x24]      ; channel 2 = L, scaled
-out[4i+3] += mixR * [voice+0x24]      ; channel 3 = R, scaled
-r9 [2i+0] += mixL * [voice+0x1c]      ; a second, stereo destination
-r9 [2i+1] += mixR * [voice+0x1c]
-```
-
-So **channels 2 and 3 carry the same stereo image as 0 and 1, only scaled**, by a per-voice send at
-`[voice+0x24]`; a second stereo bus is fed at `[voice+0x1c]`. The two sends sit either side of pan
-(`+0x18`) and drive (`+0x20`) in the voice record.
-
-Two consequences, and both are measurements rather than inferences:
-
-- **The plugin cannot be the source of the narrowing.** Its mix buffer is stereo (`0x800` bytes =
-  256 frames x 2), the pan law into it is exactly `1-p` / `p` (`0x2d11` loads `1.0`, `0x2d21`
-  subtracts, `0x2d40` multiplies by `p`), and the expansion to four preserves the ratio on every
-  channel. The image that leaves the plugin is the one this tracker already renders.
-- **The four channels are not a dry pair plus a differently-panned pair.** They are one image and a
-  scaled copy of it, so folding any of them together -- in any proportion -- changes the level and
-  never the left/right ratio. **Cross-feed cannot originate inside the plugin.**
-
-Also read on the way, and worth keeping: the mix buffer is **clamped to +-1** at `0x2e00`-`0x2e2d`
-(`vmaxps -1.0`, `vminps +1.0`) *before* the four-channel expansion. The output clip is on the summed
-stereo bus, ahead of the sends.
-
-### ✔ The output format is one of exactly two things
-
-`fmod_output_audioout.cpp`, `v0xa577a0` -- FMOD's PS4 output plugin, which accepts nothing else:
-
-```
-0xa577cb  cmp ebx, 2 ; je ok            ; ebx = speaker count
-0xa577d0  cmp ebx, 8 ; jne fail         ; 2 or 8, nothing else
-0xa577f7  cmp [r13], 0xbb80 ; jne fail  ; 48000 Hz, required
-0xa57805  mov [r9], 5                   ; format = FMOD_SOUND_FORMAT_PCMFLOAT
-0xa57826  cmp ebx, 2 ; setne al
-0xa57830  or  r9d, 4                    ; param = 4 | (channels != 2)
-0xa57844  call sceAudioOutOpen          ; 4 = FLOAT_STEREO, 5 = FLOAT_8CH
-0xa57883  call sceAudioOutSetVolume(h, 0xff, {32768 x 8})   ; every speaker at 0 dB
-```
-
-✔ Float, 48 kHz, and **either stereo or 7.1**, with all eight speaker volumes at unity -- so the
-game applies no per-speaker trim. The FMOD build is confirmed by the path string at `v0xefd129`:
-**4.44.10_2_000_131, orbis**.
-
-### The next step, and which of two it is
-
-The narrowing is boxed into one hop: **FMOD's own mixdown of a four-channel DSP unit into the output
-speaker mode.** Nothing before it survives -- the plugin preserves the ratio exactly, and the channel
-sets no speaker mix -- and nothing after it belongs to the game.
-
-Which hop it is depends on the speaker count `ebx`, which is **not yet read**. The game never calls
-`setSpeakerMode`: of the 31 `fmod_systemi.cpp` call sites in the audio layer none is it, and the one
-that looks like an init -- `v0x3e780c`, `esi = 0x10000`, `edx = 8` -- is `setStreamBufferSize` with
-`FMOD_TIMEUNIT_RAWBYTES`. So FMOD takes the driver's default and the answer is in the output
-plugin's caps. Attack it there:
-
-1. ❌ **Not from the output plugin.** `v0xa577a0` is its `Init`, and `ebx` is `r8d` -- the
-   `outputchannels` **argument**, not a decision the plugin makes. The whole FMOD Ex signature
-   checks out against the code and pins every other field at the same time:
-
-   ```
-   Init(state, driver, flags, int *rate, int channels, FMOD_SOUND_FORMAT *fmt, buflen, numbuf, extra)
-        rdi    esi     edx    rcx        r8d           r9                      [rbp+0x18] [rbp+0x20]
-                              [rcx]=48000 -> ebx        [r9]=5 (PCMFLOAT)       grain      count
-   ```
-
-   So the count is chosen by **FMOD core** from the speaker mode and merely handed down. Reading the
-   rest of the file is a dead end for this: `v0xa570f0`, which looked like a caps callback, is a
-   plain `read()` retry loop -- the `__FILE__` attribution span in `fmodapi.py` is coarser than the
-   file. Go at `System::init`'s speaker-mode negotiation in `fmod_systemi.cpp` instead, or at the
-   `FMOD_OUTPUT_DESCRIPTION` that carries `v0xa577a0`, which is built at runtime (searched: no qword
-   and no `R_X86_64_RELATIVE` addend equal to `0xa577a0` exists anywhere in the image).
-2. Stereo => FMOD downmixes 4->2 itself and the matrix is in `fmod_dspi.cpp` /
-   `fmod_dsp_connectionpool.cpp`. That matrix is then the entire answer.
-3. 7.1 => FMOD spreads 4->8 and the fold to stereo is the **console's**, downstream of the game --
-   in which case the constant is not in the eboot at all, and the tracker should model the fold
-   rather than hunt for it.
-
-⚠️ **Do not let the arithmetic choose between them.** `1/(2*sqrt2) = 0.3536` of the mono sum fits,
-and so does a width of `2-sqrt2 = 0.5858` -- and they are *the same fit*, related by `c = (1-s)/2s`
-and differing only by an overall gain that the listener's normalisation of the two recordings had
-already destroyed. There is **one** measured number here (`R/L = 1.2654` at `p = 0.6`, mirrored at
-`0.4`) and a one-parameter family fits it. That is a fit, not a reading.
-
-
-### ⚠️ The one recording that would narrow this fast
-
-**One instrument at pan 0, or at pan 1.** Two interior points (0.4 and 0.6) **cannot** separate
-
-- a linear compression `p' = 0.5 + (p - 0.5)k`, k = 0.586,
-- a cross-bleed `L' = L + bR`, b = 0.261,
-- a mono add `L' = L + cA`, c = 0.353,
-- a power law over a reduced angle,
-
-because all four fit both points. One extreme point separates all four at once, and each implies a
-different cause.
-
-⚠️ `RenderOptions.panWidth` exists **only** as a diagnostic and defaults to 1, the file's own value.
-At 0.58 it reproduces the recording almost exactly — side/mid 0.1043 against the game's 0.1026, and
-the lone `baiyon_drums_1` hit at 0.5580 against 0.5586 — which is evidence that the *model* is a
-constant width scale, and no evidence at all about where 0.58 comes from. Do not promote it to a
-constant.
-
----
 
 ## 23. A flat ~1 dB deficit above 315 Hz
 

@@ -16,6 +16,7 @@ import {
   type Instrument,
   type SampleSlot,
 } from '../src/core/instrument.ts';
+import { PAN_WIDTH } from '../src/core/render.ts';
 import {
   panGains,
   pitchRatio,
@@ -238,6 +239,35 @@ test('pan is linear, 0..1, and NOT equal-power', () => {
   assert.equal(panGains(1).right, 1, 'pan 1 is hard right');
   assert.equal(panGains(-3).left, 1, 'and it clamps');
   assert.equal(panGains(9).right, 1);
+});
+
+// The plugin's law above is hard-panning, and the game's output is not: what
+// reaches a stereo listener is narrowed to PAN_WIDTH. These are the numbers
+// least-squares measured off two recordings of the game, one instrument at pan
+// 0 and one at pan 1 -- and 0.261204 was PREDICTED from two interior placements
+// before those recordings existed, which is why it is pinned to six figures.
+test('the width the game actually delivers matches the recordings', () => {
+  const narrowed = (p: number) => panGains(0.5 + (p - 0.5) * PAN_WIDTH);
+  // quieter over louder, which is what the least squares measured
+  const quietOverLoud = (p: number) => {
+    const g = narrowed(p);
+    return Math.min(g.left, g.right) / Math.max(g.left, g.right);
+  };
+  assert.ok(Math.abs(quietOverLoud(1) - 0.261202) < 5e-5, `pan 1: ${quietOverLoud(1)}`);
+  assert.ok(Math.abs(quietOverLoud(0) - 0.261202) < 5e-5, `pan 0: ${quietOverLoud(0)}`);
+  // The interior placement the whole thing started from: the game put 0.5586 of
+  // the energy on the right where this renderer used to put 0.6000.
+  assert.ok(Math.abs(narrowed(0.6).right - 0.5586) < 5e-5, `pan 0.6: ${narrowed(0.6).right}`);
+  // A constant-power law over a reduced angle is the one candidate that is not
+  // affine; it predicts 0.198 at pan 1, and the recordings refute it.
+  assert.ok(Math.abs(quietOverLoud(1) - 0.198) > 0.05, 'constant power stays refuted');
+  // The three algebraic forms of the one law agree -- which is why none of them
+  // could be told apart until a pan was measured at an extreme.
+  const c = 1 / (2 * Math.SQRT2); // the mono copy added to both channels
+  const b = 1 / (1 + 2 * Math.SQRT2); // the same thing as a cross-bleed
+  assert.ok(Math.abs(PAN_WIDTH - (2 - Math.SQRT2)) < 1e-15);
+  assert.ok(Math.abs((1 - PAN_WIDTH) / (1 + PAN_WIDTH) - c / (1 + c)) < 1e-12);
+  assert.ok(Math.abs(b - c / (1 + c)) < 1e-12);
 });
 
 test('samplesPerStep converts tempo to frames', () => {

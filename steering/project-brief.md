@@ -24,7 +24,7 @@ Ranked by how audible a mismatch would be. This is the fidelity budget: spend ef
 | 1 | Sample data | **Bit-exact** | The banks are plain FSB4 on disk; the IMA ADPCM decoder is deterministic and already verified against the game's own `piano_C3` |
 | 2 | Pitch / note mapping | **Exact** | `basenote` + `finetune` + `Splitnotes` give a closed-form playback rate; no engine state involved |
 | 3 | Timing (tempo, swing, loop, start point) | **Exact** | Integer/rational arithmetic on a fixed grid |
-| 4 | Per-channel volume, pan, mix | **Exact** if we match FMOD's pan law | Needs one measurement (see open questions) |
+| 4 | Per-channel volume, pan, mix | **Exact** | Settled 2026-09-03: the plugin's law is linear `1-p`/`p`, and the game narrows every pan to `2-sqrt2` before a listener hears it |
 | 5 | Echo | **Exact** | Settled 2026-09-02: it is not an FMOD DSP but a delay inside `fmodextinput.prx`, and `EchoTime` is a delay in **beats** |
 | 6 | Resampling of pitched samples | **Very close** | FMOD Ex resamples with a selectable-quality interpolator. Matching it needs our own mixer, not the browser's — this is the main reason for AudioWorklet |
 | 7 | Reverb | **Exact** | Settled 2026-09-02: it is `fmodsmsreverb.prx` and the whole DSP is read |

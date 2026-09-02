@@ -65,6 +65,9 @@ they are the ground truth the JavaScript has to reproduce:
   ```
 
   Then `node dev/serve.mjs` and open http://127.0.0.1:8173/ to play them.
+- `panmeasure.py` — the stereo width of a recording: the least-squares leak of one channel into the
+  other, with the residual that says whether a single number describes it at all. This is how the
+  pan width was settled; use it on any new capture of the game.
 - `lbpdis.py`, `callgraph.py`, `fmodapi.py` — eboot RE helpers (see `eboot-re.md`).
 - `ebdyn.py` — the eboot's dynamic imports: `ebdyn.py modules` lists the modules a NID's `#L#M`
   suffix indexes, `ebdyn.py <nid>` resolves one to its module, GOT slot and every reference to it.

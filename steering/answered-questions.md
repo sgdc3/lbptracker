@@ -1245,3 +1245,70 @@ endorsed by an ear, and it was a workaround for a filename collision two layers 
 `options.oneShot` still offers `'full'` and `'natural'`, and `LBP_ONESHOT` still selects them.
 They are what this project believed for a while, the difference between them and the truth is small
 enough that only a measurement separates them, and that is exactly why they should stay runnable.
+
+---
+
+## 22. The stereo width -- SETTLED: the game narrows every pan to `2 - sqrt2`
+
+Open since a listener said *"sembra che lbp non abbia mai un hard panning"*. Closed 2026-09-03 by
+two recordings of the game at the extremes, and closed the good way: **the number was predicted
+before it was measured.**
+
+### The prediction
+
+Two placements in `Ascetic` at written pans 0.40 and 0.60 came out of the game at a channel ratio of
+0.5586 where this renderer gave 0.6000. Two interior points fix a one-parameter affine family, and
+that family predicted **0.261204** for the quiet channel of a hard-panned voice -- while a
+constant-power law over a reduced angle, the one candidate that is not affine, predicted 0.198.
+
+### The measurement
+
+One instrument at pan 0 and one at pan 1, recorded from the game, 18.0 s and 6.5 s. Least squares of
+the quiet channel against the loud one over the whole file:
+
+| | pan 0 | pan 1 | predicted |
+|---|---|---|---|
+| gain, quiet / loud | **0.261202** | **0.261202** | **0.261204** |
+| residual / quiet rms | 0.0008 | 0.0008 | |
+| correlation | 1.000000 | 1.000000 | |
+| best lag | 0 samples | 0 samples | |
+
+**Six significant figures, on two independent files, at an operating point the fit had never seen.**
+Constant power is refuted by a wide margin. The residual and the unit correlation say the quiet
+channel is the loud one times a constant -- no delay, no decorrelation, no reverb of its own -- so
+at a hard pan the game's output is effectively mono.
+
+### The law, in its three equal forms
+
+```
+width      p' = 0.5 + (p - 0.5) * s      s = 2 - sqrt2      = 0.5857864
+mono add   L' = L + c*(L+R)              c = 2^-1.5         = 0.3535534
+cross-bleed L' = L + b*R                 b = 1/(1 + 2sqrt2) = 0.2612039
+```
+
+All three are the same law and differ only by an overall gain. ⚠️ **That is why the interior points
+could not settle it and the extremes could**: within the family every form predicts the same ratio
+everywhere, so no amount of listening separates them -- but the family as a whole predicts 0.2612 at
+the extreme where constant power predicts 0.198.
+
+`c = 2^-1.5` is `0.5 / sqrt2`: the mono average of a stereo pair folded back at the standard -3 dB,
+which is what a **centre channel** does. That is the shape of the mechanism, and finding *where* it
+happens is what is left of question 22 in [open-questions.md](open-questions.md).
+
+### What was implemented
+
+`PAN_WIDTH` in `src/core/render.ts`, applied where the voice spec is built; `LBP_PAN_WIDTH=1`
+restores the file's own pans. ⚠️ **Width, not gain** -- the recordings were level-matched, so they
+fix the ratio between the channels and say nothing about the absolute level. The implementation
+scales the pan and leaves `left + right` at 1, changing only the quantity that was measured.
+`panGains` itself stays hard-panning and linear, because that **is** the plugin's law at `0x2d21`;
+the narrowing belongs above it.
+
+### The wrong turn, and it lasted a day
+
+`panWidth` existed for a day as *"a DIAGNOSTIC, not a setting"* defaulting to 1, with a note saying
+`0.58` reproduced the recording but must not be promoted until a call site said so. That caution was
+right about the *mechanism* and wrong about the *measurement*: a transfer function measured on the
+game's own output at four operating points is a reading, and it does not need the mechanism to be
+implemented. **A measured input-output relationship is evidence in its own right.** The renderer
+hard-panned for a day longer than the evidence justified.
