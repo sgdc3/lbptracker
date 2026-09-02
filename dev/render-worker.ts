@@ -49,8 +49,19 @@ type Manifest = Map<number, { file: string }>;
  * `/dev/fixtures/…` and 404s. A leading slash would work on the dev server and
  * break under any static host that serves the app from a prefix. `import.meta.url`
  * is the one form that is right in both.
+ *
+ * ⚠️ **Every segment is percent-encoded, and `new URL` is not enough on its
+ * own.** Three of the game's 216 samples have a `#` in the name --
+ * `violin_spic_string4_f#4.smp`, `choir_f#3_v2.smp`, `choir_g#4_v2.smp` -- and
+ * `new URL` treats that as the start of a fragment, so the request goes out for
+ * `…/violin_spic_string4_f` and comes back 404. The 404 body is then handed to
+ * `readWav`, which says `not a RIFF/WAVE file` and names nothing. Any level
+ * using the violin or the choir failed to render in the browser and rendered
+ * perfectly under Node, which reads the same files by path. 48 more samples have
+ * a space; those survived, because `new URL` does encode a space.
  */
-const asset = (p: string) => new URL(`../${p}`, import.meta.url).href;
+const asset = (p: string) =>
+  new URL(p.split('/').map(encodeURIComponent).join('/'), new URL('../', import.meta.url)).href;
 
 let project: LevelProject | null = null;
 let rinstIndex: Manifest | null = null;
@@ -71,7 +82,18 @@ async function manifest(dir: string): Promise<Manifest> {
 
 async function loaderFor(): Promise<(guid: number) => Promise<LoadedInstrument | null>> {
   const cache = new Map<number, LoadedInstrument | null>();
-  const bytes = async (url: string) => new Uint8Array(await (await fetch(url)).arrayBuffer());
+  /**
+   * Fetch one asset, and fail with its name and status rather than with whatever
+   * the parser makes of an error page. A 404 body reaching `readWav` produced
+   * `not a RIFF/WAVE file` and no clue which of 216 samples was missing.
+   */
+  const bytes = async (url: string) => {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`${response.status} fetching ${decodeURIComponent(new URL(url).pathname)}`);
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  };
   return async (guid: number) => {
     const hit = cache.get(guid);
     if (hit !== undefined) return hit;
