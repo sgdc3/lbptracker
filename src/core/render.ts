@@ -150,7 +150,10 @@ export async function renderSequencer(
   // to give: a reverb cut off at the final note is not the whole render.
   const TAIL_SECONDS = 6;
   const fullSeconds = (seq.lengthSteps * framesPerStep) / RATE + TAIL_SECONDS;
-  const seconds = secondsArg > 0 ? secondsArg : fullSeconds;
+  // ⚠️ `fullSeconds` measures the whole song, so rendering "to the end" from an
+  // offset is what is left of it -- otherwise a start of 60 s appends 60 s of
+  // silence past the last note.
+  const seconds = secondsArg > 0 ? secondsArg : Math.max(1, fullSeconds - fromArg);
   const frames = Math.round(seconds * RATE);
   const left = new Float32Array(frames);
   const right = new Float32Array(frames);

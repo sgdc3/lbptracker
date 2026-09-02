@@ -10,7 +10,10 @@
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const seqSelect = $<HTMLSelectElement>('seq');
-const secsSelect = $<HTMLSelectElement>('secs');
+const useRange = $<HTMLInputElement>('useRange');
+const rangeFields = $<HTMLSpanElement>('rangeFields');
+const fromInput = $<HTMLInputElement>('from');
+const toInput = $<HTMLInputElement>('to');
 const goButton = $<HTMLButtonElement>('go');
 const saveButton = $<HTMLButtonElement>('save');
 const statusLine = $<HTMLDivElement>('status');
@@ -35,6 +38,22 @@ const setStatus = (text: string, bad = false) => {
   statusLine.textContent = text;
   statusLine.classList.toggle('bad', bad);
 };
+/**
+ * Read a time box: `90`, `1:30` and `01:30` all mean the same 90 seconds, and
+ * empty means "not set" rather than zero.
+ *
+ * Returns `null` for anything it cannot read, which the caller shows as an
+ * error rather than silently treating as the start of the song.
+ */
+function parseTime(text: string): number | null | undefined {
+  const trimmed = text.trim();
+  if (trimmed === '') return undefined;
+  const parts = trimmed.split(':');
+  if (parts.length > 2 || parts.some((p) => p === '' || !/^\d+(\.\d+)?$/.test(p))) return null;
+  const seconds = parts.length === 2 ? Number(parts[0]) * 60 + Number(parts[1]) : Number(parts[0]);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+}
+
 /** `1 sequencers` was on screen for about a minute before anyone typed this. */
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -75,7 +94,14 @@ function resetResults() {
   canvas.getContext('2d')!.clearRect(0, 0, canvas.width, canvas.height);
 }
 
-/** Whether the picker accepts a new file. Refused while one is in flight. */
+/**
+ * Whether the picker accepts a new file. Refused while a load or a render runs.
+ *
+ * ⚠️ `.busy` is `pointer-events: none`, so failing to clear it does not look
+ * like a bug: the box simply stops responding, with nothing in the console. It
+ * was being cleared from a branch placed *after* the `done` handler's own
+ * `return`, so it never ran and the picker died the moment a render finished.
+ */
 function setBusy(value: boolean) {
   dropZone.classList.toggle('busy', value);
 }
@@ -145,7 +171,7 @@ worker.onmessage = (event: MessageEvent) => {
     // first load made it impossible.
     dropZone.classList.add('loaded');
     dropTitle.textContent = `${loadedName} — ${plural(list.length, 'sequencer')}`;
-    dropHint.textContent = 'Click or drop to open a different dump.';
+    dropHint.textContent = 'Click or drop to open a different file.';
     setStatus(
       `ready — ${plural(list.length, 'sequencer')}, ` +
         `${plural(Number(message.instruments), 'instrument')}, ` +
@@ -186,12 +212,9 @@ worker.onmessage = (event: MessageEvent) => {
       .map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`)
       .join('');
     setBar(1);
+    setBusy(false);
     setStatus(`done — ${seconds.toFixed(1)} s rendered in ${Number(stats.elapsed).toFixed(2)} s`);
     return;
-  }
-
-  if (message.type === 'done') {
-    setBusy(false);
   }
 
   if (message.type === 'error') {
@@ -206,12 +229,33 @@ goButton.addEventListener('click', () => {
   errorBox.textContent = '';
   goButton.disabled = true;
   saveButton.disabled = true;
+  // The whole song unless the box is ticked. A section is the exception, and
+  // making it the default meant every first render silently answered a question
+  // nobody had asked.
+  const from = useRange.checked ? parseTime(fromInput.value) : undefined;
+  const to = useRange.checked ? parseTime(toInput.value) : undefined;
+  fromInput.classList.toggle('bad', from === null);
+  toInput.classList.toggle('bad', to === null);
+  if (from === null || to === null) {
+    goButton.disabled = false;
+    setStatus('a time looks like 90 or 1:30', true);
+    return;
+  }
+  if (to !== undefined && to <= (from ?? 0)) {
+    toInput.classList.add('bad');
+    goButton.disabled = false;
+    setStatus('the end has to come after the start', true);
+    return;
+  }
   setBusy(true);
   setBar(0);
   worker.postMessage({
     type: 'render',
     uid: Number(seqSelect.value),
-    seconds: Number(secsSelect.value),
+    // An empty end means "to the end of the song", which the renderer spells as
+    // a length of zero.
+    from: from ?? 0,
+    seconds: to === undefined ? 0 : to - (from ?? 0),
   });
 });
 
@@ -235,6 +279,19 @@ function loadFrom(file: File) {
   setStatus(`reading ${file.name}…`);
   worker.postMessage({ type: 'load', file });
 }
+
+useRange.addEventListener('change', () => {
+  const on = useRange.checked;
+  fromInput.disabled = !on;
+  toInput.disabled = !on;
+  rangeFields.classList.toggle('off', !on);
+  if (!on) {
+    fromInput.classList.remove('bad');
+    toInput.classList.remove('bad');
+  } else {
+    fromInput.focus();
+  }
+});
 
 dropZone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
@@ -263,5 +320,5 @@ dropZone.addEventListener('drop', (e) => {
 // the server first: level data is other people's work, this app is meant to be a
 // static site, and a page that quietly pulls 81 MB of levels off its own host is
 // the thing `steering/game-assets.md` rules out. Ask, always.
-setStatus('open a level dump to begin');
+setStatus('open your songs file to begin');
 setBar(0);

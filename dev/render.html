@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>lbptracker — level render</title>
+<title>LBP Tracker — play your LBP3 music</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -25,11 +25,19 @@
   p.sub { color: var(--dim); margin: 0 0 1.5rem; }
   code, .mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
   .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: 1rem 0; }
-  button, select {
+  button, select, input[type="text"] {
     font: inherit; color: var(--ink); background: var(--panel);
     border: 1px solid var(--line); border-radius: 7px; padding: .45rem .8rem; cursor: pointer;
   }
-  button:hover:not(:disabled), select:hover { border-color: var(--accent); }
+  button:hover:not(:disabled), select:hover, input[type="text"]:hover,
+  input[type="text"]:focus { border-color: var(--accent); }
+  input[type="text"] { text-align: center; font-family: ui-monospace, Consolas, monospace; }
+  input[type="text"].bad { border-color: var(--bad); }
+  input[type="text"]:disabled { opacity: .4; }
+  #rangeToggle { cursor: pointer; user-select: none; }
+  #rangeToggle input { vertical-align: -1px; margin-right: .3rem; }
+  #rangeFields { display: inline-flex; gap: .5rem; align-items: center; }
+  #rangeFields.off label { opacity: .4; }
   button:disabled { opacity: .45; cursor: default; }
   select { max-width: 34rem; }
   label { color: var(--dim); }
@@ -61,21 +69,19 @@
 </head>
 <body>
 <main>
-  <h1>lbptracker — level render, in the browser</h1>
+  <h1>Play your LittleBigPlanet&nbsp;3 music</h1>
   <p class="sub">
-    The same <code>renderSequencer</code> that <code>dev/render-level.ts</code> runs under Node,
-    in a worker. No <code>OfflineAudioContext</code>, no <code>AudioBufferSourceNode.playbackRate</code>:
-    every sample is resampled, filtered and mixed by this project's own arithmetic, and the browser
-    is only asked to play back a finished 48&nbsp;kHz buffer.
-    Levels are <strong>opened from your own disk</strong>; nothing is served and nothing is uploaded.
+    Open a file of songs written in LBP3's music sequencer and hear them the way the game plays
+    them &mdash; the same instruments, the same echo and reverb, note for note. Then save any of
+    them as a WAV.
+    <strong>Everything happens on your own computer:</strong> the file you open never leaves this
+    tab, and nothing is uploaded anywhere.
   </p>
 
   <div id="drop">
-    <strong id="dropTitle">Open a level dump</strong>
+    <strong id="dropTitle">Open your songs file</strong>
     <span id="dropHint">
-      Click or drop your <code>sequencers.jsonl</code> here. It is read in this tab and never
-      uploaded. <em>A raw level <code>.bin</code> is not readable yet — that is the Thing-graph
-      walk, build order step&nbsp;4.</em>
+      Click here, or drop a <code>sequencers.jsonl</code> onto this box.
     </span>
     <input id="file" type="file" accept=".jsonl,.json,.txt">
   </div>
@@ -83,17 +89,18 @@
   <div class="row">
     <label for="seq">sequencer</label>
     <select id="seq" disabled><option>loading…</option></select>
-    <label for="secs">seconds</label>
-    <select id="secs">
-      <option value="0">all</option>
-      <option value="30">30</option>
-      <option value="60">60</option>
-    </select>
+    <label id="rangeToggle"><input id="useRange" type="checkbox"> just a section</label>
+    <span id="rangeFields" class="off">
+      <label for="from">from</label>
+      <input id="from" type="text" inputmode="numeric" placeholder="0:00" size="5" disabled>
+      <label for="to">to</label>
+      <input id="to" type="text" inputmode="numeric" placeholder="end" size="5" disabled>
+    </span>
     <button id="go" disabled>Render</button>
     <button id="save" disabled>Download WAV</button>
   </div>
 
-  <div id="status">open a level dump to begin</div>
+  <div id="status">open your songs file to begin</div>
   <div id="bar"><div></div></div>
 
   <canvas id="wave" width="1200" height="90"></canvas>

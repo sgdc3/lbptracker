@@ -137,6 +137,7 @@ self.onmessage = async (event: MessageEvent) => {
     type: string;
     uid?: number;
     seconds?: number;
+    from?: number;
     file?: File;
   };
   try {
@@ -168,6 +169,7 @@ self.onmessage = async (event: MessageEvent) => {
       say(`rendering "${seq.name}" — ${seq.tracks.length} tracks, ${seq.lengthSteps} steps…`);
       const result = await renderSequencer(seq, await loaderFor(), {
         secondsArg: message.seconds ?? 0,
+        fromArg: message.from ?? 0,
         onProgress: (phase, done, total) => {
           post({ type: 'progress', phase, done, total });
         },
