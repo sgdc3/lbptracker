@@ -269,3 +269,67 @@ test('the allocation-free variants compute exactly the same numbers', () => {
     }
   }
 });
+
+/**
+ * ⚠️ A glide moves the cutoff too, and the fixed-coefficient shortcut must not
+ * swallow that.
+ *
+ * `filterAt` scales the cutoff by the voice's playback rate through `keyTrack`,
+ * so a voice whose rate moves has a moving cutoff even with no filter envelope.
+ * The shortcut for `envAmount === 0` solved the ladder once per voice, which
+ * pinned the cutoff at the note's opening pitch — and a filter that does not
+ * follow the pitch is a riser that does not rise. `Northern Lights` opens on
+ * `noise`, `keyTrack` 1.000, glided +27 semitones: measured by zero-crossing
+ * rate the sweep rose 1.83x where the pitch rose 4.76x, and 3.47x after.
+ */
+test('a glided voice sweeps its filter, even with no filter envelope', async () => {
+  const { Mixer } = await import('../src/audio/mixer.ts');
+  const rate = 48000;
+  const n = rate;
+  // Broadband input, so what comes out is what the ladder passes.
+  const noise = new Float32Array(rate);
+  let seed = 12345;
+  for (let i = 0; i < noise.length; i += 1) {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    noise[i] = (seed / 0x40000000) - 1;
+  }
+  const crossings = (buf: Float32Array, from: number, to: number) => {
+    let zc = 0;
+    for (let i = from + 1; i < to; i += 1) if ((buf[i - 1] >= 0) !== (buf[i] >= 0)) zc += 1;
+    return zc;
+  };
+
+  const play = (pitch: number) => {
+    const mixer = new Mixer(rate);
+    mixer.play({
+      sample: { channels: [noise], sampleRate: rate, loop: { start: 0, end: rate } },
+      playbackRate: 1,
+      gain: 1,
+      pan: 0.5,
+      endFrame: n,
+      // envAmount 0 is exactly the case the shortcut takes.
+      filter: {
+        settings: { cutoff: 0.3, resonance: 0.2, keyTrack: 1, envAmount: 0 },
+        envelope: { attack: 0, decay: 0, sustain: 1, release: 0 },
+      },
+      automation: [
+        { frame: 0, pitch: 0, gain: 1 },
+        { frame: n, pitch, gain: 1 },
+      ],
+    });
+    const left = new Float32Array(n);
+    mixer.render(left, new Float32Array(n));
+    return left;
+  };
+
+  const glided = play(24);
+  const flat = play(0);
+  const early = crossings(glided, 0, rate / 8);
+  const late = crossings(glided, (7 * rate) / 8, rate);
+  assert.ok(late > early * 1.5, `the sweep opened: ${early} -> ${late}`);
+  // And a voice that does not glide is unchanged, which is what the shortcut is
+  // still there for.
+  const flatEarly = crossings(flat, 0, rate / 8);
+  const flatLate = crossings(flat, (7 * rate) / 8, rate);
+  assert.ok(Math.abs(flatLate / flatEarly - 1) < 0.15, `flat stayed flat: ${flatEarly} -> ${flatLate}`);
+});

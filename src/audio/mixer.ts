@@ -361,7 +361,15 @@ class Voice {
     // solve can leave the loop. Most instruments are in this case at modulation
     // 0: `piano`, `musicbox`, `a_kit_1`, `ray_gun` and `baiyon_drums_1` all have
     // `Params[6].x` of exactly zero.
-    const filterFixed = filter !== undefined && filter.settings.envAmount === 0;
+    // ⚠️ **And a constant rate.** The cutoff is scaled by the voice's playback
+    // rate through `keyTrack`, so a voice whose rate moves has a moving cutoff
+    // even with no filter envelope at all. A note that glides, or an instrument
+    // with LFO 1 on the pitch, has to solve the ladder per frame like any other.
+    const rateMoves =
+      lfo0 ||
+      (automation !== undefined && automation.some((point) => point.pitch !== automation[0].pitch));
+    const filterFixed =
+      filter !== undefined && filter.settings.envAmount === 0 && !rateMoves;
     let fixedBypass = false;
     if (filter && filterFixed) {
       // The envelope level is unused here, so any value gives the same answer.
@@ -497,12 +505,22 @@ class Voice {
         }
       } else if (filter) {
         const level = this.filterEnv.advance(this.secondsPerFrame, held, filter.envelope);
-        const { freq, res } = filterAtInto(
-          filter.settings,
-          level,
-          playbackRate,
-          this.filterScratch,
-        );
+        // ⚠️ `rate`, not `playbackRate`: the rate the voice is playing at **this
+        // frame**, after the note's own glide and LFO 1. Feeding the constant
+        // opening rate pins the cutoff where the note started, and a filter that
+        // does not follow the pitch is a riser that does not rise.
+        //
+        // `Northern Lights` opens on `noise` -- `kenny_noise.smp`, a one-second
+        // loop -- with `keyTrack` 1.000 and cutoff 0.465..0.120, glided from y34
+        // to y61 over 32 steps. That is +27 semitones, a rate of 4.76, and with
+        // the cutoff pinned the noise stays dull for the whole sweep: measured
+        // by zero-crossing rate it rose 1.83x where the pitch rose 4.76x.
+        //
+        // ⚠️ Which rate the engine feeds this term is **open question 12**, and
+        // `LBP_NO_KEYTRACK` exists because the term may be inert altogether. What
+        // is not in doubt is that between the opening rate and the current one,
+        // only the current one lets a glide sweep.
+        const { freq, res } = filterAtInto(filter.settings, level, rate, this.filterScratch);
         if (freq <= FILTER_BYPASS_CUTOFF) {
           const coefficients = ladderCoefficientsInto(freq, res, this.ladderScratch);
           l = this.ladderL.process(l, coefficients);

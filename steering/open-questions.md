@@ -220,6 +220,18 @@ side and neither is checked:
 
 - the direction of the `x`/`y` interpolation (`v = x + f*(y - x)` is measured on the *sends* at
   `0x3b64`, and assumed for the rest);
+
+⚠️ **A third thing, found 2026-09-02 and fixed on our side, but not settled on the engine's.**
+The filter's key tracking was being fed the voice's **opening** playback rate, so a note that glides
+kept the cutoff it started with. `Northern Lights` (`2bc7d95a`, uid 16629) opens on `noise` --
+`kenny_noise.smp`, a one-second loop, `keyTrack` **1.000**, cutoff 0.465..0.120 -- glided from y34 to
+y61 over 32 steps, which is +27 semitones and a rate of 4.76. With the cutoff pinned the riser did
+not rise: measured by zero-crossing rate the output swept **1.83x**, against **3.47x** once the
+current rate is used. `src/audio/mixer.ts` now passes the rate the voice is playing at this frame,
+and the `envAmount === 0` shortcut no longer fires for a voice whose rate moves. **Which rate the
+engine feeds that term is still this question**, and `LBP_NO_KEYTRACK` still exists because the term
+may be inert altogether -- what is not in doubt is that between the opening rate and the current one,
+only the current one lets a glide sweep.
 - the octave, which is why `LBP_PITCH=<guid>:<semitones>` exists in `dev/render-level.ts` —
   `LBP_PITCH=129082:-12` renders `robot` an octave down, scaling only the playback rate so the key
   zone and the filter's key-tracking do not move with it.
