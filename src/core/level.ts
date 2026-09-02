@@ -24,7 +24,7 @@
 
 import { loadResource, type Inflate } from './resource.ts';
 import { Serializer, SerializerError, requireLbp3, type RevisionInfo } from './serializer.ts';
-import { readThing, type PartReader, type Thing } from './thing.ts';
+import { readThingRef, type PartReader, type Thing } from './thing.ts';
 
 /** Thrown once `PWorld.things` is in hand, to stop reading the rest. */
 class StopParse extends Error {
@@ -102,7 +102,12 @@ function readWorld(s: Serializer, readers: ReadonlyMap<string, PartReader>): nev
   if (subVersion >= 0x70) s.bool(); // backdropOffsetZAuto
   if (subVersion >= 0xe2) s.str(); // overrideBackdropAmbience
   if (subVersion >= 0x3f) s.reference(readStreamingManager);
-  const things = s.references((self) => readThing(self, readers));
+  // Every Thing goes through `referenceInto` so that the cycles in a level --
+  // a Thing's parent, a switch's target -- resolve to the real object rather
+  // than the empty placeholder `reference` would register.
+  const count = s.i32();
+  const things: (Thing | undefined)[] = [];
+  for (let i = 0; i < count; i += 1) things.push(readThingRef(s, readers));
   throw new StopParse(things);
 }
 
@@ -147,7 +152,7 @@ export async function readLevel(
   worldReaders.set('WORLD', (self) => readWorld(self, worldReaders));
 
   try {
-    s.reference((self) => readThing(self, worldReaders));
+    readThingRef(s, worldReaders);
   } catch (error) {
     if (error instanceof StopParse) return { revision, things: error.things };
     throw error;

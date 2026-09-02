@@ -170,7 +170,30 @@ export function setTrace(fn: Trace | undefined): void {
  * `UnimplementedPartError` naming it, which is what makes building this out a
  * loop rather than a guess.
  */
+/** An empty Thing, registered before its body is read so cycles resolve. */
+export function emptyThing(): Thing {
+  return { uid: 0, planGuid: 0, flags: 0, extraFlags: 0, parts: new Map<string, unknown>() };
+}
+
+/** Read a Thing behind a reference, registering it before its parts are read. */
+export function readThingRef(
+  s: Serializer,
+  readers: ReadonlyMap<string, PartReader>,
+): Thing | undefined {
+  return s.referenceInto(emptyThing, (self, thing) => fillThing(self, thing, readers));
+}
+
 export function readThing(s: Serializer, readers: ReadonlyMap<string, PartReader>): Thing {
+  const thing = emptyThing();
+  fillThing(s, thing, readers);
+  return thing;
+}
+
+function fillThing(
+  s: Serializer,
+  thing: Thing,
+  readers: ReadonlyMap<string, PartReader>,
+): Thing {
   const { version } = s.revision;
   const thingStart = s.position;
 
@@ -187,19 +210,11 @@ export function readThing(s: Serializer, readers: ReadonlyMap<string, PartReader
     }
   }
 
-  const thing: Thing = {
-    uid: 0,
-    planGuid: 0,
-    flags: 0,
-    extraFlags: 0,
-    parts: new Map<string, unknown>(),
-  };
-
   // version >= 0x27f puts the UID first; older files put the parent first.
   thing.uid = s.i32();
-  thing.parent = s.reference((self) => readThing(self, readers));
-  thing.groupHead = s.reference((self) => readThing(self, readers));
-  if (version >= 0x1c7) s.reference((self) => readThing(self, readers)); // oldEmitter
+  thing.parent = readThingRef(s, readers);
+  thing.groupHead = readThingRef(s, readers);
+  if (version >= 0x1c7) readThingRef(s, readers); // oldEmitter
 
   // `isToolkit()` is false for anything the game wrote.
   if (version >= 0x214) {

@@ -270,6 +270,29 @@ export class Serializer {
     return value;
   }
 
+  /**
+   * A reference whose object exists **before** its body is read.
+   *
+   * ⚠️ `reference` registers a bare `{}` while `build` runs, so anything that
+   * refers back to the object under construction — a Thing's `parent`, a
+   * creature's `head` — receives that empty placeholder and not the real thing.
+   * For Things that is not acceptable: a level is full of cycles, and a consumer
+   * walking `thing.parts` on one of those placeholders gets `undefined`.
+   *
+   * `create` makes the shell, which is registered immediately; `fill` populates
+   * it. Callers that do not care can keep using `reference`.
+   */
+  referenceInto<T>(create: () => T, fill: (self: Serializer, value: T) => void): T | undefined {
+    const id = this.i32();
+    if (id === 0) return undefined;
+    const seen = this.referenced.get(id);
+    if (seen !== undefined) return seen as T;
+    const value = create();
+    this.referenced.set(id, value);
+    fill(this, value);
+    return value;
+  }
+
   /** A length-prefixed array. The count is an `i32`, varint when compressed. */
   array<T>(read: (self: Serializer) => T): T[] {
     const count = this.i32();

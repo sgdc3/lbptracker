@@ -25,12 +25,12 @@
  */
 
 import { Serializer, SerializerError } from './serializer.ts';
-import { readThing, type PartReader, type Thing } from './thing.ts';
+import { readThing, readThingRef, type PartReader, type Thing } from './thing.ts';
 
 /** An array of Thing references — cwlib's `thingarray`. */
 function things(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
   const count = s.i32();
-  for (let i = 0; i < count; i += 1) s.reference((self) => readThing(self, readers));
+  for (let i = 0; i < count; i += 1) readThingRef(s, readers);
 }
 
 /** `PBody`: velocities, a frozen flag and whoever is dragging it about. */
@@ -40,20 +40,20 @@ export function readBody(s: Serializer, readers: ReadonlyMap<string, PartReader>
   s.i32(); // frozen
   // `(version >= 0x22c && subVersion < 0x84) || subVersion >= 0x8b` — true either
   // way for everything this reader accepts.
-  s.reference((self) => readThing(self, readers)); // editingPlayer
+  readThingRef(s, readers); // editingPlayer
 }
 
 /** `PPos`: where the Thing is, and whose bone it is. */
 export function readPos(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
-  s.reference((self) => readThing(self, readers)); // thingOfWhichIAmABone
+  readThingRef(s, readers); // thingOfWhichIAmABone
   s.i32(); // animHash
   s.matrix(); // worldPosition; localPosition is regenerated above 0x341
 }
 
 /** `PJoint`: the connector between two Things. Long, and all of it fixed-width. */
 export function readJoint(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
-  s.reference((self) => readThing(self, readers)); // a
-  s.reference((self) => readThing(self, readers)); // b
+  readThingRef(s, readers); // a
+  readThingRef(s, readers); // b
   s.vector3(); // aContact
   s.vector3(); // bContact
   s.f32(); // length
@@ -233,7 +233,7 @@ export function readGroup(s: Serializer, readers: ReadonlyMap<string, PartReader
   readNetworkPlayerId(s); // creator
   s.resource(true); // planDescriptor, a descriptor
   if (version >= 0x267) {
-    s.reference((self) => readThing(self, readers)); // emitter
+    readThingRef(s, readers); // emitter
     s.i32(); // lifetime
     s.i32(); // aliveFrames
   }
@@ -449,7 +449,10 @@ export function readStickers(s: Serializer): void {
     const n = s.i32();
     for (let i = 0; i < n; i += 1) s.bytes(4); // x, y, startRadius, endRadius
   }
-  if (version >= 0x15d) emptyList(s, 'PStickers.eyetoyData');
+  if (version >= 0x15d) {
+    const n = s.i32();
+    for (let i = 0; i < n; i += 1) readEyetoyData(s);
+  }
 }
 
 /** `PCheckpoint`: a spawn point. Almost all of its later fields are subVersion-gated. */
@@ -602,7 +605,7 @@ function readSwitchSignal(s: Serializer): void {
 
 /** `SwitchTarget`: one Thing a switch drives, and which port on it. */
 function readSwitchTarget(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
-  s.reference((self) => readThing(self, readers)); // thing
+  readThingRef(s, readers); // thing
   if (s.revision.version > 0x326) s.i32(); // port
 }
 
@@ -652,7 +655,7 @@ export function readSwitch(s: Serializer, readers: ReadonlyMap<string, PartReade
   let type = 0;
   if (version > 0x1a4) {
     type = s.i32(); // enum32, forced fixed-width
-    s.reference((self) => readThing(self, readers)); // referenceThing
+    readThingRef(s, readers); // referenceThing
     readSwitchSignal(s); // manualActivation
   }
 
@@ -694,7 +697,7 @@ export function readSwitch(s: Serializer, readers: ReadonlyMap<string, PartReade
   if (version > 0x272 && version < 0x398) s.i32(); // logicType
   if (version > 0x272 && version < 0x369) s.i32(); // updateFrame
   if (version > 0x272) things(s, readers); // inputList
-  if (version > 0x276 && version < 0x327) s.reference((self) => readThing(self, readers));
+  if (version > 0x276 && version < 0x327) readThingRef(s, readers);
   if (version > 0x283) s.bool(); // includeRigidConnectors
   if (version > 0x284 && version < 0x327) {
     s.vector4(); // customPortOffset
@@ -779,7 +782,7 @@ export function readMicrochip(
   readers: ReadonlyMap<string, PartReader>,
 ): Microchip {
   const { version, subVersion } = s.revision;
-  s.reference((self) => readThing(self, readers)); // circuitBoardThing
+  readThingRef(s, readers); // circuitBoardThing
   if (version >= 0x283) s.bool(); // hideInPlayMode
   if (version >= 0x2b8) s.bool(); // wiresVisible
   if (version >= 0x2e4) s.s32(); // lastTouched
@@ -791,7 +794,7 @@ export function readMicrochip(
     name = s.wstr();
     const count = s.i32();
     for (let i = 0; i < count; i += 1) {
-      const thing = s.reference((self) => readThing(self, readers));
+      const thing = readThingRef(s, readers);
       const x = s.f32();
       const y = s.f32();
       s.f32(); // angle
@@ -976,7 +979,7 @@ export function readSequencerPart(s: Serializer, readers: ReadonlyMap<string, Pa
   if (version > 0x371) s.i32(); // behavior
   if (version > 0x3a0) {
     s.i32(); // triggerPlayer
-    s.reference((self) => readThing(self, readers)); // previewThing
+    readThingRef(s, readers); // previewThing
   }
   return {
     tempo,
@@ -1076,7 +1079,7 @@ function readInputRecording(s: Serializer): void {
 /** `ActingData`: what a sackbot is performing. */
 function readActingData(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
   const { version, subVersion } = s.revision;
-  const thing = () => s.reference((self) => readThing(self, readers));
+  const thing = () => readThingRef(s, readers);
   if (version > 0x2d9) {
     s.i32(); // state
     thing(); // recordingNpc
@@ -1096,7 +1099,7 @@ function readActingData(s: Serializer, readers: ReadonlyMap<string, PartReader>)
 function readNpcBehavior(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
   const { version, subVersion } = s.revision;
   if (version <= 0x293) return;
-  const thing = () => s.reference((self) => readThing(self, readers));
+  const thing = () => readThingRef(s, readers);
   thing(); // npc
   thing(); // targetThing
   s.s32(); // type
@@ -1135,7 +1138,7 @@ function readNpcBehavior(s: Serializer, readers: ReadonlyMap<string, PartReader>
 /** `PSwitchInput`: an input port on a circuit board. */
 export function readSwitchInput(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
   const { version } = s.revision;
-  const thing = () => s.reference((self) => readThing(self, readers));
+  const thing = () => readThingRef(s, readers);
   if (version < 0x2c4) {
     readSwitchSignal(s);
     s.i32(); // updateFrame
@@ -1163,7 +1166,7 @@ export function readSwitchInput(s: Serializer, readers: ReadonlyMap<string, Part
 /** `PControlinator`: the controller seat. */
 export function readControlinator(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
   const { version, subVersion } = s.revision;
-  const thing = () => s.reference((self) => readThing(self, readers));
+  const thing = () => readThingRef(s, readers);
   thing(); // attachedPlayer
   thing(); // lastAttachedPlayer
   thing(); // prompt
@@ -1233,7 +1236,7 @@ export function readEmitter(s: Serializer, readers: ReadonlyMap<string, PartRead
     if (version >= 0x38e) s.f32(); // worldRotationForEditorEmitters
     s.f32(); // emitScale
     s.f32(); // linearVel
-    if (version < 0x314) s.reference((self) => readThing(self, readers));
+    if (version < 0x314) readThingRef(s, readers);
   }
   if (version >= 0x13f) s.i32(); // currentEmitted
   doubled(0x144); // emitFlip
@@ -1280,7 +1283,7 @@ export function readSpriteLight(s: Serializer, readers: ReadonlyMap<string, Part
   s.f32(); // farDist
   s.f32(); // sourceSize
   s.resource(); // falloffTexture
-  s.reference((self) => readThing(self, readers)); // lookAt
+  readThingRef(s, readers); // lookAt
   s.bool(); // spotlight
   if (version < 0x337) {
     s.bool(); // enableFogShadows
@@ -1407,13 +1410,11 @@ function readScriptInstance(s: Serializer, readers: ReadonlyMap<string, PartRead
         s.matrix();
         break;
       case MACHINE_SAFE_PTR:
-        s.reference((self) => readThing(self, readers));
+        readThingRef(s, readers);
         break;
       case MACHINE_OBJECT_REF:
-        throw new SerializerError(
-          'a script field of machine type OBJECT_REF needs ScriptObject, which no ' +
-            'level in the corpus exercised',
-        );
+        readScriptObject(s, readers);
+        break;
       default:
         throw new SerializerError(
           `script field machine type 0x${field.machineType.toString(16)} has no reader`,
@@ -1425,6 +1426,379 @@ function readScriptInstance(s: Serializer, readers: ReadonlyMap<string, PartRead
 /** `PScript`: a script attached to a Thing. */
 export function readScript(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
   readScriptInstance(s, readers);
+}
+
+/** `ScriptObjectType`: what a boxed script value holds. */
+const OBJ_NULL = 0;
+const OBJ_ARRAY_BOOL = 1;
+const OBJ_ARRAY_S32 = 3;
+const OBJ_ARRAY_F32 = 4;
+const OBJ_ARRAY_VECTOR4 = 5;
+const OBJ_ARRAY_SAFE_PTR = 10;
+const OBJ_ARRAY_OBJECT_REF = 11;
+const OBJ_RESOURCE = 12;
+const OBJ_INSTANCE = 13;
+const OBJ_STRINGW = 14;
+const OBJ_AUDIOHANDLE = 15;
+const OBJ_STRINGA = 16;
+
+/**
+ * `ScriptObject`: a boxed value in a script field.
+ *
+ * ⚠️ Pointer-shared like the field layout, and for the same reason — one array
+ * can be referenced by many scripts. `AUDIOHANDLE` is a type with **no bytes at
+ * all**: it reads its id and stops.
+ */
+function readScriptObject(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const type = s.i32();
+  if (type === OBJ_NULL) return;
+  if (type === OBJ_INSTANCE) {
+    s.reference((self) => readScriptInstance(self, readers));
+    return;
+  }
+  const pointer = s.i32();
+  if (pointer === 0) return;
+  if (s.pointers.has(pointer)) return;
+  s.pointers.set(pointer, true);
+
+  switch (type) {
+    case OBJ_ARRAY_BOOL: {
+      const n = s.i32();
+      for (let i = 0; i < n; i += 1) s.bool();
+      break;
+    }
+    case OBJ_ARRAY_S32:
+      s.intVector();
+      break;
+    case OBJ_ARRAY_F32: {
+      const n = s.i32();
+      for (let i = 0; i < n; i += 1) s.f32();
+      break;
+    }
+    case OBJ_ARRAY_VECTOR4: {
+      const n = s.i32();
+      for (let i = 0; i < n; i += 1) s.vector4();
+      break;
+    }
+    case OBJ_STRINGW:
+      s.wstr();
+      break;
+    case OBJ_STRINGA:
+      s.str();
+      break;
+    case OBJ_RESOURCE: {
+      // The resource's own type is written first, and `INVALID` means no
+      // descriptor follows at all.
+      const resourceType = s.i32();
+      if (resourceType !== 0) s.resource();
+      break;
+    }
+    case OBJ_AUDIOHANDLE:
+      break;
+    case OBJ_ARRAY_SAFE_PTR:
+      things(s, readers);
+      break;
+    case OBJ_ARRAY_OBJECT_REF: {
+      const n = s.i32();
+      for (let i = 0; i < n; i += 1) readScriptObject(s, readers);
+      break;
+    }
+    default:
+      throw new SerializerError(`script object type ${type} has no reader`);
+  }
+}
+
+/** `ColorCorrection`: six floats. */
+function readColorCorrection(s: Serializer): void {
+  for (let i = 0; i < 6; i += 1) s.f32();
+}
+
+/** `EyetoyData`: a photo stuck to a Thing. */
+function readEyetoyData(s: Serializer): void {
+  const { version } = s.revision;
+  if (version < 0x15e) return;
+  s.resource(); // frame
+  s.resource(); // alphaMask
+  s.matrix(); // colorCorrection
+  readColorCorrection(s);
+  if (version > 0x39f) s.resource(); // outline
+}
+
+/** `PMaterialTweak`: the per-Thing material overrides. */
+export function readMaterialTweak(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const { version, subVersion } = s.revision;
+  if (version < 0x2c4) s.f32(); // activation
+  s.bool(); // hideInPlayMode
+  if (version < 0x2cd) s.i32(); // colorIndex
+  if (version > 0x2b6) s.f32(); // restitution
+  if (version > 0x30c) s.f32(); // frictionScale
+  if (version >= 0x2b7 && version < 0x343) {
+    s.u8();
+    s.u8();
+  }
+  if (version > 0x342) s.u8(); // grabbability
+  if (version > 0x3bc) s.u8(); // grabFilter
+  if (version > 0x342) s.u8(); // stickiness
+  if (version > 0x2b8) s.bool(); // noAutoDestruct
+  if (subVersion > 0x2) s.bool(); // isProjectile
+  if (version >= 0x2df && version < 0x327) readThingRef(s, readers);
+  if (version > 0x356) s.bool(); // disablePhysicsAudio
+  if (subVersion > 0x3) s.bool(); // isUsableByPoppetAudio
+  if (version > 0x3ec || subVersion > 5) s.bool(); // hasShadow
+  if (subVersion > 0x33) s.bool(); // noBevel
+  if (subVersion > 0xdb) s.bool(); // zSlice
+  if (subVersion > 0x48) s.bool(); // climbability
+  if (subVersion > 0x8c) {
+    s.bool(); // ppGrab
+    s.u8(); // ppTweakability
+    s.bool(); // ppRigidConnection
+  }
+  if (subVersion >= 0x8d) {
+    if (subVersion < 0x13d) s.f32();
+    if (subVersion < 0x92) s.u8();
+    if (subVersion >= 0x92 && subVersion < 0x13d) s.i32();
+  }
+  if (subVersion > 0xa7) s.bool(); // ppMaterialMergeable
+}
+
+/** `PEnemy`: one part of a creature. */
+export function readEnemy(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const { version } = s.revision;
+  const thing = () => readThingRef(s, readers);
+  if (version >= 0x15d) s.i32(); // partType
+  if (version >= 0x16d) s.f32(); // radius
+  if (version >= 0x19f) s.i32(); // snapVertex
+  if (version >= 0x1a9) {
+    s.vector3(); // centerOffset
+    thing(); // animThing
+    s.f32(); // animSpeed
+  }
+  if (version >= 0x246) s.i32(); // sourcePlayerNumber
+  if (version >= 0x265) s.bool(); // newWalkConstraintMass
+  if (version >= 0x31e) s.i32(); // smokeColor
+  if (version >= 0x39a) s.f32(); // smokeBrightness
+}
+
+/** `WhipSim`: the grappling hook's state, shared by pointer. */
+function readWhipSim(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const thing = () => readThingRef(s, readers);
+  thing(); // creatureThing
+  s.matrix(); // baseHandleMatrix
+  s.vector3(); // prevDir
+  s.vector3(); // currDir
+  s.i32(); // stateTimer
+  s.i32(); // state
+  thing(); // attachedThing
+  s.vector3(); // attachedLocalPos
+  s.vector3(); // attachedLocalNormal
+  s.f32(); // attachedLocalAngle
+  s.f32(); // attachedScale
+  s.bool(); // playedFailToFireSound
+  s.f32(); // attachedZOffset
+}
+
+/**
+ * `PCreature`: a sackboy or sackbot.
+ *
+ * The longest part after `PSwitch`, and almost all of it is live state rather
+ * than authored settings — where the creature is looking, how long it has been
+ * in the air, which bullet emitter is next. It is here because it has to be
+ * stepped over, not because anything reads it.
+ */
+export function readCreature(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const { version, subVersion } = s.revision;
+  const thing = () => readThingRef(s, readers);
+
+  s.resource(); // config
+  s.s32(); // jumpFrame
+  s.f32(); // groundDistance
+  s.vector3(); // groundNormal
+  thing(); // grabJoint
+  thing(); // jumpingOff
+  s.i32(); // state
+  if (subVersion >= 0x132) s.i32(); // subState
+  s.i32(); // stateTimer
+  s.f32(); // speedModifier
+  s.f32(); // jumpModifier
+  s.f32(); // strengthModifier
+  s.i32(); // zMode
+  s.s32(); // playerAwareness
+  s.s32(); // moveDirection
+  s.vector3(); // forceThatSmashedCreature
+  s.i32(); // crushFrames
+  s.f32(); // awarenessRadius
+  if (version >= 0x1df) s.i32(); // airTime
+  if (version >= 0x354) {
+    s.intVector(); // bouncepadThingUIDs
+    s.intVector(); // grabbedThingUIDs
+  }
+  if (version >= 0x221) s.bool(); // haveNotTouchedGroundSinceUsingJetpack
+  if (version >= 0x15d) {
+    things(s, readers); // legList
+    things(s, readers); // lifeSourceList
+    thing(); // lifeCreature
+    thing(); // aiCreature
+  }
+  if (version >= 0x163) {
+    s.i32(); // jumpInterval
+    s.i32(); // jumpIntervalPhase
+  }
+  if (version >= 0x169) s.bool(); // meshDirty
+  if (version >= 0x166) {
+    things(s, readers); // eyeList
+    things(s, readers); // brainAiList
+    things(s, readers); // brainLifeList
+  }
+  if (version >= 0x19c) s.bool(); // reactToLethal
+  if (version >= 0x1a9) {
+    s.matrix(); // oldAnimMatrix
+    s.f32(); // animOffset
+  }
+  if (version >= 0x1fc) s.vector3(); // groundNormalRaw
+  if (version >= 0x212) {
+    s.vector3(); // groundNormalSmooth
+    s.f32(); // bodyAdjustApplied
+  }
+  if (version >= 0x240 && version < 0x2c4) s.f32(); // switchScale
+  if (version >= 0x243) s.vector3(); // gunDirAndDashVec
+  if (subVersion >= 0x19e) s.f32(); // gunDirAndDashVecW
+  if (version >= 0x246) thing(); // resourceThing
+  if (version >= 0x247) s.i32(); // gunFireFrame
+  if (version >= 0x248) s.i32(); // bulletCount
+  if (version >= 0x24a) s.i32(); // bulletImmuneTimer
+  if (version >= 0x24d) thing(); // bulletEmitter0
+  if (version >= 0x3a2) thing(); // bulletEmitter1
+  if (version >= 0x24e) s.i32(); // bulletPosIndex
+  if (version >= 0x24f) {
+    s.i32(); // maxBulletCount
+    s.f32(); // ammoFillFactor
+  }
+  if (version >= 0x252) s.bool(); // gunDirPrecisionMode
+  if (version >= 0x320) {
+    s.i32(); // fireRate
+    s.f32(); // gunAccuracy
+    s.vector3(); // bulletEmitOffset
+    s.f32(); // bulletEmitRotation
+    thing(); // gunThing
+    thing(); // gunTrigger
+    s.i32(); // lastGunTriggerUID
+  }
+  if (version >= 0x272) s.i32(); // airTimeLeft
+  if (version >= 0x2c9) {
+    s.f32(); // amountBodySubmerged
+    s.f32(); // amountHeadSubmerged
+  }
+  if (version >= 0x289) s.bool(); // hasScubaGear
+  if (version >= 0x289 && version < 0x2c8) s.resource(); // headPiece
+  if (version >= 0x289) s.bool(); // outOfWaterJumpBoost
+  if (version >= 0x2a9) s.resource(); // handPiece
+  if (version >= 0x273) {
+    thing(); // head
+    thing(); // toolTetherJoint
+    s.f32(); // toolTetherWidth
+    thing(); // jetpack
+    s.s32(); // wallJumpDir
+    s.vector3(); // wallJumpPos
+    const contacts = s.i32();
+    for (let i = 0; i < contacts; i += 1) s.vector3(); // bootContactForceList
+    s.s32(); // gunType
+    s.bool(); // wallJumpMat
+  }
+  if (version >= 0x29e && version < 0x336) thing(); // lastDirectControlPrompt
+  if (version > 0x2e4) thing(); // directControlPrompt
+  if (version >= 0x29e && version < 0x336) {
+    s.vector3(); // smoothedDirectControlStick
+    s.i16(); // directControlAnimFrame
+    s.u8(); // directControlAnimState
+  }
+  if (version >= 0x29f && version < 0x2c1) s.u8(); // directControlMode
+  if (version >= 0x2c1 && version < 0x336) s.u8();
+  if (version >= 0x2a5) {
+    s.i32(); // responsiblePlayer
+    s.i32(); // responsibleFramesLeft
+  }
+  if (version >= 0x32c) s.bool(); // canDropPowerup
+  if (version >= 0x3f0) s.u8(); // capeExtraMaxVelocityCap
+  if (version >= 0x35a) s.i32(); // behavior
+  if (version >= 0x373) s.i32(); // effectDestroy
+  if (version >= 0x3c0) s.reference((self) => readWhipSim(self, readers));
+  if (subVersion >= 0x88 && subVersion <= 0xa4) s.resource();
+  if (subVersion >= 0xaa) thing(); // alternateFormWorld
+  if (subVersion >= 0xd7) s.i32(); // hookHatState
+  if (subVersion >= 0xd7 && subVersion < 0xea) {
+    thing();
+    thing();
+  }
+  if (subVersion >= 0xdf) thing(); // hookHatBogey
+  if (subVersion >= 0x196) {
+    for (let i = 0; i < 7; i += 1) s.i32(); // the flying timers
+    s.f32(); // flyingLegScale
+    s.vector4(); // flyingVels
+    s.bool(); // flyingFlapLockout
+    s.bool(); // flyingFallLockout
+    s.bool(); // flyingInWind
+    s.bool(); // flyingThrustLatched
+    s.i16(); // glidingTime
+  }
+  if (subVersion >= 0x20c) {
+    s.u8(); // springState
+    s.bool(); // springHasSprung
+    s.reference((self) => {
+      readThingRef(self, readers); // springThing
+      self.i32(); // springTimer
+      self.vector3(); // springDirection
+      self.vector3(); // springThingPosition
+    });
+    s.u8(); // springPower
+    s.bool(); // springSeparateForces
+    s.u8(); // springForce
+    s.u8(); // springStateTimer
+  }
+}
+
+/** `Primitive`: one draw call of a mesh. */
+function readPrimitive(s: Serializer): void {
+  s.resource(); // material
+  // `Revisions.MESH_TEXTURE_ALTERNATIVES` is 0x179, not something in the 0x3xx
+  // range -- a guess at that constant cost one debugging round.
+  if (s.revision.version >= 0x179) s.resource(); // textureAlternatives
+  s.i32(); // minVert
+  s.i32(); // maxVert
+  s.i32(); // firstIndex
+  s.i32(); // numIndices
+  s.i32(); // region
+}
+
+/** `CostumePiece`: one wearable. */
+function readCostumePiece(s: Serializer): void {
+  const { version, subVersion } = s.revision;
+  s.resource(); // mesh
+  s.i32(); // categoriesUsed
+  if (subVersion < 0x105) {
+    const n = s.i32();
+    for (let i = 0; i < n; i += 1) s.i32(); // morphParamRemap, an i32 each
+  } else s.bytes(s.i32());
+  const prims = s.i32();
+  for (let i = 0; i < prims; i += 1) readPrimitive(s);
+  if (version >= 0x19a) s.resource(true); // plan
+}
+
+/** `PCostume`: what a creature is wearing. */
+export function readCostume(s: Serializer): void {
+  const { version, subVersion } = s.revision;
+  s.resource(); // mesh
+  s.resource(); // material
+  if (version >= 0x19a) s.resource(true); // materialPlan
+  s.intVector(); // meshPartsHidden
+  const prims = s.i32();
+  for (let i = 0; i < prims; i += 1) readPrimitive(s);
+  if (subVersion >= 0xdb) s.u8(); // creatureFilter
+  const pieces = s.i32();
+  for (let i = 0; i < pieces; i += 1) readCostumePiece(s);
+  if (version >= 0x2c5) {
+    const temp = s.i32();
+    for (let i = 0; i < temp; i += 1) readCostumePiece(s);
+  }
 }
 
 /** Everything implemented so far, ready to hand to `readLevel`. */
@@ -1459,6 +1833,10 @@ export function partReaders(): Map<string, PartReader> {
   bind('EMITTER', readEmitter);
   bind('SPRITE_LIGHT', readSpriteLight);
   bind('SCRIPT', readScript);
+  bind('MATERIAL_TWEAK', readMaterialTweak);
+  bind('ENEMY', readEnemy);
+  bind('CREATURE', readCreature);
+  readers.set('COSTUME', (s) => readCostume(s));
   return readers;
 }
 
