@@ -1183,3 +1183,65 @@ that has to be taken back out. Implementing the level without the drive made the
   position relative to it is not established: that loop is per-layer and the filter is not in it.
   The implementation applies the shaper immediately after the sample read, which keeps it where it
   was measured, but a later reading could move the filter across it.
+
+---
+
+## 10. One-shots — SETTLED against a recording: **the engine gates every voice**
+
+Open since the beginning, closed 2026-09-03 when a listener recorded the game's own output for one
+drum section and synced it against a render. Two independent lines of evidence agree, and they
+overturn what this project had believed.
+
+### The code
+
+```
+0x1f65  r15d = [voice + 0x10]      ; the gate: 1 once the note's records end
+0x1f6d  sete al                    ; "still held"
+0x203a  edi = al                   ; -> the first argument to the envelope
+0x203f  call 0x16b0
+```
+
+No branch on the loop, the slot or anything else, and `0x3093` frees the voice when the envelope is
+done. `0x3035` — which this project read as "a loopless sample plays to the end of the sample" — is
+an **additional** stop, not an exemption: a loopless voice *also* ends when its position passes
+`[slot+0x78]`.
+
+### The recording
+
+`Ascetic`'s two kits, 18 seconds, aligned at a lag of 0.503 s. Envelope correlation against the game
+in eight two-second blocks, for the three rules `options.oneShot` offers:
+
+| block | `full` | `natural` | `gate` |
+|---|---|---|---|
+| 0-2 | 0.8237 | 0.8243 | **0.8368** |
+| 2-4 | 0.7751 | 0.7762 | **0.8011** |
+| 4-6 | 0.8309 | 0.8318 | **0.8501** |
+| 6-8 | 0.7856 | 0.7868 | **0.8096** |
+| 8-10 | 0.7901 | 0.7912 | **0.8087** |
+| 10-12 | 0.7775 | 0.7785 | **0.8026** |
+| 12-14 | 0.8292 | 0.8301 | **0.8489** |
+| 14-16 | 0.8100 | 0.8114 | **0.8331** |
+
+**Eight blocks out of eight.** The per-hit decay error agrees: mean |error| 34.1 ms for `gate`
+against 39.2 ms for the other two, over eleven isolated hits.
+
+### ⚠️ What this overturns, and why the old evidence was not wrong
+
+Question 10 existed because a listener reported the drums as clipped and far too quiet, and the
+arithmetic backed them: `a_kit_1`'s amplitude release is 0.068 s and `baiyon_drums_1`'s is **three
+milliseconds**, so a gated kit is cut to its written note and little more.
+
+That report was real, and it was about **the same session's renders** — which were playing
+`baiyon_drums_1` with `a_kit_1`'s kick, because two sample GUIDs had collided on one filename (see
+*Two sample GUIDs shared one filename* in [game-assets.md](game-assets.md)). With the right kick the
+drums stopped sounding wrong, and the rule invented to compensate stopped being needed.
+
+**The general rule this earns:** a fix that compensates for a symptom will survive the symptom's real
+cause being found, and go on quietly making everything else wrong. `natural` was reasonable, it was
+endorsed by an ear, and it was a workaround for a filename collision two layers away.
+
+### What is kept
+
+`options.oneShot` still offers `'full'` and `'natural'`, and `LBP_ONESHOT` still selects them.
+They are what this project believed for a while, the difference between them and the truth is small
+enough that only a measurement separates them, and that is exactly why they should stay runnable.

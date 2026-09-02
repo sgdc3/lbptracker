@@ -85,8 +85,12 @@ export interface RenderOptions {
   readonly onProgress?: RenderProgress;
   /**
    * How long a **one-shot** -- a slot whose sample has no loop -- ignores the
-   * note's gate. See `holdFramesFor`; `'natural'` is the default and the other
-   * two are the A/B ends of open question 10.
+   * note's gate.
+   *
+   * ✔ **`'gate'` is the default and it is the engine's**, settled 2026-09-03
+   * against a recording of the game. The other two are kept because they are
+   * what this project believed for a while and the difference is small enough
+   * that only a measurement separates them. See `holdFramesFor`.
    */
   readonly oneShot?: 'full' | 'natural' | 'gate';
 }
@@ -138,7 +142,7 @@ export async function renderSequencer(
     voiceLimit = VOICE_POOL_SIZE,
     clip = true,
     pitchShift = new Map<number, number>(),
-    oneShot = 'natural',
+    oneShot = 'gate',
     onProgress,
   } = options;
   const now = () => (typeof performance === 'undefined' ? Date.now() : performance.now());
@@ -214,10 +218,17 @@ export async function renderSequencer(
    * a composer reaching for the bottom octave of a pluck is after -- and a nine
    * second drone.
    *
-   * ⚠️ **Still an inference, and still question 10.** `options.oneShot` is the
-   * A/B: `'full'` is the old unbounded rule and `'gate'` is no exemption at all.
-   * What would settle it is the engine's note-off path, `sub_0x38e0` near the
-   * voice record's `+0x3e`/`+0x3f`.
+   * ✔ **SETTLED 2026-09-03, and not in favour of any of this.** The engine
+   * gates every voice -- `0x1f65` reads the gate flag and hands it to the
+   * envelope with no branch on the loop -- and a recording of the game agrees:
+   * `'gate'` beat both of the others in **eight two-second blocks out of
+   * eight**. The default is `'gate'`, for which this function returns 0, so the
+   * exemption below is now reachable only through `options.oneShot`.
+   *
+   * ⚠️ Why it took so long is worth keeping: the drums that motivated the
+   * exemption were being rendered with the **wrong kick sample**, because two
+   * GUIDs collided on one filename. See *10* in
+   * `steering/answered-questions.md`.
    */
   const holdFramesFor = (sample: SampleBuffer): number => {
     if (sample.loop !== undefined) return 0;
