@@ -41,6 +41,14 @@ anything; all are places where an answer stopped just short.
 - **The unison stack and `mime_artist`.** Layers are the same sample, verified on 14 of the 15
   stacked instruments (`slots == zones`). `mime_artist` is the exception: 4 samples, 1 zone,
   `Numstack` 5, and its 3 spare slots do not equal `Numstack - 1` either.
+
+  ⚠️ **Half of this is now settled and it is the half that mattered.** `mime_artist`'s bound
+  array in the DSP record is all zeros -- `Splitnotes` is `[87,0,0,…]` and the walk reads `[1..8]`,
+  see *19* in [answered-questions.md](answered-questions.md) -- so `0 <= note` on the first
+  comparison and **every note resolves to slot 0**, the base-81 `pluck_a6`. The other three samples
+  are unreachable as zones, which is what "1 zone, 4 samples" means. What is still open is only
+  whether the engine reaches them as *layers*: this project plays slot 0 five times, and four
+  octave-spaced samples going unused on a five-layer patch is suspicious on its own.
 - **Per-note modulation across a note's own points.** 70,028 of 2,027,633 corpus notes (3.45%) change
   modulation between their control points, and those render at their opening value. Whether the
   engine re-reads it mid-note is unmeasured.
@@ -552,71 +560,3 @@ What works instead, in order of preference:
 
 ⚠️ A negative result from a pattern scan is only as strong as the pattern.
 
----
-
-## 19. The key-zone walk is READ, and taking it literally contradicts the corpus
-
-Opened 2026-09-02, while chasing `mime_artist`. This is the sharpest form the question has had: the
-engine's walk is no longer unknown, and it *disagrees* with what this project does. One of the two
-is wrong and the disassembly is not the part in doubt.
-
-### What the engine does
-
-`fmodextinput.prx` `0x0555`-`0x0577`, and again verbatim at `0x09f0`-`0x0a14` (two note-start
-paths, identical code):
-
-```
-ecx = bextr(noteWord, 0x708)          ; bits 8..14, the raw note
-eax = 0
-loop:
-  r8d = 0                             ; the zone, if the walk never falls through
-  if (int)eax > 7:  goto done         ; a fixed EIGHT bounds
-  cmp  [rdx + rax*4 + 0x4c4], ecx     ; splitNotes[i] against the note, signed
-  eax += 1
-  if   splitNotes[i] > note:  goto loop
-  eax -= 1
-  r8d = eax                           ; the zone
-done:                                 ; r8d is passed to 0x19e0, the note start
-```
-
-So the zone is **the first `i` in 0..7 with `splitNotes[i] <= note`**, 0 when none is. Three things
-follow that `src/core/instrument.ts` does not do:
-
-- the result is **that index**, where `resolveSlot` returns the one below it;
-- the count is a **fixed eight** — not `zoneCount`, not the number of slots holding a sample;
-- **a trailing zero is a real bound and terminates the walk**, since `0 <= note` always.
-
-⚠️ The array is `Splitnotes` and not something else: the record is `0x5f0` bytes, `Numstack` is at
-`+0x4e4` (steering already had that from the stack loop), and eight `int32` at `+0x4c4` fill exactly
-the space before it — which is `RInstrument`'s own field order, `splitNotes` immediately before
-`numStack`.
-
-### Why it was not adopted
-
-Implemented literally and measured with `dev/pitch-probe.ts`, over 953,221 corpus notes on 44
-instruments, the median of (note played − base note of the slot it resolves to) moves from **0 to
-7**, and individual instruments become absurd: `woodpecker` +35, `nylonguitar` +30, `marimba` +20.
-
-The clearest single counter-example is `e_guitar_distorted`: bounds `[87,60,1,0,…]` and two samples,
-`eg_d_long_d5` (base 62) and `eg_d_long_e4` (base 52).
-
-| note | engine's walk | what `resolveSlot` does |
-|---|---|---|
-| 90 | zone 0 → D5, +28 | zone 0 → D5, +28 |
-| 65 | zone 1 → **E4, +13** | zone 0 → D5, +3 |
-| 30 | zone 2, clamped → E4, −22 | zone 1 → E4, −22 |
-
-A two-sample guitar split so that everything below 87 plays the *lower* sample is not a voicing;
-the current reading gives the ordinary one. `ukulele` behaves the same way, and `silence.smp` sitting
-in slot 0 of `conga`, `djembe` and `dumbek` reads as an "above the range" sentinel under the engine's
-indexing and as "most of the keyboard" under ours — which is the one point in the engine's favour.
-
-### Where to attack it next
-
-**`0x19e0`, the note-start function `r8d` is passed to.** Whether it uses that value as a slot index
-directly, or scales it, or offsets it, is the missing link — the slot record is `0x98` bytes, so an
-`imul` by `0x98` would settle the indexing in one instruction. It is also possible the slot array in
-the DSP's own record is not in `RInstrument`'s order, which would reconcile everything.
-
-⚠️ Do not "fix" `resolveSlot` from the disassembly alone before that is read. It has been tried, on
-2026-09-02, and reverted: the corpus is the check that caught it.

@@ -888,3 +888,81 @@ quantiser at all**, which is why the eboot has to add it afterwards.
 **The general rule this earns:** when a formula has a term supplied from outside the module you are
 reading, the module cannot tell you what that term means. `blockRoot` sat in steering for a session
 as a named unknown, and the answer was two instructions away in the *other* binary.
+
+---
+
+## 19. The key-zone walk — SETTLED: `resolveSlot` already was the engine's, and the record layout is why
+
+Opened and closed on 2026-09-02. It was posed as *"the engine's walk is read and it contradicts the
+corpus"*, and the contradiction was an off-by-one in reading the **record layout**, not in the walk.
+
+### The walk
+
+`fmodextinput.prx` `0x0555`-`0x0577`, and verbatim again at `0x09f0`-`0x0a14` (two note-start paths):
+
+```
+ecx = bextr(noteWord, 0x708)          ; bits 8..14, the raw note
+eax = 0
+loop:
+  r8d = 0                             ; the zone, if the walk never falls through
+  if (int)eax > 7:  goto done         ; a fixed eight bounds
+  cmp  [rdx + rax*4 + 0x4c4], ecx     ; signed
+  eax += 1
+  if   bound > note:  goto loop
+  eax -= 1
+  r8d = eax
+done:
+```
+
+and the zone is passed to `0x19e0`, which tail-calls `0x1a70`, where at `0x1aca` it becomes
+
+```
+movsxd rax, edx
+imul   rax, rax, 0x98                 ; the slot record size
+vcvtsi2ss xmm1, xmm0, [r15 + rax + 0x78]
+```
+
+— **straight into the slot array, no remapping.** That was the named next step and it came out clean.
+
+### The DSP's instrument record, which is what settles it
+
+| offset | what |
+|---|---|
+| `+0x000` | **eight slots of `0x98`**, ending at `+0x4c0` |
+| `+0x4c0` | `Splitnotes[0]` — **never read by the walk** |
+| `+0x4c4` … `+0x4e3` | `Splitnotes[1..8]`, the eight bounds the walk indexes |
+| `+0x4e4` | `Numstack` |
+| `+0x4e8` | `Params`, 27 `(x,y)` pairs |
+| `0x5f0` | the record's size (`imul rdx, rsi, 0x5f0` at `0x0526`) |
+
+`Params` at `+0x4e8` is checkable rather than assumed: `Params[11].x`, the amplitude attack, is read
+at `+0x540` (`0x1f8c`), and `0x4e8 + 11*8 = 0x540`.
+
+So **`+0x4c4` is `Splitnotes[1]`**, and `src/core/instrument.ts` had this right all along — its own
+`MAX_SPLITS = 9; // 8 zones; [0] is a constant, [1..8] are the bounds` says so. Transcribing the
+walk as indexing from `Splitnotes[0]` is what made the engine appear to disagree.
+
+### The check that closed it
+
+`test/instrument.test.ts` now runs `resolveSlot` against the loop above over **every instrument the
+game ships and every note**: 68 x 128 = **8,704 comparisons, no disagreement**. It is a test rather
+than a note, because the two implementations are independent and either can drift.
+
+### What it also settles
+
+- **`mime_artist` really does play everything on slot 0.** Its bounds are `[87,0,0,…]`, so the
+  record's array is all zeros and the first comparison already satisfies `0 <= note`: zone 0,
+  `pluck_a6`, base 81. The other three samples are unreachable *as zones*. Whether the engine reaches
+  them as stack layers is a different question and stays open.
+- **`[slot + 0x78]`** — open question 12's unknown — is a per-slot field, indexed by the zone. That
+  does not say what it holds, but it does say where it lives.
+
+### The wrong turn, kept
+
+The literal-from-`[0]` reading was implemented, measured and reverted inside an hour. Measured over
+953,221 corpus notes with `dev/pitch-probe.ts`, the median of (note played − base note of its slot)
+moved from **0 to 7**, and `woodpecker` went to +35, `nylonguitar` +30, `marimba` +20. The clearest
+single counter-example was `e_guitar_distorted` — bounds `[87,60,1,0,…]`, samples D5 base 62 and E4
+base 52 — where it sent note 65 to the *lower* sample. **A disassembly that contradicts a
+million-note corpus is a misread disassembly**, and the corpus is what caught it before the change
+could ship.

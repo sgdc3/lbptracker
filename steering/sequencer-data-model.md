@@ -1387,6 +1387,24 @@ inferred masks.
 and what the voice record's `+0x3e`/`+0x3f` pair counts — start and end of the note in thirds of a
 step. That closes the lead recorded earlier against open question 3.
 
+### The DSP's instrument record — measured 2026-09-02
+
+The block the eboot hands the DSP per instrument, `0x5f0` bytes (`imul rdx, rsi, 0x5f0` at
+`fmodextinput.prx` `0x0526`):
+
+| offset | what |
+|---|---|
+| `+0x000` | **eight slots of `0x98`**, ending at `+0x4c0`. The zone walk's result goes straight in here — `imul rax, rax, 0x98` at `0x1aca` — with no remapping |
+| `+0x4c0` | `Splitnotes[0]`, and **the walk never reads it** |
+| `+0x4c4`…`+0x4e3` | `Splitnotes[1..8]`, the eight bounds |
+| `+0x4e4` | `Numstack` |
+| `+0x4e8` | `Params`, 27 `(x, y)` pairs |
+
+⚠️ `Params` at `+0x4e8` is checkable rather than assumed: `Params[11].x`, the amplitude attack, is
+read at `+0x540` (`0x1f8c`), and `0x4e8 + 11*8 = 0x540`. And `+0x4c4` being `Splitnotes[1]` rather
+than `[0]` is the whole of *19* in [answered-questions.md](answered-questions.md) — reading it as
+`[0]` makes the engine appear to disagree with a million-note corpus.
+
 ### The pitch goes through a scale quantiser — `sub_0x240`, decoded
 
 ⚠️ **The address here was `0x250` and is wrong by 0x10, not by the usual 0x40.** The function

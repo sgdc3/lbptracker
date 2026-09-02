@@ -49,3 +49,74 @@ test('a note exactly on a bound belongs to the zone above it', async () => {
   assert.equal(resolveSlot(kit, 87, 8), 0);
   assert.equal(resolveSlot(kit, 127, 8), 0, 'above the ceiling still lands in zone 0');
 });
+
+/**
+ * `resolveSlot` against the engine's own loop, transcribed instruction for
+ * instruction, over every instrument the game ships and every note.
+ *
+ * `fmodextinput.prx` `0x0555`-`0x0577`, and verbatim again at `0x09f0`-`0x0a14`:
+ *
+ * ```
+ * ecx = bextr(noteWord, 0x708)          ; bits 8..14, the raw note
+ * eax = 0
+ * loop:
+ *   r8d = 0                             ; the zone, if the walk never falls through
+ *   if (int)eax > 7:  goto done         ; a fixed eight bounds
+ *   cmp  [rdx + rax*4 + 0x4c4], ecx     ; signed
+ *   eax += 1
+ *   if   bound > note:  goto loop
+ *   eax -= 1
+ *   r8d = eax
+ * done:                                 ; -> 0x19e0, and at 0x1aca:
+ *                                       ;    imul rax, rax, 0x98   -- straight
+ *                                       ;    into the slot array
+ * ```
+ *
+ * ⚠️ **`+0x4c4` is `Splitnotes[1]`, not `[0]`.** The DSP's instrument record is
+ * eight slots of `0x98` at `+0x000`, which ends at `+0x4c0`; `Splitnotes[0]`
+ * sits there and the walk never reads it. `Numstack` follows the eight bounds at
+ * `+0x4e4` and `Params` at `+0x4e8`, which is checkable — `Params[11].x`, the
+ * amplitude attack, is read at `+0x540` (`0x1f8c`), and `0x4e8 + 11*8 = 0x540`.
+ *
+ * Reading the walk as indexing from `Splitnotes[0]` is what made it look as
+ * though the engine disagreed with this module. It does not: 8,704 comparisons,
+ * no disagreement.
+ */
+test('resolveSlot is the engine’s zone walk, on every shipped instrument', async (t) => {
+  const { existsSync } = await import('node:fs');
+  const { readFile } = await import('node:fs/promises');
+  const path = (await import('node:path')).default;
+  const RINST = 'fixtures/rinst';
+  if (!existsSync(path.join(RINST, 'manifest.json'))) {
+    t.skip('no fixtures/rinst — extract it with tools/ExtractGuid.java');
+    return;
+  }
+  const { resolveSlot } = await import('../src/core/instrument.ts');
+  const { readInstrument, usedSlots } = await import('../src/core/rinstrument.ts');
+  const { loadResourceFile } = await import('../src/platform/node.ts');
+
+  /** The loop above, with the record's bound array being `Splitnotes[1..8]`. */
+  const engineZone = (splits: readonly number[], note: number, slotCount: number) => {
+    let i = 0;
+    while (i <= 7 && splits[i + 1] > note) i += 1;
+    return Math.min(i > 7 ? 0 : i, Math.max(0, slotCount - 1));
+  };
+
+  const rows = JSON.parse(await readFile(path.join(RINST, 'manifest.json'), 'utf8')) as
+    { guid: number; file: string }[];
+  let checked = 0;
+  for (const row of rows) {
+    const inst = readInstrument((await loadResourceFile(path.join(RINST, row.file))).data);
+    const slots = [...usedSlots(inst)].length;
+    for (let note = 0; note <= 127; note += 1) {
+      checked += 1;
+      assert.equal(
+        resolveSlot(inst, note, slots),
+        engineZone(inst.splitNotes, note, slots),
+        `${row.file} note ${note} (splits ${inst.splitNotes.join(',')})`,
+      );
+    }
+  }
+  assert.ok(checked >= 8000, `expected the whole palette, checked ${checked}`);
+  console.log(`    ${rows.length} instruments x 128 notes = ${checked} comparisons, all agree`);
+});
