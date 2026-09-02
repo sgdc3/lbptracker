@@ -653,12 +653,37 @@ always zero; assume nothing, and read the writer.
 `[state+0x1b00]`; the one `v0x1607c0` writes is in the **0x470-byte note block**. They are not the
 same field and a search for one will keep finding the other.
 
-⚠️ **The inferred link: that `header + 0x04` is the board row.** What the eboot writes there
-has not been read — linear disassembly of the sequencer module desynchronises and no indexed
-16-byte store was found. The row is the candidate because it is the only per-track integer wide
-enough to need wrapping (`gridY` runs 0..24). `channelVolume` in `project.ts` implements it and says
-so. If it is wrong, the 30 multi-channel sequencers are mixed wrong — but they were mixed wrong
-before too, since the volumes were not applied at all.
+### The inferred link, 2026-09-02: **its neighbour is now proven to be `gridX`**
+
+What the eboot writes into that array still has not been read — linear disassembly of the sequencer
+module desynchronises and no indexed 16-byte store was found. But the record's **other** field has
+been read, and it changes how good the inference is.
+
+`0x39cb`-`0x3a41`, the note-record walk:
+
+```
+0x39cb  rdx = [state + 0x1b00]        ; the 16-byte array   (or +0x1af8, double-buffered)
+0x39d5  rdi = block << 4              ; 16 bytes per entry
+0x39f0  eax  = A[block] + 0x00
+0x39f2  r15d = A[block] + 0x04        ; -> mod 8 -> the mixer channel
+...
+0x3a0e  r11 = noteBlock + index*4 + 0x20   ; the 4-byte note records
+0x3a13  eax <<= 4                     ; A[block][0] * 16
+0x3a31  r12d -= eax                   ; the playhead, MINUS that
+0x3a3e  edx = *r11 & 0x7f             ; the record's step
+0x3a41  cmp r12d, edx                 ; has the playhead reached it?
+```
+
+**`A[block][0] * 16` is subtracted from the playhead before a record's step is compared.** That is
+`stepOffset = gridX * 16` — so `+0x00` **is the board column**, and the `<< 4` is a second,
+independent sighting of `STEPS_PER_CELL = 16` (the first was `v0x1c5cda`'s `trunc(x * 32 / 105)`).
+
+⚠️ So `+0x04` is **the field immediately after a proven `gridX`, in a 16-byte record written per
+placement**. The row was previously the candidate only because it was "the only per-track integer
+wide enough to need wrapping"; now it is the natural partner of the field next to it. That is a much
+better inference and still an inference: the writer has not been read. `channelVolume` in
+`project.ts` implements it and says so. If it is wrong, the 30 multi-channel sequencers are mixed
+wrong — but they were mixed wrong before too, since the volumes were not applied at all.
 
 ⚠️ **Neither rendered sequencer exercises any of this**: 723339 and 737099 both have
 `NumChannels = 1` with all six volumes at 1.0, so every row lands on the same 0.75. The 30 that do

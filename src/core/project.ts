@@ -37,11 +37,21 @@ export const CELL_WIDTH = 105 / 2;
 export const CELL_HEIGHT = 105;
 
 /**
- * ⚠️ **UNMEASURED.** Steps per grid cell along X. This is the toolkit's
- * `GRID_UNIT_STEPS`, not ours -- the 52.5-unit cell width is confirmed from the
- * engine, this multiplier is not. It sets where every clip lands on the
- * timeline, so a wrong value shifts whole instruments rather than detuning
- * them. See steering/open-questions.md.
+ * Steps per grid cell along X.
+ *
+ * ✔ **Measured, and from two independent places** -- this comment used to say
+ * UNMEASURED and credit the figure to the toolkit's `GRID_UNIT_STEPS`, which was
+ * stale on both counts:
+ *
+ * - the eboot at `v0x1c5cda` computes a step count as `trunc(x * 32 / 105)`,
+ *   i.e. 32 steps per 105 world units and so **16 per 52.5-unit cell**;
+ * - `fmodextinput.prx` `0x3a13`-`0x3a31` takes the placement's board column from
+ *   a 16-byte per-placement record, shifts it **left by 4**, and subtracts that
+ *   from the playhead before comparing a note record's step. `gridX * 16` is the
+ *   step offset, in the engine's own arithmetic.
+ *
+ * It sets where every clip lands on the timeline, so a wrong value would shift
+ * whole instruments rather than detune them.
  */
 export const STEPS_PER_CELL = 16;
 
