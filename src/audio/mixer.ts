@@ -69,6 +69,62 @@ export interface AutomationPoint {
   readonly gain: number;
 }
 
+/**
+ * The waveshaper's coefficient, `k = 2d / (1 - d)`.
+ *
+ * **Measured**, `fmodextinput.prx` `0x1ee0`-`0x1f33`:
+ *
+ * ```
+ * 0x1ee0  d  = broadcast([voice + 0x20])      ; Params[26], already clamped 0..1
+ * 0x1ee7  d  = min(d,  0.95)                  ; and this is what keeps 1 - d
+ * 0x1eef  d  = max(d, -0.95)                  ; off zero
+ * 0x1ef7  a  = d * 2
+ * 0x1f07  b  = 1 - d
+ * 0x1f0b  r  = vrcpps(b), one Newton step     ; 2r - b*r*r, at 0x1f0f-0x1f1b
+ * 0x1f1f  k  = a * r = 2d / (1 - d)
+ * ```
+ *
+ * ⚠️ The engine reciprocates with `vrcpps` plus one Newton-Raphson step rather
+ * than dividing. That lands within an ulp of a true divide and there is no way
+ * to reproduce `vrcpps`'s 12-bit seed from JavaScript, so this divides. It is
+ * the one place in the shaper that is not bit-exact, and it is smaller than the
+ * float rounding either side of it.
+ */
+export function driveCoefficient(drive: number): number {
+  const d = Math.min(Math.max(drive, 0), 0.95);
+  return (2 * d) / (1 - d);
+}
+
+/**
+ * The engine's soft clip, `f(x) = (1 + k)x / (1 + k|x|)`.
+ *
+ * **Measured**, the per-layer loop at `0x2cab`-`0x2cf1`, applied to whatever the
+ * sampler at `0x3780` returned:
+ *
+ * ```
+ * 0x2cab  |x|                                 ; vandps against the sign mask
+ * 0x2cc0  k * |x|
+ * 0x2cc4  1 + k*|x|
+ * 0x2ccc  its reciprocal, vrcpps + a Newton step again
+ * 0x2ce5  (1 + k) * x                         ; 1 + k precomputed at 0x2b4d
+ * 0x2cf1  (1 + k) * x / (1 + k*|x|)
+ * ```
+ *
+ * ⚠️ **`k = 0` is an exact bypass** -- `f(x) = x` with no rounding -- which is
+ * why the 59 instruments that leave `Params[26]` at zero render identically with
+ * this in the chain.
+ *
+ * ⚠️ **Where it sits is measured only relative to the sampler.** `0x2c88` calls
+ * the sample read, the shaper runs on its result, and `0x2d0d`/`0x2d25` then
+ * apply the gain and the pan -- so it is after the sample and before those. The
+ * ladder's position relative to it is *not* established here: that loop is
+ * per-layer and the filter is not in it. This applies the shaper immediately
+ * after the sample read, which keeps it where it was measured.
+ */
+function softClip(x: number, k: number, onePlusK: number): number {
+  return (onePlusK * x) / (1 + k * (x < 0 ? -x : x));
+}
+
 export interface VoiceSpec {
   readonly sample: SampleBuffer;
   /** Sample frames advanced per output frame. */
@@ -98,6 +154,15 @@ export interface VoiceSpec {
    * seconds** and none of them ever went away.
    */
   readonly cutFrame?: number;
+  /**
+   * `Params[26]`, the **drive**, 0..0.95 -- a soft-clip waveshaper on the
+   * sampler's output. 0 is a bypass, exactly.
+   *
+   * See `driveCoefficient`. Nine of the game's 68 instruments set it, and for
+   * `e_guitar_power` (0.731) and `e_guitar_distorted` (0.570..0.700) it is the
+   * whole character of the patch.
+   */
+  readonly drive?: number;
   /**
    * Frames for which a one-shot's gate is held open regardless of the note.
    *
@@ -370,6 +435,11 @@ class Voice {
       (automation !== undefined && automation.some((point) => point.pitch !== automation[0].pitch));
     const filterFixed =
       filter !== undefined && filter.settings.envAmount === 0 && !rateMoves;
+
+    // The drive is per note, so its two constants are solved once per voice.
+    // `k === 0` is the bypass and skips the branch entirely.
+    const driveK = driveCoefficient(this.spec.drive ?? 0);
+    const driveOnePlusK = 1 + driveK;
     let fixedBypass = false;
     if (filter && filterFixed) {
       // The envelope level is unused here, so any value gives the same answer.
@@ -440,6 +510,11 @@ class Voice {
         r = mips
           ? readMipped(mips[1] ?? mips[0], this.position, this.mipLevel, region)
           : interpolate(srcR, this.position, region);
+      }
+      if (driveK !== 0) {
+        l = softClip(l, driveK, driveOnePlusK);
+        if (!mono) r = softClip(r, driveK, driveOnePlusK);
+        else r = l;
       }
       let panLeft = this.left;
       let panRight = this.right;

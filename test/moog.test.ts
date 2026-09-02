@@ -333,3 +333,67 @@ test('a glided voice sweeps its filter, even with no filter envelope', async () 
   const flatLate = crossings(flat, (7 * rate) / 8, rate);
   assert.ok(Math.abs(flatLate / flatEarly - 1) < 0.15, `flat stayed flat: ${flatEarly} -> ${flatLate}`);
 });
+
+/**
+ * The drive, `Params[26]` — a soft clip on the sampler's output.
+ *
+ * `fmodextinput.prx` `0x1ee0`-`0x1f33` builds `k = 2d/(1 − d)` with `d` clamped
+ * to 0.95, and `0x2cab`-`0x2cf1` applies `(1 + k)x / (1 + k|x|)` to whatever the
+ * sampler returned. Nine of the game's 68 instruments set it, and for
+ * `e_guitar_power` (0.731) and `e_guitar_distorted` (0.570..0.700) it is the
+ * whole patch.
+ */
+test('the drive is a soft clip, and zero is an exact bypass', async () => {
+  const { driveCoefficient, Mixer } = await import('../src/audio/mixer.ts');
+
+  assert.equal(driveCoefficient(0), 0, 'no drive, no coefficient');
+  assert.equal(driveCoefficient(0.5), 2, '2*0.5/(1-0.5)');
+  // ⚠️ The 0.95 clamp is what keeps 1 - d off zero; without it a drive of 1
+  // divides by zero and the voice becomes NaN for the rest of the render.
+  assert.equal(driveCoefficient(1), driveCoefficient(0.95));
+  assert.ok(Number.isFinite(driveCoefficient(1)));
+  assert.equal(driveCoefficient(-5), 0, 'and the low end is clamped too');
+
+  const rate = 48000;
+  const ramp = new Float32Array(rate);
+  for (let i = 0; i < ramp.length; i += 1) ramp[i] = (i / ramp.length) * 2 - 1;
+  const render = (drive: number) => {
+    const mixer = new Mixer(rate);
+    mixer.play({
+      sample: { channels: [ramp], sampleRate: rate, loop: { start: 0, end: rate } },
+      playbackRate: 1,
+      gain: 1,
+      pan: 0,
+      endFrame: rate,
+      drive,
+    });
+    const left = new Float32Array(rate);
+    mixer.render(left, new Float32Array(rate));
+    return left;
+  };
+
+  // ⚠️ Zero must be bit-identical, not merely close: 59 of the game's 68
+  // instruments leave Params[26] at zero, so anything else here would change
+  // every render in the corpus.
+  const clean = render(0);
+  const bypass = render(0);
+  assert.deepEqual([...clean], [...bypass]);
+
+  const driven = render(0.5); // k = 2
+  // f(x) = 3x / (1 + 2|x|). At x = 0.5 that is 1.5/2 = 0.75 -- louder, and
+  // compressed towards the rail rather than clipped at it.
+  // The ramp runs -1..+1 over `rate` samples, so x maps to an index -- clamped,
+  // because x = +1 is one past the last sample.
+  const at = (buf: Float32Array, x: number) =>
+    buf[Math.min(rate - 1, Math.round(((x + 1) / 2) * rate))];
+  assert.ok(Math.abs(at(driven, 0.5) - 0.75) < 0.01, `got ${at(driven, 0.5)}`);
+  assert.ok(Math.abs(at(driven, -0.5) + 0.75) < 0.01, 'and it is odd-symmetric');
+  // f(1) = (1+k)/(1+k) = 1 exactly: the rails are fixed points, so a soft clip
+  // never exceeds full scale however hard it is driven.
+  assert.ok(Math.abs(at(driven, 1) - at(clean, 1)) < 0.01, 'the rail is a fixed point');
+  assert.ok(at(driven, 1) <= 1.0001, 'and it never goes past it');
+  assert.ok(Math.abs(at(driven, 0)) < 1e-6, 'and so is zero');
+  // Small signals get the full (1 + k) gain, which is where the loudness comes
+  // from -- and why the two guitars carry the lowest output levels in the game.
+  assert.ok(at(driven, 0.01) > at(clean, 0.01) * 2.8, 'quiet parts are lifted');
+});

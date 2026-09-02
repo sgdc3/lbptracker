@@ -1103,3 +1103,83 @@ immediately after the `.y` load" finds nothing for them. Each still resolves to
   repeats all four with **`xmm15`** in place of `xmm7`. Two modulation values in one call is not
   something this project models, and the obvious guesses — the two ends of a per-block ramp, or two
   channels — are guesses. It is written down here rather than in a descriptive file for that reason.
+
+---
+
+## 21. `Params[26]` — SETTLED and IMPLEMENTED: a soft-clip drive on the sampler's output
+
+Opened and closed on 2026-09-02. It was the largest unmodelled thing left in the synth, and it was
+hiding behind a "settled" statement that was wrong twice over.
+
+### ⚠️ What steering used to say
+
+The reverb entry recorded `voice+0x20` as *"the instrument's own reverb send … and then **nothing
+reads it** — a grep of the whole PRX finds the store and no read."* Both halves were wrong. `+0x5b8`
+is **`Params[26]`**, which this project names `drive`; the send is `Params[25]` at `+0x5b0`. And it
+**is** read — by a **`vbroadcastss`**, which is how a grep for `vmovss` missed it.
+
+### The whole thing, measured
+
+```
+0x3b93  d = Params[26].x + mod*(y - x)
+0x3baf  [voice + 0x20] = d
+0x3cd8  [voice + 0x20] = clamp(d, 0, 1)          ; at note start
+
+0x1ee0  d  = broadcast([voice + 0x20])           ; once per block
+0x1ee7  d  = min(d,  0.95)                       ; keeps 1 - d off zero
+0x1eef  d  = max(d, -0.95)
+0x1ef7  a  = d * 2
+0x1f07  b  = 1 - d
+0x1f0b  r  = vrcpps(b) + one Newton step         ; 2r - b*r*r
+0x1f1f  k  = a * r = 2d / (1 - d)
+0x2b4d  1 + k
+
+0x2c88  call 0x3780                              ; the sampler
+0x2cab  |x|                                      ; vandps with the sign mask
+0x2cc0  k * |x|
+0x2cc4  1 + k*|x|
+0x2ccc  its reciprocal, vrcpps + a Newton step again
+0x2cf1  out = (1 + k) * x / (1 + k*|x|)
+0x2d0d  ... then the gain, and 0x2d25 the pan
+```
+
+So `f(x) = (1 + k)·x / (1 + k·|x|)` — the standard soft clip — applied **per layer, to the
+sampler's output, before the gain and the pan**.
+
+Two properties that make it safe to add to an existing renderer:
+
+- **`k = 0` is an exact bypass**, `f(x) = x` with no rounding, so the 59 instruments that leave
+  `Params[26]` at zero render bit-identically.
+- **The rails are fixed points**: `f(±1) = ±1`, so however hard it is driven the shaper never
+  exceeds full scale. It is a compressor towards the rail, not a clipper at it.
+
+### What it changes
+
+| | |
+|---|---|
+| instruments that set it | **9 of 68** |
+| notes whose *evaluated* drive is non-zero | **50,383 of 1,842,515 (2.73%)**, in **109 sequencers** |
+| `e_guitar_power` | k = **5.442** — a gain of 6.4x on small signals |
+| `e_guitar_distorted` | k = 2.651…4.667 |
+| `electric_harpsichord` | k = 0.053…1.279 |
+| `baiyon_drums_1`, `baiyon_city_kyoto`, `baiyon_shiny_01` | k up to 0.5 |
+
+⚠️ Read the two counts together. 17.24% of corpus notes are *on* an instrument that sets a drive,
+but most of those are `baiyon_drums_1`, whose range is `0.000 … 0.087` — zero at modulation 0, where
+most notes sit. The number that matters is the evaluated one, 2.73%.
+
+⚠️ And note the pairing that hid this: `e_guitar_power` and `e_guitar_distorted` carry the **lowest
+output levels in the game**, 0.088 and 0.161, which is what you would expect if the drive adds level
+that has to be taken back out. Implementing the level without the drive made them quiet *and* clean
+— two errors partly cancelling, which is why nothing sounded obviously broken.
+
+### What is deliberately not claimed
+
+- ⚠️ **The engine reciprocates with `vrcpps` plus one Newton step, twice.** That lands within an ulp
+  of a true divide, and `vrcpps`'s 12-bit seed cannot be reproduced from JavaScript, so
+  `src/audio/mixer.ts` divides. It is the one place in the shaper that is not bit-exact.
+- ⚠️ **Its position is measured only relative to the sampler.** `0x2c88` calls the sample read, the
+  shaper runs on the result, and the gain and pan follow — that much is certain. The **ladder's**
+  position relative to it is not established: that loop is per-layer and the filter is not in it.
+  The implementation applies the shaper immediately after the sample read, which keeps it where it
+  was measured, but a later reading could move the filter across it.

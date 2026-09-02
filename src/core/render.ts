@@ -423,6 +423,10 @@ export async function renderSequencer(
         2 *
         P(OUTPUT_PARAMS.level) *
         stackGain,
+      // `Params[26]`. The engine clamps it to 0..1 when the note starts
+      // (`0x3cd8`-`0x3cf3`) and again to 0.95 in the block; `driveCoefficient`
+      // does the second, so only the first belongs here.
+      drive: Math.min(1, Math.max(0, P(OUTPUT_PARAMS.drive))),
       pan: track.pan,
       // Swing bends the step clock, so every frame position goes through it.
       startFrame: Math.round(swungFrame(event.step, framesPerStep, seq.swing)),
