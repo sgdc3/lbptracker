@@ -323,8 +323,8 @@ resonance 0. `square_wave` is the same story (`resonance 0.000..0.830`, all note
 **What is not settled** is whether the game sounds the same. Two things could still be wrong on our
 side and neither is checked:
 
-- the direction of the `x`/`y` interpolation (`v = x + f*(y - x)` is measured on the *sends* at
-  `0x3b64`, and assumed for the rest);
+- ~~the direction of the `x`/`y` interpolation~~ — **SETTLED 2026-09-02 for all 27 parameters**, not
+  just the sends. See *20* in [answered-questions.md](answered-questions.md);
 
 ⚠️ **A third thing, found 2026-09-02 and fixed on our side, but not settled on the engine's.**
 The filter's key tracking was being fed the voice's **opening** playback rate, so a note that glides

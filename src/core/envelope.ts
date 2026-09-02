@@ -71,6 +71,14 @@ export const ENVELOPE_SECONDS_PER_UNIT = 4;
  * `mod` comes from bits 24..27 of the note word divided by 15, so it has
  * sixteen positions. Where `x === y` -- most instruments, most params -- the
  * parameter is fixed and `mod` does nothing.
+ *
+ * ✔ **`x + mod*(y - x)`, and the direction is measured on every one of the 27
+ * parameters, not inferred from one.** `fmodextinput.prx` loads `.x` then `.y`
+ * and subtracts `y - x` at 27 distinct sites; the four filter parameters load
+ * into xmm8..xmm14 first and combine later, at `0x29c2`, `0x29ec`, `0x2a03` and
+ * `0x2a36`, which is why a scan for "the `vsubss` right after the `.y` load"
+ * finds only 23. Getting the direction backwards would invert every range in the
+ * game at once, silently, on the 19% of notes that carry a modulation.
  */
 export function evaluateParam(param: InstrumentParam, mod: number): number {
   return param.x + mod * (param.y - param.x);

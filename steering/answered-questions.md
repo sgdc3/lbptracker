@@ -1054,3 +1054,52 @@ and `0x3035` stops the voice:
   sample" written in the engine rather than inferred from a corpus. It says nothing about whether a
   gate can stop it *earlier*, which is the half question 10 still turns on, and it is in tension with
   the bound `holdFramesFor` puts on that rule. Read both before touching either.
+
+---
+
+## 20. The `x`/`y` interpolation — SETTLED: `x + f·(y − x)`, on all 27 parameters
+
+This was the first bullet of question 15, and it mattered more than its size suggests: the direction
+was **measured on the sends alone** (`0x3b64`) and *assumed* for the other twenty-six. Getting it
+backwards inverts every range in the game at once, silently, on the 19% of corpus notes that carry a
+non-zero modulation — a wrong resonance, a wrong cutoff, a wrong attack, all at the same time and
+none of them obviously wrong on their own.
+
+### How it was checked
+
+A sweep from every function start in `fmodextinput.prx`, collecting every instruction whose operand
+resolves into the `Params` array (`+0x4e8` … `+0x5b7`, 27 `(x, y)` pairs of floats). That finds
+**60 reads covering all 27 parameters**, always `.x` first and `.y` second, and for each one the
+`vsubss` that follows:
+
+| parameters | where the subtraction is | order |
+|---|---|---|
+| 0, 1, 2 — the unison stack | `0x1b20`, `0x1b82`, `0x1ab9` | `y − x` |
+| 7–10 — the filter ADSR | `0x214f`, `0x2175`, `0x219b`, `0x21c1` | `y − x` |
+| 11–14 — the amplitude ADSR | `0x1f9c`, `0x1fc0`, `0x1fe4`, `0x200b` | `y − x` |
+| 15–23 — the three LFOs | `0x224f`…`0x2806`, nine sites (three read twice) | `y − x` |
+| 24 — output level | `0x23ac` | `y − x` |
+| 25, 26 — send, drive | `0x3b64`, `0x3ba3` | `y − x` |
+| **3, 4, 5, 6 — the filter** | `0x29ec`, `0x2a36`, `0x2a03`, `0x29c2` | `y − x` |
+
+⚠️ The four filter parameters are the reason a naive scan reports only 23 of 27. They are loaded
+into `xmm8`…`xmm14` in one batch at `0x2945`-`0x297d` and combined much later, so "the `vsubss`
+immediately after the `.y` load" finds nothing for them. Each still resolves to
+`x + f·(y − x)` — e.g. the cutoff:
+
+```
+0x29ec  vsubss xmm10, xmm10, xmm13     ; y - x
+0x29f1  vmulss xmm6,  xmm7,  xmm10     ; * the modulation
+0x29f6  vaddss xmm6,  xmm13, xmm6      ; x + f*(y - x)
+0x29ff  vmulps xmm6,  xmm6,  xmm6      ; ... and then SQUARED
+```
+
+### Two things that came free
+
+- **The cutoff is squared after interpolation** (`0x29ff`), which is what `filterAtInto` already
+  does — `settings.cutoff * settings.cutoff`. Independent corroboration of a formula that had been
+  taken from a different reading.
+- ⚠️ **The filter block evaluates every parameter twice, at two different `f`s.** `0x2a54` onward
+  repeats all four with **`xmm15`** in place of `xmm7`. Two modulation values in one call is not
+  something this project models, and the obvious guesses — the two ends of a per-block ramp, or two
+  channels — are guesses. It is written down here rather than in a descriptive file for that reason.
