@@ -93,6 +93,20 @@ export interface RenderOptions {
    * that only a measurement separates them. See `holdFramesFor`.
    */
   readonly oneShot?: 'full' | 'natural' | 'gate';
+  /**
+   * Run the reverb. Default true.
+   *
+   * For comparing against a recording of the game with its reverb turned off:
+   * the reverb is a whole DSP with its own eleven-slot preset, and taking it out
+   * of both sides leaves the voice chain on its own to be judged.
+   *
+   * ⚠️ This zeroes the reverb's **return**, not its send. The send still feeds
+   * the output clip, which is where the engine's non-linearity lives, so a
+   * no-reverb render is not simply "the same render minus a tail".
+   */
+  readonly reverb?: boolean;
+  /** Run the echo. Default true. Same reasoning as `reverb`. */
+  readonly echo?: boolean;
 }
 
 export interface RenderResult {
@@ -143,6 +157,8 @@ export async function renderSequencer(
     clip = true,
     pitchShift = new Map<number, number>(),
     oneShot = 'gate',
+    reverb: withReverb = true,
+    echo: withEcho = true,
     onProgress,
   } = options;
   const now = () => (typeof performance === 'undefined' ? Date.now() : performance.now());
@@ -572,7 +588,9 @@ export async function renderSequencer(
   for (let i = 0; i < frames; i += 1) {
     if (onProgress && (i & 0x3ffff) === 0) void onProgress('effects', i, frames);
     dryEnergy += left[i] ** 2 + right[i] ** 2;
-    const e = echo.process(echoL[i], echoR[i]);
+    const e = withEcho
+      ? echo.process(echoL[i], echoR[i])
+      : { left: 0, right: 0 };
     echoEnergy += e.left ** 2 + e.right ** 2;
     let dryL = left[i] + e.left;
     let dryR = right[i] + e.right;
@@ -588,7 +606,7 @@ export async function renderSequencer(
     // ⚠️ One call per frame, stereo. It used to be two calls -- one per channel --
     // through a single instance, which ran every delay line at twice the frame
     // rate and put both channels through the same state.
-    const r = reverb.process(sendL, sendR);
+    const r = withReverb ? reverb.process(sendL, sendR) : { left: 0, right: 0 };
     reverbEnergy += r.left ** 2 + r.right ** 2;
     left[i] = dryL + r.left;
     right[i] = dryR + r.right;

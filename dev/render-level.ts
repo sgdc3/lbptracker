@@ -132,7 +132,16 @@ const unpitchedGuids = (process.env.LBP_UNPITCHED ?? '')
  * one-shot no exemption at all and clips the drums. See `holdFramesFor` in
  * `src/core/render.ts`.
  */
-const oneShot = (process.env.LBP_ONESHOT ?? 'natural') as 'full' | 'natural' | 'gate';
+const oneShot = (process.env.LBP_ONESHOT ?? 'gate') as 'full' | 'natural' | 'gate';
+
+/**
+ * `LBP_NO_REVERB=1` / `LBP_NO_ECHO=1` -- for comparing against a recording of
+ * the game with its effects turned off. Each removes that effect's **return**;
+ * the sends still feed the output clip, because that is where the engine's
+ * non-linearity is and taking it out would change the dry path too.
+ */
+const withReverb = process.env.LBP_NO_REVERB !== '1';
+const withEcho = process.env.LBP_NO_ECHO !== '1';
 
 const manifest = async (dir: string) =>
   new Map<number, { file: string }>(
@@ -233,6 +242,8 @@ const result = await renderSequencer(seq, loadInstrument, {
   clip,
   pitchShift,
   oneShot,
+  reverb: withReverb,
+  echo: withEcho,
 });
 
 console.log(
@@ -270,7 +281,7 @@ console.log(
 console.log(`pre-normalisation RMS ${result.rms.toFixed(5)}`);
 
 const { pcm, norm } = toPcm16(result.left, result.right);
-const out = `fixtures/level-seq${seq.uid}${oneShot === 'natural' ? '' : `-${oneShot}`}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${clip ? '' : '-noclip'}${
+const out = `fixtures/level-seq${seq.uid}${oneShot === 'gate' ? '' : `-${oneShot}`}${withReverb ? '' : '-noreverb'}${withEcho ? '' : '-noecho'}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${clip ? '' : '-noclip'}${
   pitchShift.size ? `-pitch${[...pitchShift.keys()].join('_')}` : ''
 }${unpitchedPercussion ? '-unpitched' : ''}.wav`;
 await writeFile(out, writeWav(pcm, 2, RATE));
