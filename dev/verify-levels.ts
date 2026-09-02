@@ -54,6 +54,7 @@ const hex = (bytes: Uint8Array) =>
 let filesChecked = 0;
 let sequencersMatched = 0;
 let placementsMatched = 0;
+let emptySequencers = 0;
 const problems: string[] = [];
 
 for (const entry of await readdir(DIR, { withFileTypes: true })) {
@@ -77,7 +78,16 @@ for (const entry of await readdir(DIR, { withFileTypes: true })) {
   for (const sequencer of musicSequencers(things)) {
     const rows = expected.get(sequencer.uid);
     if (!rows) {
-      problems.push(`${entry.name.slice(0, 8)} seq ${sequencer.uid} is not in the dump`);
+      // ⚠️ Not a mismatch when the sequencer is empty: `RawDump` writes one row
+      // per instrument placement, so a sequencer with none produces no rows at
+      // all and cannot appear in the dump. 5aa77945's uid 2470000 is one --
+      // zero placements, default tempo. The walk reports something the dump's
+      // shape cannot express.
+      if (sequencer.placements.length > 0) {
+        problems.push(`${entry.name.slice(0, 8)} seq ${sequencer.uid} is not in the dump`);
+      } else {
+        emptySequencers += 1;
+      }
       continue;
     }
     const ours = sequencer.placements.map((p) => p.instrument);
@@ -112,7 +122,8 @@ for (const entry of await readdir(DIR, { withFileTypes: true })) {
 
 console.log(
   `\n${filesChecked} levels parsed, ${sequencersMatched} music sequencers matched the dump ` +
-    `exactly, ${placementsMatched} instrument placements byte for byte`,
+    `exactly, ${placementsMatched} instrument placements byte for byte` +
+    (emptySequencers ? `; ${emptySequencers} empty sequencers the dump cannot express` : ''),
 );
 for (const problem of problems.slice(0, 20)) console.log(`  ${problem}`);
 if (problems.length > 20) console.log(`  … and ${problems.length - 20} more`);

@@ -156,6 +156,11 @@ export function hasPart(thing: Thing, name: string): boolean {
  * one Thing later, by the `0xAA` marker, and the byte offset alone does not say
  * which part was wrong. The span of every part is what turns "something before
  * byte 219" into "SHAPE ran 103..217 and should have stopped at 216".
+ *
+ * Each part and Thing fires **twice**: once on entry with `end` of -1, once on
+ * exit with the real end. The entries are what matter when the failure happens
+ * deep inside a nested read — the exits never arrive for the frames that are
+ * still open, and those are exactly the ones holding the bug.
  */
 export type Trace = (event: string, start: number, end: number) => void;
 let trace: Trace | undefined;
@@ -196,6 +201,7 @@ function fillThing(
 ): Thing {
   const { version, subVersion } = s.revision;
   const thingStart = s.position;
+  trace?.('THING', thingStart, -1);
 
   // `Revisions.THING_TEST_MARKER` is 0x2a1. It is a plain 0xAA and its whole job
   // is to fail loudly here rather than 200 bytes later.
@@ -256,6 +262,7 @@ function fillThing(
     const read = readers.get(part.name);
     if (!read) throw new UnimplementedPartError(part.name);
     const partStart = s.position;
+    trace?.(part.name, partStart, -1);
     const value = s.reference((self) => read(self, thing));
     trace?.(part.name, partStart, s.position);
     thing.parts.set(part.name, value);

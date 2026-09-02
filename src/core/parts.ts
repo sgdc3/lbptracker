@@ -654,7 +654,13 @@ export function readSwitch(s: Serializer, readers: ReadonlyMap<string, PartReade
   if (version > 0x197) s.bool(); // hideInPlayMode
   let type = 0;
   if (version > 0x1a4) {
-    type = s.i32(); // enum32, forced fixed-width
+    // ⚠️ `enum32(type, true)` — the second argument is **signed**, not "force
+    // fixed-width", so this is a zigzag varint. Read plainly it still consumes
+    // the right number of bytes for small values, which is why seven levels
+    // parsed anyway; what it gets wrong is the *value*, and `type` decides
+    // whether a sticker plan follows. A wrong type here costs one byte, one
+    // Thing later.
+    type = s.s32();
     readThingRef(s, readers); // referenceThing
     readSwitchSignal(s); // manualActivation
   }

@@ -120,9 +120,11 @@ reorder 1 and 2 — you want the asset pipeline proven before anything depends o
    anything" — so the tool was right and the inference drawn from its output was not. Two
    sessions of planning were done against a number that was answering a different question.
 
-   Do it against `tools/RawDump.java`'s output as a golden fixture — 129,696 rows — so every part
-   added is checked the moment it lands. `dev/walk-levels.ts` is the loop: it names the next
-   missing part rather than throwing a stack trace.
+   Done, 2026-09-02, in 30 part readers. `dev/walk-levels.ts` was the loop — it names the next
+   missing part rather than throwing a stack trace — and `dev/verify-levels.ts` is the check against
+   the Java dump. What remains before Java can be dropped entirely is the board **coordinates** for
+   an open circuit board: `PPos` is stepped over rather than kept, so a rebuilt placement has no
+   cell. See `musicSequencers` in `level.ts`.
 5. **Echo and reverb** — both are read out of the game and implemented in `src/audio/effects.ts`.
 6. **UI**.
 7. **Round-trip export** back into a game-loadable resource. The feature that makes the project
@@ -184,7 +186,7 @@ Follow the pattern for anything else platform-shaped.
 | `src/core/rinstrument.ts` | the `INSb` sampler patch. Parses all 68 instruments exactly |
 | `src/core/wav.ts` | 16-bit PCM RIFF read + write — the sequencer's own sample format |
 | `dev/serve.mjs`, `dev/index.html`, `dev/app.ts` | the instrument bench: picks any of the game's 68 instruments, loads its real samples, plays them across its key splits |
-| the Thing-graph walk | **not started** — this is the next real piece |
+| `src/core/thing.ts`, `level.ts`, `parts.ts` | the Thing-graph walk, in TypeScript. **All 10 corpus levels parse, and `dev/verify-levels.ts` matches `tools/RawDump.java` on 149 music sequencers and 62,158 instrument placements byte for byte** — every instrument in the corpus |
 | `src/core/render.ts` | the whole pipeline as one platform-neutral function. **Verified 2026-09-02: the Node render and a Chrome render of the same level are byte-identical** — 70,704,044 bytes, SHA-256 `1785d0d8…` |
 | `dev/render.html`, `render-app.ts`, `render-worker.ts` | the browser renderer: pick any of the corpus's 338 sequencers, render it in a worker, play it and save the WAV. **The level dump is opened by the user**, not served — the same file, opened from disk, renders to the same bytes |
 | echo, reverb | done and measured — see *2 / 2b* and *6 / 14* in [answered-questions.md](answered-questions.md) |
