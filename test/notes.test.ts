@@ -214,3 +214,37 @@ test('the modulation is the low nibble of the fourth byte, over 15', () => {
   // ⚠️ Bits 28..29 select a per-block table and must not leak in either.
   assert.equal(mod(0x30), 0);
 });
+
+// ------------------------------------------------ creator-authored names
+
+test('the editor’s XML escaping is undone in names', async () => {
+  const { decodeEntities } = await import('../src/core/parts.ts');
+
+  // The only two the corpus actually contains: &apos; 46 times across the
+  // sequencer names and 416 across the instrument names, &amp; 7 times.
+  assert.equal(decodeEntities('&apos;Sands of the Cosmos&apos;'), "'Sands of the Cosmos'");
+  assert.equal(
+    decodeEntities('Voltaic - Festerd_Jester &amp; iChaosClay'),
+    'Voltaic - Festerd_Jester & iChaosClay',
+  );
+  assert.equal(decodeEntities('Don&apos;t Touch the Monocle'), "Don't Touch the Monocle");
+
+  // The rest of the XML five, and both numeric forms.
+  assert.equal(decodeEntities('&lt;a&gt; &quot;b&quot;'), '<a> "b"');
+  assert.equal(decodeEntities('&#39;&#x27;'), "''");
+
+  // ⚠️ One pass, not five. Replacing &amp; and then &apos; would turn a literal
+  // `&amp;apos;` into an apostrophe -- the classic double-unescape.
+  assert.equal(decodeEntities('&amp;apos;'), '&apos;');
+
+  // Anything not in the XML five is left exactly as found: the game escapes for
+  // XML, so decoding HTML names would be a guess.
+  assert.equal(decodeEntities('a &nbsp; b'), 'a &nbsp; b');
+  assert.equal(decodeEntities('R&D &; &#; &#xzz;'), 'R&D &; &#; &#xzz;');
+  // A lone surrogate and an out-of-range code point stay visible rather than
+  // throwing or becoming a replacement character.
+  assert.equal(decodeEntities('&#xD800;'), '&#xD800;');
+  assert.equal(decodeEntities('&#1114112;'), '&#1114112;');
+
+  assert.equal(decodeEntities('nothing to do'), 'nothing to do');
+});
