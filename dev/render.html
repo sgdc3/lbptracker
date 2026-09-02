@@ -52,7 +52,9 @@
   #drop:hover, #drop.over { border-color: var(--accent); background: #1f2630; }
   #drop strong { display: block; margin-bottom: .3rem; }
   #drop span { color: var(--dim); font-size: .9rem; }
-  #drop[hidden] { display: none; }
+  #drop.busy { opacity: .5; pointer-events: none; }
+  #drop.loaded { padding: .8rem 1rem; }
+  #drop.loaded strong { display: inline; margin: 0; }
   #file { display: none; }
   pre { white-space: pre-wrap; color: var(--bad); font-size: .85rem; }
 </style>
@@ -69,8 +71,8 @@
   </p>
 
   <div id="drop">
-    <strong>Open a level dump</strong>
-    <span>
+    <strong id="dropTitle">Open a level dump</strong>
+    <span id="dropHint">
       Click or drop your <code>sequencers.jsonl</code> here. It is read in this tab and never
       uploaded. <em>A raw level <code>.bin</code> is not readable yet — that is the Thing-graph
       walk, build order step&nbsp;4.</em>

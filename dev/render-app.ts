@@ -20,17 +20,24 @@ const errorBox = $<HTMLPreElement>('error');
 const player = $<HTMLAudioElement>('player');
 const canvas = $<HTMLCanvasElement>('wave');
 const dropZone = $<HTMLDivElement>('drop');
+const dropTitle = $<HTMLElement>('dropTitle');
+const dropHint = $<HTMLElement>('dropHint');
 const fileInput = $<HTMLInputElement>('file');
 
 const worker = new Worker(new URL('./render-worker.ts', import.meta.url), { type: 'module' });
 
 let wavUrl: string | null = null;
 let wavName = 'render.wav';
+/** The dump currently loaded, so the drop zone can say what it is holding. */
+let loadedName = '';
 
 const setStatus = (text: string, bad = false) => {
   statusLine.textContent = text;
   statusLine.classList.toggle('bad', bad);
 };
+/** `1 sequencers` was on screen for about a minute before anyone typed this. */
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
 const setBar = (fraction: number) => {
   barFill.style.width = `${Math.max(0, Math.min(1, fraction)) * 100}%`;
 };
@@ -49,6 +56,29 @@ const WEIGHTS: Record<string, { start: number; span: number; label: string }> = 
   mix: { start: 0.02, span: 0.92, label: 'mixing voices' },
   effects: { start: 0.94, span: 0.06, label: 'echo and reverb' },
 };
+
+/**
+ * Clear whatever the last render left behind.
+ *
+ * Called before a new dump is opened. Without it a stale waveform, a stale stats
+ * table and -- worse -- a playable audio element from the *previous* dump sit
+ * under a picker that has just been pointed at a different file.
+ */
+function resetResults() {
+  if (wavUrl) URL.revokeObjectURL(wavUrl);
+  wavUrl = null;
+  player.removeAttribute('src');
+  player.load();
+  saveButton.disabled = true;
+  statsTable.innerHTML = '';
+  errorBox.textContent = '';
+  canvas.getContext('2d')!.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+/** Whether the picker accepts a new file. Refused while one is in flight. */
+function setBusy(value: boolean) {
+  dropZone.classList.toggle('busy', value);
+}
 
 /** A cheap peak envelope, so a finished render is visible as well as audible. */
 function drawWave(left: Float32Array, right: Float32Array) {
@@ -108,10 +138,18 @@ worker.onmessage = (event: MessageEvent) => {
     if (halloween) seqSelect.value = String(halloween.uid);
     seqSelect.disabled = false;
     goButton.disabled = false;
+    setBusy(false);
     setBar(1);
+    // ⚠️ The zone stays. Swapping one dump for another without reloading the
+    // page is the first thing anyone tries, and hiding the picker after the
+    // first load made it impossible.
+    dropZone.classList.add('loaded');
+    dropTitle.textContent = `${loadedName} — ${plural(list.length, 'sequencer')}`;
+    dropHint.textContent = 'Click or drop to open a different dump.';
     setStatus(
-      `ready — ${list.length} sequencers, ${message.instruments} instruments, ` +
-        `${message.samples} samples`,
+      `ready — ${plural(list.length, 'sequencer')}, ` +
+        `${plural(Number(message.instruments), 'instrument')}, ` +
+        `${plural(Number(message.samples), 'sample')}`,
     );
     return;
   }
@@ -152,8 +190,13 @@ worker.onmessage = (event: MessageEvent) => {
     return;
   }
 
+  if (message.type === 'done') {
+    setBusy(false);
+  }
+
   if (message.type === 'error') {
     goButton.disabled = false;
+    setBusy(false);
     setStatus('failed', true);
     errorBox.textContent = String(message.text);
   }
@@ -163,6 +206,7 @@ goButton.addEventListener('click', () => {
   errorBox.textContent = '';
   goButton.disabled = true;
   saveButton.disabled = true;
+  setBusy(true);
   setBar(0);
   worker.postMessage({
     type: 'render',
@@ -181,7 +225,13 @@ saveButton.addEventListener('click', () => {
 
 /** Hand the worker a `File`; it does the reading, so this thread stays free. */
 function loadFrom(file: File) {
-  dropZone.hidden = true;
+  loadedName = file.name;
+  resetResults();
+  seqSelect.disabled = true;
+  seqSelect.innerHTML = '<option>loading…</option>';
+  goButton.disabled = true;
+  setBusy(true);
+  setBar(0);
   setStatus(`reading ${file.name}…`);
   worker.postMessage({ type: 'load', file });
 }
@@ -189,6 +239,9 @@ function loadFrom(file: File) {
 dropZone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
   const file = fileInput.files?.[0];
+  // Cleared so that picking the *same* file again still fires `change`, which
+  // is how you re-read a dump you have just regenerated.
+  fileInput.value = '';
   if (file) loadFrom(file);
 });
 for (const event of ['dragenter', 'dragover'] as const) {
