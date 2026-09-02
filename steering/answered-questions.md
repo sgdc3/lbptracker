@@ -1302,13 +1302,32 @@ Read the same day, `v0xa57770` -- the `GetDriverCaps` callback of the output des
 `setSpeakerMode`, so that is the mode it runs in, and `sceAudioOutOpen` gets `param = 5`,
 `FLOAT_8CH`.
 
-**LBP3 renders eight channels.** The stereo anyone hears is a downmix underneath it, and `0.7071` is
-the ITU-R BS.775 centre coefficient -- the textbook one. ⚠️ **So the constant is the playback
-chain's, not LBP's own pan law.** Keeping it is still right for this tracker, which is a stereo
-renderer for stereo listeners; what it means is that the game's *internal* image is wider, and that
-a capture made through a different downmixer should reproduce the same number only insofar as that
-downmixer follows the standard. See question 22 in [open-questions.md](open-questions.md) for the
-one piece still missing: what puts `(L+R)/2` in the centre channel in the first place.
+**LBP3 renders eight channels.** The stereo anyone hears is a downmix underneath it.
+
+### ✔ And the downmix itself is read, because the captures were made under shadPS4
+
+`shared/src/core/libraries/audio/sdl_audio_out.cpp`, `DownmixF32_8CHToStereoPS4`, taken when the
+game opens six or more channels and the host device is stereo:
+
+```c
+static constexpr float DOWNMIX_CENTER = 0.7071f;                 // FC = 2
+d[i*2 + 0] = s[o + FL] + 0.7071f * s[o + FC] + 0.7071f * (s[o+4] + s[o+6]);
+d[i*2 + 1] = s[o + FR] + 0.7071f * s[o + FC] + 0.7071f * (s[o+5] + s[o+7]);
+```
+
+A 7.1 fold cross-feeds **only** through the centre, so the measurement pins the content:
+`0.7071 * FC = 0.3536 * (L+R)`, hence `FC = (L+R)/2`. ⚠️ **The asymmetric alternative is refuted by
+the recordings themselves**: had FMOD mapped the DSP's four channels straight into the bus as
+FL, FR, FC, LFE, the centre would hold `L * send` and the ratio would be 0.2612 at pan 0 and **0**
+at pan 1. Both captures give 0.261202.
+
+**So the two halves have different owners.** The centre feed is the *game's* -- FMOD putting a mono
+average there when it upmixes the 4-channel DSP into 7.1 -- and the `1/sqrt2` fold is the
+*downmixer's*, and it is the ITU-R BS.775 coefficient that real hardware and a compliant emulator
+share. A stereo listener hears this narrowing either way, which is why the tracker reproduces it.
+
+What is left of question 22 in [open-questions.md](open-questions.md) is only *why* FMOD feeds the
+centre at all.
 
 ### What was implemented
 

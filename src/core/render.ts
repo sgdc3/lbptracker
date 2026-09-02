@@ -70,23 +70,24 @@ export const RATE = 48000;
  * average of a stereo pair folded back in at the textbook -3 dB, which is what a
  * **centre channel** does.
  *
- * ⚠️ **This is the playback chain's fold, not LBP's own pan law.** The game
- * renders **7.1**: `v0xa57770`, FMOD's `GetDriverCaps` for its "FMOD Orbis
- * AudioOut Output" driver, reports `FMOD_SPEAKERMODE_7POINT1`, 48 kHz and
- * float, and the game never calls `setSpeakerMode`. So eight channels leave the
- * game and the stereo anyone hears is a downmix underneath it -- where `1/sqrt2`
- * is the ITU-R BS.775 centre coefficient.
+ * ⚠️ **It happens in the stereo fold, not in the sequencer**, and the two halves
+ * have different owners. The game renders **7.1**: `v0xa57770`, FMOD's
+ * `GetDriverCaps` for its "FMOD Orbis AudioOut Output" driver, reports
+ * `FMOD_SPEAKERMODE_7POINT1`, 48 kHz and float, and `setSpeakerMode` is never
+ * called. Eight channels leave the game, and folding 7.1 to stereo cross-feeds
+ * **only through the centre**, at the ITU-R BS.775 coefficient `1/sqrt2` --
+ * which is what `2^-1.5 = 0.7071 * (L+R)/2` is.
  *
- * Nothing in the sequencer itself does this: the plugin's pan law is exactly
- * `1-p` / `p` (`0x2d21`/`0x2d40`), the pan reaches the voice unmodified
- * (`0x3b29`), and its four output channels are one image plus a scaled copy,
- * which cannot cross-feed. What still has no reading is what puts `(L+R)/2` in
- * the centre channel -- see question 22 in steering/open-questions.md.
+ * So the centre must carry the mono average, and that part is the *game's*: the
+ * sequencer itself cannot do it -- its pan law is exactly `1-p` / `p`
+ * (`0x2d21`/`0x2d40`), the pan reaches the voice unmodified (`0x3b29`), and its
+ * four output channels are one image plus a scaled copy. What has no reading yet
+ * is why FMOD feeds the centre when it upmixes that 4-channel DSP into 7.1. See
+ * question 22 in steering/open-questions.md.
  *
- * Keeping it is right anyway: this is a stereo renderer for stereo listeners,
- * and it matches what they hear. It does mean the game's **internal** image is
- * wider than this, and that a capture made through a downmixer that does not
- * follow the standard would measure a different constant.
+ * A stereo listener therefore hears this narrowing on hardware or emulator
+ * alike, which is why the tracker reproduces it. It does mean the game's
+ * **internal** image is wider than what this renders.
  *
  * ⚠️ **Width, not gain.** The recordings were level-matched, so they fix the
  * ratio between the channels and say nothing about the absolute level. This

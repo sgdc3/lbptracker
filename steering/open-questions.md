@@ -626,13 +626,13 @@ What works instead, in order of preference:
 
 ---
 
-## 22. What puts a mono sum in the centre channel -- the fold itself is now placed
+## 22. Why FMOD feeds the centre speaker a mono sum -- everything downstream is now read
 
-⚠️ **Read [answered-questions.md](answered-questions.md) entry 22 first.** What the game does is
-measured to six significant figures and implemented (`PAN_WIDTH = 2-sqrt2`). What is left is a much
-smaller question than it was, because the *location* is now read.
+⚠️ **Read [answered-questions.md](answered-questions.md) entry 22 first.** The narrowing is
+measured to six significant figures and implemented (`PAN_WIDTH = 2-sqrt2`). Both ends of the chain
+below the sequencer are now *read*, not fitted, and what is left is one step inside FMOD.
 
-### ✔ The game's output is 7.1, so the fold is BELOW the game
+### ✔ The game renders 7.1
 
 `v0xa57770`, the `GetDriverCaps` callback of the output description built at `v0x13e3c78` and named
 **"FMOD Orbis AudioOut Output"**:
@@ -643,39 +643,56 @@ smaller question than it was, because the *location* is now read.
 0xa5778b  [r8]  = 6         ; FMOD_SPEAKERMODE_7POINT1
 ```
 
-Its two neighbours in the same table confirm it is that table: `v0xa57720` writes `[rsi] = 1` (one
-driver) and `v0xa57730` copies the string `"Orbis AudioOut output"`. The game never calls
-`setSpeakerMode`, so this **is** the mode FMOD runs in: `ebx` in `Init` is 8 and
-`param = 4 | (8 != 2) = 5`, `SCE_AUDIO_OUT_PARAM_FORMAT_FLOAT_8CH`.
+Its neighbours confirm it is that table: `v0xa57720` writes one driver, `v0xa57730` copies
+`"Orbis AudioOut output"`. The game never calls `setSpeakerMode`, so this is the mode FMOD runs in,
+and `sceAudioOutOpen` gets `param = 5`, `FLOAT_8CH`. **Eight channels leave the game.**
 
-⚠️ **So LBP3 renders eight channels and the stereo a listener hears is a downmix underneath it.**
-The narrowing is not in the game. Branches 1 and 2 of the old version of this question -- FMOD
-downmixing 4->2 itself -- are dead: FMOD is *up*mixing 4->8 here, and the fold to two is somebody
-else's.
+The Init callback was reached the direct way in the end: it is called once, from a C++ adjustor
+thunk at `v0xa574a0` (`add rax, -0x38`), whose address is taken at `v0xa57412` -- the description
+being built. Searching for the real function's address had failed because nothing takes it.
 
-That also explains the constant's shape. `c = 2^-1.5` is `0.7071 * (L+R)/2`: a **centre channel**
-carrying the mono average, folded at the -3 dB coefficient of ITU-R BS.775 -- the textbook stereo
-downmix, which any standards-following downmixer applies identically.
+### ✔ The fold to stereo, read from shadPS4's source
 
-### What is actually left
+The listener's captures were made under shadPS4, so the downmix is not inferred at all --
+`shared/src/core/libraries/audio/sdl_audio_out.cpp`, `DownmixF32_8CHToStereoPS4`:
 
-**Where does the centre content come from?** A 7.1 downmix only cross-feeds through C, so something
-must be putting `(L+R)/2` there, and nothing found so far does:
+```c
+static constexpr float DOWNMIX_FRONT   = 1.0f;
+static constexpr float DOWNMIX_CENTER  = 0.7071f;
+static constexpr float DOWNMIX_SURROUND = 0.7071f;
 
-- the sequencer DSP is 4-channel and writes one image plus a scaled copy (see below), no centre;
-- FMOD's `FMOD_SPEAKERMAPTYPE_DEFAULT` maps a 4-channel source as quad -- FL, FR and two surrounds,
-  which fold without cross-feed;
-- a mapping that reached C would have to be **symmetric**, and the recordings prove symmetry: pan 0
-  and pan 1 give the same 0.261202, so a scheme feeding only one channel into C is excluded.
+const float center = DOWNMIX_CENTER * s[o + FC];              // FC = 2
+d[i*2 + 0] = DOWNMIX_FRONT * s[o + FL] + center + DOWNMIX_SURROUND * (s[o+4] + s[o+6]);
+d[i*2 + 1] = DOWNMIX_FRONT * s[o + FR] + center + DOWNMIX_SURROUND * (s[o+5] + s[o+7]);
+```
 
-⚠️ **And the measured constant belongs to the downmixer, not to LBP.** If the capture that
-produced it came from an emulator rather than PS4 hardware, the number is that emulator's fold. It
-is the ITU coefficient, so a compliant downmixer agrees -- but this has not been checked against two
-different chains, and it is the cheapest thing left to check.
+selected when `num_channels >= 6` and the host device reports 1 or 2 channels (`ps4_downmix`).
+**A 7.1 downmix cross-feeds only through the centre**: the surround terms go to their own side.
 
-⚠️ **What this does NOT change:** the tracker is a stereo renderer for stereo listeners, and it
-matches what they hear. Keeping `PAN_WIDTH` is right regardless of which side of the HDMI cable the
-fold happens on. Only the *attribution* of the constant is at stake here, not the audio.
+### ✔ Therefore the centre carries `(L+R)/2` -- derived, not fitted
+
+With the fold read, the measurement forces the content. `0.7071 * FC = 0.3536 * (L+R)` gives
+`FC = (L+R)/2`, and the obvious alternative is **refuted by the recordings**: if FMOD mapped the
+DSP's four channels straight into the bus as FL, FR, FC, LFE, the centre would hold `L * send` and
+the result would be *asymmetric* -- ratio 0.2612 at pan 0 and **0** at pan 1. The two captures give
+the same 0.261202 at both. Any scheme feeding one side into the centre dies the same way.
+
+### What is left, and it is one step
+
+**Why does FMOD Ex put the mono average of a 4-channel 2D source into the centre speaker when it
+upmixes to 7.1?** That is the only unread link. The channel is created by `playDSP`, is `FMOD_2D`,
+has pan `0.0`, volume `1.0`, and no `setSpeakerMix` or `setSpeakerLevels` is ever called on it, so
+whatever does this is FMOD's default matrix -- `fmod_dspi.cpp` / `fmod_dsp_connectionpool.cpp`.
+
+⚠️ **This is now a curiosity, not a fidelity risk.** The centre feed is the *game's* (FMOD's), and
+the `1/sqrt2` fold is the *downmixer's* and is the ITU-R BS.775 coefficient, which real hardware and
+a compliant emulator share. So a stereo listener hears this narrowing either way, and the tracker is
+right to reproduce it.
+
+⚠️ **The experiment that would show the eight channels directly**, and it is cheap: shadPS4 only
+downmixes when the host device is stereo. Point it at a device reporting more than two channels and
+SDL gets the raw 8-channel stream -- capture that and the centre channel can be read straight off,
+turning the last derived step into a measured one.
 
 ### What has been eliminated, with the address that eliminated it
 
@@ -690,13 +707,6 @@ fold happens on. Only the *attribution* of the constant is at stake here, not th
 | a mono reverb send bleeding into the output | **no** — the two dominant placements have `reverbSend` **0.000** |
 | the mixer-channel records carrying a pan | **no** — `0x10b7`-`0x10cb` fill them `{0.75, 0, 0}` and `0x3adf`/`0x3ae9` read the second and third as **integer flags**, `or`-ed with a global |
 | the level position | **no** — the listener plays the game and says so |
-
-### The next reading, if it is picked up again
-
-FMOD's own upmix of a 4-channel DSP unit into a 7.1 bus: `fmod_dspi.cpp` /
-`fmod_dsp_connectionpool.cpp`, the default connection matrix. That is the only place left inside the
-game where a centre feed could be created, and if it is not there then the fold is entirely the
-playback chain's and question 22 closes as "not LBP's".
 
 
 ## 23. A flat ~1 dB deficit above 315 Hz

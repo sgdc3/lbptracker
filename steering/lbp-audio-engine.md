@@ -89,6 +89,36 @@ FMOD DSP units** — they are not a bespoke effect. That is good news for fideli
 a plain delay line with feedback and a wet/dry mix, and reproducing it in an AudioWorklet is
 arithmetic, not guesswork.
 
+## The output stage: the game is a 7.1 renderer
+
+✔ **Measured 2026-09-03**, `v0xa57770` -- the `GetDriverCaps` callback of the output description
+built at `v0x13e3c78` and named **"FMOD Orbis AudioOut Output"**:
+
+```
+[rdx] = 0x84      FMOD_CAPS_OUTPUT_MULTICHANNEL | FMOD_CAPS_OUTPUT_FORMAT_PCMFLOAT
+[rcx] = 0xbb80    48000, and v0xa577f7 rejects anything else
+[r8]  = 6         FMOD_SPEAKERMODE_7POINT1
+```
+
+The game never calls `setSpeakerMode`, so that is the mode FMOD runs in. Its output plugin's `Init`
+(`v0xa577a0`) accepts a speaker count of **2 or 8 and nothing else**, and passes
+`param = 4 | (channels != 2)` to `sceAudioOutOpen` -- 4 is `FLOAT_STEREO`, 5 is `FLOAT_8CH` -- then
+sets all eight speaker volumes to `32768`, 0 dB, applying no trim of its own.
+
+⚠️ **So everything this project measures from a recording is measured through a downmix**, and the
+stereo image the tracker matches is narrower than the game's internal one. That is not a defect in
+the recordings; it is what a stereo listener hears. See *22. The stereo width* in
+[answered-questions.md](answered-questions.md) for the constant (`PAN_WIDTH = 2-sqrt2`) and for
+which half of it belongs to the game and which to the fold.
+
+⚠️ **How the corpus of recordings is captured, and why it matters.** They come from **shadPS4**,
+not from PS4 hardware. That is usually irrelevant -- but not for anything measured downstream of
+FMOD, where the emulator supplies the code. Its fold lives in
+`shared/src/core/libraries/audio/sdl_audio_out.cpp`, `DownmixF32_8CHToStereoPS4`, and it runs only
+when the game opens six or more channels **and the host audio device is stereo**. Point shadPS4 at a
+device with more than two channels and no downmix happens at all, which is the cheapest way to
+capture the game's eight channels directly.
+
 ## What this means for matching the sound
 
 - **Echo**: **settled** — not an FMOD DSP at all, but a delay inside `fmodextinput.prx` on a
