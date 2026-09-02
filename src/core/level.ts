@@ -93,12 +93,15 @@ function readStreamingManager(s: Serializer): void {
  * older ones are omitted rather than left as dead code.
  */
 function readWorld(s: Serializer, readers: ReadonlyMap<string, PartReader>): never {
-  s.f32(); // backdropOffsetX
-  s.f32(); // backdropOffsetY
-  s.f32(); // backdropOffsetZ
-  s.bool(); // backdropOffsetZAuto
-  s.str(); // overrideBackdropAmbience
-  s.reference(readStreamingManager);
+  const { subVersion } = s.revision;
+  if (subVersion >= 0x6d) {
+    s.f32(); // backdropOffsetX
+    s.f32(); // backdropOffsetY
+    s.f32(); // backdropOffsetZ
+  }
+  if (subVersion >= 0x70) s.bool(); // backdropOffsetZAuto
+  if (subVersion >= 0xe2) s.str(); // overrideBackdropAmbience
+  if (subVersion >= 0x3f) s.reference(readStreamingManager);
   const things = s.references((self) => readThing(self, readers));
   throw new StopParse(things);
 }

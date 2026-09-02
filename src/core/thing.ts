@@ -165,8 +165,9 @@ export function readThing(s: Serializer, readers: ReadonlyMap<string, PartReader
     const marker = s.u8();
     if (marker !== 0xaa) {
       throw new SerializerError(
-        `Thing test marker was 0x${marker.toString(16)}, not 0xaa — the stream is ` +
-          `already out of step before this Thing`,
+        `Thing test marker was 0x${marker.toString(16)}, not 0xaa, at byte ` +
+          `${s.position - 1} — the part reader before this one consumed the wrong ` +
+          `number of bytes`,
       );
     }
   }

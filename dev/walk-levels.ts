@@ -16,11 +16,12 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { readLevel } from '../src/core/level.ts';
 import { loadResource } from '../src/core/resource.ts';
-import { UnimplementedPartError, type PartReader } from '../src/core/thing.ts';
+import { partReaders } from '../src/core/parts.ts';
+import { UnimplementedPartError } from '../src/core/thing.ts';
 import { nodeInflate } from '../src/platform/node.ts';
 
 const DIR = process.argv[2] ?? 'C:/Users/sgdc3/Desktop/LBP/toolkit/tools/sequencerdump/data';
-const readers = new Map<string, PartReader>();
+const readers = partReaders();
 
 const missing = new Map<string, number>();
 for (const entry of await readdir(DIR, { withFileTypes: true })) {
@@ -37,7 +38,7 @@ for (const entry of await readdir(DIR, { withFileTypes: true })) {
     const label =
       error instanceof UnimplementedPartError
         ? `part ${error.part}`
-        : String((error as Error).message).slice(0, 80);
+        : String((error as Error).message);
     console.log(`${entry.name.slice(0, 8)}  ${tag}  -> ${label}`);
     missing.set(label, (missing.get(label) ?? 0) + 1);
   }
