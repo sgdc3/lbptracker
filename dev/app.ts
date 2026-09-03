@@ -245,6 +245,52 @@ function noteSeconds(): number {
   return Number(($('length') as HTMLInputElement).value) / 100;
 }
 
+/** A slider's raw value. */
+const num = (id: string) => Number(($(id) as HTMLInputElement).value);
+/** A slider scaled to 0..1. */
+const unit = (id: string) => num(id) / 100;
+const ticked = (id: string) => ($(id) as HTMLInputElement).checked;
+
+/**
+ * The live overrides, read at note-on.
+ *
+ * ⚠️ **Off by default, and that is the point.** Unticked, every group falls
+ * through to the instrument's own measured parameters, so the bench still plays
+ * the game. The sliders are for asking "what does this knob do", not for
+ * inventing a patch and mistaking it for the engine.
+ */
+const overrideAdsr = () =>
+  ticked('ovEnv')
+    ? {
+        attack: num('envA') / 100,
+        decay: num('envD') / 100,
+        sustain: unit('envS'),
+        release: num('envR') / 100,
+      }
+    : undefined;
+
+const overrideFilter = () =>
+  ticked('ovFilter')
+    ? {
+        settings: {
+          cutoff: unit('filCut'),
+          resonance: unit('filRes'),
+          keyTrack: num('filTrack') / 100,
+          envAmount: num('filEnv') / 100,
+        },
+        envelope: { attack: 0, decay: 0.3, sustain: 1, release: 0.2 },
+      }
+    : undefined;
+
+const overrideLfos = () =>
+  ticked('ovLfo')
+    ? ([0, 1, 2].map((i) => ({
+        rate: num(`lfo${i + 1}r`) / 10,
+        depth: unit(`lfo${i + 1}d`),
+        spread: 0,
+      })) as unknown as ReturnType<typeof currentLfos>)
+    : undefined;
+
 /**
  * The instrument's own ADSR, or undefined when the bench is asked to fall back
  * to the stand-ins so the two can be compared.
@@ -291,6 +337,89 @@ function currentLfos() {
     spread: p[l.spread].x,
   });
   return [one(LFO_PARAMS[0]), one(LFO_PARAMS[1]), one(LFO_PARAMS[2])] as const;
+}
+
+/**
+ * A note that lasts until it is let go.
+ *
+ * The sequencer never needs this -- every note it writes already knows its own
+ * length -- so the gate is left open (no `endFrame`) and `Mixer.release` closes
+ * it when the key, the mouse or the MIDI note comes up. One tag per sounding
+ * note; retriggering the same note releases the old one first, which is what a
+ * keyboard does and what stops a stuck key ringing forever.
+ */
+let nextTag = 1;
+const sounding = new Map<number, number>();
+
+function noteOn(note: number, velocity = 96): void {
+  const v = voiceFor(note);
+  if (!v || !node || !context) return;
+  // The browser-resampler control has no note-off; it stays timed, and says so.
+  if (engine === 'browser') {
+    playNote(note);
+    return;
+  }
+  noteOff(note);
+  const tag = nextTag++;
+  sounding.set(note, tag);
+  const adsr = overrideAdsr() ?? currentAdsr();
+  node.port.postMessage({
+    type: 'play',
+    sampleId: `slot${v.zone}`,
+    voice: {
+      playbackRate: v.playbackRate,
+      gain:
+        velocityGain(velocity) * 2 * (instrument?.params[OUTPUT_PARAMS.level].x ?? 0.5),
+      pan: unit('pPan'),
+      drive: unit('pDrive'),
+      echoSend: unit('echoSend'),
+      reverbSend: unit('reverbSend'),
+      // No `endFrame`: the gate stays open until `release` closes it.
+      release: adsr ? 0 : Math.round(0.12 * context.sampleRate),
+      decayDbPerSecond: adsr ? 0 : num('decay'),
+      envelope: adsr,
+      filter: overrideFilter() ?? currentFilter(),
+      lfos: overrideLfos() ?? currentLfos(),
+      tag,
+    },
+  });
+  setKeyDown(note, true);
+  $('detail').textContent = describe(note);
+}
+
+function noteOff(note: number): void {
+  const tag = sounding.get(note);
+  if (tag === undefined) return;
+  sounding.delete(note);
+  node?.port.postMessage({ type: 'release', tag });
+  setKeyDown(note, false);
+}
+
+/** Let go of everything, for Escape and for a lost focus. */
+function panic(): void {
+  for (const note of [...sounding.keys()]) noteOff(note);
+  node?.port.postMessage({ type: 'stopAll' });
+}
+
+/**
+ * Push the whole output stage to the worklet.
+ *
+ * Rebuilding an effect drops its tail, so this is called when a control moves
+ * and not per note.
+ */
+function pushEffects(): void {
+  const framesPerStep = ((60 / num('tempo')) / 4) * (context?.sampleRate ?? 48000);
+  node?.port.postMessage({
+    type: 'effects',
+    echoTime: num('echoTime') / 10,
+    framesPerStep,
+    feedback: unit('echoFb'),
+    mix: unit('echoMix'),
+    reverbSetting: num('reverbSet'),
+    echoOn: unit('echoSend') > 0,
+    reverbOn: unit('reverbSend') > 0,
+    clip: ticked('optClip'),
+  });
 }
 
 function playNote(note: number, atSeconds = 0): void {
@@ -377,23 +506,125 @@ function describe(note: number): string {
   );
 }
 
-/** Colour each key by the slot it resolves to, so the zones are visible. */
-function buildKeyboard(): void {
-  const keys = $('keys');
-  keys.textContent = '';
-  for (let note = 12; note <= 96; note += 1) {
-    const v = voiceFor(note);
-    const key = document.createElement('button');
-    key.className = 'key' + (NOTE_NAMES[note % 12].includes('#') ? ' sharp' : '');
-    if (v) key.style.borderBottom = `3px solid ${zoneColour(v.zone)}`;
-    key.textContent = noteName(note);
-    key.title = describe(note);
-    key.addEventListener('click', () => {
-      playNote(note);
-      $('detail').textContent = describe(note);
-    });
-    keys.append(key);
+/**
+ * Which computer key plays a note, inverted from KEY_MAP for the caps.
+ *
+ * ⚠️ A `KeyboardEvent.code` is a name, not a character: `Comma`, `Period` and
+ * `Slash` are three of the twenty-five keys in the map, and printing the code
+ * verbatim put whole words across the keys they label.
+ */
+const CODE_GLYPH: Record<string, string> = {
+  Comma: ',', Period: '.', Slash: '/', Semicolon: ';', Quote: "'",
+  BracketLeft: '[', BracketRight: ']', Backslash: '\\', Minus: '-', Equal: '=',
+  Backquote: '`',
+};
+
+function capsFor(note: number): string {
+  const offset = note - octaveBase;
+  for (const [code, value] of Object.entries(KEY_MAP)) {
+    if (value !== offset) continue;
+    return CODE_GLYPH[code] ?? code.replace(/^(Key|Digit)/, '');
   }
+  return '';
+}
+
+/**
+ * A real piano: white keys in a row, black keys overlaid between them.
+ *
+ * ⚠️ The black key's position cannot be derived from a count of naturals
+ * alone -- there is no black key between E/F or B/C -- so each one is placed at
+ * the boundary of the white key it follows. The offsets below are that
+ * boundary, in white-key widths.
+ */
+const PIANO_LOW = 24; // C1
+const PIANO_HIGH = 96; // C7
+const BLACK_AFTER = new Set([0, 2, 5, 7, 9]); // C D F G A
+
+function buildKeyboard(): void {
+  const piano = $('piano');
+  piano.textContent = '';
+  const whites: number[] = [];
+  for (let note = PIANO_LOW; note <= PIANO_HIGH; note += 1) {
+    if (!NOTE_NAMES[note % 12].includes('#')) whites.push(note);
+  }
+  const width = 100 / whites.length;
+
+  whites.forEach((note, index) => {
+    const key = document.createElement('div');
+    key.className = 'wkey';
+    key.dataset.note = String(note);
+    key.title = describe(note);
+    const v = voiceFor(note);
+    const zone = document.createElement('div');
+    zone.className = 'zone';
+    if (v) zone.style.background = zoneColour(v.zone);
+    const caps = document.createElement('div');
+    caps.className = 'caps';
+    caps.textContent = capsFor(note);
+    const label = document.createElement('div');
+    label.className = 'lbl';
+    label.textContent = note % 12 === 0 ? noteName(note) : '';
+    key.append(zone, caps, label);
+    piano.append(key);
+
+    // The sharp above this white key, if the pair has one.
+    if (BLACK_AFTER.has(note % 12) && note + 1 <= PIANO_HIGH) {
+      const sharp = note + 1;
+      const black = document.createElement('div');
+      black.className = 'bkey';
+      black.dataset.note = String(sharp);
+      black.title = describe(sharp);
+      black.style.left = `${(index + 1) * width}%`;
+      black.style.width = `${width * 0.62}%`;
+      black.style.marginLeft = `${-width * 0.31}%`;
+      const bz = document.createElement('div');
+      bz.className = 'zone';
+      const bv = voiceFor(sharp);
+      if (bv) bz.style.background = zoneColour(bv.zone);
+      const bc = document.createElement('div');
+      bc.className = 'caps';
+      bc.textContent = capsFor(sharp);
+      black.append(bz, bc);
+      piano.append(black);
+    }
+  });
+}
+
+/** Pointer play: press, glide across keys, release anywhere. */
+function bindPiano(): void {
+  const piano = $('piano');
+  let gliding = false;
+  let last = -1;
+  const noteAt = (target: EventTarget | null): number => {
+    const el = (target as HTMLElement | null)?.closest<HTMLElement>('[data-note]');
+    return el ? Number(el.dataset.note) : -1;
+  };
+  piano.addEventListener('pointerdown', (event) => {
+    const note = noteAt(event.target);
+    if (note < 0) return;
+    gliding = true;
+    last = note;
+    piano.setPointerCapture(event.pointerId);
+    noteOn(note);
+    event.preventDefault();
+  });
+  piano.addEventListener('pointermove', (event) => {
+    if (!gliding) return;
+    // `elementFromPoint`, because the capture sends every move to the piano.
+    const note = noteAt(document.elementFromPoint(event.clientX, event.clientY));
+    if (note < 0 || note === last) return;
+    noteOff(last);
+    last = note;
+    noteOn(note);
+  });
+  const up = () => {
+    if (!gliding) return;
+    gliding = false;
+    noteOff(last);
+    last = -1;
+  };
+  piano.addEventListener('pointerup', up);
+  piano.addEventListener('pointercancel', up);
 }
 
 function zoneColour(zone: number): string {
@@ -401,13 +632,91 @@ function zoneColour(zone: number): string {
   return `hsl(${hues[zone % hues.length]} 60% 55%)`;
 }
 
-/** Light the on-screen key so the mapping is visible while playing. */
+/** Light the on-screen key, so the mapping is visible while playing. */
+function setKeyDown(note: number, down: boolean): void {
+  const el = document.querySelector<HTMLElement>(`#piano [data-note="${note}"]`);
+  el?.classList.toggle('down', down);
+}
+
+/** A flash for the timed bench buttons, which have no key-up to wait for. */
 function flashKey(note: number): void {
-  const el = [...document.querySelectorAll<HTMLElement>('#keys .key')]
-    .find((k) => k.textContent === noteName(note));
-  if (!el) return;
-  el.classList.add('lit');
-  setTimeout(() => el.classList.remove('lit'), 140);
+  setKeyDown(note, true);
+  setTimeout(() => setKeyDown(note, false), 140);
+}
+
+/** Octave changed: let go of everything and redraw the key caps. */
+function shiftedOctave(): void {
+  panic();
+  $('octave').textContent = `octave: ${noteName(octaveBase)}`;
+  for (const el of document.querySelectorAll<HTMLElement>('#piano [data-note]')) {
+    const caps = el.querySelector('.caps');
+    if (caps) caps.textContent = capsFor(Number(el.dataset.note));
+  }
+}
+
+/**
+ * Web MIDI, when the browser has it and the user allows it.
+ *
+ * ⚠️ `requestMIDIAccess` prompts, so it is asked for only when a device is
+ * chosen -- opening the page must not put a permission dialog in the way of the
+ * mouse and the computer keyboard, which need no permission at all.
+ */
+let midiAccess: MIDIAccess | null = null;
+
+async function enableMidi(): Promise<void> {
+  const state = $('midiState');
+  if (typeof navigator.requestMIDIAccess !== 'function') {
+    state.textContent = 'not supported by this browser';
+    return;
+  }
+  try {
+    midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+  } catch (error) {
+    state.textContent = `refused: ${(error as Error).message}`;
+    state.classList.remove('on');
+    return;
+  }
+  const select = $<HTMLSelectElement>('midiIn');
+  const listed = [...(midiAccess?.inputs.values() ?? [])];
+  select.innerHTML = '<option value="">none</option>';
+  for (const input of listed) {
+    const option = document.createElement('option');
+    option.value = input.id;
+    option.textContent = input.name;
+    select.append(option);
+  }
+  state.textContent = listed.length
+    ? `${listed.length} input${listed.length === 1 ? '' : 's'} — pick one`
+    : 'no inputs found';
+  state.classList.toggle('on', listed.length > 0);
+  if (listed.length === 1) {
+    select.value = listed[0].id;
+    listenTo(listed[0].id);
+  }
+}
+
+function listenTo(id: string): void {
+  for (const input of midiAccess?.inputs.values() ?? []) {
+    input.onmidimessage = null;
+  }
+  const port = [...(midiAccess?.inputs.values() ?? [])].find((p) => p.id === id);
+  const state = $('midiState');
+  if (!port) {
+    state.textContent = 'no input selected';
+    state.classList.remove('on');
+    return;
+  }
+  port.onmidimessage = (event) => {
+    const [status, a, b] = event.data ?? [];
+    if (status === undefined) return;
+    const kind = status & 0xf0;
+    // 0x90 with velocity 0 is a note-off; every controller sends it that way.
+    if (kind === 0x90 && b > 0) noteOn(a, b);
+    else if (kind === 0x80 || (kind === 0x90 && b === 0)) noteOff(a);
+    else if (kind === 0xb0 && (a === 120 || a === 123)) panic();
+  };
+  state.textContent = `listening to ${port.name}`;
+  state.classList.add('on');
 }
 
 function bindKeyboard(): void {
@@ -416,15 +725,20 @@ function bindKeyboard(): void {
     const target = event.target as HTMLElement | null;
     if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
 
+    if (event.code === 'Escape') {
+      panic();
+      event.preventDefault();
+      return;
+    }
     if (event.code === 'ArrowLeft' || event.code === 'ArrowDown') {
       octaveBase = Math.max(0, octaveBase - 12);
-      $('octave').textContent = `octave: ${noteName(octaveBase)}`;
+      shiftedOctave();
       event.preventDefault();
       return;
     }
     if (event.code === 'ArrowRight' || event.code === 'ArrowUp') {
       octaveBase = Math.min(108, octaveBase + 12);
-      $('octave').textContent = `octave: ${noteName(octaveBase)}`;
+      shiftedOctave();
       event.preventDefault();
       return;
     }
@@ -438,14 +752,20 @@ function bindKeyboard(): void {
 
     const note = octaveBase + offset;
     if (note < 0 || note > 127) return;
-    playNote(note);
-    flashKey(note);
-    $('detail').textContent = describe(note);
+    noteOn(note);
   });
 
-  window.addEventListener('keyup', (event) => heldKeys.delete(event.code));
-  // A dropped keyup (alt-tab mid-note) would otherwise wedge the key.
-  window.addEventListener('blur', () => heldKeys.clear());
+  window.addEventListener('keyup', (event) => {
+    if (!heldKeys.delete(event.code)) return;
+    const offset = KEY_MAP[event.code];
+    if (offset !== undefined) noteOff(octaveBase + offset);
+  });
+  // A dropped keyup (alt-tab mid-note) would otherwise wedge the key -- and now
+  // that a note lasts as long as its key is held, a wedged key rings forever.
+  window.addEventListener('blur', () => {
+    heldKeys.clear();
+    panic();
+  });
 }
 
 function playSequence(notes: number[], step: number): void {
@@ -538,6 +858,61 @@ async function init(): Promise<void> {
     $('gainLabel').textContent = value.toFixed(2);
     if (master && context) master.gain.setTargetAtTime(value, context.currentTime, 0.01);
   });
+
+  bindPiano();
+
+  // Every remaining slider is label + value, so they are declared rather than
+  // wired one at a time. `effects` marks the ones that rebuild the output stage.
+  const knobs: [string, (v: number) => string, boolean][] = [
+    ['pPan', (v) => (v === 50 ? 'centre' : `${v < 50 ? 'L' : 'R'} ${Math.abs(v - 50) * 2}%`), false],
+    ['pDrive', (v) => (v / 100).toFixed(2), false],
+    ['envA', (v) => `${(v / 100).toFixed(2)}s`, false],
+    ['envD', (v) => `${(v / 100).toFixed(2)}s`, false],
+    ['envS', (v) => (v / 100).toFixed(2), false],
+    ['envR', (v) => `${(v / 100).toFixed(2)}s`, false],
+    ['filCut', (v) => (v / 100).toFixed(2), false],
+    ['filRes', (v) => (v / 100).toFixed(2), false],
+    ['filEnv', (v) => (v / 100).toFixed(2), false],
+    ['filTrack', (v) => (v / 100).toFixed(2), false],
+    ['lfo1r', (v) => `${(v / 10).toFixed(1)} Hz`, false],
+    ['lfo1d', (v) => (v / 100).toFixed(2), false],
+    ['lfo2r', (v) => `${(v / 10).toFixed(1)} Hz`, false],
+    ['lfo2d', (v) => (v / 100).toFixed(2), false],
+    ['lfo3r', (v) => `${(v / 10).toFixed(1)} Hz`, false],
+    ['lfo3d', (v) => (v / 100).toFixed(2), false],
+    ['echoSend', (v) => (v / 100).toFixed(2), true],
+    ['echoTime', (v) => `${(v / 10).toFixed(2)} beats`, true],
+    ['echoFb', (v) => (v / 100).toFixed(2), true],
+    ['echoMix', (v) => (v / 100).toFixed(2), true],
+    ['tempo', (v) => `${v} BPM`, true],
+    ['reverbSend', (v) => (v / 100).toFixed(2), true],
+    ['reverbSet', (v) => String(v), true],
+  ];
+  for (const [id, format, effects] of knobs) {
+    const el = $<HTMLInputElement>(id);
+    const show = () => {
+      $(`${id}Label`).textContent = format(Number(el.value));
+      if (effects) pushEffects();
+    };
+    el.addEventListener('input', show);
+    show();
+  }
+  $('optClip').addEventListener('change', pushEffects);
+
+  // A group greys out until it is overriding, so it is obvious at a glance
+  // whether what you hear is the instrument's or yours.
+  for (const [box, group] of [['ovEnv', 'gEnv'], ['ovFilter', 'gFilter'], ['ovLfo', 'gLfo']]) {
+    const el = $<HTMLInputElement>(box);
+    const show = () => $(group).classList.toggle('off', !el.checked);
+    el.addEventListener('change', show);
+    show();
+  }
+
+  const midiSelect = $<HTMLSelectElement>('midiIn');
+  midiSelect.addEventListener('mousedown', () => {
+    if (!midiAccess) void enableMidi();
+  }, { once: true });
+  midiSelect.addEventListener('change', () => listenTo(midiSelect.value));
 }
 
 void init();
