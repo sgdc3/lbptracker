@@ -306,6 +306,16 @@ export interface ScheduledNote {
     readonly pitch: number;
     readonly volume: number;
     readonly timbre: number;
+    /**
+     * `(timbre & 0x0f) / 15`, per point.
+     *
+     * ⚠️ It is the same byte as `timbre`, not a field of its own -- the low
+     * nibble of the note word's fourth byte. It is here per point because the
+     * engine RAMPS it between them, like pitch and volume; `modulation` above
+     * is only the opening value, which is all a caller wanting one number
+     * needs.
+     */
+    readonly modulation: number;
   }[];
   readonly hasPitchAutomation: boolean;
   readonly hasVolumeAutomation: boolean;
@@ -342,6 +352,7 @@ export function schedule(sequencer: Sequencer): ScheduledNote[] {
           pitch: p.pitch,
           volume: p.volume,
           timbre: p.timbre,
+          modulation: p.modulation,
         })),
         hasPitchAutomation: note.hasPitchAutomation,
         hasVolumeAutomation: note.hasVolumeAutomation,

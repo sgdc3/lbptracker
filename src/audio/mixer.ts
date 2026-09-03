@@ -9,12 +9,15 @@
 
 import { panGains, panGainsInto } from '../core/voice.ts';
 import type { Adsr } from '../core/envelope.ts';
-import { Envelope } from '../core/envelope.ts';
+import { ADSR_PARAMS, ADSR_PARAMS_B, Envelope, evaluateAdsr, evaluateParam } from '../core/envelope.ts';
+import type { InstrumentParam } from '../core/rinstrument.ts';
+import { LFO_PARAMS, OUTPUT_PARAMS } from '../core/params.ts';
 import type { Interpolator } from './interpolate.ts';
 import { INTERPOLATORS, DEFAULT_INTERPOLATOR } from './interpolate.ts';
 import type { LfoSettings } from './lfo.ts';
 import { LFO_RATE_SCALE, Lfo, gainFactor, panFold, pitchFactor } from './lfo.ts';
 import type { FilterSettings } from './moog.ts';
+import { FILTER_PARAMS } from './moog.ts';
 import {
   FILTER_BYPASS_CUTOFF,
   MoogLadder,
@@ -238,6 +241,41 @@ export interface VoiceSpec {
    */
   readonly automation?: readonly AutomationPoint[];
   /**
+   * The note's modulation ramp, and the `Params` it feeds.
+   *
+   * ⚠️ **The modulation is not a per-voice constant, and treating it as one is
+   * wrong on 3.6% of notes.** It is `voice+0x28` in the engine, the value that
+   * picks a point inside every one of the 27 `Params` ranges, and
+   * `fmodextinput.prx` ramps it exactly as it ramps volume and pitch:
+   * `sub_0x3930` writes its slide rate at `0x3e8a` beside the other two, and
+   * `sub_0x1c60` -- the per-voice renderer, called once per chunk per voice
+   * under the DSP read callback -- advances it at `0x1f4a` and re-reads the
+   * result four times to re-derive the parameters. See
+   * `steering/answered-questions.md` 6d.
+   *
+   * 34,449 corpus notes move it, and on 30,170 of them (87.6%) that moves some
+   * parameter by 0.35 or more; the widest measured swings are cutoff 0.906,
+   * resonance 0.892, level 0.591, drive 0.390. 26 of the 27 parameters move on
+   * some note. So this is not a garnish and it cannot be done for a chosen few.
+   *
+   * Absent means flat, which is what 96.4% of notes are, and a voice without it
+   * takes byte-for-byte the path it took before this existed.
+   */
+  readonly morph?: {
+    readonly params: readonly InstrumentParam[];
+    /** Modulation at each control point, in frames from the voice's start. */
+    readonly points: readonly { readonly frame: number; readonly value: number }[];
+    /**
+     * `Params[level]` at the modulation the spec's `gain` was built with.
+     *
+     * ❗ The gain carries the track level, the channel volume, the headroom,
+     * the velocity and the stack correction as well, and none of those may move.
+     * So the level travels as a RATIO against this, which is the only factor of
+     * the product the modulation owns.
+     */
+    readonly opening: number;
+  };
+  /**
    * How much of this voice goes to the echo and reverb buses, 0..1.
    *
    * `PInstrument` carries both as real fields (`echoSend`, `reverbSend`), and
@@ -279,6 +317,14 @@ export interface VoiceSpec {
   readonly tag?: number;
 }
 
+/**
+ * How often a morphing voice re-derives what the modulation feeds.
+ *
+ * The AudioWorklet's render quantum, so that the offline render and the live one
+ * chunk identically and stay bit-for-bit equal.
+ */
+const MORPH_FRAMES = 128;
+
 class Voice {
   position = 0;
   readonly spec: VoiceSpec;
@@ -309,6 +355,20 @@ class Voice {
   private readonly secondsPerFrame: number;
   private decayGain = 1;
   /**
+   * What the modulation currently makes of the instrument.
+   *
+   * These shadow the matching `spec` fields, and the render loop reads them
+   * rather than the spec so that a morphing voice needs no branch in the hot
+   * path. Without a `morph` they are set once from the spec and never move, so
+   * the loop behaves exactly as it did before they existed.
+   */
+  private curEnvelope: Adsr | undefined;
+  private curFilterEnv: Adsr | undefined;
+  private curLfos: readonly [LfoSettings, LfoSettings, LfoSettings] | undefined;
+  private curDrive: number;
+  private curGain: number;
+
+  /**
    * Live expression: `Mixer.expression`, neutral until something sends some.
    *
    * `bendRate` is the multiplier, not the semitones, because the loop wants the
@@ -323,8 +383,10 @@ class Voice {
    * every offline render is untouched.
    */
   private filterSettings: FilterSettings | undefined;
-  private readonly left: number;
-  private readonly right: number;
+  // Not readonly: the modulation moves the output level, so `refreshMorph`
+  // rebuilds the pair. Without a morph they are written once and never again.
+  private left: number;
+  private right: number;
 
   // Fields are declared and assigned longhand rather than with TypeScript
   // parameter properties: Node's strip-only type removal rejects any syntax
@@ -359,9 +421,77 @@ class Voice {
     this.position = spec.startPosition ?? 0;
     this.secondsPerFrame = 1 / outputRate;
     this.filterSettings = spec.filter?.settings;
+    this.curEnvelope = spec.envelope;
+    this.curFilterEnv = spec.filter?.envelope;
+    this.curLfos = spec.lfos;
+    this.curDrive = spec.drive ?? 0;
+    this.curGain = spec.gain;
     const gains = panGains(spec.pan);
     this.left = gains.left * spec.gain;
     this.right = gains.right * spec.gain;
+  }
+
+  /**
+   * Re-derive everything the modulation feeds, at this voice's current position.
+   *
+   * ⚠️ **Every parameter, not a chosen few.** `evaluateParam` is affine in
+   * the modulation, so interpolating the modulation and deriving is the same
+   * arithmetic as deriving at the ends and interpolating -- but the things built
+   * on top are not affine (`evaluateAdsr` squares its times, the ladder squares
+   * the cutoff), so the modulation is what gets interpolated and the derivation
+   * is redone from it, which is what the engine does too.
+   */
+  private refreshMorph(): void {
+    const morph = this.spec.morph;
+    if (morph === undefined) return;
+    const points = morph.points;
+    let i = 0;
+    while (i + 1 < points.length && points[i + 1].frame <= this.elapsed) i += 1;
+    const from = points[i];
+    const to = points[i + 1];
+    let mod = from.value;
+    if (to !== undefined) {
+      const span = to.frame - from.frame;
+      const t = span > 0 ? (this.elapsed - from.frame) / span : 1;
+      mod = from.value + (to.value - from.value) * t;
+    }
+
+    const p = morph.params;
+    const at = (index: number) => evaluateParam(p[index] ?? { x: 0, y: 0 }, mod);
+    this.curEnvelope = this.spec.envelope && evaluateAdsr(p, ADSR_PARAMS, mod);
+    const filter = this.spec.filter;
+    if (filter) {
+      this.curFilterEnv = evaluateAdsr(p, ADSR_PARAMS_B, mod);
+      this.filterSettings = {
+        cutoff: at(FILTER_PARAMS.cutoff),
+        resonance: at(FILTER_PARAMS.resonance),
+        // ❗ The caller may have zeroed the key tracking as an A/B, and the
+        // modulation must not put it back. Its ratio to the spec's own value is
+        // the only honest way to carry that through.
+        keyTrack: filter.settings.keyTrack === 0 ? 0 : at(FILTER_PARAMS.keyTrack),
+        envAmount: at(FILTER_PARAMS.envAmount),
+      };
+    }
+    if (this.spec.lfos) {
+      const lfo = (n: 0 | 1 | 2) => ({
+        rate: at(LFO_PARAMS[n].rate),
+        depth: at(LFO_PARAMS[n].depth),
+        // The spread is a phase, drawn once when the voice starts.
+        spread: this.spec.lfos![n].spread,
+      });
+      this.curLfos = [lfo(0), lfo(1), lfo(2)];
+    }
+    this.curDrive = Math.min(1, Math.max(0, at(OUTPUT_PARAMS.drive)));
+    // ❗ The level is one factor of a gain that also carries the track level,
+    // the channel volume, the headroom, the velocity and the stack correction.
+    // Only its own factor may move, so it moves as a ratio against the value
+    // the spec was built with.
+    const level = at(OUTPUT_PARAMS.level);
+    const opening = morph.opening;
+    this.curGain = opening > 0 ? (this.spec.gain * level) / opening : this.spec.gain;
+    const gains = panGains(this.spec.pan);
+    this.left = gains.left * this.curGain;
+    this.right = gains.right * this.curGain;
   }
 
   /**
@@ -462,7 +592,56 @@ class Voice {
    * against a sixteen-million-frame block it is the difference between seconds
    * and hours.
    */
+  /**
+   * Render `frames`, in chunks if the modulation is moving.
+   *
+   * ⚠️ **The chunking is the whole of how the morph is applied**, and it is why
+   * `renderChunk` needed no branch: every quantity the modulation feeds is
+   * hoisted at the top of that function, so re-deriving between calls is enough.
+   * A voice with no `morph` is handed straight through and runs exactly the code
+   * it ran before this existed.
+   *
+   * `MORPH_FRAMES` is our own choice, not a measurement: the engine advances the
+   * modulation once per chunk in `sub_0x1c60` and how long its chunks are has
+   * not been read out. 128 is the AudioWorklet's own quantum, so the offline
+   * render and the live one still agree frame for frame -- which they are
+   * measured to do, and must keep doing.
+   */
   render(
+    outLeft: Float32Array,
+    outRight: Float32Array,
+    frames: number,
+    interpolate: Interpolator,
+    engineSampler: boolean,
+  ): { begin: number; end: number } {
+    if (this.spec.morph === undefined) {
+      return this.renderChunk(outLeft, outRight, frames, interpolate, engineSampler);
+    }
+    let at = 0;
+    let begin = -1;
+    let end = 0;
+    while (at < frames) {
+      const take = Math.min(MORPH_FRAMES, frames - at);
+      this.refreshMorph();
+      const span = this.renderChunk(
+        outLeft.subarray(at),
+        outRight.subarray(at),
+        take,
+        interpolate,
+        engineSampler,
+      );
+      if (span.end > span.begin) {
+        if (begin < 0) begin = at + span.begin;
+        end = at + span.end;
+      }
+      // Short of the chunk means the voice ran out inside it.
+      if (span.end < take) break;
+      at += take;
+    }
+    return { begin: begin < 0 ? 0 : begin, end };
+  }
+
+  private renderChunk(
     outLeft: Float32Array,
     outRight: Float32Array,
     frames: number,
@@ -475,9 +654,10 @@ class Voice {
     const srcL = chans[0];
     const srcR = mono ? chans[0] : chans[1];
     const loop = sample.loop;
-    const envelope = this.spec.envelope;
+    const envelope = this.curEnvelope;
     const filter = this.spec.filter;
-    const lfos = this.spec.lfos;
+    const filterEnv = this.curFilterEnv;
+    const lfos = this.curLfos;
     const automation = this.spec.automation;
     // With the engine sampler off the voice falls back to `interpolate` over
     // the full-rate channels, which is the A/B path: it is how a different
@@ -506,6 +686,7 @@ class Voice {
     const rateMoves =
       lfo0 ||
       this.expressive ||
+      this.spec.morph !== undefined ||
       (automation !== undefined && automation.some((point) => point.pitch !== automation[0].pitch));
     const settings = this.filterSettings;
     const filterFixed =
@@ -513,7 +694,7 @@ class Voice {
 
     // The drive is per note, so its two constants are solved once per voice.
     // `k === 0` is the bypass and skips the branch entirely.
-    const driveK = driveCoefficient(this.spec.drive ?? 0);
+    const driveK = driveCoefficient(this.curDrive);
     const driveOnePlusK = 1 + driveK;
     let fixedBypass = false;
     if (settings && filterFixed) {
@@ -643,8 +824,8 @@ class Voice {
             panFold(this.lfo[2].value, lfos[2].depth, this.spec.pan * 2),
             this.panScratch,
           );
-          panLeft = gains.left * this.spec.gain;
-          panRight = gains.right * this.spec.gain;
+          panLeft = gains.left * this.curGain;
+          panRight = gains.right * this.curGain;
         }
       }
 
@@ -660,7 +841,7 @@ class Voice {
           r = mono ? l : this.ladderR.process(r, this.ladderScratch);
         }
       } else if (settings && filter) {
-        const level = this.filterEnv.advance(this.secondsPerFrame, held, filter.envelope);
+        const level = this.filterEnv.advance(this.secondsPerFrame, held, filterEnv ?? filter.envelope);
         // ⚠️ `rate`, not `playbackRate`: the rate the voice is playing at **this
         // frame**, after the note's own glide and LFO 1. Feeding the constant
         // opening rate pins the cutoff where the note started, and a filter that

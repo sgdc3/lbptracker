@@ -504,6 +504,39 @@ export async function renderSequencer(
     // resonance 0.53.
     const mod = event.modulation;
     const P = (index: number) => evaluateParam(p[index], mod);
+
+    /**
+     * The modulation ramp, when this note has one.
+     *
+     * ⚠️ **`event.modulation` is the opening value and the engine does not
+     * hold it.** `fmodextinput.prx` ramps the modulation between a note's
+     * control points exactly as it ramps volume and pitch -- `sub_0x3930`
+     * writes its slide rate at `0x3e8a`, `sub_0x1c60` advances it at `0x1f4a`
+     * and re-derives the parameters from it. Holding it flat was wrong on
+     * 34,449 corpus notes (3.6%), and on 30,170 of those it moved some
+     * parameter by 0.35 or more. See `steering/answered-questions.md` 6d.
+     *
+     * Built only when the note actually moves it: 96.4% of notes get
+     * `undefined` and take the path they took before this existed, which is
+     * what keeps the corpus render bit-identical.
+     */
+    const morph = (() => {
+      const values = event.points.map((point) => point.modulation);
+      if (values.every((value) => value === values[0])) return undefined;
+      return {
+        params: p,
+        opening: P(OUTPUT_PARAMS.level),
+        points: event.points.map((point, index) => ({
+          // The same clock `automation` uses: frames of the note's own sounding
+          // time, swung, measured from its start.
+          frame: Math.round(
+            swungFrame(event.step + point.step, framesPerStep, seq.swing) -
+              swungFrame(event.step, framesPerStep, seq.swing),
+          ),
+          value: values[index],
+        })),
+      };
+    })();
     const lfo = (n: 0 | 1 | 2) => ({
       rate: P(LFO_PARAMS[n].rate),
       depth: P(LFO_PARAMS[n].depth),
@@ -585,6 +618,7 @@ export async function renderSequencer(
       },
       lfos: [lfo(0), lfo(1), lfo(2)],
       automation,
+      morph,
       // The sends, `fmodextinput.prx` 0x3c8a-0x3d10 (true vaddrs). The note block
       // carries five floats per placement at `+0x420 + 20i` -- level, pan,
       // echoSend, reverbSend, instrument index -- and the two sends are treated

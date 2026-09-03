@@ -771,3 +771,77 @@ test('live timbre offsets the cutoff, and clamps into range', () => {
     assert.ok(Math.abs(c[i] - d[i]) < 1e-9, `clamped frame ${i}`);
   }
 });
+
+// ------------------------------------------------------------------ the morph
+
+/**
+ * The note's modulation is not a per-voice constant.
+ *
+ * ⚠️ It picks a point inside every one of the 27 `Params` ranges, and
+ * `fmodextinput.prx` RAMPS it between a note's control points exactly as it
+ * ramps volume and pitch: `sub_0x3930` writes its slide rate at `0x3e8a` and
+ * `sub_0x1c60` advances it at `0x1f4a` and re-derives the parameters. This
+ * project held it flat for the whole voice, which was wrong on 34,449 corpus
+ * notes -- and on 30,170 of them it moved some parameter by 0.35 or more.
+ */
+test('a moving modulation moves what it feeds', async () => {
+  const { OUTPUT_PARAMS } = await import('../src/core/params.ts');
+  const flat = { channels: [new Float32Array(2000).fill(1)], sampleRate: 48000 };
+  const params = Array.from({ length: 27 }, () => ({ x: 0, y: 0 }));
+  // The output level runs 0.25 at modulation 0 to 1.0 at modulation 1, so a
+  // note that sweeps the modulation should end four times as loud as it starts.
+  params[OUTPUT_PARAMS.level] = { x: 0.25, y: 1 };
+
+  const mixer = new Mixer(48000);
+  mixer.play({
+    sample: flat, playbackRate: 1, pan: 0.5,
+    // The gain the spec was built with, i.e. at the opening modulation.
+    gain: 1,
+    morph: {
+      params,
+      opening: 0.25,
+      points: [{ frame: 0, value: 0 }, { frame: 512, value: 1 }],
+    },
+  });
+  const left = new Float32Array(640);
+  const right = new Float32Array(640);
+  mixer.render(left, right);
+
+  // `panGains(0.5)` is the linear law's half and half, so the level shows up
+  // halved. Read at chunk starts: the morph is re-derived per 128 frames.
+  assert.ok(Math.abs(left[0] - 0.5) < 1e-6, `opening: ${left[0]}`);
+  assert.ok(Math.abs(left[128] - 0.5 * 1.75) < 1e-6, `quarter way: ${left[128]}`);
+  assert.ok(Math.abs(left[256] - 0.5 * 2.5) < 1e-6, `half way: ${left[256]}`);
+  assert.ok(Math.abs(left[512] - 0.5 * 4) < 1e-6, `arrived: ${left[512]}`);
+  assert.ok(Math.abs(left[639] - 0.5 * 4) < 1e-6, `and holds: ${left[639]}`);
+});
+
+test('a modulation that does not move changes nothing at all', async () => {
+  const { OUTPUT_PARAMS } = await import('../src/core/params.ts');
+  // ⚠️ This is the invariant that lets the change ship: 96.4% of corpus notes
+  // hold their modulation, and they must render byte for byte as before. Proved
+  // on the corpus too -- 25 s of `Indestructible`, 6,126 notes and none of them
+  // moving, gives the same md5 with and without this code.
+  const flat = { channels: [new Float32Array(2000).fill(1)], sampleRate: 48000 };
+  const params = Array.from({ length: 27 }, () => ({ x: 0, y: 0 }));
+  params[OUTPUT_PARAMS.level] = { x: 0.25, y: 1 };
+
+  const without = new Mixer(48000);
+  without.play({ sample: flat, playbackRate: 1, pan: 0.5, gain: 1 });
+  const withFlat = new Mixer(48000);
+  withFlat.play({
+    sample: flat, playbackRate: 1, pan: 0.5, gain: 1,
+    morph: { params, opening: 0.25, points: [{ frame: 0, value: 0 }, { frame: 512, value: 0 }] },
+  });
+
+  const a = new Float32Array(640);
+  const b = new Float32Array(640);
+  const c = new Float32Array(640);
+  const d = new Float32Array(640);
+  without.render(a, b);
+  withFlat.render(c, d);
+  for (let i = 0; i < 640; i += 1) {
+    assert.equal(c[i], a[i], `frame ${i}`);
+    assert.equal(d[i], b[i], `frame ${i}`);
+  }
+});

@@ -157,7 +157,7 @@ Per sequencer it is very uneven, which is worth knowing before concluding a rend
 | 723339 "Ascetic" | 28,998 | 10 (0.0%) | 0 |
 | 737099 "This Is Halloween" | 29,260 | **2,488 (8.5%)** | 2,440 |
 
-### The engine ramps it, and re-reads it every chunk — MEASURED 2026-09-03, NOT YET IMPLEMENTED
+### The engine ramps it, and re-reads it every chunk — MEASURED AND IMPLEMENTED 2026-09-03
 
 ⚠️ **This section said the opposite until today, and the reason it gave was a reason and not a
 measurement:** "modulation is not interpolated, because it feeds things read once when the voice
@@ -198,11 +198,40 @@ asserts `r8d == 4` and `r9d == 4` and traps with `int 0x41` otherwise — the 4-
 advancing the output pointer by four channels. So the modulation is advanced and the parameters
 re-evaluated **once per chunk per voice** — not per sample, and not once per voice.
 
-⚠️ **So `src/core/render.ts` is wrong, not merely simplified**, on the 70,028 notes (3.45%) that
-move their modulation: it holds the opening value for the whole voice. The fix is bounded by that
-cadence — re-evaluate the modulation-dependent parameters per block rather than per voice, which
-is what our own worklet already renders in — but it is a change to the voice architecture and is
-not done.
+**How much it was worth, measured before building it.** 34,449 notes in the corpus move their
+modulation, and on **30,170 of them (87.6%) that moves some parameter by 0.35 or more**. The widest
+swings over a single note are cutoff **0.906**, resonance **0.892**, level **0.591**, drive
+**0.390**, and **26 of the 27 parameters move on some note** — only LFO 3's spread never does. So
+it could not be done for a chosen few.
+
+**How it is done.** `VoiceSpec.morph` carries the note's modulation ramp and the instrument's
+`Params`, and `Voice.render` walks the buffer in 128-frame chunks, re-deriving between them — the
+filter settings, both ADSRs, the LFO rates and depths, the drive and the output level. That mirrors
+the engine, which re-derives inside its own per-voice renderer.
+
+⚠️ **The modulation is what gets interpolated, not the things built on it.** `evaluateParam` is
+affine in the modulation, so interpolating either end would give the same numbers — but
+`evaluateAdsr` squares its times and the ladder squares its cutoff, so interpolating *those* would
+not. The derivation is redone from the interpolated modulation, which is also what the engine does.
+
+**Two things left where a caller's intent has to win over the modulation**: `noKeyTrack`, the A/B
+that forces the filter's key tracking to 0, is honoured by leaving it at 0 rather than letting the
+modulation put it back; and the output level moves as a *ratio* against the value the spec was built
+with, because the spec's `gain` also carries the track level, the channel volume, the headroom, the
+velocity and the stack correction, none of which the modulation owns.
+
+⚠️ **`echoSend` and `reverbSend` still do not move.** They are applied per voice in
+`Mixer.render` rather than inside the voice, so making them follow the modulation means
+restructuring the send accumulation — and doing it at the resolution of a `Mixer.render` call would
+make the offline render and the live one disagree, which they are measured not to. The send moves
+on 50.5% of the affected notes and its widest swing is **0.210**, the smallest of the group. It is
+the one piece of this outstanding.
+
+**Verified from both ends.** 25 s of `Indestructible` — 6,126 notes, not one of them moving its
+modulation — renders to the **same md5** with and without this code, which is the invariant that
+lets it ship. 25 s of `Ascetic`, whose 519 moving notes are 3.6% of it, differs on **30.3% of
+frames** with a peak difference of 0.1419 against a signal RMS of 0.0751, and the difference's own
+RMS is only **22 dB** below the signal. It was not a subtlety.
 
 ## 13. The voice pool — 32 voices, steal the quietest — MEASURED AND IMPLEMENTED
 
