@@ -223,6 +223,18 @@ either file:
   category found so far is fixed and carries a note in the code saying what it was; this residue
   is below the level worth more session time and is printed by the script rather than hidden.
 
+⚠️ **A MIDI file's tracks do NOT get sixteen channels each, but a DAW gives them sixteen
+anyway.** The header can declare 65,535 tracks and they are still one shared channel space — the
+channel is in the status byte, not the track — which is why a dense song runs out. *But* a DAW that
+imports a format 1 file as one project track per MIDI track hands each track its own instrument,
+and that instrument only ever sees its own track's events. Reaper does this. So
+`channelsPerPart` gives every part all fifteen member channels in a **single file**, and measured
+over the corpus that is **dragged 0 and 825 notes short of a glide (0.086%)** against 1,245 and
+1,535 when they are shared — identical to writing one file per part, without the 4,909 files. It is
+off by default because a single-stream player (hardware, a plain player, Reaper told to import as
+one track) would hear the parts collide. `splitSequencerToMidi` is the option that needs no promise
+about the reader: separate files, packed by polyphony, 249 for the corpus where 149 sufficed.
+
 ⚠️ **The order notes are allocated in is most of the shared-channel problem, and it is not
 obvious.** Allocating in plain time order let a flat note take the last free channel a moment
 before a gliding one needed it: 3,593 notes lost a glide where, measured, only **1,172 ever arrive

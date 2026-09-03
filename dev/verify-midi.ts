@@ -116,6 +116,7 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
     const after = music(imported.sequencer);
     notes += before.length;
     const problems: string[] = [];
+    let missing = 0;
     if (after.length !== before.length - exported.dropped) {
       problems.push(`${before.length} notes out, ${after.length} back`);
     }
@@ -151,10 +152,28 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
         if (cost < bestCost) { bestCost = cost; best = i; }
       }
       if (!candidates || best < 0) {
-        if (problems.length < 3) problems.push(`no note at step ${a.step} pitch ${a.pitch}`);
+        // ⚠️ A note the export DECLARED it could not carry is not a
+        // disagreement -- it is the one thing MPE genuinely cannot do, more
+        // copies of a pitch at once than there are channels to tell them apart.
+        // Counting it here as well left the gate failing on a single note in
+        // `Avian` that the tally had already reported.
+        missing += 1;
+        if (missing > exported.dropped && problems.length < 3) {
+          problems.push(`no note at step ${a.step} pitch ${a.pitch}`);
+        }
         continue;
       }
       const b = candidates[best];
+      // ⚠️ A dropped note leaves one `before` with no partner, and the greedy
+      // matcher then pairs it with whatever leftover is nearest -- blaming the
+      // conversion for its own guess. `Avian` reported a 64-step note becoming
+      // one step, when in truth a third copy of that pitch had been declared
+      // uncarriable and the other two were fine. Leave the candidate for whoever
+      // it belongs to.
+      if (a.duration !== b.duration && missing < exported.dropped) {
+        missing += 1;
+        continue;
+      }
       candidates.splice(best, 1);
       if (candidates.length === 0) bucket.delete(key);
       if (a.duration !== b.duration && problems.length < 3) {

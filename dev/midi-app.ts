@@ -22,9 +22,12 @@ import {
   DEFAULT_BEND_RANGE,
   midiToSequencer,
   sequencerToMidi,
+  splitSequencerToMidi,
   type MidiExportResult,
   type MidiImportResult,
+  type MidiSplit,
 } from '../src/core/midi.ts';
+import { writeZip } from '../src/core/zip.ts';
 import { readLevelProject, type LevelProject, type Sequencer } from '../src/core/project.ts';
 import { webInflate } from '../src/platform/web.ts';
 
@@ -37,6 +40,8 @@ const saveButton = $<HTMLButtonElement>('save');
 const modeSelect = $<HTMLSelectElement>('mode');
 const bakeSwing = $<HTMLInputElement>('bakeSwing');
 const bendInput = $<HTMLInputElement>('bendRange');
+const splitSelect = $<HTMLSelectElement>('split');
+const perPart = $<HTMLInputElement>('perPart');
 const autoBend = $<HTMLInputElement>('autoBend');
 const logBox = $<HTMLDivElement>('log');
 
@@ -86,11 +91,20 @@ function options() {
   return {
     mpe: modeSelect.value === 'mpe',
     bakeSwing: bakeSwing.checked,
+    channelsPerPart: perPart.checked,
     bendRange: autoBend.checked ? undefined : Number(bendInput.value),
   };
 }
 
-let exported: MidiExportResult | undefined;
+/**
+ * What the last conversion produced, whether it came out as one file or several.
+ *
+ * A single file is modelled as a split of one, so everything downstream -- the
+ * tally, the download, the counters -- has one shape to deal with rather than
+ * two. The only difference the listener sees is whether the button says `.mid`
+ * or `.zip`.
+ */
+let exported: MidiSplit | undefined;
 let exportedName = 'song.mid';
 
 /**
@@ -108,9 +122,15 @@ function convert(): void {
   $('report').classList.remove('on');
   if (!seq) return;
 
-  exported = sequencerToMidi(seq, options());
+  const opts = options();
+  exported =
+    splitSelect.value === 'packed'
+      ? splitSequencerToMidi(seq, opts)
+      : asSplit(seq, sequencerToMidi(seq, opts));
   const safe = (seq.name || `sequencer-${seq.uid}`).replace(/[^\w .-]+/g, '_').trim();
-  exportedName = `${safe || 'song'}.mid`;
+  exportedName =
+    exported.files.length > 1 ? `${safe || 'song'}.zip` : (exported.files[0]?.name ?? 'song.mid');
+  saveButton.textContent = exported.files.length > 1 ? 'Download .zip' : 'Download .mid';
 
   const lost: string[] = [];
   if (exported.droppedGlides > 0) {
@@ -153,7 +173,10 @@ function convert(): void {
     { value: exported.notes.toLocaleString(), label: 'notes' },
     { value: String(exported.parts), label: 'parts' },
     { value: exported.events.toLocaleString(), label: 'events' },
-    { value: `${(exported.bytes.length / 1024).toFixed(0)} kB`, label: 'file' },
+    ...(exported.files.length > 1
+      ? [{ value: String(exported.files.length), label: 'files' }]
+      : []),
+    { value: `${(exported.bytes / 1024).toFixed(0)} kB`, label: 'in all' },
     // ⚠️ `dragged`, not `sharedChannel`. Sharing is usually free -- on
     // `Ascetic` 124 notes share and 6 are ever touched by a neighbour's bend --
     // and putting the big number in front of someone implies a damage that is
@@ -176,9 +199,35 @@ function convert(): void {
   );
 }
 
+/** One file, in the shape a split has, so the page has one path through. */
+const asSplit = (seq: { name: string; uid: number }, result: MidiExportResult): MidiSplit => {
+  const safe = (seq.name || `sequencer-${seq.uid}`).replace(/[^\w .-]+/g, '_').trim();
+  return {
+    files: [{ name: `${safe || 'song'}.mid`, result }],
+    notes: result.notes,
+    parts: result.parts,
+    events: result.events,
+    bytes: result.bytes.length,
+    sharedChannel: result.sharedChannel,
+    dragged: result.dragged,
+    flattened: result.flattened,
+    droppedGlides: result.droppedGlides,
+    dropped: result.dropped,
+    clampedPitch: result.clampedPitch,
+    clampedBend: result.clampedBend,
+  };
+};
+
 saveButton.addEventListener('click', () => {
   if (!exported) return;
-  const blob = new Blob([exported.bytes as unknown as BlobPart], { type: 'audio/midi' });
+  // A browser blocks a burst of downloads, so several files arrive as one zip.
+  const single = exported.files.length === 1;
+  const payload = single
+    ? exported.files[0].result.bytes
+    : writeZip(exported.files.map((f) => ({ name: f.name, bytes: f.result.bytes })));
+  const blob = new Blob([payload as unknown as BlobPart], {
+    type: single ? 'audio/midi' : 'application/zip',
+  });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -187,7 +236,10 @@ saveButton.addEventListener('click', () => {
   // Revoked on the next turn of the loop: doing it synchronously races the
   // click in some browsers and downloads nothing.
   setTimeout(() => URL.revokeObjectURL(url), 0);
-  log(`saved ${exportedName} — ${(exported.bytes.length / 1024).toFixed(0)} kB`);
+  log(
+    `saved ${exportedName} — ${(payload.length / 1024).toFixed(0)} kB` +
+      (single ? '' : `, ${exported.files.length} files`),
+  );
 });
 
 const showBend = () => {
@@ -196,7 +248,7 @@ const showBend = () => {
     : `±${bendInput.value}`;
   bendInput.disabled = autoBend.checked;
 };
-for (const el of [modeSelect, bakeSwing, bendInput, autoBend]) {
+for (const el of [modeSelect, bakeSwing, bendInput, autoBend, splitSelect, perPart]) {
   el.addEventListener('change', () => {
     showBend();
     convert();

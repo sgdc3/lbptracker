@@ -533,3 +533,141 @@ test('a note in front of a glide takes it away, and the loss is declared', () =>
   assert.equal(exported.dropped, 0, 'nothing is thrown away to save a glide');
   assert.equal(exported.flattened, 1, 'exactly one glide gave way, and it is counted');
 });
+
+// ------------------------------------------------------------------- splitting
+
+test('splitting puts the parts in as few files as their polyphony needs', async () => {
+  const { splitSequencerToMidi } = await import('../src/core/midi.ts');
+  // Two parts of ten simultaneous notes each: twenty at once is over a zone's
+  // fifteen, ten is not, so they belong in one file each and no note shares.
+  const part = (row: number, base: number) =>
+    makeTrack(
+      Array.from({ length: 10 }, (_, i) => [{ step: 0, pitch: base + i }, { step: 15, pitch: base + i }]),
+      { gridY: row, guid: 1000 + row },
+    );
+  const seq = makeSequencer([part(0, 40), part(1, 60)]);
+
+  const whole = sequencerToMidi(seq);
+  assert.ok(whole.sharedChannel > 0, 'one file cannot hold twenty at once');
+
+  const split = splitSequencerToMidi(seq);
+  assert.equal(split.files.length, 2);
+  assert.equal(split.notes, whole.notes, 'and every note is still written');
+  assert.equal(split.sharedChannel, 0, 'with nothing left sharing');
+  assert.ok(split.files.every((f) => /\.mid$/.test(f.name)));
+});
+
+test('a song that fits stays one file, and keeps the plain name', async () => {
+  const { splitSequencerToMidi } = await import('../src/core/midi.ts');
+  const seq = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]])], { name: 'Small Song' });
+  const split = splitSequencerToMidi(seq);
+  assert.equal(split.files.length, 1);
+  assert.equal(split.files[0].name, 'Small Song.mid');
+});
+
+test('every file of a split imports on its own', async () => {
+  const { splitSequencerToMidi } = await import('../src/core/midi.ts');
+  const part = (row: number, base: number) =>
+    makeTrack(
+      Array.from({ length: 10 }, (_, i) => [{ step: 0, pitch: base + i }, { step: 15, pitch: base + i }]),
+      { gridY: row, guid: 1000 + row },
+    );
+  const seq = makeSequencer([part(0, 40), part(1, 60)], { tempo: 137, numChannels: 2 });
+  const split = splitSequencerToMidi(seq);
+  let notes = 0;
+  for (const file of split.files) {
+    const imported = midiToSequencer(file.result.bytes);
+    assert.equal(imported.ours, true, `${file.name} carries the header`);
+    assert.equal(imported.sequencer.tempo, 137, 'every file knows the tempo');
+    assert.equal(imported.sequencer.numChannels, 2, 'and the mixer');
+    notes += imported.notes;
+  }
+  assert.equal(notes, 20, 'and between them they hold the whole song');
+});
+
+test('a zip of the split reads back as the files that went in', async () => {
+  const { writeZip, crc32 } = await import('../src/core/zip.ts');
+  const one = Uint8Array.of(1, 2, 3, 4, 5);
+  const two = new Uint8Array(1000).fill(0x41);
+  const zip = writeZip([{ name: 'one.mid', bytes: one }, { name: 'two.mid', bytes: two }]);
+
+  // Read it the way an unzipper does: the central directory is the index.
+  const view = new DataView(zip.buffer);
+  const end = zip.length - 22;
+  assert.equal(view.getUint32(end, true), 0x06054b50, 'end of central directory');
+  assert.equal(view.getUint16(end + 8, true), 2, 'two entries');
+  let at = view.getUint32(end + 16, true);
+  const found: { name: string; bytes: Uint8Array }[] = [];
+  for (let i = 0; i < 2; i += 1) {
+    assert.equal(view.getUint32(at, true), 0x02014b50);
+    const crc = view.getUint32(at + 16, true);
+    const size = view.getUint32(at + 24, true);
+    const nameLen = view.getUint16(at + 28, true);
+    const offset = view.getUint32(at + 42, true);
+    const name = new TextDecoder().decode(zip.subarray(at + 46, at + 46 + nameLen));
+    // The local header repeats the name and the sizes; both copies must agree.
+    assert.equal(view.getUint32(offset, true), 0x04034b50, `${name} local header`);
+    assert.equal(view.getUint32(offset + 18, true), size, `${name} size agrees`);
+    assert.equal(view.getUint32(offset + 14, true), crc, `${name} crc agrees`);
+    const from = offset + 30 + view.getUint16(offset + 26, true) + view.getUint16(offset + 28, true);
+    const bytes = zip.subarray(from, from + size);
+    assert.equal(crc32(bytes), crc, `${name} contents match their checksum`);
+    found.push({ name, bytes });
+    at += 46 + nameLen;
+  }
+  assert.deepEqual(found.map((f) => f.name), ['one.mid', 'two.mid']);
+  assert.deepEqual([...found[0].bytes], [...one]);
+  assert.equal(found[1].bytes.length, 1000);
+});
+
+test('per-part channels give every part all fifteen, in one file', () => {
+  // ⚠️ The point a DAW makes true: a file's tracks share one set of sixteen
+  // channels, but Reaper — and anything else that lands one project track per
+  // MIDI track — hands each track its own instrument, and that instrument sees
+  // only its own track's events. There the parts never meet.
+  const part = (row: number, base: number) =>
+    makeTrack(
+      Array.from({ length: 10 }, (_, i) => [{ step: 0, pitch: base + i }, { step: 15, pitch: base + i }]),
+      { gridY: row, guid: 1000 + row },
+    );
+  const seq = makeSequencer([part(0, 40), part(1, 60)]);
+
+  const shared = sequencerToMidi(seq);
+  assert.ok(shared.sharedChannel > 0, 'twenty at once does not fit in fifteen');
+
+  const split = sequencerToMidi(seq, { channelsPerPart: true });
+  assert.equal(split.sharedChannel, 0, 'ten and ten do');
+  assert.equal(split.notes, shared.notes);
+
+  // Both parts really are using the same channel numbers — that is the trade.
+  const used = new Map<number, Set<number>>();
+  for (const [index, track] of readMidi(split.bytes).tracks.entries()) {
+    for (const e of track.events) {
+      if ((e.data[0] & 0xf0) !== 0x90 || e.data[2] === 0) continue;
+      const set = used.get(index) ?? new Set<number>();
+      set.add(e.data[0] & 0x0f);
+      used.set(index, set);
+    }
+  }
+  const [a, b] = [...used.values()];
+  assert.ok([...a].some((ch) => b.has(ch)), 'the two parts overlap on channel numbers');
+});
+
+test('a per-part file still reads back correctly here', () => {
+  // This importer reads each MIDI track on its own, which is exactly what a DAW
+  // does — so a file written this way round-trips even though a single-stream
+  // player would hear the parts collide.
+  const part = (row: number, base: number) =>
+    makeTrack(
+      [
+        ...Array.from({ length: 10 }, (_, i) => [{ step: 0, pitch: base + i }, { step: 15, pitch: base + i }]),
+        [{ step: 2, pitch: base }, { step: 10, pitch: base + 7 }],
+      ],
+      { gridY: row, guid: 1000 + row },
+    );
+  const seq = makeSequencer([part(0, 40), part(1, 60)]);
+  const exported = sequencerToMidi(seq, { channelsPerPart: true });
+  assert.equal(exported.flattened, 0, 'and no glide had to be given up');
+  const { sequencer } = midiToSequencer(exported.bytes);
+  assert.deepEqual(music(sequencer), music(seq));
+});

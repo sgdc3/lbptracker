@@ -92,6 +92,16 @@
           </select>
         </div>
         <div class="row" style="margin-top:.5rem">
+          <label for="split">files</label>
+          <select id="split">
+            <option value="one" selected>one file</option>
+            <option value="packed">split into several files</option>
+          </select>
+        </div>
+        <div class="row" style="margin-top:.5rem">
+          <label class="check" title="Safe in a DAW that imports one project track per MIDI track"><input type="checkbox" id="perPart"> every part gets its own 15 channels</label>
+        </div>
+        <div class="row" style="margin-top:.5rem">
           <label class="check" title="Write the swung positions instead of the straight grid"><input type="checkbox" id="bakeSwing"> bake the swing into the timing</label>
         </div>
         <p class="hintline">
@@ -99,6 +109,21 @@
           to one note. Plain spends them on <em>instruments</em>, which is what a General MIDI
           player expects &mdash; and a bend on a shared channel would move the whole part, so in
           that mode the glides are dropped rather than faked. The count below says how many.
+        </p>
+        <p class="hintline">
+          &#9888; <strong>A file&rsquo;s tracks do not get a channel space each.</strong> The header
+          can declare 65,535 of them and they still share one set of sixteen: the channel is in the
+          status byte, not in the track. That is why a dense passage runs out.
+        </p>
+        <p class="hintline">
+          <strong>A DAW puts them back, though.</strong> Reaper &mdash; and anything else that
+          imports a file as one project track per MIDI track &mdash; gives each track its own
+          instrument, and that instrument only ever sees its own track&rsquo;s events. So
+          <em>every part gets its own 15 channels</em> is the setting to use when the destination is
+          a DAW: nothing shares, nothing is dragged. Leave it off for a hardware module or a plain
+          player, which hear one stream and would have the parts collide. <em>Split</em> is the
+          option that needs neither promise &mdash; separate files, packed as tightly as their
+          polyphony allows, handed over as a zip.
         </p>
       </div>
       <div class="group">

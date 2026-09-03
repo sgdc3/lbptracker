@@ -102,6 +102,28 @@ export interface MidiExportOptions {
   readonly bakeSwing?: boolean;
   readonly ppq?: number;
   /**
+   * Give every part its own fifteen member channels instead of sharing them.
+   *
+   * ⚠️ **This is safe in a DAW and unsafe in a player.** A file's tracks share
+   * one set of sixteen channels -- the channel is in the status byte, not the
+   * track -- so two parts on channel 5 are the same channel 5 to anything that
+   * plays the file as one stream. But a DAW that imports a format 1 file as
+   * SEPARATE TRACKS gives each one its own instrument, and that instrument only
+   * ever sees its own track's events: Reaper does this, and so does every other
+   * DAW that lands one MIDI track per project track. There the parts never meet,
+   * and the fifteen channels are fifteen per part.
+   *
+   * What it buys, over the corpus: nothing is dragged at all and the notes that
+   * lose a glide fall from 1,535 to 825 -- the same as writing one file per
+   * part, without the 4,909 files.
+   *
+   * What it costs: played as a single stream -- a hardware module, a simple
+   * player, Reaper asked to import as one track -- parts collide on the same
+   * channels, and two notes of one pitch there have indistinguishable note-offs.
+   * So it is off by default.
+   */
+  readonly channelsPerPart?: boolean;
+  /**
    * How often a glide is resampled, in steps; 0 writes only the control points.
    *
    * ⚠️ **A glide written as two events is not a glide.** The engine ramps
@@ -476,7 +498,24 @@ export function sequencerToMidi(
   });
 
   const bodies: MidiEvent[][] = parts.map(() => []);
-  const pool = new VoicePool();
+  /**
+   * One pool, or one per part; see `channelsPerPart`.
+   *
+   * The counters are summed over whatever pools exist, so the rest of the
+   * function does not need to know which arrangement it is in.
+   */
+  const perPart = options.channelsPerPart ?? false;
+  const pools = new Map<number, VoicePool>();
+  const poolFor = (part: number) => {
+    const key = perPart ? part : -1;
+    const found = pools.get(key);
+    if (found) return found;
+    const made = new VoicePool();
+    pools.set(key, made);
+    return made;
+  };
+  const tally = (pick: (p: VoicePool) => number) =>
+    [...pools.values()].reduce((sum, p) => sum + pick(p), 0);
   let clampedPitch = 0;
   let clampedBend = 0;
   let droppedGlides = 0;
@@ -532,8 +571,9 @@ export function sequencerToMidi(
   const placements = new Map<ScheduledNote, { channel: number; exclusive: boolean; base: number }>();
   if (mpe) {
     for (const event of order) {
-      if (event === flat[0]) pool.rewind();
-      if (partOfTrack.get(event.track) === undefined) continue;
+      if (event === flat[0]) for (const p of pools.values()) p.rewind();
+      const part = partOfTrack.get(event.track);
+      if (part === undefined) continue;
       const track = sequencer.tracks[event.track];
       const value = notePitch(event.pitch, track.scale, blockRoot(track.key));
       if (value < 0 || value > 127) clampedPitch += 1;
@@ -541,7 +581,7 @@ export function sequencerToMidi(
       const startTick = at(event.step);
       const endTick = Math.max(startTick + 1, at(event.step + event.durationSteps));
       const place = { channel: -1, exclusive: true, base };
-      const taken = pool.take(startTick, base, endTick, needsChannel(event), place);
+      const taken = poolFor(part).take(startTick, base, endTick, needsChannel(event), place);
       place.channel = taken.channel;
       place.exclusive = place.exclusive && taken.exclusive;
       placements.set(event, place);
@@ -726,13 +766,13 @@ export function sequencerToMidi(
     notes,
     parts: parts.length,
     events: tracks.reduce((sum, t) => sum + t.events.length, 0),
-    sharedChannel: pool.shared,
-    dragged: pool.dragged,
+    sharedChannel: tally((p) => p.shared),
+    dragged: tally((p) => p.dragged),
     flattened,
     clampedPitch,
     clampedBend,
     droppedGlides,
-    dropped: pool.refused,
+    dropped: tally((p) => p.refused),
   };
 }
 
@@ -1281,3 +1321,128 @@ export const META_TAGS = { sequencer: SEQ_TAG, track: TRK_TAG };
 /** Kept for callers that want the raw record helper alongside the mapping. */
 export type { NoteRecord };
 export { meta };
+
+/* -------------------------------------------------------------------- split */
+
+export interface MidiSplit {
+  readonly files: readonly { readonly name: string; readonly result: MidiExportResult }[];
+  /** The counters, summed over the set. */
+  readonly notes: number;
+  readonly parts: number;
+  readonly events: number;
+  readonly bytes: number;
+  readonly sharedChannel: number;
+  readonly dragged: number;
+  readonly flattened: number;
+  readonly droppedGlides: number;
+  readonly dropped: number;
+  readonly clampedPitch: number;
+  readonly clampedBend: number;
+}
+
+/**
+ * The same song across several files, so that fewer notes have to share.
+ *
+ * ⚠️ **A MIDI file's tracks do NOT get a channel space each.** The header can
+ * declare 65,535 of them and they are still one shared set of sixteen channels:
+ * the channel lives in the status byte, and two tracks writing `0x93` address
+ * the same channel 4. A track is an editing container. That is the whole reason
+ * a dense song runs out of member channels no matter how many tracks it uses,
+ * and it is why splitting means splitting into FILES.
+ *
+ * (There is a `FF 21` MIDI Port meta event that does give a track its own
+ * sixteen. It is deprecated, unevenly honoured, and a reader that ignores it
+ * collapses every port back onto one channel space with no allocator having
+ * planned for the collisions -- overlapping notes of one pitch, ambiguous
+ * note-offs, notes left hanging. It is not worth the trade.)
+ *
+ * Measured over the corpus's 953,791 notes:
+ *
+ * | | files | dragged | glide lost |
+ * |---|---|---|---|
+ * | one file | 149 | 1,245 (0.131%) | 1,535 (0.161%) |
+ * | packed, here | 249 | 193 (0.020%) | 1,016 (0.107%) |
+ * | one per part | 4,909 | 0 | 825 (0.086%) |
+ *
+ * One file per part is perfect on drag and unusable in bulk -- `Ascetic` alone
+ * becomes 46 files. Packing parts into as few files as their combined polyphony
+ * allows gets most of the benefit for two.
+ */
+export function splitSequencerToMidi(
+  sequencer: Sequencer,
+  options: MidiExportOptions = {},
+): MidiSplit {
+  const groups = partsOf(sequencer).map((part) => {
+    const tracks = part.tracks.map((index) => sequencer.tracks[index]);
+    return { tracks, spans: spansOf({ ...sequencer, tracks }) };
+  });
+
+  // First-fit descending: the busiest parts choose first, which is what keeps
+  // the bin count near the lower bound. `MEMBERS.length` is the limit because a
+  // note beyond it is one that must share.
+  groups.sort((a, b) => peak(b.spans) - peak(a.spans));
+  const bins: { tracks: Track[]; spans: Span2[] }[] = [];
+  for (const group of groups) {
+    const bin = bins.find((b) => peak([...b.spans, ...group.spans]) <= MEMBERS.length);
+    if (bin) {
+      bin.tracks.push(...group.tracks);
+      bin.spans.push(...group.spans);
+    } else {
+      bins.push({ tracks: [...group.tracks], spans: [...group.spans] });
+    }
+  }
+
+  const stem = (sequencer.name || `sequencer-${sequencer.uid}`).replace(/[^\w .-]+/g, '_').trim();
+  const files = bins.map((bin, index) => ({
+    name: bins.length === 1
+      ? `${stem || 'song'}.mid`
+      : `${stem || 'song'} ${String(index + 1).padStart(2, '0')}.mid`,
+    result: sequencerToMidi({ ...sequencer, tracks: bin.tracks }, options),
+  }));
+
+  const sum = (pick: (r: MidiExportResult) => number) =>
+    files.reduce((total, file) => total + pick(file.result), 0);
+  return {
+    files,
+    notes: sum((r) => r.notes),
+    parts: sum((r) => r.parts),
+    events: sum((r) => r.events),
+    bytes: sum((r) => r.bytes.length),
+    sharedChannel: sum((r) => r.sharedChannel),
+    dragged: sum((r) => r.dragged),
+    flattened: sum((r) => r.flattened),
+    droppedGlides: sum((r) => r.droppedGlides),
+    dropped: sum((r) => r.dropped),
+    clampedPitch: sum((r) => r.clampedPitch),
+    clampedBend: sum((r) => r.clampedBend),
+  };
+}
+
+/** A note's life, in thirds of a step. Only the packing needs this. */
+type Span2 = readonly [number, number];
+
+function spansOf(sequencer: Sequencer): Span2[] {
+  return schedule(sequencer).map(
+    (event) =>
+      [Math.round(event.step * 3), Math.round((event.step + event.durationSteps) * 3)] as Span2,
+  );
+}
+
+/** The most notes sounding at once, by sweeping the ends. */
+function peak(spans: readonly Span2[]): number {
+  const edges: Span2[] = [];
+  for (const [from, to] of spans) {
+    edges.push([from, 1]);
+    edges.push([to, -1]);
+  }
+  // A note ending exactly where another begins does not overlap it, so the
+  // closing edge has to be taken first at a shared tick.
+  edges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let now = 0;
+  let top = 0;
+  for (const [, delta] of edges) {
+    now += delta;
+    top = Math.max(top, now);
+  }
+  return top;
+}
