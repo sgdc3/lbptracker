@@ -131,8 +131,23 @@ self.onmessage = async (event: MessageEvent) => {
     uid?: number;
     seconds?: number;
     from?: number;
-    /** `RenderOptions.panWidth`; absent leaves the measured default. */
+    /**
+     * Engine switches; each absent one leaves its measured default.
+     *
+     * ⚠️ **More are accepted here than the page offers.** `oneShot`,
+     * `noKeyTrack` and `unpitchedPercussion` stay reachable because they are how
+     * their laws were measured, but each of those laws is now settled, so a
+     * switch for it on the page would only offer a way to render something known
+     * to be wrong. `dev/render-level.ts` still exposes them as env vars.
+     */
     panWidth?: number;
+    oneShot?: 'full' | 'natural' | 'gate';
+    voiceLimit?: number;
+    reverb?: boolean;
+    echo?: boolean;
+    clip?: boolean;
+    noKeyTrack?: boolean;
+    unpitchedPercussion?: boolean;
     file?: File;
   };
   try {
@@ -165,8 +180,17 @@ self.onmessage = async (event: MessageEvent) => {
       const result = await renderSequencer(seq, await loaderFor(), {
         secondsArg: message.seconds ?? 0,
         fromArg: message.from ?? 0,
-        // Absent means the measured default; the page always sends one.
+        // Each absent field means the measured default; the page always sends them.
         ...(message.panWidth === undefined ? {} : { panWidth: message.panWidth }),
+        ...(message.oneShot === undefined ? {} : { oneShot: message.oneShot }),
+        ...(message.voiceLimit === undefined ? {} : { voiceLimit: message.voiceLimit }),
+        ...(message.reverb === undefined ? {} : { reverb: message.reverb }),
+        ...(message.echo === undefined ? {} : { echo: message.echo }),
+        ...(message.clip === undefined ? {} : { clip: message.clip }),
+        ...(message.noKeyTrack === undefined ? {} : { noKeyTrack: message.noKeyTrack }),
+        ...(message.unpitchedPercussion === undefined
+          ? {}
+          : { unpitchedPercussion: message.unpitchedPercussion }),
         onProgress: (phase, done, total) => {
           post({ type: 'progress', phase, done, total });
         },

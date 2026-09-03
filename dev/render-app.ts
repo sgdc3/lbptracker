@@ -8,6 +8,7 @@
  * `playbackRate`, nothing that could differ between engines.
  */
 
+import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
 import { PAN_WIDTH } from '../src/core/render.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -17,6 +18,11 @@ const rangeFields = $<HTMLSpanElement>('rangeFields');
 const fromInput = $<HTMLInputElement>('from');
 const toInput = $<HTMLInputElement>('to');
 const panWidthInput = $<HTMLInputElement>('panWidth');
+const voicesInput = $<HTMLInputElement>('voices');
+const optNoCap = $<HTMLInputElement>('optNoCap');
+const optReverb = $<HTMLInputElement>('optReverb');
+const optEcho = $<HTMLInputElement>('optEcho');
+const optClip = $<HTMLInputElement>('optClip');
 const goButton = $<HTMLButtonElement>('go');
 const saveButton = $<HTMLButtonElement>('save');
 const statusLine = $<HTMLDivElement>('status');
@@ -25,6 +31,10 @@ const statsTable = $<HTMLTableElement>('stats');
 const errorBox = $<HTMLPreElement>('error');
 const player = $<HTMLAudioElement>('player');
 const canvas = $<HTMLCanvasElement>('wave');
+const playPause = $<HTMLButtonElement>('playPause');
+const timesLabel = $<HTMLSpanElement>('times');
+const muteButton = $<HTMLButtonElement>('mute');
+const volSlider = $<HTMLInputElement>('vol');
 const dropZone = $<HTMLDivElement>('drop');
 const dropTitle = $<HTMLElement>('dropTitle');
 const dropHint = $<HTMLElement>('dropHint');
@@ -44,6 +54,34 @@ const readPanWidth = (): number | null => {
   const value = Number(text);
   return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
 };
+
+voicesInput.value = String(VOICE_POOL_SIZE);
+
+/**
+ * The voice pool: a positive count, or no cap at all when `unlimited` is ticked.
+ *
+ * ⚠️ Uncapping it is the one switch here that makes the render *less* like the
+ * game rather than differently like it -- the 32-voice pool is the engine's, and
+ * a level written against it depends on the stealing. It exists because a render
+ * with no cap is how the pool's effect was measured in the first place.
+ *
+ * The tick disables the box rather than clearing it, so the count you were using
+ * is still there when you turn the cap back on.
+ */
+const readVoices = (): number | null => {
+  if (optNoCap.checked) return VOICES_UNLIMITED;
+  const text = voicesInput.value.trim();
+  if (text === '') return VOICE_POOL_SIZE;
+  const value = Number(text);
+  return Number.isInteger(value) && value > 0 ? value : null;
+};
+
+const syncVoiceCap = () => {
+  voicesInput.disabled = optNoCap.checked;
+  if (optNoCap.checked) voicesInput.classList.remove('bad');
+};
+optNoCap.addEventListener('change', syncVoiceCap);
+syncVoiceCap();
 
 const worker = new Worker(new URL('./render-worker.ts', import.meta.url), { type: 'module' });
 
@@ -109,7 +147,11 @@ function resetResults() {
   saveButton.disabled = true;
   statsTable.innerHTML = '';
   errorBox.textContent = '';
-  canvas.getContext('2d')!.clearRect(0, 0, canvas.width, canvas.height);
+  peaks = null;
+  canvas.classList.add('empty');
+  for (const el of [playPause, muteButton, volSlider]) el.disabled = true;
+  paint();
+  syncTransport();
 }
 
 /**
@@ -124,12 +166,169 @@ function setBusy(value: boolean) {
   dropZone.classList.toggle('busy', value);
 }
 
-/** A cheap peak envelope, so a finished render is visible as well as audible. */
-function drawWave(left: Float32Array, right: Float32Array) {
+/*
+ * ---------------------------------------------------------------- the player
+ *
+ * The waveform *is* the transport: it draws the position, it takes the clicks
+ * and the keyboard, and the row beneath it holds only what a picture cannot do
+ * (a play button, a clock, a volume).
+ *
+ * ⚠️ **The `<audio>` element is still there, hidden.** It stays the decoder and
+ * the clock -- everything here drives it and reads it back. Reimplementing
+ * playback over `AudioContext` would mean owning buffering and seek, and would
+ * put a second audio path in a project whose whole point is that the render is
+ * the only arithmetic that matters.
+ */
+
+/** One peak per canvas column, computed once per render and reused every frame. */
+let peaks: Float32Array | null = null;
+/** Set while a pointer drag is scrubbing, so the clock does not fight the hand. */
+let scrubbing = false;
+
+const PLAY = '\u25b6';
+const PAUSE = '\u23f8';
+const LOUD = '\ud83d\udd0a';
+const MUTED = '\ud83d\udd07';
+
+/** `0:00` / `5:39`, and `-` before anything is loaded. */
+const clock = (seconds: number): string => {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+  const whole = Math.floor(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+};
+
+/** Draw the envelope, split at the playhead. */
+function paint() {
   const context = canvas.getContext('2d')!;
   const { width, height } = canvas;
   context.clearRect(0, 0, width, height);
-  context.fillStyle = '#6fd3a0';
+  if (!peaks) return;
+
+  const duration = Number.isFinite(player.duration) ? player.duration : 0;
+  const played = duration > 0 ? Math.round((player.currentTime / duration) * width) : 0;
+  const mid = height / 2;
+
+  for (let x = 0; x < width; x += 1) {
+    const h = Math.max(1, peaks[x] * (height - 6));
+    context.fillStyle = x <= played ? '#6fd3a0' : '#3d4a52';
+    context.fillRect(x, mid - h / 2, 1, h);
+  }
+  if (duration > 0) {
+    context.fillStyle = '#e6e8ec';
+    context.fillRect(Math.min(played, width - 2), 0, 2, height);
+  }
+}
+
+/** Keep the clock, the button and the slider's ARIA in step with the element. */
+function syncTransport() {
+  const duration = Number.isFinite(player.duration) ? player.duration : 0;
+  timesLabel.textContent = `${clock(player.currentTime)} / ${clock(duration)}`;
+  playPause.textContent = player.paused ? PLAY : PAUSE;
+  playPause.setAttribute('aria-label', player.paused ? 'Play' : 'Pause');
+  muteButton.textContent = player.muted || player.volume === 0 ? MUTED : LOUD;
+  muteButton.setAttribute('aria-label', player.muted ? 'Unmute' : 'Mute');
+  canvas.setAttribute('aria-valuemax', duration.toFixed(1));
+  canvas.setAttribute('aria-valuenow', player.currentTime.toFixed(1));
+  canvas.setAttribute(
+    'aria-valuetext',
+    peaks ? `${clock(player.currentTime)} of ${clock(duration)}` : 'nothing rendered yet',
+  );
+}
+
+/**
+ * Repaint on every animation frame while playing.
+ *
+ * ⚠️ `timeupdate` alone is not enough: it fires about four times a second, which
+ * makes the playhead visibly step rather than move. The loop stops itself as
+ * soon as playback does, so a paused page costs nothing.
+ */
+function frame() {
+  paint();
+  syncTransport();
+  if (!player.paused && !player.ended) requestAnimationFrame(frame);
+}
+
+/** Seek from a pointer position over the canvas. */
+function seekTo(clientX: number) {
+  const duration = Number.isFinite(player.duration) ? player.duration : 0;
+  if (!peaks || duration <= 0) return;
+  const box = canvas.getBoundingClientRect();
+  const ratio = Math.min(1, Math.max(0, (clientX - box.left) / box.width));
+  player.currentTime = ratio * duration;
+  paint();
+  syncTransport();
+}
+
+canvas.addEventListener('pointerdown', (event) => {
+  if (!peaks) return;
+  scrubbing = true;
+  canvas.setPointerCapture(event.pointerId);
+  seekTo(event.clientX);
+});
+canvas.addEventListener('pointermove', (event) => {
+  if (scrubbing) seekTo(event.clientX);
+});
+canvas.addEventListener('pointerup', (event) => {
+  scrubbing = false;
+  canvas.releasePointerCapture(event.pointerId);
+});
+
+const togglePlay = () => {
+  if (!peaks) return;
+  if (player.paused) void player.play();
+  else player.pause();
+};
+
+playPause.addEventListener('click', togglePlay);
+
+// Space and Enter play, the arrows scrub, Home/End jump. This is the whole
+// reason the canvas carries `tabindex` and `role="slider"`.
+canvas.addEventListener('keydown', (event) => {
+  const duration = Number.isFinite(player.duration) ? player.duration : 0;
+  if (!peaks || duration <= 0) return;
+  const step = event.shiftKey ? 30 : 5;
+  const set = (t: number) => {
+    player.currentTime = Math.min(duration, Math.max(0, t));
+    paint();
+    syncTransport();
+  };
+  switch (event.key) {
+    case ' ':
+    case 'Enter': togglePlay(); break;
+    case 'ArrowLeft': set(player.currentTime - step); break;
+    case 'ArrowRight': set(player.currentTime + step); break;
+    case 'Home': set(0); break;
+    case 'End': set(duration); break;
+    case 'ArrowUp': volSlider.value = String(Math.min(1, player.volume + 0.05));
+                    volSlider.dispatchEvent(new Event('input')); break;
+    case 'ArrowDown': volSlider.value = String(Math.max(0, player.volume - 0.05));
+                      volSlider.dispatchEvent(new Event('input')); break;
+    default: return;
+  }
+  event.preventDefault();
+});
+
+volSlider.addEventListener('input', () => {
+  player.volume = Number(volSlider.value);
+  player.muted = player.volume === 0;
+  syncTransport();
+});
+
+muteButton.addEventListener('click', () => {
+  player.muted = !player.muted;
+  syncTransport();
+});
+
+player.addEventListener('play', frame);
+player.addEventListener('pause', () => { paint(); syncTransport(); });
+player.addEventListener('ended', () => { paint(); syncTransport(); });
+player.addEventListener('loadedmetadata', () => { paint(); syncTransport(); });
+player.addEventListener('timeupdate', () => { if (!scrubbing) syncTransport(); });
+
+/** A cheap peak envelope, so a finished render is visible as well as audible. */
+function drawWave(left: Float32Array, right: Float32Array) {
+  const { width } = canvas;
+  const envelope = new Float32Array(width);
   const per = Math.max(1, Math.floor(left.length / width));
   for (let x = 0; x < width; x += 1) {
     let peak = 0;
@@ -138,9 +337,13 @@ function drawWave(left: Float32Array, right: Float32Array) {
       const v = Math.max(Math.abs(left[i]), Math.abs(right[i]));
       if (v > peak) peak = v;
     }
-    const h = Math.max(1, peak * height);
-    context.fillRect(x, (height - h) / 2, 1, h);
+    envelope[x] = peak;
   }
+  peaks = envelope;
+  canvas.classList.remove('empty');
+  for (const el of [playPause, muteButton, volSlider]) el.disabled = false;
+  paint();
+  syncTransport();
 }
 
 worker.onmessage = (event: MessageEvent) => {
@@ -272,6 +475,13 @@ goButton.addEventListener('click', () => {
     setStatus('pan width is a number from 0 to 1', true);
     return;
   }
+  const voiceLimit = readVoices();
+  if (voiceLimit === null) {
+    voicesInput.classList.add('bad');
+    goButton.disabled = false;
+    setStatus('the voice pool is a whole number, or "off"', true);
+    return;
+  }
   setBusy(true);
   setBar(0);
   worker.postMessage({
@@ -282,6 +492,10 @@ goButton.addEventListener('click', () => {
     // a length of zero.
     from: from ?? 0,
     seconds: to === undefined ? 0 : to - (from ?? 0),
+    voiceLimit,
+    reverb: optReverb.checked,
+    echo: optEcho.checked,
+    clip: optClip.checked,
   });
 });
 
