@@ -21,6 +21,7 @@
  */
 
 import { loaderFor, manifest, asset, type Manifest } from './assets.ts';
+import { seqPicker } from './seq-picker.ts';
 import { type VoiceSpec } from '../src/audio/mixer.ts';
 import { readLevelProject, type LevelProject } from '../src/core/project.ts';
 import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
@@ -29,6 +30,7 @@ import { webInflate } from '../src/platform/web.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const seqSelect = $<HTMLSelectElement>('seq');
+const seqSearch = $<HTMLInputElement>('seqSearch');
 const playButton = $<HTMLButtonElement>('play');
 const rewindButton = $<HTMLButtonElement>('rewind');
 const statusLine = $<HTMLDivElement>('status');
@@ -523,7 +525,7 @@ const prepareNow = () => {
     setError(String((error as Error).stack ?? error));
   });
 };
-seqSelect.addEventListener('change', prepareNow);
+const picker = seqPicker(seqSelect, seqSearch, prepareNow);
 
 // ------------------------------------------------------------------ the file
 
@@ -546,10 +548,7 @@ async function openFile(file: File): Promise<void> {
     const list = project.sequencers
       .map((s) => ({ uid: s.uid, name: s.name, tracks: s.tracks.length }))
       .sort((a, b) => b.tracks - a.tracks);
-    seqSelect.innerHTML = list
-      .map((s) => `<option value="${s.uid}">${s.name || '(untitled)'} — ${s.tracks} instruments</option>`)
-      .join('');
-    seqSelect.disabled = list.length === 0;
+    picker.setRows(list);
     dropZone.classList.add('loaded');
     dropTitle.textContent = `${file.name} — ${list.length} sequencers`;
     dropHint.textContent = 'Click or drop to open a different file.';

@@ -8,11 +8,13 @@
  * `playbackRate`, nothing that could differ between engines.
  */
 
+import { seqPicker } from './seq-picker.ts';
 import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
 import { PAN_WIDTH } from '../src/core/render.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const seqSelect = $<HTMLSelectElement>('seq');
+const seqSearch = $<HTMLInputElement>('seqSearch');
 const useRange = $<HTMLInputElement>('useRange');
 const rangeFields = $<HTMLSpanElement>('rangeFields');
 const fromInput = $<HTMLInputElement>('from');
@@ -88,6 +90,10 @@ const syncVoiceCap = () => {
 };
 optNoCap.addEventListener('change', syncVoiceCap);
 syncVoiceCap();
+
+// The renderer has nothing to do when a song is picked -- rendering waits for
+// the button -- so the picker only filters here.
+const picker = seqPicker(seqSelect, seqSearch, () => {});
 
 const worker = new Worker(new URL('./render-worker.ts', import.meta.url), { type: 'module' });
 
@@ -379,17 +385,10 @@ worker.onmessage = (event: MessageEvent) => {
 
   if (message.type === 'loaded') {
     const list = message.list as { uid: number; name: string; tracks: number }[];
-    seqSelect.innerHTML = '';
-    for (const item of list) {
-      const option = document.createElement('option');
-      option.value = String(item.uid);
-      option.textContent = `${item.name || '(untitled)'} — ${plural(item.tracks, 'instrument')}`;
-      seqSelect.append(option);
-    }
+    picker.setRows(list);
     // This Is Halloween, if it is in this level: the one every render is judged on.
     const halloween = list.find((item) => item.uid === 737099);
     if (halloween) seqSelect.value = String(halloween.uid);
-    seqSelect.disabled = false;
     goButton.disabled = false;
     setBusy(false);
     setBar(1);
