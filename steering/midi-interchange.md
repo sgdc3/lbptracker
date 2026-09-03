@@ -63,11 +63,39 @@ fails there, rather than silently in a DAW six months later.
 
 ## 2. `LBP-TRK ` — one text meta per part track
 
-`guid` · `name` · `gridY` · `level` · `pan` · `echoSend` · `reverbSend` · `key` · `scale` ·
-`clips` · `rest`? · `lane`? · `fix`?
+`guid` · `gridY` · `level` · `pan` · `echoSend` · `reverbSend` · `key` · `scale` · `clips` ·
+`rest`? · `lane`? · `fix`?
 
-The first nine are the placement — instrument, mixer row, level, pan, both sends, and the key and
-scale that were folded into the note numbers. The last four are the interesting ones:
+The first eight are the placement — instrument, mixer row, level, pan, both sends, and the key and
+scale that were folded into the note numbers. The last three are the interesting ones.
+
+### What a DAW can edit, and what it cannot
+
+Audited 2026-09-04 by making each edit to an exported file and re-importing it. **The rule that
+came out of it: a value with a MIDI message of its own must not have a second copy in a meta that
+wins.** Three fields failed that and were fixed; one cannot be fixed.
+
+| edit | survives? | |
+|---|---|---|
+| rename the song | ✅ | the conductor's track name is the only source |
+| rename a part | ✅ | ⚠️ **was overwritten** — the meta carried a second copy and won, so a renamed part came back as `guid 129085`. The suffix a lane's track carries (`saw_wave (2)`) is stripped on the way in, exactly, because the meta says which lane it is |
+| change the tempo | ✅ | ⚠️ **was overwritten**; see §1 |
+| transpose the notes | ✅ | `Key` is undone by subtraction, and a transposition composes |
+| move the notes in time | ✅ | the cell list re-fits them; notes outside every declared cell open a new clip |
+| **level, pan, reverb send** | ✅ | ⚠️ **were ignored** — now CC 7, CC 10 and CC 91 on the master channel, so a DAW plays the level's own mix instead of every part flat and centred, and a fader move comes back |
+| the echo send | ❌ | MIDI has no controller for a delay send. 91 is reverb, 93 chorus, 94 detune, 95 phaser, and none of them is this. It stays in the meta |
+| the instrument | ❌ | a program change is 7 bits and a GUID is six digits. Bank select could be abused into 21 bits; a DAW would then show "bank 1009, program 61", which is worse than honest |
+
+❗ **The mixer needs BOTH the controller and the meta, and a rule for when they disagree.** Seven
+bits cannot hold the editor's steps: over 62,158 corpus placements, `level` is exact at 7 bits on
+70.2%, `reverbSend` on 80.5% and **`pan` on 8.9%** — the values are round decimals (0.25, 0.35,
+0.46). So the meta keeps the exact number and the controller wins only once it stops agreeing with
+it, which is the same rule the tempo uses. An untouched file keeps 0.35; an edited one gets the
+fader.
+
+⚠️ **CC 7 carries `level` alone, not level times the channel volume.** Folding the mixer stage
+in would make it un-invertible, and 308 of the corpus's 338 sequencers run one channel at a uniform
+0.75 — a constant, not a balance.
 
 ### `clips` — the board layout, `[gridX, steps]` per cell
 

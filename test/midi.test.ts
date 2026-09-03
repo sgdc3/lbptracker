@@ -11,7 +11,9 @@ import {
   midiToSequencer,
   sequencerToMidi,
 } from '../src/core/midi.ts';
-import { metaString, readMidi, tempoEvent, writeMidi, writeVar, varLength } from '../src/core/smf.ts';
+import {
+  controlChange, metaString, metaText, readMidi, tempoEvent, writeMidi, writeVar, varLength,
+} from '../src/core/smf.ts';
 
 /* ---------------------------------------------------------------- fixtures */
 
@@ -560,6 +562,59 @@ test('a plateau before a fade is still a plateau', () => {
     [[0, 96], [8, 96], [16, 0]],
     'the fade starts at step 8, not at the note-on',
   );
+});
+
+test('the mixer rides on CC 7, 10 and 91, and a fader move wins', () => {
+  const seq = makeSequencer([
+    makeTrack([[{ step: 0, pitch: 60 }]], { level: 0.25, pan: 0.35, reverbSend: 0.4 }),
+  ]);
+  const bytes = sequencerToMidi(seq).bytes;
+
+  // A DAW sees the level's own mix instead of every part flat and centred.
+  const ccs = new Map<number, number>();
+  for (const t of readMidi(bytes).tracks.slice(1)) {
+    for (const e of t.events) if ((e.data[0] & 0xf0) === 0xb0) ccs.set(e.data[1], e.data[2]);
+  }
+  assert.equal(ccs.get(7), Math.round(0.25 * 127));
+  assert.equal(ccs.get(10), Math.round(0.35 * 127));
+  assert.equal(ccs.get(91), Math.round(0.4 * 127));
+
+  // ⚠️ Untouched, the meta's exact value stands -- seven bits cannot hold
+  // 0.35, and rounding it every trip would walk the pan across the stereo field.
+  const back = midiToSequencer(bytes).sequencer;
+  assert.equal(back.tracks[0].level, 0.25);
+  assert.equal(back.tracks[0].pan, 0.35);
+  assert.equal(back.tracks[0].reverbSend, 0.4);
+
+  // Moved, the controller wins.
+  const file = readMidi(bytes);
+  const edited = writeMidi({
+    format: 1, division: file.division,
+    tracks: file.tracks.map((t, i) => (i === 0 ? t : {
+      events: t.events.map((e) => ((e.data[0] & 0xf0) === 0xb0 && e.data[1] === 10
+        ? controlChange(e.tick, e.data[0] & 0x0f, 10, 0) : e)),
+    })),
+  });
+  assert.equal(midiToSequencer(edited).sequencer.tracks[0].pan, 0);
+});
+
+test('renaming a part in a DAW survives the trip back', () => {
+  // ⚠️ The `LBP-TRK` meta used to carry a second copy of the name, and the
+  // copy won: a part renamed in a DAW came back as the name the level had --
+  // which for the corpus is no name at all, so `guid 129085`. The track name
+  // meta is the only source now.
+  const seq = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]], { name: 'kalimba' })]);
+  const file = readMidi(sequencerToMidi(seq).bytes);
+  const renamed = writeMidi({
+    format: 1, division: file.division,
+    tracks: file.tracks.map((t, i) => (i === 0 ? t : {
+      events: t.events.map((e) => {
+        const m = metaString(e);
+        return m?.type === 0x03 ? metaText(e.tick, 0x03, 'My Bass') : e;
+      }),
+    })),
+  });
+  assert.equal(midiToSequencer(renamed).sequencer.tracks[0].name, 'My Bass');
 });
 
 test('the record patch is written only for what MIDI could not say', () => {

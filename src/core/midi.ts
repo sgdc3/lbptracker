@@ -1207,8 +1207,32 @@ export function sequencerToMidi(
         const fix = lane === 0 ? patch?.get(index) : undefined;
         const header: MidiEvent[] = [
           metaText(0, 0x03, label),
+          // ❗ **The mixer on the controllers MIDI has for it.** Level, pan and
+          // the reverb send are CC 7, 10 and 91 -- so a DAW plays the level's
+          // own mix instead of every part flat and centred, and a fader move
+          // survives the trip back. The meta keeps the exact value beside them,
+          // and the rule when they disagree is the tempo's: seven bits cannot
+          // hold the editor's steps (pan is exact at 7 bits on 8.9% of the
+          // corpus's placements), so the meta wins while the controller still
+          // AGREES to within its own resolution, and the controller wins the
+          // moment it does not. Unedited files keep 0.25 exactly; an edited one
+          // gets what the fader says.
+          //
+          // ⚠️ On the master channel, which is where MPE puts a control that
+          // belongs to the whole zone. And `level` alone, not level times the
+          // channel volume: folding the mixer stage in would make it
+          // un-invertible, and 308 of the corpus's 338 sequencers have one
+          // channel at a uniform 0.75, which is a constant and not a balance.
+          controlChange(0, MASTER, 7, clamp7(t.level * 127)),
+          controlChange(0, MASTER, 10, clamp7(t.pan * 127)),
+          controlChange(0, MASTER, 91, clamp7(t.reverbSend * 127)),
           metaText(0, 0x01, TRK_TAG + JSON.stringify({
-            guid: t.guid, name: nameOf(t), gridY: t.gridY,
+            // ⚠️ **No `name`.** It is the track name meta, and carrying a
+            // second copy here meant the copy won: renaming a part in a DAW came
+            // back as the name the level had. The echo send stays because MIDI
+            // has no controller for a delay send -- 91 is reverb, 93 chorus, 94
+            // detune, 95 phaser, and none of them is this.
+            guid: t.guid, gridY: t.gridY,
             level: t.level, pan: t.pan, echoSend: t.echoSend, reverbSend: t.reverbSend,
             key: t.key, scale: t.scale, clips: part.clips,
             // Written only when it is not the game's current default, which is
@@ -1609,6 +1633,20 @@ function readPart(
     fix: new Map(),
     notes: [],
   };
+  /**
+   * The mixer controllers this track carries, by CC number.
+   *
+   * Read before the meta, because the meta needs them: only a controller that
+   * DISAGREES with the meta's exact value is an edit. First value wins -- these
+   * are written once, at tick 0, and anything later is automation we do not
+   * model.
+   */
+  const mixer = new Map<number, number>();
+  for (const event of track.events) {
+    if ((event.data[0] & 0xf0) === 0xb0 && !mixer.has(event.data[1])) {
+      if ([7, 10, 91].includes(event.data[1])) mixer.set(event.data[1], event.data[2]);
+    }
+  }
   for (const event of track.events) {
     const text = metaString(event);
     if (text?.type === 0x03 && text.text) part.name = text.text;
@@ -1619,11 +1657,25 @@ function readPart(
           typeof meta[key] === 'number' ? (meta[key] as number) : fallback;
         part.guid = pick('guid', 0);
         part.gridY = pick('gridY', index);
-        part.level = pick('level', NEUTRAL.level);
-        part.pan = pick('pan', NEUTRAL.pan);
         part.echoSend = pick('echoSend', NEUTRAL.echoSend);
-        part.reverbSend = pick('reverbSend', NEUTRAL.reverbSend);
-        if (typeof meta.name === 'string') part.name = meta.name;
+        // ❗ **The controller wins the moment it stops agreeing.** Written and
+        // read as a pair: seven bits cannot hold the editor's steps, so a file
+        // nobody touched keeps the meta's exact 0.25, and a file whose fader
+        // moved gets what the fader says. The same rule the tempo uses.
+        const dialled = (cc: number | undefined, exact: number) =>
+          cc === undefined || cc === clamp7(exact * 127) ? exact : cc / 127;
+        // ❗ A lane's track is named `part (n)` so a DAW's track list reads; the
+        // suffix is the exporter's and comes straight back off. The meta says
+        // which lane this is, so what to strip is known exactly rather than
+        // guessed at with a pattern.
+        const lane = pick('lane', -1);
+        const suffix = ` (${lane + 1})`;
+        if (lane >= 0 && part.name.endsWith(suffix)) {
+          part.name = part.name.slice(0, -suffix.length);
+        }
+        part.level = dialled(mixer.get(7), pick('level', NEUTRAL.level));
+        part.pan = dialled(mixer.get(10), pick('pan', NEUTRAL.pan));
+        part.reverbSend = dialled(mixer.get(91), pick('reverbSend', NEUTRAL.reverbSend));
         // The part's resting bit, and the game's current default without one.
         part.rest = pick('rest', 1) === 0 ? 0 : 1;
         if (meta.fix !== null && typeof meta.fix === 'object') {
