@@ -73,7 +73,7 @@ let worstVolume = 0;
 let bent = 0;
 const totals = {
   shared: 0, dropped: 0, clampedPitch: 0, clampedBend: 0, bytes: 0, lengthened: 0,
-  flattened: 0, deviating: 0, automated: 0,
+  flattened: 0, deviating: 0, automated: 0, dragged: 0,
 };
 
 for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
@@ -95,6 +95,7 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
     const imported = midiToSequencer(exported.bytes);
     totals.shared += exported.sharedChannel;
     totals.flattened += exported.flattened;
+    totals.dragged += exported.dragged;
     for (const e of schedule(seq)) {
       if (e.hasPitchAutomation || e.hasVolumeAutomation) totals.automated += 1;
     }
@@ -205,8 +206,9 @@ console.log(
     `${totals.flattened.toLocaleString()} of them lost it to a shared channel (${pc(totals.flattened)}), ` +
     `and ${totals.deviating.toLocaleString()} notes came back with a different curve\n` +
     `${(totals.bytes / 1e6).toFixed(1)} MB of MIDI; ${totals.shared.toLocaleString()} notes shared a ` +
-    `channel, ${totals.dropped} could not be carried, ${totals.clampedPitch} pitches and ` +
-    `${totals.clampedBend} bends clamped, ${totals.lengthened} notes lengthened to the grid`,
+    `channel and ${totals.dragged.toLocaleString()} of those (${pc(totals.dragged)}) will be bent ` +
+    `by a neighbour in a synth; ${totals.dropped} could not be carried, ${totals.clampedPitch} ` +
+    `pitches and ${totals.clampedBend} bends clamped, ${totals.lengthened} lengthened to the grid`,
 );
 /**
  * What this gates on, and what it only reports.

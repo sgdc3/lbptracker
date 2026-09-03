@@ -135,6 +135,13 @@ function convert(): void {
   if (exported.clampedPitch > 0) {
     lost.push(`${plural(exported.clampedPitch, 'note')} fell outside MIDI’s 0–127 and were clamped.`);
   }
+  if (exported.dragged > 0) {
+    lost.push(
+      `${plural(exported.dragged, 'note')} sit on a channel that is being bent while they sound, ` +
+        `so a synth will pull them along with it. Reading the file back here does not: the bend ` +
+        `is known to belong to the note that claimed the channel.`,
+    );
+  }
   if (exported.clampedBend > 0) {
     lost.push(
       `${plural(exported.clampedBend, 'control point')} bent further than the range allows. Turn ` +
@@ -147,8 +154,15 @@ function convert(): void {
     { value: String(exported.parts), label: 'parts' },
     { value: exported.events.toLocaleString(), label: 'events' },
     { value: `${(exported.bytes.length / 1024).toFixed(0)} kB`, label: 'file' },
+    // ⚠️ `dragged`, not `sharedChannel`. Sharing is usually free -- on
+    // `Ascetic` 124 notes share and 6 are ever touched by a neighbour's bend --
+    // and putting the big number in front of someone implies a damage that is
+    // not there.
+    ...(exported.dragged > 0
+      ? [{ value: exported.dragged.toLocaleString(), label: 'take on a bend', warn: true }]
+      : []),
     ...(exported.sharedChannel > 0
-      ? [{ value: exported.sharedChannel.toLocaleString(), label: 'shared a channel', warn: true }]
+      ? [{ value: exported.sharedChannel.toLocaleString(), label: 'shared a channel' }]
       : []),
     ...(lost.length === 0 ? [{ value: '✓', label: 'nothing lost' }] : []),
   ]);

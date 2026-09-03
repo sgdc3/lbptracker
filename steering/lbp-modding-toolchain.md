@@ -212,6 +212,10 @@ either file:
   dense passage runs out. A note that has to share writes no bend and no pressure at all, because
   both belong to the channel and a newcomer setting them drags whatever is already sounding there.
   The count is reported by `sequencerToMidi`, never swallowed.
+- 27,036 notes share a channel, but **only 1,245 of them (0.13%) are ever reached by the
+  neighbour's bend** — the rest sit on a channel that stays centred for their whole life and lose
+  nothing. ⚠️ **Report `dragged`, not `sharedChannel`.** The raw sharing count is five times larger
+  and implies a damage that is not there: on `Ascetic` 124 notes share and 6 are touched.
 - 22.7 MB of MIDI; 0 pitches clamped, 0 bends clamped, 0 lengthened, **1 note that MPE cannot
   carry** — seventeen copies of one pitch at once, in `Avian`, with nowhere left where a note-off
   could tell them apart.
@@ -224,8 +228,11 @@ obvious.** Allocating in plain time order let a flat note take the last free cha
 before a gliding one needed it: 3,593 notes lost a glide where, measured, only **1,172 ever arrive
 while more than fifteen glides are already sounding**. `sequencerToMidi` therefore allocates in two
 passes, the notes that need a channel to themselves first, and falls back through a channel nobody
-is bending, then a channel whose glides all began earlier, then the master channel — which MPE
-allows to carry notes — and only then gives a glide up. That last case is real and is counted:
+is bending, then the master channel — which MPE allows to carry notes and where nothing is ever
+bent — then a channel whose glides all began earlier, and only then gives a glide up. ⚠️ **The
+master goes before the earlier-glide case, not after**: our own importer knows whose a bend is, a
+synth does not, and parking a note on the master is the one placement that cannot be dragged.
+Ascetic's dragged notes went from 18 to 6 on that ordering alone. That last case is real and is counted:
 `flattened`. Deciding is a separate step from writing for exactly that reason, since displacing a
 glide has to be able to reach a note that was placed earlier.
 

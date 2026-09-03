@@ -132,6 +132,15 @@ export interface MidiExportResult {
   readonly events: number;
   /** Notes that had to share a member channel because all 15 were busy. */
   readonly sharedChannel: number;
+  /**
+   * Sharers that a neighbour's bend actually reaches.
+   *
+   * A subset of `sharedChannel`, and much the smaller number: most sharing is
+   * free, because the channel is not being bent while the sharer sounds. These
+   * are the ones a synth will pull out of tune -- this file's own importer
+   * knows whose the bend is and is not fooled.
+   */
+  readonly dragged: number;
   /** Notes whose pitch left MIDI's 0..127 and was clamped to it. */
   readonly clampedPitch: number;
   /** Control points whose bend exceeded the range and was clamped. */
@@ -259,6 +268,8 @@ class VoicePool {
   refused = 0;
   /** Glides given up so that a note could be placed in front of them. */
   demoted = 0;
+  /** Sharers that will hear somebody else's bend; see `take`. */
+  dragged = 0;
 
   constructor() {
     this.placed = MEMBERS.map(() => []);
@@ -323,9 +334,12 @@ class VoicePool {
        * went to it.
        *
        *   QUIET     a channel nobody is bending at all
-       *   BEHIND    one whose glides all began before this note
-       *   MASTER    channel 1, which MPE lets carry notes and where a note with
-       *             no expression to lose costs nothing
+       *   MASTER    channel 1, which MPE lets carry notes and where nothing is
+       *             ever bent, so a note parked there is never dragged
+       *   BEHIND    one whose glides all began before this note. Our own
+       *             importer knows whose the bend is (see `owners`), but a
+       *             synth does not: this note WILL be dragged by it, which is
+       *             what `dragged` counts and why the master comes first.
        *   DISPLACE  a channel where a glide has to be given up for this note
        *
        * The last one is a real loss and is counted. Refusing instead of
@@ -335,7 +349,7 @@ class VoicePool {
       const inFront = (i: number) =>
         this.live[i].filter(clashes).filter((b) => b.gliding && b.from > tick);
 
-      for (const how of ['quiet', 'behind', 'master', 'displace'] as const) {
+      for (const how of ['quiet', 'master', 'behind', 'displace'] as const) {
         if (how === 'master') {
           this.liveMaster = this.liveMaster.filter((b) => b.until > tick);
           if (this.liveMaster.some((b) => b.note === note && b.from < until)) continue;
@@ -390,6 +404,12 @@ class VoicePool {
       }
       this.shared += 1;
       exclusive = false;
+      // ⚠️ **Sharing a channel is usually free, and the raw count says
+      // otherwise.** On `Ascetic` 124 notes share and only 18 of them ever have
+      // a bend land on their channel; the rest sit on one that stays centred for
+      // their whole life and lose nothing at all. This is the number worth
+      // showing anyone.
+      if (this.live[best].filter(clashes).some((b) => b.gliding)) this.dragged += 1;
     }
     const span: Span = {
       note, from: tick, until, gliding: gliding && exclusive,
@@ -707,6 +727,7 @@ export function sequencerToMidi(
     parts: parts.length,
     events: tracks.reduce((sum, t) => sum + t.events.length, 0),
     sharedChannel: pool.shared,
+    dragged: pool.dragged,
     flattened,
     clampedPitch,
     clampedBend,
