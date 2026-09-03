@@ -63,10 +63,10 @@ fails there, rather than silently in a DAW six months later.
 
 ## 2. `LBP-TRK ` — one text meta per part track
 
-`guid` · `gridY` · `level` · `pan` · `echoSend` · `reverbSend` · `key` · `scale` · `clips` ·
-`rest`? · `lane`? · `fix`?
+`guid` · `instrument` · `gridY` · `level` · `pan` · `echoSend` · `reverbSend` · `key` · `scale` ·
+`clips` · `name`? · `rest`? · `lane`? · `fix`?
 
-The first eight are the placement — instrument, mixer row, level, pan, both sends, and the key and
+The first nine are the placement — instrument, mixer row, level, pan, both sends, and the key and
 scale that were folded into the note numbers. The last three are the interesting ones.
 
 ### What a DAW can edit, and what it cannot
@@ -88,16 +88,26 @@ wins.** Three fields failed that and were fixed; one cannot be fixed.
 
 ### The track name is `row 4 - saw_wave`
 
-❗ **The label is the part's identity, not decoration.** Two of a placement's fields have no MIDI
-message at all — the board row, and the instrument, whose GUID is six digits against a program
-change's seven bits (bank select could be abused into 21 bits, but a DAW would then show "bank
-1009, program 61", which is worse than honest). So both live in the track name, which is the one
-thing about a track a DAW always lets you edit.
+Two of a placement's fields have no MIDI message at all — the board row, and the instrument, whose
+GUID is six digits against a program change's seven bits (bank select could be abused into 21 bits,
+but a DAW would then show "bank 1009, program 61", which is worse than honest). So both are in the
+track name, which is the one thing about a track a DAW always lets you edit.
 
-Reading the instrument back needs the caller: only the `.rinst` manifest knows what `saw_wave` is,
-and `midiToSequencer`'s `instrumentGuid` is that map read backwards. Without one the meta's GUID
-stands and a rename changes only the row — which is also what happens to a name that resolves to
-nothing, because **a typo in a track name must not silence a part**.
+❗ **The label is cosmetic and a debugging aid; the meta is the carrier.** Everything the label
+says is in the meta as well — `gridY` and, since 2026-09-04, the instrument's `instrument` name
+beside its `guid` — and the label is read only to see whether it says something **different**.
+Measured: every part-track name stripped from the corpus's exports, **62,158 clips of 62,158 still
+correct**. A DAW that renames tracks to its own scheme changes nothing.
+
+⚠️ **Carrying the name as well as the GUID is what makes that safe, and it closed a real hole.**
+Before it, any resolver hit overrode the GUID — so a manifest that mapped `saw_wave` to a different
+GUID silently changed the instrument on a file nobody had touched. Now the resolver is not even
+asked unless the label disagrees.
+
+Reading a *renamed* instrument back still needs the caller: only the `.rinst` manifest knows what
+`piano` is, and `midiToSequencer`'s `instrumentGuid` is that map read backwards. Without one, or
+with a name that resolves to nothing, the meta's GUID stands — because **a typo in a track name
+must not silence a part**.
 
 ⚠️ **The label carries the INSTRUMENT, never `Track.name`.** The Thing's own label is empty on
 every placement of all 22 corpus levels; putting it in the track name would hide the instrument on

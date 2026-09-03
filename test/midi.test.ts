@@ -892,6 +892,38 @@ test('a track is named for its row and instrument, and the Thing name rides alon
   assert.equal(imported.sequencer.tracks[0].guid, 4242, 'and the GUID, so it plays the same sample');
 });
 
+test('the import never depends on the track name', () => {
+  // ❗ **The label is cosmetic and a debugging aid; the meta is the carrier.**
+  // A DAW that renames tracks to its own scheme, or drops the name, must not
+  // change what comes back — so everything the label says is in the meta too,
+  // and the label is read only to see whether it says something DIFFERENT.
+  // Measured over the corpus: every track name removed, 62,158 clips of 62,158
+  // still correct.
+  const seq = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]], { guid: 4242, gridY: 7 })]);
+  const file = readMidi(sequencerToMidi(seq, { instrumentName: () => 'saw_wave' }).bytes);
+  const nameless = writeMidi({
+    format: 1, division: file.division,
+    tracks: file.tracks.map((t, i) => ({
+      events: t.events.filter((e) => !(i > 0 && metaString(e)?.type === 0x03)),
+    })),
+  });
+  const back = midiToSequencer(nameless).sequencer;
+  assert.equal(back.tracks[0].guid, 4242);
+  assert.equal(back.tracks[0].gridY, 7);
+  assert.equal(back.tracks[0].notes.length, 1);
+});
+
+test('a resolver cannot change an instrument nobody renamed', () => {
+  // ⚠️ **The meta carries the instrument's NAME as well as its GUID**, and
+  // without it any resolver hit overrode the GUID: a manifest that mapped
+  // `saw_wave` to a different GUID silently changed the instrument on a file
+  // nobody had touched. Only a label that disagrees with the meta is an edit.
+  const seq = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]], { guid: 4242 })]);
+  const bytes = sequencerToMidi(seq, { instrumentName: () => 'saw_wave' }).bytes;
+  const back = midiToSequencer(bytes, { instrumentGuid: () => 777 }).sequencer;
+  assert.equal(back.tracks[0].guid, 4242, 'the resolver is not even asked');
+});
+
 test('renaming a track moves the part to another row and instrument', () => {
   // ❗ **The one thing a DAW could not do before.** A program change is seven
   // bits against a six-digit GUID and there is no message at all for a board

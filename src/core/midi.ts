@@ -1263,6 +1263,15 @@ export function sequencerToMidi(
             // controller keeps its exact value here as well, because seven bits
             // cannot hold the editor's steps -- see the CCs above.
             guid: t.guid, gridY: t.gridY,
+            // ❗ **The instrument's name as well as its GUID**, so the meta is a
+            // complete carrier and the import never *depends* on the track name.
+            // A mangled or missing label leaves everything standing; the label
+            // is read only to see whether it says something DIFFERENT from
+            // this, which is what tells an edit from a round trip. Without the
+            // name here, any resolver hit overrode the GUID -- so a manifest
+            // that mapped the same name to a different GUID silently changed
+            // the instrument on a file nobody had touched.
+            instrument: instrumentOf(t),
             // The Thing's own label, which the track name does not carry.
             ...(t.name ? { name: t.name } : {}),
             level: t.level, pan: t.pan, echoSend: t.echoSend, reverbSend: t.reverbSend,
@@ -1751,8 +1760,12 @@ function readPart(
         if (parsed) {
           const row = Number(parsed[1]);
           if (Number.isInteger(row)) part.gridY = row;
-          const guid = options.instrumentGuid?.(parsed[2]);
-          if (guid !== undefined) part.guid = guid;
+          // ❗ Only a name that DISAGREES with the meta's is an edit, and only
+          // then is the resolver asked. Same rule as the tempo and the mixer.
+          if (parsed[2] !== meta.instrument) {
+            const guid = options.instrumentGuid?.(parsed[2]);
+            if (guid !== undefined) part.guid = guid;
+          }
         }
         // The Thing's own label, which the track name never carried.
         part.name = typeof meta.name === 'string' ? meta.name : '';
