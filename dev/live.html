@@ -172,7 +172,38 @@
   </section>
 
   <section>
-    <p class="step"><b>4</b> Turn the output stage while it runs</p>
+    <p class="step"><b>4</b> The song&rsquo;s own settings</p>
+    <div class="live">
+      <div class="group">
+        <h3>timing</h3>
+        <div class="knob">
+          <label for="tempo">tempo</label>
+          <input type="range" id="tempo" min="20" max="400" step="1" value="120">
+          <output id="tempoLabel">120 BPM</output>
+        </div>
+        <div class="knob">
+          <label for="swing">swing</label>
+          <input type="range" id="swing" min="0" max="100" step="1" value="0">
+          <output id="swingLabel">0.00</output>
+        </div>
+        <p class="hintline">
+          Both are written into the song. Changing either moves every note, so the plan is rebuilt
+          &mdash; underneath, keeping your place in the <em>music</em> rather than in seconds.
+        </p>
+      </div>
+      <div class="group">
+        <h3>channel volumes</h3>
+        <div id="channels"></div>
+        <p class="hintline">
+          The sequencer&rsquo;s own mixer, one per board row. Pull one to nothing to hear what a
+          part is doing to the whole.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="step"><b>5</b> Turn the output stage while it runs</p>
     <div class="live">
       <div class="group">
         <h3>echo</h3>

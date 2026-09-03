@@ -51,6 +51,9 @@ const panWidthInput = $<HTMLInputElement>('panWidth');
 const voicesInput = $<HTMLInputElement>('voices');
 const noCapBox = $<HTMLInputElement>('optNoCap');
 const staleNote = $<HTMLParagraphElement>('staleNote');
+const tempoInput = $<HTMLInputElement>('tempo');
+const swingInput = $<HTMLInputElement>('swing');
+const channelsBox = $<HTMLDivElement>('channels');
 
 const setStatus = (text: string, bad = false) => {
   statusLine.textContent = text;
@@ -202,6 +205,27 @@ const planOptions = () => ({
   voiceLimit: VOICES_UNLIMITED,
 });
 
+/**
+ * The song's own settings, as the listener has left them.
+ *
+ * ⚠️ **These cannot be live in the worklet.** Tempo and swing decide where
+ * every note falls and the channel volumes decide every voice's gain, all of
+ * which is fixed when a voice is built -- so changing one rebuilds the plan.
+ * The rebuild is swapped in under the transport, and the playhead is carried
+ * over in STEPS rather than seconds, because a tempo change moves the seconds
+ * a musical position corresponds to.
+ */
+let overrides: { tempo?: number; swing?: number; volumes?: number[] } = {};
+
+const withOverrides = <T extends { tempo: number; swing: number; volumes: readonly number[] }>(
+  seq: T,
+): T => ({
+  ...seq,
+  tempo: overrides.tempo ?? seq.tempo,
+  swing: overrides.swing ?? seq.swing,
+  volumes: overrides.volumes ?? seq.volumes,
+});
+
 /** The pool size the listener has asked for. */
 const poolSize = () => (noCapBox.checked ? VOICES_UNLIMITED : Number(voicesInput.value));
 
@@ -291,8 +315,14 @@ function pushEffects(): void {
  */
 async function prepare(restart = true): Promise<void> {
   const uid = picker.value();
-  const seq = project?.sequencers.find((s) => s.uid === uid);
-  if (!seq || !rinstIndex || !smpIndex) return;
+  const original = project?.sequencers.find((s) => s.uid === uid);
+  if (!original || !rinstIndex || !smpIndex) return;
+  if (restart) overrides = {};
+  const seq = withOverrides(original);
+  // Where we are in the music, not in seconds: a tempo change moves one and
+  // not the other, and the music is what a listener is following.
+  const stepBefore = !restart && framesPerStep > 0 ? songPosition() / framesPerStep : 0;
+  const wasPlaying = playing;
 
   if (restart) {
     setError('');
@@ -385,9 +415,14 @@ async function prepare(restart = true): Promise<void> {
     // they were going to; only notes not yet posted come from the new plan.
     // Re-pointing `nextIndex` at the current position is the whole handover --
     // no `stopAll`, no seek, no gap.
+    cursorFrames = Math.min(songFrames, stepBefore * framesPerStep);
+    if (context) startedAt = context.currentTime;
+    playing = wasPlaying;
     const now = songPosition();
     nextIndex = plan.findIndex((p) => p.at >= now);
     if (nextIndex < 0) nextIndex = plan.length;
+    handed.clear();
+    rebuildPool(now);
   }
 
   playButton.disabled = false;
@@ -414,6 +449,20 @@ async function prepare(restart = true): Promise<void> {
   ]
     .map(([k, v]) => `<span>${k} ${v.startsWith('<b') ? v : `<b>${v}</b>`}</span>`)
     .join('');
+  if (restart) {
+    tempoInput.value = String(Math.round(original.tempo));
+    swingInput.value = String(Math.round(original.swing * 100));
+    channelsBox.innerHTML = original.volumes
+      .map(
+        (v, i) =>
+          `<div class="knob"><label for="ch${i}">row ${i}</label>` +
+          `<input type="range" id="ch${i}" class="chan" data-ch="${i}" min="0" max="150" ` +
+          `value="${Math.round(v * 100)}">` +
+          `<output id="ch${i}Label">${v.toFixed(2)}</output></div>`,
+      )
+      .join('');
+    showSongOptions();
+  }
   markStale();
   showPlanOptions();
   setStatus(`ready — ${built.length.toLocaleString()} voices scheduled, press play`);
@@ -636,6 +685,40 @@ panWidthInput.addEventListener('input', () => {
  * what is already sounding finishes as it was going to. Debounced, because it
  * is a slider and every pixel of it would otherwise start a rebuild.
  */
+/**
+ * Labels for the song's own settings, and the debounced rebuild they need.
+ *
+ * Slower than the pool's debounce because this one actually re-renders the
+ * voices, where the pool is only arithmetic.
+ */
+const showSongOptions = () => {
+  $('tempoLabel').textContent = `${tempoInput.value} BPM`;
+  $('swingLabel').textContent = (Number(swingInput.value) / 100).toFixed(2);
+  for (const el of channelsBox.querySelectorAll<HTMLInputElement>('.chan')) {
+    const out = document.getElementById(`ch${el.dataset.ch}Label`);
+    if (out) out.textContent = (Number(el.value) / 100).toFixed(2);
+  }
+};
+
+let songTimer = 0;
+const songChanged = () => {
+  showSongOptions();
+  if (!plan.length) return;
+  overrides = {
+    tempo: Number(tempoInput.value),
+    swing: Number(swingInput.value) / 100,
+    volumes: [...channelsBox.querySelectorAll<HTMLInputElement>('.chan')].map(
+      (el) => Number(el.value) / 100,
+    ),
+  };
+  window.clearTimeout(songTimer);
+  songTimer = window.setTimeout(() => void prepare(false), 450);
+};
+
+tempoInput.addEventListener('input', songChanged);
+swingInput.addEventListener('input', songChanged);
+channelsBox.addEventListener('input', songChanged);
+
 const replanSoon = () => {
   showPlanOptions();
   if (!plan.length) return;
