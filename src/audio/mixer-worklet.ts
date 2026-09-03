@@ -99,6 +99,14 @@ export class MixerProcessor extends AudioWorkletProcessor {
   private echoOn = false;
   private reverbOn = false;
   private clip = true;
+  /**
+   * Frames since the last voice-count report.
+   *
+   * The count is posted on a timer rather than per block: a render quantum is
+   * 128 frames, which would be nearly four hundred messages a second for a
+   * number a person reads ten times a second at most.
+   */
+  private sinceReport = 0;
   /** Send buses, grown on demand. A render quantum is 128 frames today. */
   private echoL = new Float32Array(128);
   private echoR = new Float32Array(128);
@@ -187,6 +195,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
     if (!this.echo && !this.reverb && !this.clip) {
       this.mixer.render(left, right);
       if (output.length > 1 && right === left) right.set(left);
+      this.report(left.length);
       return true;
     }
 
@@ -222,7 +231,16 @@ export class MixerProcessor extends AudioWorkletProcessor {
       right[i] = dryR + (r ? r.right : 0);
     }
     if (output.length > 1 && right === left) right.set(left);
+    this.report(left.length);
     return true; // stay alive across silence; the graph decides when to stop
+  }
+
+  private report(frames: number): void {
+    this.sinceReport += frames;
+    if (this.sinceReport < sampleRate / 10) return;
+    this.sinceReport = 0;
+    const { total, sounding } = this.mixer.counts();
+    this.port.postMessage({ type: 'voices', total, sounding });
   }
 }
 

@@ -672,6 +672,20 @@ export class Mixer {
   }
 
   /**
+   * How many voices the pool is holding, split by whether they have started.
+   *
+   * A scheduler posts voices ahead of time with a `startFrame` delay, so "how
+   * many are there" and "how many can be heard" are different questions and a
+   * meter that answered the wrong one would be misleading rather than merely
+   * imprecise. Cheap enough to call at a UI rate; not for the audio path.
+   */
+  counts(): { total: number; sounding: number } {
+    let sounding = 0;
+    for (const voice of this.voices) if (voice.delay <= 0) sounding += 1;
+    return { total: this.voices.length, sounding };
+  }
+
+  /**
    * Close the gate on every voice carrying `tag`, as a key coming up does.
    *
    * ⚠️ **This is the note's own gate, not a stop.** `life` and `hold` are what

@@ -108,6 +108,26 @@ let startedAt = 0;
 let playing = false;
 /** How far into `plan` the scheduler has already posted. */
 let nextIndex = 0;
+/**
+ * What the audio thread last said it was holding.
+ *
+ * ⚠️ **Not the count of voices posted in the last tick**, which is what this
+ * readout used to be and which is nearly always zero: the scheduler posts in
+ * bursts every 100 ms, so on a sparse song most ticks post nothing while plenty
+ * is still ringing. A voice can also outlive its gate by its release, which no
+ * amount of counting on this side would know about.
+ */
+let sounding = 0;
+let queued = 0;
+
+function showLoad(): void {
+  if (!playing && sounding === 0 && queued === 0) {
+    loadLabel.textContent = plan.length ? 'ready' : 'idle';
+    return;
+  }
+  loadLabel.textContent =
+    `${sounding} sounding` + (queued > 0 ? ` · ${queued} queued` : '');
+}
 
 /**
  * How far ahead notes are posted.
@@ -149,8 +169,14 @@ async function ensureAudio(): Promise<AudioWorkletNode> {
   master = new GainNode(context, { gain: Number(volSlider.value) });
   node.connect(master).connect(context.destination);
   node.port.onmessage = (event: MessageEvent) => {
-    const data = event.data as { type: string; id?: string };
+    const data = event.data as { type: string; id?: string; total?: number; sounding?: number };
     if (data.type === 'missingSample') setError(`the worklet has no sample "${data.id}"`);
+    // The only place that knows what is actually sounding is the audio thread.
+    if (data.type === 'voices') {
+      sounding = data.sounding ?? 0;
+      queued = (data.total ?? 0) - sounding;
+      showLoad();
+    }
   };
   return node;
 }
@@ -328,7 +354,12 @@ function stop(clear = true): void {
   playing = false;
   playButton.textContent = '▶';
   playButton.setAttribute('aria-label', 'Play');
-  if (clear) node?.port.postMessage({ type: 'stopAll' });
+  if (clear) {
+    node?.port.postMessage({ type: 'stopAll' });
+    sounding = 0;
+    queued = 0;
+  }
+  showLoad();
 }
 
 /**
@@ -342,7 +373,6 @@ function pump(): void {
   if (!playing || !node) return;
   const now = songPosition();
   const until = now + LOOKAHEAD * RATE;
-  let posted = 0;
   while (nextIndex < plan.length && plan[nextIndex].at < until) {
     const p = plan[nextIndex];
     // The delay this voice waits before it starts, and its own end rebased onto
@@ -360,12 +390,7 @@ function pump(): void {
       lfoPhase: p.lfoPhase,
     });
     nextIndex += 1;
-    posted += 1;
   }
-  loadLabel.textContent =
-    nextIndex >= plan.length && now >= songFrames
-      ? 'done'
-      : `${posted} voice${posted === 1 ? '' : 's'} queued`;
   if (now >= songFrames) {
     stop();
     cursorFrames = songFrames;
