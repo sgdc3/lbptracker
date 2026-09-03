@@ -152,12 +152,17 @@ function showLoad(): void {
   // Dropouts rather than a load percentage: see `lastFrame` in the worklet for
   // why a percentage cannot be measured from there, and why this answers the
   // question a load meter was only being asked as a proxy for.
+  //
+  // ⚠️ Only the dropout count turns red. Colouring the whole line made the voice
+  // counts look like part of the alarm, and they are just numbers.
   const health = dropouts === 0
     ? 'no dropouts'
     : `${dropouts} dropout${dropouts === 1 ? '' : 's'}` +
       (lostMs >= 1 ? ` (${lostMs.toFixed(0)} ms lost)` : '');
-  loadLabel.textContent = `${sounding} sounding · ${queued} queued · ${health}`;
-  loadLabel.style.color = dropouts > 0 ? 'var(--bad)' : '';
+  loadLabel.innerHTML =
+    `${sounding} sounding · ${queued} queued · ` +
+    `<button type="button" class="drops${dropouts > 0 ? ' bad' : ''}" ` +
+    `title="Click to reset the count">${health}</button>`;
 }
 
 /**
@@ -545,6 +550,14 @@ window.addEventListener('keydown', (event) => {
   event.preventDefault();
   if (playing) stop();
   else start();
+});
+
+// Delegated, because `showLoad` replaces the button ten times a second.
+loadLabel.addEventListener('click', (event) => {
+  if (!(event.target as HTMLElement).closest('.drops')) return;
+  dropouts = 0;
+  lostMs = 0;
+  showLoad();
 });
 
 volSlider.addEventListener('input', () => {
