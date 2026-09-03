@@ -300,6 +300,82 @@ test('release closes the gate on a tagged voice and leaves the others', () => {
   assert.ok(Math.abs(left[128] - after) < 1e-9, 'an unknown tag changes nothing');
 });
 
+// ⚠️ THE PROPERTY THE WHOLE PROJECT RESTS ON, AND IT IS CURRENTLY FALSE FOR REAL
+// SONGS. The offline render calls `Mixer.render` once for a whole song; an
+// AudioWorklet calls it every 128 frames. Measured on `Rotary` through
+// `dev/live-sim.ts`, the same voices rendered in 128-frame blocks come out
+// -4.6 dB from the one-call render and audibly quieter (rms 0.0245 against
+// 0.0308), converging as the block grows: -6.6 dB at 512, -14.9 dB at 2048,
+// -58.5 dB at 4800, and bit-identical at 19200.
+//
+// ⚠️ **This synthetic case does not reproduce it**, which is why it is not a
+// regression test for that bug yet -- one voice, sixty staggered voices, with
+// and without an envelope, with the filter, the LFOs and the drive all pass.
+// Whatever the trigger is, it is something the game's own instruments do that
+// this does not. Keep the test: it pins the property for everything it does
+// cover, and the day it starts failing it will have found the trigger.
+test('the mixer renders the same audio whatever the block size', () => {
+  const tone = new Float32Array(4800);
+  for (let i = 0; i < tone.length; i += 1) tone[i] = Math.sin((2 * Math.PI * 220 * i) / 48000);
+  const sample = { channels: [tone], sampleRate: 48000, loop: { start: 0, end: 4799 } };
+  const spec = {
+    sample,
+    playbackRate: 1,
+    gain: 0.8,
+    pan: 0.5,
+    endFrame: 6000,
+    release: 480,
+    envelope: { attack: 0.01, decay: 0.2, sustain: 0.6, release: 0.15 },
+    // The pieces a real instrument brings that a bare tone does not.
+    filter: {
+      settings: { cutoff: 0.4, resonance: 0.5, keyTrack: 1, envAmount: 0.5 },
+      envelope: { attack: 0.02, decay: 0.3, sustain: 0.5, release: 0.2 },
+    },
+    lfos: [
+      { rate: 0.3, depth: 0.4, spread: 0 },
+      { rate: 0.2, depth: 0.3, spread: 0 },
+      { rate: 0.1, depth: 0.5, spread: 0 },
+    ],
+    drive: 0.4,
+    random: () => 0.25,
+  } as const;
+
+  const run = (block: number): Float32Array => {
+    const mixer = new Mixer(48000);
+    // Many voices, staggered: one voice on its own was block-independent, and
+    // what a song has that a single note does not is a pool of them starting
+    // and finishing at different moments.
+    for (let v = 0; v < 60; v += 1) {
+      mixer.play({
+        ...spec,
+        startFrame: 1000 + v * 137,
+        endFrame: 1000 + v * 137 + 3000 + v * 11,
+        playbackRate: 1 + v * 0.01,
+      });
+    }
+    const left = new Float32Array(24000);
+    const right = new Float32Array(24000);
+    for (let at = 0; at < left.length; at += block) {
+      const size = Math.min(block, left.length - at);
+      mixer.render(left.subarray(at, at + size), right.subarray(at, at + size));
+    }
+    return left;
+  };
+
+  const whole = run(24000);
+  for (const block of [128, 512, 4096]) {
+    const chunked = run(block);
+    let err = 0;
+    let sig = 0;
+    for (let i = 0; i < whole.length; i += 1) {
+      err += (whole[i] - chunked[i]) ** 2;
+      sig += whole[i] ** 2;
+    }
+    const db = 10 * Math.log10(err / Math.max(sig, 1e-30));
+    assert.ok(db < -100, `block ${block} differs from one call by ${db.toFixed(1)} dB`);
+  }
+});
+
 test('samplesPerStep converts tempo to frames', () => {
   // 120 BPM, 4 steps per beat, 48 kHz -> half a second per beat, 6000 per step.
   assert.equal(samplesPerStep(48000, 120, 4), 6000);

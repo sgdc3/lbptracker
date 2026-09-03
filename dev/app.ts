@@ -602,6 +602,10 @@ function bindPiano(): void {
   piano.addEventListener('pointerdown', (event) => {
     const note = noteAt(event.target);
     if (note < 0) return;
+    // Playing a key takes the keyboard with it. Without this the page keeps
+    // focus on whatever was clicked last -- a select, a slider -- and the letter
+    // keys either do nothing or change that control instead of playing notes.
+    piano.focus();
     gliding = true;
     last = note;
     piano.setPointerCapture(event.pointerId);
@@ -720,6 +724,20 @@ function listenTo(id: string): void {
 }
 
 function bindKeyboard(): void {
+  /**
+   * Anything inside the keyboard's own card counts as playing it.
+   *
+   * ⚠️ **A control still gets its keys while it has focus**, because a slider
+   * that cannot be nudged with the arrows is worse than one that steals `Z`.
+   * The card claims the keyboard only when the click did not land on a control.
+   */
+  const card = $('piano').closest('section');
+  card?.addEventListener('pointerdown', (event) => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('input, select, textarea, button, a')) return;
+    $('piano').focus();
+  });
+
   window.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
