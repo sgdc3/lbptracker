@@ -137,6 +137,9 @@
 
     <section>
       <p class="step"><b>3</b> Turn things while it sounds</p>
+      <p class="hintline" style="margin-top:-.2rem">
+        Double-click any fader to put it back where it started.
+      </p>
       <div class="params">
         <div class="group">
           <h3>voice</h3>
@@ -154,16 +157,6 @@
             <label for="pDrive">drive</label>
             <input type="range" id="pDrive" min="0" max="95" value="0">
             <output id="pDriveLabel">0.00</output>
-          </div>
-          <div class="knob">
-            <label for="length">note length</label>
-            <input type="range" id="length" min="10" max="400" value="120">
-            <output id="lengthLabel">1.20s</output>
-          </div>
-          <div class="knob">
-            <label for="decay">decay</label>
-            <input type="range" id="decay" min="0" max="24" step="1" value="0">
-            <output id="decayLabel">off (faithful)</output>
           </div>
         </div>
 
@@ -316,6 +309,17 @@
         <button id="stop">Stop</button>
       </div>
       <div class="row">
+        <div class="knob" style="flex:1 1 19rem; max-width:24rem">
+          <label for="length">note length</label>
+          <input type="range" id="length" min="10" max="400" value="120">
+          <output id="lengthLabel">1.20s</output>
+        </div>
+        <p class="hintline" style="margin:0; flex:1 1 15rem">
+          How long each note of those sequences is held. The keyboard above ignores it &mdash; a
+          key sounds for as long as you hold it.
+        </p>
+      </div>
+      <div class="row">
         <label for="engine">engine</label>
         <select id="engine">
           <option value="ours" selected>our mixer</option>
@@ -360,6 +364,6 @@
     </section>
   </div>
 </main>
-<script type="module" src="/dev/app.ts"></script>
+<script type="module" src="./app.ts"></script>
 </body>
 </html>

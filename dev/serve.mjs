@@ -34,25 +34,50 @@ const TYPES = new Map([
   ['.svg', 'image/svg+xml'],
 ]);
 
-function resolveSafe(urlPath) {
+/**
+ * Where on disk a URL might be, best guess first.
+ *
+ * `dev/` is the **web root, not a path segment**: the pages live there but
+ * import out of `src/`, so serving the repository root directly would put
+ * `/dev/` in front of every page. Looking in `dev/` first and the repository
+ * second gives the pages the URLs they deserve -- `/`, `/live.html`,
+ * `/render.html` -- while `../src/...`, which the browser normalises to
+ * `/src/...` once the page sits at the root, still finds its module. Old
+ * `/dev/...` URLs keep working through the second candidate, so nothing
+ * anyone has bookmarked breaks.
+ *
+ * The confinement check is per candidate, not on the result: `/../x` resolves
+ * inside the repository through `dev/` and outside it through the root, and
+ * only the safe one may survive.
+ */
+function candidates(urlPath) {
   const clean = decodeURIComponent(urlPath.split('?')[0]);
-  const target = path.resolve(ROOT, `.${clean === '/' ? '/dev/index.html' : clean}`);
+  const rel = `.${clean === '/' ? '/index.html' : clean}`;
   // Never serve outside the repository, whatever the URL claims.
-  if (target !== ROOT && !target.startsWith(ROOT + path.sep)) return null;
-  return target;
+  return [path.resolve(ROOT, 'dev', rel), path.resolve(ROOT, rel)].filter(
+    (target) => target === ROOT || target.startsWith(ROOT + path.sep),
+  );
 }
 
 const server = createServer(async (req, res) => {
-  const file = resolveSafe(req.url ?? '/');
-  if (!file) {
+  const tries = candidates(req.url ?? '/');
+  if (tries.length === 0) {
     res.writeHead(403).end('outside the repository');
     return;
   }
 
   let body;
-  try {
-    body = await readFile(file);
-  } catch {
+  let file;
+  for (const candidate of tries) {
+    try {
+      body = await readFile(candidate);
+      file = candidate;
+      break;
+    } catch {
+      // Try the next place it could be.
+    }
+  }
+  if (file === undefined) {
     res.writeHead(404).end(`not found: ${req.url}`);
     return;
   }

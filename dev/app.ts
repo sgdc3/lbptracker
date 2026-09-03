@@ -240,7 +240,7 @@ function voiceFor(note: number) {
   return { zone, s, ratio, playbackRate: ratio * (s.wav.sampleRate / context.sampleRate) };
 }
 
-/** Held-note length in seconds, from the slider. */
+/** How long a note of a bench sequence is held, in seconds, from the slider. */
 function noteSeconds(): number {
   return Number(($('length') as HTMLInputElement).value) / 100;
 }
@@ -376,7 +376,6 @@ function noteOn(note: number, velocity = 96): void {
       reverbSend: unit('reverbSend'),
       // No `endFrame`: the gate stays open until `release` closes it.
       release: adsr ? 0 : Math.round(0.12 * context.sampleRate),
-      decayDbPerSecond: adsr ? 0 : num('decay'),
       envelope: adsr,
       filter: overrideFilter() ?? currentFilter(),
       lfos: overrideLfos() ?? currentLfos(),
@@ -481,13 +480,12 @@ function playNote(note: number, atSeconds = 0): void {
       // released. Without this, low notes ring on and high notes cut off with
       // the sample rather than with the note.
       // With the instrument's own ADSR the end frame is the GATE, not the end:
-      // the release runs on past it. Without it, the old stand-ins apply -- a
-      // fixed 0.12 s linear fade and the diagnostic decay slider.
+      // the release runs on past it. Without it, the stand-in applies -- a
+      // fixed 0.12 s linear fade.
       endFrame: Math.round(
         (atSeconds + held + (adsr ? 0 : 0.12)) * context.sampleRate,
       ),
       release: adsr ? 0 : Math.round(0.12 * context.sampleRate),
-      decayDbPerSecond: adsr ? 0 : Number(($('decay') as HTMLInputElement).value),
       envelope: adsr,
       filter,
       lfos,
@@ -855,21 +853,6 @@ async function init(): Promise<void> {
         : `sampler: ${name} over the full-rate sample (not what the game does)`,
     );
   });
-  const decay = $<HTMLInputElement>('decay');
-  const showDecay = () => {
-    const v = Number(decay.value);
-    $('decayLabel').textContent = v === 0 ? 'off (faithful)' : `${v} dB/s (ours)`;
-  };
-  decay.addEventListener('input', showDecay);
-  showDecay();
-
-  const length = $<HTMLInputElement>('length');
-  const showLength = () => {
-    $('lengthLabel').textContent = `${(Number(length.value) / 100).toFixed(2)}s`;
-  };
-  length.addEventListener('input', showLength);
-  showLength();
-
   const gain = $<HTMLInputElement>('gain');
   gain.addEventListener('input', () => {
     const value = Number(gain.value) / 100;
@@ -884,6 +867,7 @@ async function init(): Promise<void> {
   const knobs: [string, (v: number) => string, boolean][] = [
     ['pPan', (v) => (v === 50 ? 'centre' : `${v < 50 ? 'L' : 'R'} ${Math.abs(v - 50) * 2}%`), false],
     ['pDrive', (v) => (v / 100).toFixed(2), false],
+    ['length', (v) => `${(v / 100).toFixed(2)}s`, false],
     ['envA', (v) => `${(v / 100).toFixed(2)}s`, false],
     ['envD', (v) => `${(v / 100).toFixed(2)}s`, false],
     ['envS', (v) => (v / 100).toFixed(2), false],
@@ -916,6 +900,21 @@ async function init(): Promise<void> {
     show();
   }
   $('optClip').addEventListener('change', pushEffects);
+
+  // Double-click a fader to put it back where it started.
+  //
+  // `defaultValue` is the `value=` attribute in the HTML, and nothing here ever
+  // writes a slider from code, so that attribute IS the default -- no second
+  // source of truth to keep in step. Re-dispatching `input` rather than setting
+  // the label directly means the reset goes through whatever the slider is
+  // already wired to, including the ones that rebuild the output stage.
+  document.addEventListener('dblclick', (event) => {
+    const el = event.target;
+    if (!(el instanceof HTMLInputElement) || el.type !== 'range') return;
+    if (el.value === el.defaultValue) return;
+    el.value = el.defaultValue;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
 
   // A group greys out until it is overriding, so it is obvious at a glance
   // whether what you hear is the instrument's or yours.

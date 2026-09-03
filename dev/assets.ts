@@ -26,10 +26,10 @@ export type Manifest = Map<number, { file: string }>;
  * A path under the site root, resolved against this module rather than the page.
  *
  * ⚠️ A bare relative URL in a worker resolves against the **worker's own
- * directory**, not the document's, so `fetch('fixtures/…')` from `/dev/` asks for
- * `/dev/fixtures/…` and 404s. A leading slash would work on the dev server and
- * break under any static host that serves the app from a prefix. `import.meta.url`
- * is the one form that is right in both.
+ * directory**, not the document's, so `fetch('fixtures/…')` from a worker under
+ * `/workers/` asks for `/workers/fixtures/…` and 404s. A leading slash would work
+ * on the dev server and break under any static host that serves the app from a
+ * prefix. `import.meta.url` is the one form that is right in both.
  *
  * ⚠️ **Every segment is percent-encoded, and `new URL` is not enough on its
  * own.** Three of the game's 216 samples have a `#` in the name --
