@@ -268,6 +268,15 @@ export interface VoiceSpec {
    * voice's layers sit at different points of the same cycle.
    */
   readonly lfoPhaseOffset?: readonly [number, number, number];
+  /**
+   * A caller's handle on this voice, for {@link Mixer.release}.
+   *
+   * A sequencer never needs one -- every note it plays already knows when it
+   * ends -- but a keyboard does: the note lasts until the key comes up, and
+   * that moment is not known when the voice starts. Untagged voices are
+   * unaffected by `release`, so nothing that does not ask for this changes.
+   */
+  readonly tag?: number;
 }
 
 class Voice {
@@ -660,6 +669,27 @@ export class Mixer {
 
   stopAll(): void {
     this.voices.length = 0;
+  }
+
+  /**
+   * Close the gate on every voice carrying `tag`, as a key coming up does.
+   *
+   * ⚠️ **This is the note's own gate, not a stop.** `life` and `hold` are what
+   * `Voice.render` reads as "still held" (`held = hold > 0 || life > 0`), so
+   * clearing them starts whatever release the voice already has: the amplitude
+   * envelope's if it has one, and otherwise the linear fade. It never truncates
+   * a sound the engine would have let ring.
+   *
+   * Voices are left in the pool to finish releasing; `stopAll` is the one that
+   * takes them away.
+   */
+  release(tag: number): void {
+    for (const voice of this.voices) {
+      if (voice.spec.tag === tag) {
+        voice.life = 0;
+        voice.hold = 0;
+      }
+    }
   }
 
   /**

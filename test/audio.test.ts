@@ -270,6 +270,36 @@ test('the width the game actually delivers matches the recordings', () => {
   assert.ok(Math.abs(b - c / (1 + c)) < 1e-12);
 });
 
+// A keyboard note does not know when it ends when it starts, so the mixer needs
+// a handle. `release` closes the gate the way a key coming up does -- it must
+// start the release, not truncate the sound, and it must leave untagged voices
+// completely alone.
+test('release closes the gate on a tagged voice and leaves the others', () => {
+  const tone = new Float32Array(48000).fill(0.5);
+  const sample = { channels: [tone], sampleRate: 48000, loop: { start: 0, end: 47999 } };
+  const mixer = new Mixer(48000);
+  const common = { sample, playbackRate: 1, gain: 1, pan: 0.5 } as const;
+  mixer.play({ ...common, tag: 7 });
+  mixer.play({ ...common });                       // untagged: must survive
+
+  const left = new Float32Array(256);
+  const right = new Float32Array(256);
+  mixer.render(left, right);
+  const before = left[128];
+  assert.ok(before > 0, 'both voices are sounding');
+
+  mixer.release(7);
+  mixer.render(left, right);
+  const after = left[128];
+  assert.ok(after > 0, 'the untagged voice still sounds after the other is released');
+  assert.ok(after < before, `releasing one voice lowers the mix: ${before} -> ${after}`);
+
+  // A tag nothing carries must be a no-op rather than a silent stop-all.
+  mixer.release(999);
+  mixer.render(left, right);
+  assert.ok(Math.abs(left[128] - after) < 1e-9, 'an unknown tag changes nothing');
+});
+
 test('samplesPerStep converts tempo to frames', () => {
   // 120 BPM, 4 steps per beat, 48 kHz -> half a second per beat, 6000 per step.
   assert.equal(samplesPerStep(48000, 120, 4), 6000);
