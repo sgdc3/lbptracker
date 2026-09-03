@@ -777,3 +777,48 @@ test('a file with no cells to go on is still cut into legal clips', () => {
   }
   assert.equal(result.dropped, 0);
 });
+
+test('a clip length tells overlapping clips apart', () => {
+  // ⚠️ Cells alone are not enough: clips of one part overlap — a cell is 16
+  // steps and a clip may hold 128 — so on the cells alone 86.50% of the
+  // corpus's notes fit more than one clip. With each clip's own extent as
+  // well it is 0.09%.
+  //
+  // Here the clip at cell 0 is four steps long and the one at cell 1 is
+  // twenty. A note at step 18 fits only the second — but on cells alone it
+  // would fit both, and the first is the one the old rule would have taken.
+  const short = makeTrack([[{ step: 0, pitch: 60 }, { step: 3, pitch: 60 }]], {
+    gridX: 0, stepOffset: 0, gridY: 1, guid: 5,
+  });
+  const long = makeTrack(
+    [[{ step: 2, pitch: 64 }, { step: 19, pitch: 64 }]],
+    { gridX: 1, stepOffset: STEPS_PER_CELL, gridY: 1, guid: 5 },
+  );
+  const seq = makeSequencer([short, long]);
+
+  const { sequencer } = midiToSequencer(sequencerToMidi(seq).bytes);
+  const cells = sequencer.tracks
+    .map((t) => ({ x: t.gridX, notes: t.notes.length }))
+    .sort((a, b) => a.x - b.x);
+  assert.deepEqual(cells, [{ x: 0, notes: 1 }, { x: 1, notes: 1 }], 'one note each, as written');
+  assert.deepEqual(music(sequencer), music(seq));
+});
+
+test('a clip with no notes at all still comes back', () => {
+  // ⚠️ 52 placements across the corpus hold nothing — an instrument dropped on
+  // the board and never written in. There is nothing in a MIDI file to bring
+  // one back except the cell list, so the importer emits every declared cell
+  // whether or not anything landed in it.
+  const empty = makeTrack([], { gridX: 154, stepOffset: 154 * STEPS_PER_CELL, gridY: 2, guid: 148321 });
+  const played = makeTrack([[{ step: 0, pitch: 60 }]], {
+    gridX: 3, stepOffset: 3 * STEPS_PER_CELL, gridY: 2, guid: 148321,
+  });
+  const seq = makeSequencer([empty, played]);
+
+  const { sequencer } = midiToSequencer(sequencerToMidi(seq).bytes);
+  assert.deepEqual(
+    sequencer.tracks.map((t) => [t.gridX, t.notes.length]).sort((a, b) => a[0] - b[0]),
+    [[3, 1], [154, 0]],
+    'both cells, and the empty one is still empty',
+  );
+});

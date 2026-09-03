@@ -211,7 +211,7 @@ listed here comes back exactly, and `test/midi.test.ts` pins the field list so t
 | lost | how much | why |
 |---|---|---|
 | `Key` / `Scale` | 764 placements set `Key`, none set `Scale` | folded into the note numbers on the way out, so the file plays in anything; an import is chromatic in C and **sounds identical** |
-| which clip a note sat in | 52 of 62,158 clips come back empty (0.08%) | clips of one part overlap — a cell is 16 steps and a clip holds 128 — so a note two cells could hold is genuinely ambiguous. **The cells themselves come back: 62,106 clips, 100% of them on cells the author used.** |
+| which clip a note sat in | 1 clip of 62,158, and 42 more hold a different number of notes (0.07%) | the residue of a genuine ambiguity: clips of one part overlap, so a few notes fit two of them and either answer puts them at the same place on the timeline |
 | per-point modulation | 34,449 notes (3.6%) vary it | one CC 74 per note, at its opening value — which is also all `render.ts` reads, so **nothing audible** |
 | coincident control points | 302 notes (0.03%) | two records on one position collapse to the later, which is what the engine's `t = span > 0 ? … : 1` does |
 | a glide, to a shared channel | 825 (0.09%) per part, 1,535 (0.16%) shared | fifteen member channels against thirty-two voices; always counted, never silent |
@@ -219,10 +219,20 @@ listed here comes back exactly, and `test/midi.test.ts` pins the field list so t
 
 ⚠️ **The board layout is carried by the `LBP-TRK` meta, not by a CC.** MIDI has no controller for
 "this note belongs to that clip" and a CC would be the wrong tool anyway — seven bits, and a synth
-would act on it. The `clips` field of the per-track text meta lists the `gridX` of every clip the
-part had, and `cutIntoClips` lays the notes back into the latest cell that can hold each. There is
-no standard message for this and there does not need to be: a text meta is ignored by everything
-that does not know it and exact for everything that does.
+would act on it. There is no standard message for this and there does not need to be: a text meta
+is ignored by everything that does not know it and exact for everything that does.
+
+⚠️ **And the cell alone is not enough — the clip's LENGTH is what makes it recoverable.** `clips`
+holds `[gridX, steps]` per clip. On the cells alone **86.50% of the corpus's notes fit more than
+one clip**, because clips of a part overlap heavily: a cell is 16 steps and a clip may hold 128.
+Adding each clip's own extent takes that to **0.09%**, for one number per clip. Measured end to
+end, 62,158 clips come back as 62,157, all on cells the author used, 99.93% of them holding exactly
+the notes they held.
+
+⚠️ **Emit every declared cell, including the empty ones.** 52 placements in the corpus hold no
+notes at all — an instrument dropped on the board and never written in — and nothing in a MIDI file
+can bring one back except the cell list. Skipping them is what made the count 62,106 rather than
+62,157, and it looked like an ambiguity rather than the omission it was.
 
 ⚠️ **Two fields cost nothing only because the corpus never uses them**, and that is worth knowing
 before trusting the table on a newer level: `timbre` bits 4-5 — the per-block table select — are
