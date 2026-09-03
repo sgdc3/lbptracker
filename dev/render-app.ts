@@ -13,8 +13,7 @@ import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
 import { PAN_WIDTH } from '../src/core/render.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const seqSelect = $<HTMLSelectElement>('seq');
-const seqSearch = $<HTMLInputElement>('seqSearch');
+const seqHost = $<HTMLDivElement>('seq');
 const useRange = $<HTMLInputElement>('useRange');
 const rangeFields = $<HTMLSpanElement>('rangeFields');
 const fromInput = $<HTMLInputElement>('from');
@@ -93,7 +92,7 @@ syncVoiceCap();
 
 // The renderer has nothing to do when a song is picked -- rendering waits for
 // the button -- so the picker only filters here.
-const picker = seqPicker(seqSelect, seqSearch, () => {});
+const picker = seqPicker(seqHost, () => {});
 
 const worker = new Worker(new URL('./render-worker.ts', import.meta.url), { type: 'module' });
 
@@ -388,7 +387,7 @@ worker.onmessage = (event: MessageEvent) => {
     picker.setRows(list);
     // This Is Halloween, if it is in this level: the one every render is judged on.
     const halloween = list.find((item) => item.uid === 737099);
-    if (halloween) seqSelect.value = String(halloween.uid);
+    if (halloween) picker.select(halloween.uid);
     goButton.disabled = false;
     setBusy(false);
     setBar(1);
@@ -496,7 +495,7 @@ goButton.addEventListener('click', () => {
   setBar(0);
   worker.postMessage({
     type: 'render',
-    uid: Number(seqSelect.value),
+    uid: picker.value(),
     panWidth,
     // An empty end means "to the end of the song", which the renderer spells as
     // a length of zero.
@@ -521,8 +520,7 @@ saveButton.addEventListener('click', () => {
 function loadFrom(file: File) {
   loadedName = file.name;
   resetResults();
-  seqSelect.disabled = true;
-  seqSelect.innerHTML = '<option>loading…</option>';
+  picker.setRows([]);
   goButton.disabled = true;
   setBusy(true);
   setBar(0);

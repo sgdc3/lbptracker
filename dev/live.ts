@@ -29,8 +29,7 @@ import { PAN_WIDTH, RATE, renderSequencer } from '../src/core/render.ts';
 import { webInflate } from '../src/platform/web.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const seqSelect = $<HTMLSelectElement>('seq');
-const seqSearch = $<HTMLInputElement>('seqSearch');
+const seqHost = $<HTMLDivElement>('seq');
 const playButton = $<HTMLButtonElement>('play');
 const rewindButton = $<HTMLButtonElement>('rewind');
 const statusLine = $<HTMLDivElement>('status');
@@ -125,6 +124,9 @@ let queued = 0;
  * `null` means the worklet could not read a clock, which must not read as zero.
  */
 let audioLoad: number | null = null;
+/** Blocks the audio thread failed to deliver since playback started. */
+let dropouts = 0;
+let lostMs = 0;
 
 function showLoad(): void {
   if (!playing && sounding === 0 && queued === 0) {
@@ -133,11 +135,15 @@ function showLoad(): void {
   }
   // Both numbers, always: a field that appears and disappears as it crosses
   // zero draws the eye to the wrong thing and shifts everything beside it.
-  // Three decimals: a worklet running twenty voices sits far under 1%, and the
-  // question this meter has to answer first is whether it is measuring at all.
-  const cpu = audioLoad === null ? 'n/a' : `${(audioLoad * 100).toFixed(3)}%`;
-  loadLabel.textContent = `${sounding} sounding · ${queued} queued · cpu ${cpu}`;
-  loadLabel.style.color = (audioLoad ?? 0) > 0.8 ? 'var(--bad)' : '';
+  // Dropouts rather than a load percentage: see `lastFrame` in the worklet for
+  // why a percentage cannot be measured from there, and why this answers the
+  // question a load meter was only being asked as a proxy for.
+  const health = dropouts === 0
+    ? 'no dropouts'
+    : `${dropouts} dropout${dropouts === 1 ? '' : 's'}` +
+      (lostMs >= 1 ? ` (${lostMs.toFixed(0)} ms lost)` : '');
+  loadLabel.textContent = `${sounding} sounding · ${queued} queued · ${health}`;
+  loadLabel.style.color = dropouts > 0 ? 'var(--bad)' : '';
 }
 
 /**
@@ -186,7 +192,8 @@ async function ensureAudio(): Promise<AudioWorkletNode> {
   node.connect(master).connect(context.destination);
   node.port.onmessage = (event: MessageEvent) => {
     const data = event.data as {
-      type: string; id?: string; total?: number; sounding?: number; load?: number | null;
+      type: string; id?: string; total?: number; sounding?: number;
+      load?: number | null; dropouts?: number; lostFrames?: number;
     };
     if (data.type === 'missingSample') setError(`the worklet has no sample "${data.id}"`);
     // The only place that knows what is actually sounding is the audio thread.
@@ -194,6 +201,8 @@ async function ensureAudio(): Promise<AudioWorkletNode> {
       sounding = data.sounding ?? 0;
       queued = (data.total ?? 0) - sounding;
       audioLoad = data.load ?? null;
+      dropouts += data.dropouts ?? 0;
+      lostMs = ((data.lostFrames ?? 0) / RATE) * 1000;
       showLoad();
     }
   };
@@ -218,14 +227,21 @@ function pushEffects(): void {
 
 // ------------------------------------------------------------------ the plan
 
-async function prepare(): Promise<void> {
-  const uid = Number(seqSelect.value);
+/**
+ * Build the plan, and put the transport where the caller asks.
+ *
+ * `restart` is the whole difference between picking a song and changing the
+ * voice pool: one starts from the top, the other keeps playing.
+ */
+async function prepare(restart = true): Promise<void> {
+  const uid = picker.value();
   const seq = project?.sequencers.find((s) => s.uid === uid);
   if (!seq || !rinstIndex || !smpIndex) return;
 
-  seqSelect.disabled = true;
-  setError('');
-  setStatus(`getting "${seq.name}" ready — ${seq.tracks.length} tracks…`);
+  if (restart) {
+    setError('');
+    setStatus(`getting "${seq.name}" ready — ${seq.tracks.length} tracks…`);
+  }
   await ensureAudio();
 
   const load = await loaderFor(rinstIndex, smpIndex);
@@ -300,11 +316,21 @@ async function prepare(): Promise<void> {
   pushEffects();
   pushPanWidth();
   drawDensity();
-  seek(0);
+  if (restart) {
+    seek(0);
+  } else {
+    // ⚠️ **Swapped underneath a running transport, without touching the audio.**
+    // Voices already handed to the worklet keep their old cuts and finish as
+    // they were going to; only notes not yet posted come from the new plan.
+    // Re-pointing `nextIndex` at the current position is the whole handover --
+    // no `stopAll`, no seek, no gap.
+    const now = songPosition();
+    nextIndex = plan.findIndex((p) => p.at >= now);
+    if (nextIndex < 0) nextIndex = plan.length;
+  }
 
   playButton.disabled = false;
   rewindButton.disabled = false;
-  seqSelect.disabled = false;
   timeline.setAttribute('aria-valuemax', songSeconds.toFixed(1));
   metersBox.innerHTML = [
     ['voices', built.length.toLocaleString()],
@@ -316,7 +342,12 @@ async function prepare(): Promise<void> {
     .map(([k, v]) => `<span>${k} <b>${v}</b></span>`)
     .join('');
   markStale();
-  setStatus(`ready — ${built.length.toLocaleString()} voices scheduled, press play`);
+  setStatus(
+    restart
+      ? `ready — ${built.length.toLocaleString()} voices scheduled, press play`
+      : `voice pool ${noCapBox.checked ? 'uncapped' : voicesInput.value} — ` +
+        `${built.length.toLocaleString()} voices, ${result.stolen.toLocaleString()} stolen`,
+  );
 }
 
 /** A voice-per-second histogram, so the song has a shape before it plays. */
@@ -378,6 +409,8 @@ function stop(clear = true): void {
     node?.port.postMessage({ type: 'stopAll' });
     sounding = 0;
     queued = 0;
+    dropouts = 0;
+    lostMs = 0;
   }
   showLoad();
 }
@@ -484,26 +517,21 @@ panWidthInput.addEventListener('input', () => {
   pushPanWidth();
 });
 /**
- * The pool cannot be live, so it re-plans itself instead of waiting to be asked.
+ * The pool re-plans without stopping.
  *
  * ⚠️ The allocator needs the whole note list at once to decide what gets
- * stolen, so there is no way to change the size without rebuilding the plan.
- * Debounced, because it is a slider and every pixel of it would otherwise start
- * a render; the playhead and whether it was playing are both kept.
+ * stolen, so the size cannot be changed without rebuilding the plan -- but
+ * rebuilding it does not have to interrupt anything. The new plan is swapped in
+ * under the running transport and takes effect for notes not yet scheduled;
+ * what is already sounding finishes as it was going to. Debounced, because it
+ * is a slider and every pixel of it would otherwise start a rebuild.
  */
 let replanTimer = 0;
 const replanSoon = () => {
   showPlanOptions();
   if (!plan.length) return;
   window.clearTimeout(replanTimer);
-  replanTimer = window.setTimeout(() => {
-    const at = songPosition();
-    const wasPlaying = playing;
-    void prepare().then(() => {
-      seek(at);
-      if (wasPlaying) start();
-    });
-  }, 400);
+  replanTimer = window.setTimeout(() => void prepare(false), 350);
 };
 voicesInput.addEventListener('input', replanSoon);
 noCapBox.addEventListener('change', replanSoon);
@@ -520,12 +548,11 @@ showPlanOptions();
 const prepareNow = () => {
   stop();
   void prepare().catch((error: unknown) => {
-    seqSelect.disabled = false;
     setStatus('failed', true);
     setError(String((error as Error).stack ?? error));
   });
 };
-const picker = seqPicker(seqSelect, seqSearch, prepareNow);
+const picker = seqPicker(seqHost, prepareNow);
 
 // ------------------------------------------------------------------ the file
 

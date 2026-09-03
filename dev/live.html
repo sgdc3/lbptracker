@@ -91,8 +91,7 @@
     <p class="step"><b>2</b> Pick a song &mdash; it gets ready by itself</p>
     <div class="row">
       <label for="seq">sequencer</label>
-      <select id="seq" disabled><option>no level open</option></select>
-      <input id="seqSearch" type="text" placeholder="search…" size="12" aria-label="Filter the sequencer list" disabled>
+      <div id="seq"></div>
     </div>
     <details id="switches">
       <summary>Engine switches</summary>
@@ -122,14 +121,15 @@
             <label class="check"><input id="optNoCap" type="checkbox"> unlimited</label>
           </div>
           <p class="hintline">
-            The engine&rsquo;s is 32. Its stealing is decided over the whole song at once, so
-            moving this rebuilds the song &mdash; it does that by itself, keeping your place.
+            Live &mdash; move it while it plays. The engine&rsquo;s is 32. Its stealing is decided
+            over the whole song at once, so changing it rebuilds the plan, but the rebuild is
+            swapped in underneath: nothing stops, and what is already sounding finishes.
             Uncapping it plays every note, which is not the game.
           </p>
         </div>
       </div>
       <p class="hintline" id="staleNote" hidden>
-        &#9888; Rebuilding for the new pool size&hellip;
+        Rebuilding for the new pool size&hellip;
       </p>
     </details>
 
@@ -152,9 +152,8 @@
       <input id="vol" type="range" min="0" max="1" step="0.01" value="0.7" aria-label="Volume">
     </div>
     <p class="hintline">
-      <kbd>Space</kbd> plays and pauses, click the bar to seek. The voice pool is the engine&rsquo;s
-      32 and its stealing was decided when the song was prepared, so what you hear is what the
-      renderer would write.
+      <kbd>Space</kbd> plays and pauses, click the bar to seek. Every voice comes from the
+      renderer itself, so what you hear is what it would write to a file.
     </p>
     <div id="meters" style="margin-top:.8rem"></div>
   </section>

@@ -84,6 +84,8 @@ export type MixerMessage =
   | { type: 'stopAll' };
 
 declare const sampleRate: number;
+/** The sample index of the block about to be rendered; see `lastFrame`. */
+declare const currentFrame: number;
 declare function registerProcessor(
   name: string,
   processor: typeof MixerProcessor,
@@ -143,6 +145,21 @@ export class MixerProcessor extends AudioWorkletProcessor {
    */
   private readonly canTime =
     typeof performance !== 'undefined' && typeof performance.now === 'function';
+  /**
+   * The audio clock at the previous `process`, for spotting skipped blocks.
+   *
+   * ⚠️ **This is the metric that works here.** A wall clock is not exposed to an
+   * AudioWorkletGlobalScope -- `performance` is absent in Chrome -- and
+   * `AudioContext.renderCapacity`, which would answer the question directly, is
+   * not implemented either. But `currentFrame` is the sample index of the block
+   * about to be rendered, and it advances by exactly one block per call while
+   * the thread keeps up. When it jumps further, blocks were skipped and the
+   * device got nothing: a dropout, which is what "notes cutting out" sounds
+   * like and the only thing worth reporting.
+   */
+  private lastFrame = -1;
+  private dropouts = 0;
+  private lostFrames = 0;
   /** Send buses, grown on demand. A render quantum is 128 frames today. */
   private echoL = new Float32Array(128);
   private echoR = new Float32Array(128);
@@ -283,6 +300,14 @@ export class MixerProcessor extends AudioWorkletProcessor {
   }
 
   private report(frames: number, began: number): void {
+    if (this.lastFrame >= 0) {
+      const advanced = currentFrame - this.lastFrame;
+      if (advanced > frames) {
+        this.dropouts += 1;
+        this.lostFrames += advanced - frames;
+      }
+    }
+    this.lastFrame = currentFrame;
     if (this.canTime) {
       const spent = performance.now() - began;
       const budget = (frames / sampleRate) * 1000;
@@ -298,8 +323,12 @@ export class MixerProcessor extends AudioWorkletProcessor {
       total,
       sounding,
       load: this.canTime ? this.worstLoad : null,
+      dropouts: this.dropouts,
+      lostFrames: this.lostFrames,
     });
     this.worstLoad = 0;
+    this.dropouts = 0;
+    this.lostFrames = 0;
   }
 }
 

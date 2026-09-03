@@ -1,10 +1,15 @@
 /**
- * A filtered sequencer picker, shared by the live player and the renderer.
+ * The song picker: one searchable control, shared by the live player and the
+ * renderer.
  *
- * A level can hold twenty-five songs and the busiest ones are not always the
- * ones somebody opened the file for, so the list needs a search box. Both pages
- * need the same one, and the last time two pages grew their own copy of
- * something this small it cost a day (see `dev/assets.ts`).
+ * ⚠️ **A native `<select>` with a search box beside it was the first attempt and
+ * it was wrong.** Two controls for one choice, the box doing nothing until you
+ * notice what it is for, and the list still a native popup that cannot show a
+ * filter. This is one control: it reads as a field, it opens a panel with the
+ * matches in it, and typing filters them.
+ *
+ * The last time two of these pages grew their own copy of something this small
+ * it cost a day, which is why `dev/assets.ts` exists and why this is here.
  */
 
 export interface SeqRow {
@@ -14,62 +19,148 @@ export interface SeqRow {
 }
 
 export interface SeqPicker {
-  /** Replace the list. Selects the first row and returns its uid, or 0. */
+  /** Replace the list and select the first row. Returns its uid, or 0. */
   setRows(rows: readonly SeqRow[]): number;
   /** The uid currently selected. */
   value(): number;
+  /** Select a row without telling the caller's `onPick`. */
+  select(uid: number): void;
 }
 
-const label = (row: SeqRow) =>
-  `${row.name || '(untitled)'} — ${row.tracks} instrument${row.tracks === 1 ? '' : 's'}`;
+const title = (row: SeqRow) => row.name || '(untitled)';
+const detail = (row: SeqRow) => `${row.tracks} instrument${row.tracks === 1 ? '' : 's'}`;
+
+const escape = (text: string) =>
+  text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 /**
- * Wire a `<select>` to a search box.
+ * Turn a container into the picker. It supplies its own markup, so a page only
+ * has to give it somewhere to live.
  *
- * ⚠️ **Filtering never changes what is selected.** On the live page choosing a
- * song starts preparing it, so a filter that dropped the current selection
- * would throw away a prepared song for a keystroke. The selected row is kept in
- * the list even when it does not match, and `onPick` fires only for a real
- * choice.
+ * `onPick` fires for a real choice and never for filtering.
  */
 export function seqPicker(
-  select: HTMLSelectElement,
-  search: HTMLInputElement,
+  host: HTMLElement,
   onPick: (uid: number) => void,
 ): SeqPicker {
+  host.classList.add('picker');
+  host.innerHTML =
+    '<button type="button" class="picker-field" aria-haspopup="listbox" aria-expanded="false" disabled>' +
+    '<span class="picker-name">no level open</span>' +
+    '<span class="picker-detail"></span></button>' +
+    '<div class="picker-pop" hidden>' +
+    '<input class="picker-search" type="text" placeholder="search songs…" aria-label="Search songs">' +
+    '<div class="picker-list" role="listbox"></div>' +
+    '<div class="picker-none" hidden>nothing matches</div></div>';
+
+  const field = host.querySelector<HTMLButtonElement>('.picker-field')!;
+  const name = host.querySelector<HTMLElement>('.picker-name')!;
+  const detailEl = host.querySelector<HTMLElement>('.picker-detail')!;
+  const pop = host.querySelector<HTMLElement>('.picker-pop')!;
+  const search = host.querySelector<HTMLInputElement>('.picker-search')!;
+  const list = host.querySelector<HTMLElement>('.picker-list')!;
+  const none = host.querySelector<HTMLElement>('.picker-none')!;
+
   let rows: readonly SeqRow[] = [];
+  let chosen = 0;
+  /** Which row the arrow keys are on; -1 when nothing is highlighted. */
+  let cursor = -1;
+  let shown: SeqRow[] = [];
+
+  const showField = () => {
+    const row = rows.find((r) => r.uid === chosen);
+    name.textContent = row ? title(row) : 'no level open';
+    detailEl.textContent = row ? detail(row) : '';
+  };
 
   const draw = () => {
     const needle = search.value.trim().toLowerCase();
-    const chosen = Number(select.value);
-    const matches = (r: SeqRow) => needle === '' || label(r).toLowerCase().includes(needle);
-    // The selected row is always listed, even when it does not match, so that
-    // filtering cannot silently change what is playing.
-    const shown = rows.filter((r) => matches(r) || r.uid === chosen);
-    select.innerHTML = shown
-      .map((r) => `<option value="${r.uid}">${label(r)}</option>`)
+    shown = rows.filter((r) => needle === '' || title(r).toLowerCase().includes(needle));
+    list.innerHTML = shown
+      .map(
+        (r, i) =>
+          `<button type="button" role="option" class="picker-row${r.uid === chosen ? ' on' : ''}` +
+          `${i === cursor ? ' at' : ''}" data-uid="${r.uid}" aria-selected="${r.uid === chosen}">` +
+          `<span>${escape(title(r))}</span><span class="picker-detail">${detail(r)}</span></button>`,
+      )
       .join('');
-    // Keep the selection across a redraw; the option element is a new one.
-    if (shown.some((r) => r.uid === chosen)) select.value = String(chosen);
-    // Judged on real matches, not on `shown`: the kept selection would otherwise
-    // make "no results" impossible to reach.
-    search.classList.toggle('bad', needle !== '' && !rows.some(matches));
+    none.hidden = shown.length > 0;
   };
 
-  search.addEventListener('input', draw);
-  select.addEventListener('change', () => onPick(Number(select.value)));
+  const open = () => {
+    if (field.disabled) return;
+    pop.hidden = false;
+    field.setAttribute('aria-expanded', 'true');
+    search.value = '';
+    cursor = shown.findIndex((r) => r.uid === chosen);
+    draw();
+    search.focus();
+    list.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+  };
+
+  const close = () => {
+    pop.hidden = true;
+    field.setAttribute('aria-expanded', 'false');
+  };
+
+  /** Choose a row. `quiet` selects without telling the page. */
+  const pick = (uid: number, quiet = false) => {
+    if (uid === chosen) {
+      close();
+      return;
+    }
+    chosen = uid;
+    showField();
+    close();
+    if (!quiet) onPick(uid);
+  };
+
+  field.addEventListener('click', () => (pop.hidden ? open() : close()));
+  list.addEventListener('click', (event) => {
+    const row = (event.target as HTMLElement).closest<HTMLElement>('.picker-row');
+    if (row) pick(Number(row.dataset.uid));
+  });
+  search.addEventListener('input', () => {
+    cursor = shown.length ? 0 : -1;
+    draw();
+  });
+
+  search.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      close();
+      field.focus();
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (!shown.length) return;
+      cursor = (cursor + (event.key === 'ArrowDown' ? 1 : shown.length - 1)) % shown.length;
+      draw();
+      list.children[cursor]?.scrollIntoView({ block: 'nearest' });
+    } else if (event.key === 'Enter') {
+      if (cursor >= 0 && shown[cursor]) pick(shown[cursor].uid);
+    } else {
+      return;
+    }
+    event.preventDefault();
+  });
+
+  // Clicking away closes it. `pointerdown` rather than `click`, so it closes
+  // before whatever was clicked reacts.
+  document.addEventListener('pointerdown', (event) => {
+    if (!pop.hidden && !host.contains(event.target as Node)) close();
+  });
 
   return {
     setRows(next) {
       rows = next;
+      chosen = next.length ? next[0].uid : 0;
+      field.disabled = next.length === 0;
       search.value = '';
-      select.innerHTML = next
-        .map((r) => `<option value="${r.uid}">${label(r)}</option>`)
-        .join('');
-      select.disabled = next.length === 0;
-      search.disabled = next.length === 0;
-      return next.length ? next[0].uid : 0;
+      draw();
+      showField();
+      return chosen;
     },
-    value: () => Number(select.value),
+    value: () => chosen,
+    select(uid) {
+      pick(uid, true);
+    },
   };
 }
