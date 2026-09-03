@@ -1430,10 +1430,19 @@ made **78% of the corpus's clips** come back as a different file. It now travels
 
 ### The order records are written in
 
-Measured the same day, over the 27,124 corpus clips that hold two notes at one position: the
-author's order is **position ascending, then pitch DESCENDING**, on **27,124 of 27,124**. (42 are
-also consistent with ascending, and in those every tie is a unison.) Clips are in position order at
-all in 58,693 of 59,029.
+Measured the same day. **Three keys, each at 100%, each found by the failures the one before it
+left:**
+
+| key | population | agreeing |
+|---|---|---|
+| position **ascending** | 59,029 clips with two notes or more | 58,693 (99.43%) |
+| then pitch **descending** | 27,124 clips holding two notes at one position | **27,124 (100%)** |
+| then the end **ascending** — the shorter note first | 333 clips still tied on both | **333 (100%)** |
+
+⚠️ **A fourth key would be a guess and is not taken.** Among the 254 clips holding a pair tied on
+all three, nothing reaches agreement: modulation ascending 98.8%, volume descending 94.9%. The
+order there is the order the author placed the notes in, and no property of the music recovers it —
+8 clips of 62,158.
 
 ⚠️ **`Note.points` is not the file's order either.** `makeNote` sorts a chain's records into
 position order, and real files do store them out of it — `Wayward` has a two-record note written

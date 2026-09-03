@@ -1889,12 +1889,16 @@ function cutIntoClips(
       }
       return { startThirds, endThirds, points, modulation: raw.modulation };
     })
-    // ⚠️ **Ties break on pitch DESCENDING, which is measured, not chosen.**
-    // Of the 27,124 corpus clips that hold two notes at one position, **27,124**
-    // are written high note first; 42 are also consistent with ascending, and
-    // those are the ones where every tie is a unison. Sorting on the start alone
-    // left 1,944 clips holding the right notes in the wrong order.
-    .sort((a, b) => a.startThirds - b.startThirds || b.points[0].pitch - a.points[0].pitch);
+    // ⚠️ **Ties break on pitch DESCENDING, then on the END ascending, and
+    // both are measured rather than chosen.** Of the 27,124 corpus clips that
+    // hold two notes at one position, **27,124** are written high note first;
+    // of the 333 that then hold two at one position AND one pitch, **333** put
+    // the shorter one first. Sorting on the start alone left 1,944 clips holding
+    // the right notes in the wrong order, and stopping at the pitch left 37.
+    .sort((a, b) =>
+      a.startThirds - b.startThirds
+      || b.points[0].pitch - a.points[0].pitch
+      || a.endThirds - b.endThirds);
 
   /**
    * Where the clips go.

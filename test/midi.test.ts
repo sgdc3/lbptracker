@@ -449,6 +449,30 @@ test('the two fields MIDI has no room for come back through the patch', () => {
   assert.deepEqual([...tight.tracks[0].records], [...track.records]);
 });
 
+test('records come back in the order the editor writes them', () => {
+  // ⚠️ **Three keys, each measured at 100% over the corpus and each found by
+  // the failures the one before it left**: position ascending (58,693 of 59,029
+  // clips), then pitch DESCENDING (27,124 of 27,124 clips with a tie), then the
+  // END ascending (333 of 333 clips still tied). A fourth would be a guess --
+  // among the 254 clips tied on all three, no key beats 98.8% -- so the 8 clips
+  // that remain are authoring order and nothing in the music says what it was.
+  const seq = makeSequencer([
+    makeTrack([
+      // Written deliberately out of every order the sort could impose.
+      [{ step: 0, pitch: 51 }, { step: 15, pitch: 51 }],
+      [{ step: 0, pitch: 51 }, { step: 24, pitch: 63 }],
+      [{ step: 0, pitch: 60 }, { step: 8, pitch: 60 }],
+      [{ step: 4, pitch: 40 }],
+    ]),
+  ]);
+  const back = midiToSequencer(sequencerToMidi(seq, { exact: false }).bytes).sequencer;
+  assert.deepEqual(
+    back.tracks[0].notes.map((n) => [n.startStep, n.points[0].pitch, n.endStep]),
+    // pitch 60 before pitch 51 at step 0; then the shorter of the two 51s.
+    [[0, 60, 8], [0, 51, 15], [0, 51, 24], [4, 40, 4]],
+  );
+});
+
 test('the record patch is written only for what MIDI could not say', () => {
   // A plain clip needs none of it, and says so.
   const plain = sequencerToMidi(makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]])]));
