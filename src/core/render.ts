@@ -176,6 +176,30 @@ export interface RenderOptions {
    * same section at `1` and comparing is the check that keeps it honest.
    */
   readonly panWidth?: number;
+  /**
+   * Called with every voice as it is handed to the mixer, and with the identity
+   * of the sample it plays.
+   *
+   * ⚠️ **This exists so that live playback is not a second implementation.**
+   * Building a voice from a note is where nearly every measured law in this
+   * project ends up -- the key splits, the pitch formula, the modulation point,
+   * the stack layers, the sends, the pan width, the voice pool's cuts -- and a
+   * realtime player that rebuilt any of it would drift from the render silently.
+   * With this it schedules exactly the voices the render would have mixed.
+   *
+   * `startFrame` is absolute, in output frames from the start of the render.
+   */
+  readonly onVoice?: (
+    voice: VoiceSpec,
+    where: { guid: number; zone: number; startFrame: number },
+  ) => void;
+  /**
+   * Build the voices and stop, without mixing or running the effects.
+   *
+   * The returned buffers are empty and every audio statistic is zero; what is
+   * worth having is `onVoice` and the counts. Pointless without `onVoice`.
+   */
+  readonly planOnly?: boolean;
 }
 
 export interface RenderResult {
@@ -229,6 +253,8 @@ export async function renderSequencer(
     reverb: withReverb = true,
     echo: withEcho = true,
     panWidth = PAN_WIDTH,
+    onVoice,
+    planOnly = false,
     onProgress,
   } = options;
   const now = () => (typeof performance === 'undefined' ? Date.now() : performance.now());
@@ -581,7 +607,7 @@ export async function renderSequencer(
     const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
     for (let layer = 0; layer < layers; layer += 1) {
       const cut = cutAt.get(`${eventIndex},${layer}`);
-      mixer.play({
+      const voice: VoiceSpec = {
         ...spec,
         // The allocator handing this record to a later note. Undefined when the
         // pool never came for it, which is the usual case.
@@ -617,12 +643,40 @@ export async function renderSequencer(
         lfoPhaseOffset: [0, 1, 2].map(
           (n) => P(LFO_PARAMS[n].spread) * ((2 * Math.PI) / layers) * layer,
         ) as unknown as readonly [number, number, number],
-      });
+      };
+      // One voice, offered to whoever asked and then mixed. A realtime player
+      // schedules from here rather than rebuilding any of it.
+      onVoice?.(voice, { guid: event.guid, zone, startFrame: voice.startFrame ?? 0 });
+      if (!planOnly) mixer.play(voice);
     }
     played += 1;
   }
 
   const voicesMs = now() - voicesStarted;
+
+  if (planOnly) {
+    return {
+      left,
+      right,
+      frames,
+      seconds,
+      framesPerStep,
+      events: events.length,
+      played,
+      skipped,
+      stolen,
+      stolenBy,
+      echoRel: 0,
+      reverbRel: 0,
+      clippedFrames: 0,
+      peak: 0,
+      rms: 0,
+      echo: new Echo(RATE, seq.echoTime, framesPerStep, seq.echoFeedback, seq.echoMix),
+      reverb: new Reverb(RATE, reverbPreset(seq.reverb)),
+      preset: reverbPreset(seq.reverb),
+      timings: { voicesMs, mixMs: 0, effectsMs: 0 },
+    } as RenderResult;
+  }
 
   const echoL = new Float32Array(frames);
   const echoR = new Float32Array(frames);
