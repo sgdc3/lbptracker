@@ -26,6 +26,9 @@ Steering files (read on demand, per the hints):
 - [steering/lbp-modding-toolchain.md](steering/lbp-modding-toolchain.md) — **read before writing a
   parser for any LBP resource or archive**: what ennuo's toolkit already solves, what it does not,
   and the rule for turning its readings into facts of ours.
+- [steering/midi-interchange.md](steering/midi-interchange.md) — **read before touching
+  `src/core/midi.ts`, or before adding a field to `Sequencer` or `Track`**: every side channel the
+  MIDI file carries, what each costs over the corpus, and which one can go stale.
 - [steering/game-assets.md](steering/game-assets.md) — read before touching audio data: where the
   banks are on disk, the FSB4 layout, the codecs (measured), and the asset-licensing stance.
 - [steering/lbp-audio-engine.md](steering/lbp-audio-engine.md) — read when you need to know what
