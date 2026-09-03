@@ -671,3 +671,28 @@ test('a per-part file still reads back correctly here', () => {
   const { sequencer } = midiToSequencer(exported.bytes);
   assert.deepEqual(music(sequencer), music(seq));
 });
+
+test('a track is named after its instrument when the level does not name it', () => {
+  // ⚠️ `PInstrument` carries no name worth printing: `Track.name` is empty on
+  // every placement of all 22 corpus levels. Without a resolver the file calls
+  // every track `guid 148321` and a DAW is unreadable.
+  const seq = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]], { name: '', guid: 148321 })]);
+
+  const bare = readMidi(sequencerToMidi(seq).bytes);
+  const named = readMidi(
+    sequencerToMidi(seq, {
+      instrumentName: (guid) => (guid === 148321 ? 'baiyon_drums_1' : undefined),
+    }).bytes,
+  );
+  const names = (file: ReturnType<typeof readMidi>) =>
+    file.tracks.flatMap((t) => t.events).map(metaString).filter((m) => m?.type === 0x03).map((m) => m?.text);
+
+  assert.ok(names(bare).includes('guid 148321'), 'the GUID is the fallback, not the goal');
+  assert.ok(names(named).includes('baiyon_drums_1'));
+  // And it survives a round trip, so re-importing shows the name too.
+  const back = midiToSequencer(
+    sequencerToMidi(seq, { instrumentName: () => 'baiyon_drums_1' }).bytes,
+  );
+  assert.equal(back.sequencer.tracks[0].name, 'baiyon_drums_1');
+  assert.equal(back.sequencer.tracks[0].guid, 148321, 'and the GUID still says what to play');
+});

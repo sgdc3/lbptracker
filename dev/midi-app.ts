@@ -92,6 +92,9 @@ function options() {
     mpe: modeSelect.value === 'mpe',
     bakeSwing: bakeSwing.checked,
     channelsPerPart: perPart.checked,
+    // The level stores no name on a placement, so without this every track in
+    // the file is called `guid 148321` and a DAW is unreadable.
+    instrumentName: (guid: number) => rinstIndex?.get(guid)?.file.replace('.rinst', ''),
     bendRange: autoBend.checked ? undefined : Number(bendInput.value),
   };
 }
@@ -260,6 +263,7 @@ showBend();
 
 async function openLevel(file: File): Promise<void> {
   dropZone.classList.add('busy');
+  rinstIndex = rinstIndex ?? (await manifest('fixtures/rinst').catch(() => undefined));
   setStatus('status', `reading ${file.name}…`);
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());

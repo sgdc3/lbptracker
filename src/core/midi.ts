@@ -124,6 +124,16 @@ export interface MidiExportOptions {
    */
   readonly channelsPerPart?: boolean;
   /**
+   * A GUID to a readable instrument name, for the track names.
+   *
+   * ⚠️ **`PInstrument` has no name field worth printing.** `Track.name` comes
+   * from the Thing and is empty on every placement of all 22 corpus levels, so
+   * without this a DAW shows `guid 148321` and nobody can tell it is the drum
+   * kit. The caller has the resolver -- the extracted `.rinst` manifest -- and
+   * this module has no business fetching anything.
+   */
+  readonly instrumentName?: (guid: number) => string | undefined;
+  /**
    * How often a glide is resampled, in steps; 0 writes only the control points.
    *
    * ⚠️ **A glide written as two events is not a glide.** The engine ramps
@@ -491,6 +501,8 @@ export function sequencerToMidi(
   const at = (position: number) =>
     Math.round(bakeSwing ? swungFrame(position, ticksPerStep, sequencer.swing) : position * ticksPerStep);
 
+  const nameOf = (track: Track) =>
+    track.name || options.instrumentName?.(track.guid) || `guid ${track.guid}`;
   const parts = partsOf(sequencer);
   const partOfTrack = new Map<number, number>();
   parts.forEach((part, index) => {
@@ -750,9 +762,9 @@ export function sequencerToMidi(
   parts.forEach((part, index) => {
     const t = part.track;
     const header: MidiEvent[] = [
-      metaText(0, 0x03, t.name || `guid ${t.guid}`),
+      metaText(0, 0x03, nameOf(t)),
       metaText(0, 0x01, TRK_TAG + JSON.stringify({
-        guid: t.guid, name: t.name, gridY: t.gridY,
+        guid: t.guid, name: nameOf(t), gridY: t.gridY,
         level: t.level, pan: t.pan, echoSend: t.echoSend, reverbSend: t.reverbSend,
         key: t.key, scale: t.scale, clips: part.clips,
       })),
