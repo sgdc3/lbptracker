@@ -175,8 +175,10 @@
         engine has thirty-two voices, so a dense passage runs out. A note that has to share writes
         no bend and no pressure &mdash; those belong to the channel, and a newcomer setting them
         would drag whatever is already sounding there with it &mdash; so it loses its own glide
-        instead. Across the corpus that is 0.38% of notes, and the count is always shown rather
-        than swallowed. <code>Key</code> and <code>Scale</code> are folded into the note numbers on
+        instead. The notes that carry a glide are allocated first for that reason, and a note with
+        nothing to express is parked on the master channel rather than taking one from a glide.
+        Across the corpus that leaves 0.16% of notes short of a glide, and the count is always
+        shown rather than swallowed. <code>Key</code> and <code>Scale</code> are folded into the note numbers on
         the way out, because a MIDI file has to play in something that has never heard of an LBP
         scale; an import therefore comes back chromatic, sounding the same and written differently.
       </p>

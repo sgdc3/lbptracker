@@ -207,15 +207,27 @@ either file:
 
 - 149 sequencers, **953,791 notes**, none lost, none moved, no pitch, duration or modulation
   changed; an intact note's curve stays inside the half unit its integer fields round by.
-- 88,893 notes (9.32%) carry a glide. **3,593 of them (0.38%) lose it to a channel they had to
+- 88,893 notes (9.32%) carry a glide. **1,537 of them (0.16%) lose it to a channel they had to
   share** — an MPE zone has fifteen member channels and this engine has thirty-two voices, so a
   dense passage runs out. A note that has to share writes no bend and no pressure at all, because
   both belong to the channel and a newcomer setting them drags whatever is already sounding there.
   The count is reported by `sequencerToMidi`, never swallowed.
-- 22.2 MB of MIDI; 0 pitches clamped, 0 bends clamped, 0 notes dropped, 0 lengthened.
-- **2 notes in 953,791 (0.0002%) change without being declared** and are not explained. Every
+- 22.7 MB of MIDI; 0 pitches clamped, 0 bends clamped, 0 lengthened, **1 note that MPE cannot
+  carry** — seventeen copies of one pitch at once, in `Avian`, with nowhere left where a note-off
+  could tell them apart.
+- **7 notes in 953,791 (0.0007%) change without being declared** and are not explained. Every
   category found so far is fixed and carries a note in the code saying what it was; this residue
   is below the level worth more session time and is printed by the script rather than hidden.
+
+⚠️ **The order notes are allocated in is most of the shared-channel problem, and it is not
+obvious.** Allocating in plain time order let a flat note take the last free channel a moment
+before a gliding one needed it: 3,593 notes lost a glide where, measured, only **1,172 ever arrive
+while more than fifteen glides are already sounding**. `sequencerToMidi` therefore allocates in two
+passes, the notes that need a channel to themselves first, and falls back through a channel nobody
+is bending, then a channel whose glides all began earlier, then the master channel — which MPE
+allows to carry notes — and only then gives a glide up. That last case is real and is counted:
+`flattened`. Deciding is a separate step from writing for exactly that reason, since displacing a
+glide has to be able to reach a note that was placed earlier.
 
 ⚠️ **The bend range is picked from the music, not fixed at MPE's 48.** 582 of the corpus's
 1,448,224 control points glide further than 48 semitones and the widest is 62; nothing reaches 96,

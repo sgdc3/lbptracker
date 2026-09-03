@@ -135,17 +135,26 @@ export function writeMidi(file: MidiFile): Uint8Array {
 }
 
 /**
- * Sort events into writing order: by tick, then by the caller's sequence.
+ * Sort events into writing order: by tick, then `rank`, then the caller's order.
  *
- * ⚠️ **The tie-break is the index, and it has to be explicit.** `Array.sort` is
- * stable in every current engine, but the events arrive from several loops --
- * one per note, one per track -- and are concatenated, so "the order they were
- * pushed in" is only meaningful once they are numbered.
+ * ⚠️ **The index tie-break has to be explicit.** `Array.sort` is stable in
+ * every current engine, but the events arrive from several loops -- one per
+ * note, one per track -- and are concatenated, so "the order they were pushed
+ * in" is only meaningful once they are numbered.
+ *
+ * ⚠️ **And push order alone is not enough when the caller does not build the
+ * events in time order.** A note-off pushed late still has to precede a
+ * note-on pushed early if they land on the same tick, or a reader pairs them
+ * the wrong way round and ends the wrong note. `rank` is where a caller states
+ * that; see the one in `midi.ts`.
  */
-export function sortEvents(events: readonly MidiEvent[]): MidiEvent[] {
+export function sortEvents(
+  events: readonly MidiEvent[],
+  rank: (event: MidiEvent) => number = () => 0,
+): MidiEvent[] {
   return events
-    .map((event, index) => ({ event, index }))
-    .sort((a, b) => a.event.tick - b.event.tick || a.index - b.index)
+    .map((event, index) => ({ event, index, rank: rank(event) }))
+    .sort((a, b) => a.event.tick - b.event.tick || a.rank - b.rank || a.index - b.index)
     .map((e) => e.event);
 }
 

@@ -36,6 +36,7 @@ import {
   CHANNEL_COUNT,
   STEPS_PER_CELL,
   schedule,
+  type ScheduledNote,
   type Sequencer,
   type Track,
 } from './project.ts';
@@ -159,6 +160,30 @@ export interface MidiExportResult {
 
 const clamp7 = (v: number) => (v < 0 ? 0 : v > 127 ? 127 : Math.round(v));
 
+/**
+ * What has to happen first when several things land on one tick.
+ *
+ * ⚠️ **Notes are not written in time order any more.** Gliding notes are
+ * allocated before flat ones, so a flat note ending at tick T is written after
+ * a gliding note starting at T, and push order would put the note-on first. A
+ * reader pairing by channel and pitch then ends the note that just began -- a
+ * held note came back one step long, 728 of them across the corpus.
+ *
+ * The order is: what the track says, then everything that is finishing, then
+ * the expression a starting note is about to need, then the notes themselves.
+ * CC 74 rides with the note-on rather than with the other expression, because
+ * it is read per note at the note-on and separating them lets a neighbour's
+ * timbre be picked up instead.
+ */
+const rank = (event: MidiEvent): number => {
+  const status = event.data[0];
+  if (status === 0xff || status === 0xf0 || status === 0xf7) return 0;
+  const kind = status & 0xf0;
+  if (kind === 0x80) return 1;
+  if (kind === 0xe0 || kind === 0xd0) return 2;
+  return 3;
+};
+
 /* ------------------------------------------------------------------- export */
 
 /**
@@ -200,6 +225,8 @@ function partsOf(sequencer: Sequencer): Part[] {
  * Zero-based here, so the master is 0 and the members are 1..15.
  */
 const MEMBERS = Array.from({ length: 15 }, (_, i) => i + 1);
+/** Channel 1, zero-based. It carries the zone's settings and, at a pinch, notes. */
+const MASTER = 0;
 
 /**
  * Which member channel each note gets.
@@ -210,41 +237,171 @@ const MEMBERS = Array.from({ length: 15 }, (_, i) => i + 1);
  * that one invariant -- a free channel when there is one, the emptiest safe
  * channel when there is not, and a refusal when even that is impossible.
  */
+interface Span {
+  readonly note: number;
+  readonly from: number;
+  readonly until: number;
+  gliding: boolean;
+  /** Give up this span's glide, because something had to be placed in front. */
+  demote(): void;
+}
+
 class VoicePool {
-  private readonly busy: { note: number; until: number }[][];  // per member channel
+  /** Every span ever placed, per member channel. Append-only; see `rewind`. */
+  private readonly placed: Span[][];
+  /** The ones that can still overlap what is being asked about now. */
+  private live: Span[][];
+  /** The same two lists for the master channel, which is the overflow. */
+  private readonly placedMaster: Span[] = [];
+  private liveMaster: Span[] = [];
   private readonly freedAt: number[];
   shared = 0;
   refused = 0;
+  /** Glides given up so that a note could be placed in front of them. */
+  demoted = 0;
 
   constructor() {
-    this.busy = MEMBERS.map(() => []);
+    this.placed = MEMBERS.map(() => []);
+    this.live = MEMBERS.map(() => []);
     this.freedAt = MEMBERS.map(() => 0);
   }
 
-  take(tick: number, note: number, until: number): { channel: number; exclusive: boolean } {
-    let best = -1;
+  /**
+   * Start the clock again at zero without forgetting anything.
+   *
+   * \u26a0\ufe0f **The second pass goes back to the beginning of the song**, and the
+   * live lists are pruned as the tick advances -- so without this they would be
+   * empty of everything the first pass placed early, and flat notes would be
+   * handed channels that gliding notes were already sounding on. Two notes of
+   * one pitch then landed on one channel, whose note-offs are indistinguishable,
+   * and the corpus check went from 0 sequencers disagreeing to 111.
+   */
+  rewind(): void {
+    this.live = this.placed.map((spans) => [...spans]);
+    this.liveMaster = [...this.placedMaster];
+  }
+
+  /**
+   * `gliding` says whether this note will write bend and pressure of its own,
+   * which is what makes exclusivity worth spending a channel on.
+   */
+  take(
+    tick: number,
+    note: number,
+    until: number,
+    gliding: boolean,
+    placement: { exclusive: boolean },
+  ): { channel: number; exclusive: boolean } {
+    // Pruning is by `until <= tick` only -- correct because the tick only moves
+    // forward within a pass. What is left may still start after this note ends,
+    // so the overlap test needs both ends.
+    const clashes = (span: Span) => span.from < until;
+    let free = -1;
     for (let i = 0; i < MEMBERS.length; i += 1) {
-      this.busy[i] = this.busy[i].filter((b) => b.until > tick);
+      this.live[i] = this.live[i].filter((b) => b.until > tick);
       // Least recently freed first, so channels rotate: a receiver's release
       // tail on the channel it just let go is the one thing round-robin buys.
-      if (this.busy[i].length === 0 && (best < 0 || this.freedAt[i] < this.freedAt[best])) {
-        best = i;
+      if (!this.live[i].some(clashes) && (free < 0 || this.freedAt[i] < this.freedAt[free])) {
+        free = i;
       }
     }
+    let best = free;
     let exclusive = true;
     if (best < 0) {
-      for (let i = 0; i < MEMBERS.length; i += 1) {
-        if (this.busy[i].some((b) => b.note === note)) continue;
-        if (best < 0 || this.busy[i].length < this.busy[best].length) best = i;
+      /*
+       * Nothing free, so something has to give. What follows tries the ways of
+       * sharing in order of what they cost.
+       *
+       * ⚠️ **A sharer writes no expression of its own**, because bend and
+       * pressure belong to the channel and setting them would drag whatever is
+       * already sounding there. So a reader can only tell whose the channel's
+       * bend is by asking who arrived first -- and that answer is only useful if
+       * the note with the glide is always the earlier one. When a flat note was
+       * allowed to start in front of a glide, the glide lost its whole tail: in
+       * `Rain` a 32-step fade stopped at volume 30 instead of reaching 0,
+       * because the newcomer had claimed the channel and the rest of the ramp
+       * went to it.
+       *
+       *   QUIET     a channel nobody is bending at all
+       *   BEHIND    one whose glides all began before this note
+       *   MASTER    channel 1, which MPE lets carry notes and where a note with
+       *             no expression to lose costs nothing
+       *   DISPLACE  a channel where a glide has to be given up for this note
+       *
+       * The last one is a real loss and is counted. Refusing instead of
+       * displacing cost 426 notes across the corpus, and a lost note is worse
+       * than a lost glide.
+       */
+      const inFront = (i: number) =>
+        this.live[i].filter(clashes).filter((b) => b.gliding && b.from > tick);
+
+      for (const how of ['quiet', 'behind', 'master', 'displace'] as const) {
+        if (how === 'master') {
+          this.liveMaster = this.liveMaster.filter((b) => b.until > tick);
+          if (this.liveMaster.some((b) => b.note === note && b.from < until)) continue;
+          const span: Span = { note, from: tick, until, gliding: false, demote: () => {} };
+          this.liveMaster.push(span);
+          this.placedMaster.push(span);
+          this.shared += 1;
+          return { channel: MASTER, exclusive: false };
+        }
+        for (let i = 0; i < MEMBERS.length; i += 1) {
+          const here = this.live[i].filter(clashes);
+          // Never two of one pitch on a channel: their note-offs are the same
+          // three bytes, so the second would end the first.
+          if (here.some((b) => b.note === note)) continue;
+          if (how === 'quiet' && here.some((b) => b.gliding)) continue;
+          if (how !== 'displace' && inFront(i).length > 0) continue;
+          if (best < 0) {
+            best = i;
+          } else if (
+            how === 'displace'
+              ? inFront(i).length < inFront(best).length
+              : here.length < this.live[best].filter(clashes).length
+          ) {
+            best = i;
+          }
+        }
+        if (best >= 0) {
+          // Whatever this displaces stops being a glide: its owner is rewritten
+          // flat, which is why allocation happens before anything is written.
+          for (const span of inFront(best)) span.demote();
+          break;
+        }
       }
       if (best < 0) {
-        this.refused += 1;
-        return { channel: -1, exclusive: false };
+        // ⚠️ **Last resort: the master channel.** Fifteen member channels all
+        // holding this pitch already leaves nowhere to put it that a note-off
+        // could tell apart -- and MPE allows notes on the master channel, which
+        // is exactly what it is for. They get no per-note expression there,
+        // which costs nothing: a note that reaches this point had none to give.
+        // Four notes in the corpus's 953,791 land here, all in one unison-heavy
+        // passage of `Avian`, and before this they were dropped outright.
+        this.liveMaster = this.liveMaster.filter((b) => b.until > tick);
+        if (this.liveMaster.some((b) => b.note === note && b.from < until)) {
+          this.refused += 1;
+          return { channel: -1, exclusive: false };
+        }
+        const onMaster: Span = { note, from: tick, until, gliding: false, demote: () => {} };
+        this.liveMaster.push(onMaster);
+        this.placedMaster.push(onMaster);
+        this.shared += 1;
+        return { channel: MASTER, exclusive: false };
       }
       this.shared += 1;
       exclusive = false;
     }
-    this.busy[best].push({ note, until });
+    const span: Span = {
+      note, from: tick, until, gliding: gliding && exclusive,
+      demote: () => {
+        if (!span.gliding) return;
+        span.gliding = false;
+        this.demoted += 1;
+        placement.exclusive = false;
+      },
+    };
+    this.live[best].push(span);
+    this.placed[best].push(span);
     this.freedAt[best] = Math.max(this.freedAt[best], until);
     return { channel: MEMBERS[best], exclusive };
   }
@@ -321,18 +478,67 @@ export function sequencerToMidi(
     return 8192 + (semitones / bendRange) * 8192;
   };
 
-  for (const event of schedule(sequencer)) {
+  /**
+   * Which notes need a channel to themselves.
+   *
+   * ⚠️ **The order these are allocated in is the whole of the shared-channel
+   * problem.** A zone has fifteen member channels and this engine has
+   * thirty-two voices, so a dense passage runs out -- but only 9.3% of notes
+   * carry a glide, and measured across the corpus only **1,172 notes arrive
+   * while more than fifteen glides are already sounding**. Allocating in plain
+   * time order let a flat note take the last channel a moment before a gliding
+   * one needed it, and 3,593 notes lost a glide where at most 1,172 had to.
+   * Two passes, the gliding notes first, is the fix.
+   *
+   * A note that opens at volume zero counts too: MIDI has no note-on velocity
+   * of 0, so its opening level has to travel as pressure, which only an
+   * exclusive channel may write.
+   */
+  const needsChannel = (event: ScheduledNote) =>
+    event.hasPitchAutomation || event.hasVolumeAutomation || clamp7(event.volume) === 0;
+
+  const all = schedule(sequencer);
+  const gliding = all.filter(needsChannel);
+  const flat = all.filter((e) => !needsChannel(e));
+  const order = [...gliding, ...flat];
+
+  /**
+   * Who gets a channel, decided before anything is written.
+   *
+   * ⚠️ **Allocating and writing have to be separate steps.** Placing a note
+   * can take the exclusivity away from one already placed -- see `demote` -- and
+   * a loop that wrote as it went would already have written that note's glide.
+   */
+  const placements = new Map<ScheduledNote, { channel: number; exclusive: boolean; base: number }>();
+  if (mpe) {
+    for (const event of order) {
+      if (event === flat[0]) pool.rewind();
+      if (partOfTrack.get(event.track) === undefined) continue;
+      const track = sequencer.tracks[event.track];
+      const value = notePitch(event.pitch, track.scale, blockRoot(track.key));
+      if (value < 0 || value > 127) clampedPitch += 1;
+      const base = clamp7(value);
+      const startTick = at(event.step);
+      const endTick = Math.max(startTick + 1, at(event.step + event.durationSteps));
+      const place = { channel: -1, exclusive: true, base };
+      const taken = pool.take(startTick, base, endTick, needsChannel(event), place);
+      place.channel = taken.channel;
+      place.exclusive = place.exclusive && taken.exclusive;
+      placements.set(event, place);
+    }
+  }
+
+  for (const event of order) {
     const partIndex = partOfTrack.get(event.track);
     if (partIndex === undefined) continue;
     const track = sequencer.tracks[event.track];
     const root = blockRoot(track.key);
-    const toMidi = (raw: number) => {
-      const value = notePitch(raw, track.scale, root);
-      if (value < 0 || value > 127) clampedPitch += 1;
-      return clamp7(value);
-    };
+    // ❗ The pitch clamp is counted during allocation, not here: this runs over
+    // the same notes a second time and would double every casualty.
+    const toMidi = (raw: number) => clamp7(notePitch(raw, track.scale, root));
 
-    const base = toMidi(event.pitch);
+    const place = placements.get(event);
+    const base = place ? place.base : toMidi(event.pitch);
     const startTick = at(event.step);
     const endTick = Math.max(startTick + 1, at(event.step + event.durationSteps));
     const out = bodies[partIndex];
@@ -346,8 +552,8 @@ export function sequencerToMidi(
       continue;
     }
 
-    const { channel, exclusive } = pool.take(startTick, base, endTick);
-    if (channel < 0) continue;
+    if (place === undefined || place.channel < 0) continue;
+    const { channel, exclusive } = place;
 
     // ⚠️ **Points that share a position collapse, and the LAST one wins.**
     // The engine's interpolator is `t = span > 0 ? (elapsed - from) / span : 1`,
@@ -395,13 +601,7 @@ export function sequencerToMidi(
       // that byte is a note-off. So a note written at volume 0 comes back at 1,
       // and it is only ever 0 in the first place as the foot of a fade-in, which
       // is a shape worth being honest about losing.
-      if (
-        event.hasPitchAutomation ||
-        event.hasVolumeAutomation ||
-        clamp7(event.volume) === 0
-      ) {
-        flattened += 1;
-      }
+      if (needsChannel(event)) flattened += 1;
       out.push(noteOff(endTick, channel, base));
       notes += 1;
       continue;
@@ -439,6 +639,14 @@ export function sequencerToMidi(
       }
     }
     out.push(noteOff(endTick, channel, base));
+    // ⚠️ **A glide is undone when it ends.** Nothing else resets a member
+    // channel, so the next note to land there would inherit the bend this one
+    // finished on -- and a note that shares the channel while this one is still
+    // sounding is being dragged by it until this fires. An exclusive note sets
+    // its own bend on the way in, so this only matters for the ones that cannot.
+    if (points.length > 1 && points[points.length - 1].semitones !== 0) {
+      out.push(pitchBend(endTick, channel, bendValue(0)));
+    }
     notes += 1;
   }
 
@@ -478,7 +686,7 @@ export function sequencerToMidi(
     );
   }
 
-  const tracks: MidiTrack[] = [{ events: sortEvents(head) }];
+  const tracks: MidiTrack[] = [{ events: sortEvents(head, rank) }];
   parts.forEach((part, index) => {
     const t = part.track;
     const header: MidiEvent[] = [
@@ -489,7 +697,7 @@ export function sequencerToMidi(
         key: t.key, scale: t.scale, clips: part.clips,
       })),
     ];
-    tracks.push({ events: [...header, ...sortEvents(bodies[index])] });
+    tracks.push({ events: [...header, ...sortEvents(bodies[index], rank)] });
   });
 
   const bytes = writeMidi({ format: 1, division: ppq, tracks });
@@ -737,6 +945,8 @@ function readPart(
   const pressureTick = new Float64Array(16).fill(-1);
   const bend = new Float64Array(16);
   const bendTick = new Float64Array(16).fill(-1);
+  /** The note each channel's expression is addressed to; see `owners`. */
+  const ownerOf = new Map<number, RawNote>();
   let unmatched = 0;
   let last = 0;
 
@@ -745,19 +955,27 @@ function readPart(
     if (note === undefined) return;
     note.endTick = tick;
     sounding.delete(key);
+    if (ownerOf.get(note.channel) === note) ownerOf.delete(note.channel);
   };
 
   /**
    * Which sounding notes a channel-wide bend or pressure belongs to.
    *
-   * ⚠️ **In an MPE zone that is the OLDEST note on the channel, not all of
-   * them.** MPE means one note per channel, so normally there is nothing to
-   * choose between; the case that matters is a chord too big for the zone,
-   * where a channel has to carry a second note. The exporter gives the full
-   * glide to the note that got the channel first and writes the newcomer flat,
-   * so the oldest note is the one the bends are for -- and handing them to the
-   * newcomer as well is exactly the bug this rule was written for, a flat note
-   * in `Twitch` arriving four semitones sharp.
+   * ⚠️ **In an MPE zone it is the note that OWNS the channel, and ownership
+   * is claimed, not inherited.** MPE means one note per channel, so normally
+   * there is nothing to choose between; the case that matters is a chord too
+   * big for the zone, where a channel has to carry a second note. The exporter
+   * writes bend and pressure immediately before the note-on of the note it gave
+   * the channel to, and writes nothing at all for a newcomer, so a note-on that
+   * finds expression at its own tick is the owner and one that does not is a
+   * lodger.
+   *
+   * ⚠️ **This used to be "the oldest note on the channel", and that broke the
+   * moment the exporter stopped allocating in time order.** Gliding notes are
+   * now allocated first, so a flat note that started earlier can be sharing a
+   * channel with a gliding note that started later -- and under the old rule
+   * the glide went to the flat note. Ownership by claim does not care which
+   * came first.
    *
    * Outside a zone a channel legitimately holds a chord, and a bend there
    * really does move all of it.
@@ -765,9 +983,8 @@ function readPart(
   const owners = (channel: number): RawNote[] => {
     const on = [...sounding.values()].filter((note) => note.channel === channel);
     if (!zoned || on.length < 2) return on;
-    let oldest = on[0];
-    for (const note of on) if (note.startTick < oldest.startTick) oldest = note;
-    return [oldest];
+    const owner = ownerOf.get(channel);
+    return owner !== undefined && on.includes(owner) ? [owner] : [];
   };
 
   for (const event of track.events) {
@@ -781,20 +998,29 @@ function readPart(
     const key = channel * 128 + a;
     if (kind === 0x90 && b > 0) {
       end(key, event.tick);
-      // ⚠️ **Only the first note on a channel may claim the expression sent at
-      // its tick.** A note joining a channel that is already sounding wrote none
-      // of its own -- see the exporter -- so a pressure or bend at the same tick
-      // belongs to somebody else, and taking it moved notes to pitches nothing
-      // in the file had asked for.
+      // ⚠️ **Only a note that finds its channel empty may claim the expression
+      // sent at its tick, and claiming CONSUMES it.** A note joining a channel
+      // wrote none of its own -- see the exporter -- so anything there belongs
+      // to somebody else. Both halves are needed: without the emptiness test a
+      // newcomer landing on a tick where the owner happened to emit a glide
+      // sample claimed the whole rest of the ramp; without the consumption a
+      // second note-on at the same instant claimed it a second time.
       const alone = ![...sounding.values()].some((n) => n.channel === channel);
+      const claimsBend = alone && bendTick[channel] === event.tick;
+      const claimsPress = alone && pressureTick[channel] === event.tick;
       const note: RawNote = {
         channel, note: a, velocity: b,
-        opening: alone && pressureTick[channel] === event.tick ? pressure[channel] : undefined,
-        openingBend: alone && bendTick[channel] === event.tick ? bend[channel] : undefined,
+        opening: claimsPress ? pressure[channel] : undefined,
+        openingBend: claimsBend ? bend[channel] : undefined,
         startTick: event.tick, endTick: event.tick,
         modulation: modulation[channel],
         bends: [], presses: [],
       };
+      if (claimsBend || claimsPress) {
+        bendTick[channel] = -1;
+        pressureTick[channel] = -1;
+        ownerOf.set(channel, note);
+      }
       sounding.set(key, note);
       part.notes.push(note);
     } else if (kind === 0x80 || (kind === 0x90 && b === 0)) {

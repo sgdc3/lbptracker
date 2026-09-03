@@ -227,16 +227,19 @@ test('a chord bigger than the zone shares channels rather than colliding', () =>
   assert.equal(assertNoPitchCollision(exported.bytes), 20);
 });
 
-test('sixteen unisons cannot be carried, and say so instead of vanishing', () => {
+test('seventeen unisons cannot be carried, and say so instead of vanishing', () => {
   // ⚠️ The one case MPE genuinely cannot express: more copies of a single
-  // pitch than there are channels to tell them apart. Fifteen go, the rest are
-  // reported -- a converter that dropped them quietly would be lying.
+  // pitch than there are channels to tell them apart. Sixteen go -- the fifteen
+  // member channels and then the master, which the specification allows to
+  // carry notes and which is the right place for one that can have no
+  // expression anyway -- and the rest are reported. A converter that dropped
+  // them quietly would be lying. One note in the corpus's 953,791 gets here.
   const chord: Point[][] = [];
   for (let i = 0; i < 24; i += 1) chord.push([{ step: 0, pitch: 60 }, { step: 8, pitch: 60 }]);
   const exported = sequencerToMidi(makeSequencer([makeTrack(chord)]));
-  assert.equal(exported.notes, 15);
-  assert.equal(exported.dropped, 9);
-  assert.equal(assertNoPitchCollision(exported.bytes), 15);
+  assert.equal(exported.notes, 16);
+  assert.equal(exported.dropped, 8);
+  assert.equal(assertNoPitchCollision(exported.bytes), 16);
 });
 
 test('a glide is written as a glide, not as two steps', () => {
@@ -250,10 +253,16 @@ test('a glide is written as a glide, not as two steps', () => {
     .filter((e) => (e.data[0] & 0xf0) === 0xe0);
   assert.ok(bends.length > 16, `expected a resampled ramp, got ${bends.length} bend events`);
   const values = bends.map((e) => (e.data[2] << 7) | e.data[1]);
-  for (let i = 1; i < values.length; i += 1) {
-    assert.ok(values[i] >= values[i - 1], 'the ramp only ever rises');
-  }
   assert.equal(values[0], 8192, 'it starts centred');
+  // ⚠️ The last event is the reset the note leaves behind: nothing else
+  // re-centres a member channel, so the next note to land there would inherit
+  // the pitch this one finished on.
+  assert.equal(values[values.length - 1], 8192, 'and is undone when the note ends');
+  const ramp = values.slice(0, -1);
+  for (let i = 1; i < ramp.length; i += 1) {
+    assert.ok(ramp[i] >= ramp[i - 1], 'the ramp only ever rises');
+  }
+  assert.ok(ramp[ramp.length - 1] > 8192 * 1.2, 'and reaches the note it glides to');
 });
 
 /* ------------------------------------------------------------- round trips */
@@ -478,4 +487,49 @@ test('the track name reaches the file and comes back', () => {
   assert.ok(names.includes('lbp3/piano'), `track names: ${names.join(', ')}`);
   assert.equal(imported.sequencer.tracks[0].name, 'lbp3/piano');
   assert.equal(imported.sequencer.tracks[0].guid, 4242, 'and the GUID, so it plays the same sample');
+});
+
+test('a glide keeps its channel when flat notes are competing for it', () => {
+  // ⚠️ **This is the shared-channel problem.** A zone has fifteen member
+  // channels and this engine has thirty-two voices, so a dense passage runs
+  // out — and allocating in plain time order let fifteen flat notes take every
+  // channel a moment before the one note that actually needed one. Across the
+  // corpus that flattened 3,593 notes where at most 1,172 ever had to.
+  // Fifteen flat notes holding for sixteen steps, and one glide starting inside
+  // them: in time order the flat ones take every channel first.
+  const notes: Point[][] = [];
+  for (let i = 0; i < 15; i += 1) {
+    notes.push([{ step: 0, pitch: 40 + i }, { step: 15, pitch: 40 + i }]);
+  }
+  notes.push([{ step: 1, pitch: 72 }, { step: 9, pitch: 84 }]);
+  const seq = makeSequencer([makeTrack(notes)]);
+
+  const exported = sequencerToMidi(seq);
+  assert.equal(exported.notes, 16);
+  assert.equal(exported.flattened, 0, 'the glide is not the one that gives way');
+  assert.ok(exported.sharedChannel > 0, 'something had to share — just not the glide');
+
+  const { sequencer } = midiToSequencer(exported.bytes);
+  const glide = schedule(sequencer).find((e) => e.pitch === 72);
+  assert.ok(glide, 'the gliding note came back');
+  assert.equal(glide.points.length, 2);
+  assert.equal(glide.points[1].pitch, 84, 'and it still reaches where it was going');
+});
+
+test('a note in front of a glide takes it away, and the loss is declared', () => {
+  // The case the ordering cannot save: a flat note that starts BEFORE the glide
+  // it has to share with. A reader tells the channel's owner by who arrived
+  // first, so the glide has to be given up — never silently.
+  const notes: Point[][] = [];
+  // Every member channel taken by a glide that starts later than the flat notes.
+  for (let i = 0; i < 15; i += 1) {
+    notes.push([{ step: 4, pitch: 40 + i }, { step: 12, pitch: 52 + i }]);
+  }
+  // Two flat notes of ONE pitch, so the second cannot go on the master either.
+  notes.push([{ step: 0, pitch: 100 }, { step: 15, pitch: 100 }]);
+  notes.push([{ step: 0, pitch: 100 }, { step: 15, pitch: 100 }]);
+  const exported = sequencerToMidi(makeSequencer([makeTrack(notes)]));
+  assert.equal(exported.notes, 17, 'every note is written');
+  assert.equal(exported.dropped, 0, 'nothing is thrown away to save a glide');
+  assert.equal(exported.flattened, 1, 'exactly one glide gave way, and it is counted');
 });
