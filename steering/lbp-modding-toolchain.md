@@ -213,12 +213,11 @@ Measured 2026-09-03 over the corpus, both channel modes, `dev/verify-midi.ts`:
 
 ```
 62.158 clips, 1.448.224 records: 0 came back different
-per part : 686 clips carried verbatim, 0 unpatchable, 24.49 MB
-shared   : 1.188 clips carried verbatim, 0 unpatchable, 24.30 MB
+352 clips carried verbatim, 0 unpatchable, 24.4 MB
 ```
 
-and it is a **fixed point from the first trip**: three round trips give 1,448,224 records and
-24.49 MB every time, with all 149 sequencers byte-identical between trip 1 and trip 2. The music
+and it is a **fixed point from the first trip**: three round trips give 1,448,224 records and the
+same byte count every time, with all 149 sequencers identical between trip 1 and trip 2. The music
 comparison that used to be the strongest statement here now reads **0 sequencers disagreeing, worst
 deviation pitch 0.000, volume 0.000, modulation 0.000** — the deviations it used to report are
 gone because the records themselves come back.
@@ -235,7 +234,8 @@ Three things got it there, in the order they were found:
    in the wrong order.
 3. **A verbatim record patch for the remainder.** The exporter imports its own output, compares
    clip by clip, and writes the originals base64 in the `LBP-TRK` meta's `fix` for the ones that
-   differ. 686 clips of 62,158, **0.73% of the bytes**, and it takes the last 1,206 notes to 0.
+   differ — **352 clips of 62,158** once the comparison stopped counting the order chains sit in,
+   which is authoring order and nothing recovers it.
 
 ⚠️ **A patch is not the same kind of thing as the metas around it.** `LBP-SEQ` and `LBP-TRK`
 describe the *placement* — the mixer, the board, the key — and stay true however the notes are
@@ -245,11 +245,10 @@ why the page says what it is for. **The importer trusts the patch over the note 
 also why shared mode now comes back whole: a flattened note's glide is gone from the MIDI and
 present in the patch.
 
-⚠️ So `flattened`, `dropped` and `dragged` no longer describe what a ROUND TRIP loses — they
-describe what a **foreign reader** loses, which is the honest reading of them and always was.
-`LBP_MIDI_LOOSE=1` turns the patch off and measures MIDI alone: worst deviation pitch 0.167,
-volume 0.500, 686 clips (per part) or 1,188 (shared) that would have needed a patch, and shared
-mode's 1,742 declared losses exactly equalling its 1,742 changed curves.
+⚠️ So `flattened`, `dropped` and `dragged` describe what a **foreign reader** loses, not what a
+round trip loses — the honest reading of them, and always was. `LBP_MIDI_LOOSE=1` turns the patch
+off and measures MIDI alone: worst deviation pitch 0.167, volume 0.500, and 352 clips that would
+have needed a patch.
 
 ⚠️ **`Track.records` is the file's own bytes and `Track.notes` is not a re-encoding of them.**
 `makeNote` sorts a chain into position order and real files do not always store it that way, so
@@ -350,7 +349,7 @@ metas hears, and what the file degrades to if a DAW edits it.
 | which clip a note sat in | 1 clip of 62,158, and 42 more hold a different number of notes (0.07%) | the residue of a genuine ambiguity: clips of one part overlap, so a few notes fit two of them and either answer puts them at the same place on the timeline |
 | per-point modulation | 8 notes of 34,449 that vary it | carried on CC 74 per change; the eight that do not survive move it by less than the quantiser can see |
 | coincident control points | 302 notes (0.03%) | two records on one position collapse to the later, which is what the engine's `t = span > 0 ? … : 1` does |
-| a glide, to a shared channel | 0 per part, 1,742 (0.18%) shared | fifteen member channels against thirty-two voices; always counted, never silent |
+| a glide, to a shared channel | **0** | fifteen member channels against thirty-two voices, and lanes hold the difference; always counted, never silent |
 | pitch and volume resolution | within half a unit — measured worst 0.167 semitones and 0.500 | bend is rounded to whole semitones and positions to thirds of a step, which is the record grid |
 | `timbre` bits 4-5, volume > 127 | 0 in the corpus | MIDI has seven bits for either |
 
@@ -372,63 +371,63 @@ can bring one back except the cell list. Skipping them is what made the count 62
 62,158, and it looked like an ambiguity rather than the omission it was.
 
 The measurement, from `dev/verify-midi.ts` over the corpus on 2026-09-03 — run it after touching
-either file. `LBP_MIDI_PERPART=1` measures the mode a DAW should be given, and
-`LBP_MIDI_LOOSE=1` turns the record patch off so the MIDI-alone numbers stay visible:
+either file. `LBP_MIDI_LOOSE=1` turns the record patch off so the MIDI-alone numbers stay visible:
 
-|  | per part | shared |
-|---|---|---|
-| sequencers disagreeing | 0 | 0 |
-| clips whose records differ | **0** of 62,158 | **0** of 62,158 |
-| clips carried verbatim | 686 (1.10%) | 1,188 (1.91%) |
-| notes sharing a channel | 30 | 27,210 |
-| … of those, dragged by a neighbour's bend | 0 | 1,352 (0.14%) |
-| … whose timbre a sharer moved | 0 | 4,522 (0.47%) |
-| glides MIDI alone could not carry | 0 | 1,742 (0.18%) |
-| notes MPE could not carry at all | 0 | 1 |
-| size | 24.5 MB | 24.3 MB |
+| | |
+|---|---|
+| sequencers disagreeing | **0** of 149 |
+| clips whose records differ | **0** of 62,158 |
+| clips carried verbatim | 352 (0.57%) |
+| notes sharing a channel | 30, all of them flat |
+| … dragged by a neighbour's bend | 0 |
+| … whose timbre a sharer moved | 0 |
+| glides MIDI alone could not carry | 0 |
+| notes MPE could not carry at all | 0 |
+| size | 24.4 MB |
 
-- 88,893 notes (9.32%) carry a glide. In `channelsPerPart` **none of them lose it even in the MIDI
-  events**. Sharing the channels across the file costs 1,742 of them — an MPE zone has fifteen
-  member channels and this engine has thirty-two voices, so a dense passage runs out. A note that
-  has to share writes no bend and no pressure at all, because both belong to the channel and a
-  newcomer setting them drags whatever is already sounding there. The count is reported by
-  `sequencerToMidi`, never swallowed — and the patch then brings the records back anyway.
-- ⚠️ **Report `dragged`, not `sharedChannel`.** The raw sharing count is five times larger and
-  implies a damage that is not there: on `Ascetic` 124 notes share and 6 are touched.
-- The one note MPE cannot carry is seventeen copies of one pitch at once, in `Avian`, with nowhere
-  left where a note-off could tell them apart. ⚠️ **It comes back**, because the clip that lost
-  it differs and is therefore carried verbatim — which is why `dev/verify-midi.ts` checks the note
-  count against a RANGE rather than against `before - dropped`. Holding it to the equality blamed
-  `Avian` for a note the patch had already restored.
-- **The residue that used to sit here is gone.** It read "7 notes in 953,791 (0.0007%) change
-  without being declared, and are not explained"; with the records carried, nothing changes at all.
-  `LBP_MIDI_LOOSE=1` still shows what MIDI alone does, and there the declaration is exact in shared
-  mode: 1,742 declared, 1,742 changed.
+- 88,893 notes (9.32%) carry a glide and **none of them loses it, even in the MIDI events alone**.
+- ⚠️ **Report `dragged`, not `sharedChannel`.** The raw sharing count was five times larger when
+  parts shared, and implied a damage that was not there. It is 30 against 0 now, which makes the
+  same point.
+- **Two residues that used to sit here are gone.** One read "7 notes in 953,791 (0.0007%) change
+  without being declared, and are not explained" — with the records carried, nothing changes at
+  all. The other was `Avian`'s single note that MPE could not carry, seventeen copies of one pitch
+  at once: lanes hold it. ⚠️ `dev/verify-midi.ts` still checks the note count against a RANGE
+  rather than against `before - dropped`, because a dropped note comes back through the patch and
+  the equality blamed `Avian` for a note that had already been restored.
 
-⚠️ **A MIDI file's tracks do NOT get sixteen channels each, but a DAW gives them sixteen
-anyway.** The header can declare 65,535 tracks and they are still one shared channel space — the
-channel is in the status byte, not the track — which is why a dense song runs out. *But* a DAW that
-imports a format 1 file as one project track per MIDI track hands each track its own instrument,
-and that instrument only ever sees its own track's events. Reaper does this. So
-`channelsPerPart` gives every part all fifteen member channels in a **single file**, and measured
-over the corpus that is **dragged 0 and no note short of a glide** against 1,352 and 1,742 when
-they are shared — identical to writing one file per part, without the 4,909 files. It is
-off by default because a single-stream player (hardware, a plain player, Reaper told to import as
-one track) would hear the parts collide. `splitSequencerToMidi` is the option that needs no promise
-about the reader: separate files, packed by polyphony, 249 for the corpus where 149 sufficed.
+✅ **Every part gets all fifteen member channels, and there is no longer a mode where it does
+not.** Settled 2026-09-03. A MIDI file's tracks do NOT get sixteen channels each — the header can
+declare 65,535 and the channel still lives in the status byte — but a DAW that imports a format 1
+file as one project track per MIDI track gives each track its own instrument, and that instrument
+only ever sees its own track's events. Reaper does this. The file is written for that reader and
+says so; `splitSequencerToMidi` is the option for one that cannot promise it, since separate files
+need no promise at all.
 
-⚠️ **The order notes are allocated in is most of the shared-channel problem, and it is not
-obvious.** Allocating in plain time order let a flat note take the last free channel a moment
-before a gliding one needed it: 3,593 notes lost a glide where, measured, only **1,172 ever arrive
-while more than fifteen glides are already sounding**. `sequencerToMidi` therefore allocates in two
-passes, the notes that need a channel to themselves first, and falls back through a channel nobody
-is bending, then the master channel — which MPE allows to carry notes and where nothing is ever
-bent — then a channel whose glides all began earlier, and only then gives a glide up. ⚠️ **The
-master goes before the earlier-glide case, not after**: our own importer knows whose a bend is, a
-synth does not, and parking a note on the master is the one placement that cannot be dragged.
-Ascetic's dragged notes went from 18 to 6 on that ordering alone. That last case is real and is counted:
-`flattened`. Deciding is a separate step from writing for exactly that reason, since displacing a
-glide has to be able to reach a note that was placed earlier.
+What the old shared mode cost, for the record: 1,742 glides (0.18%), 1,352 notes dragged by a
+neighbour's bend, 4,522 whose timbre a sharer moved, and one note in `Avian` that MPE could not
+carry at all. All four are now **0**.
+
+⚠️ **Sharing has not gone, it has changed shape.** 30 notes of the corpus's 953,791 still share
+a channel, and the polyphony count does not predict them: a part is split into lanes so that no
+lane holds more than fifteen at once, but a channel is held for a note's whole life, so **one long
+note can pairwise overlap fifteen short ones without three ever sounding together**. The gliding
+pass parks each of those on a channel of its own, round-robin, and the long note arrives to find
+every channel booked. Measured at the moment it happens: 1-2 concurrent, 14-17 booked ahead, and
+every one of the 30 is a FLAT note — so `dragged`, `timbred` and `flattened` are all 0. That is the
+two-pass allocator working as intended, not failing.
+
+⚠️ **The order notes are allocated in is what makes that true, and it is not obvious.**
+Allocating in plain time order let a flat note take the last free channel a moment before a gliding
+one needed it: 3,593 notes lost a glide where, measured, only **1,172 ever arrive while more than
+fifteen glides are already sounding**. `sequencerToMidi` therefore allocates in two passes, the
+notes that need a channel to themselves first, and falls back through a channel nobody is bending,
+then the master channel — which MPE allows to carry notes and where nothing is ever bent — then a
+channel whose glides all began earlier, and only then gives a glide up. ⚠️ **The master goes
+before the earlier-glide case, not after**: our own importer knows whose a bend is, a synth does
+not, and parking a note on the master is the one placement that cannot be dragged. That last case
+is real and is counted: `flattened`. Deciding is a separate step from writing for exactly that
+reason, since displacing a glide has to be able to reach a note that was placed earlier.
 
 ⚠️ **The bend range is picked from the music, not fixed at MPE's 48.** 582 of the corpus's
 1,448,224 control points glide further than 48 semitones and the widest is 62; nothing reaches 96,

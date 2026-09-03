@@ -205,51 +205,68 @@ test('the file announces an MPE lower zone and its bend range', () => {
 
 /** Walk a file's note events, asserting no channel ever holds one pitch twice. */
 function assertNoPitchCollision(bytes: Uint8Array): number {
-  const sounding = new Set<number>();
+  // ⚠️ **Per track, because that is the only reader this file is written
+  // for.** A file's tracks share one set of sixteen channels, so flattening
+  // them here would report a collision between two lanes of one part -- and a
+  // DAW that lands one project track per MIDI track never sees it, which is
+  // exactly the promise the export is built on. Within a track it is a real
+  // error: two identical note-ons on one channel have indistinguishable
+  // note-offs.
   let written = 0;
-  const events = readMidi(bytes)
-    .tracks.flatMap((t) => t.events)
-    .sort((a, b) => a.tick - b.tick);
-  for (const event of events) {
-    const kind = event.data[0] & 0xf0;
-    const key = ((event.data[0] & 0x0f) << 8) | event.data[1];
-    if (kind === 0x90 && event.data[2] > 0) {
-      assert.ok(!sounding.has(key), `channel ${event.data[0] & 0x0f} already holds note ${event.data[1]}`);
-      sounding.add(key);
-      written += 1;
-    } else if (kind === 0x80) {
-      sounding.delete(key);
+  for (const track of readMidi(bytes).tracks) {
+    const sounding = new Set<number>();
+    for (const event of [...track.events].sort((a, b) => a.tick - b.tick)) {
+      const kind = event.data[0] & 0xf0;
+      const key = ((event.data[0] & 0x0f) << 8) | event.data[1];
+      if (kind === 0x90 && event.data[2] > 0) {
+        assert.ok(
+          !sounding.has(key),
+          `channel ${event.data[0] & 0x0f} already holds note ${event.data[1]}`,
+        );
+        sounding.add(key);
+        written += 1;
+      } else if (kind === 0x80) {
+        sounding.delete(key);
+      }
     }
   }
   return written;
 }
 
-test('a chord bigger than the zone shares channels rather than colliding', () => {
-  // Twenty different pitches at once, fifteen member channels. Sharing a
-  // channel costs those notes their own expression and nothing else, so it is
-  // the right thing to give up -- but it has to be counted.
+test('a chord bigger than the zone takes a second lane, and shares nothing', () => {
+  // Twenty different pitches at once against fifteen member channels. This used
+  // to cost five of them their own channel; the part is split across two MIDI
+  // tracks instead, and a DAW plays them on two instances of one instrument.
   const chord: Point[][] = [];
   for (let i = 0; i < 20; i += 1) chord.push([{ step: 0, pitch: 40 + i }, { step: 8, pitch: 40 + i }]);
   const exported = sequencerToMidi(makeSequencer([makeTrack(chord)]));
   assert.equal(exported.notes, 20, 'every note is written');
+  assert.equal(exported.sharedChannel, 0, 'and none of them has to share');
   assert.equal(exported.dropped, 0);
-  assert.equal(exported.sharedChannel, 5, '20 notes over 15 channels');
   assert.equal(assertNoPitchCollision(exported.bytes), 20);
+  const { sequencer } = midiToSequencer(exported.bytes);
+  assert.equal(sequencer.tracks.reduce((n, t) => n + t.notes.length, 0), 20);
 });
 
-test('seventeen unisons cannot be carried, and say so instead of vanishing', () => {
-  // ⚠️ The one case MPE genuinely cannot express: more copies of a single
-  // pitch than there are channels to tell them apart. Sixteen go -- the fifteen
-  // member channels and then the master, which the specification allows to
-  // carry notes and which is the right place for one that can have no
-  // expression anyway -- and the rest are reported. A converter that dropped
-  // them quietly would be lying. One note in the corpus's 953,791 gets here.
+test('twenty-four unisons all survive, on two lanes', () => {
+  // ⚠️ **This used to be the one case MPE genuinely could not express**:
+  // more copies of a single pitch than there are channels to tell them apart,
+  // so eight of these were reported dropped and the corpus had one such note in
+  // `Avian`. Lanes end it -- a part over fifteen at once is written across
+  // enough MIDI tracks to hold it, and each track has its own fifteen.
+  //
+  // ❗ `dropped` is kept even so. It is 0 on the corpus and on every shape that
+  // could be constructed for it, but a converter that loses notes quietly is
+  // exactly what the counter exists to prevent, and proving it unreachable is
+  // not the same as it being unreachable.
   const chord: Point[][] = [];
   for (let i = 0; i < 24; i += 1) chord.push([{ step: 0, pitch: 60 }, { step: 8, pitch: 60 }]);
   const exported = sequencerToMidi(makeSequencer([makeTrack(chord)]));
-  assert.equal(exported.notes, 16);
-  assert.equal(exported.dropped, 8);
-  assert.equal(assertNoPitchCollision(exported.bytes), 16);
+  assert.equal(exported.notes, 24, 'every one of them is written');
+  assert.equal(exported.dropped, 0);
+  assert.equal(assertNoPitchCollision(exported.bytes), 24);
+  const { sequencer } = midiToSequencer(exported.bytes);
+  assert.equal(sequencer.tracks.reduce((n, t) => n + t.notes.length, 0), 24);
 });
 
 test('a glide is written as a glide, not as two steps', () => {
@@ -769,39 +786,43 @@ test('a glide keeps its channel when flat notes are competing for it', () => {
   // out — and allocating in plain time order let fifteen flat notes take every
   // channel a moment before the one note that actually needed one. Across the
   // corpus that flattened 3,593 notes where at most 1,172 ever had to.
-  // Fifteen flat notes holding for sixteen steps, and one glide starting inside
-  // them: in time order the flat ones take every channel first.
-  const notes: Point[][] = [];
+  // ❗ **Lanes end the ordinary form of this**, so the shape that still reaches
+  // it is the one the corpus's own 30 sharers have: ONE long flat note whose
+  // tail crosses a run of glides that start later. Instantaneous polyphony
+  // never passes two, so the part stays a single lane -- but the pool hands out
+  // channels to the gliding pass first, round-robin, and by the time the flat
+  // note is placed every channel has a glide somewhere inside its span.
+  const notes: Point[][] = [[{ step: 0, pitch: 100 }, { step: 60, pitch: 100 }]];
   for (let i = 0; i < 15; i += 1) {
-    notes.push([{ step: 0, pitch: 40 + i }, { step: 15, pitch: 40 + i }]);
+    notes.push([{ step: 2 + i * 3, pitch: 40 + i }, { step: 4 + i * 3, pitch: 52 + i }]);
   }
-  notes.push([{ step: 1, pitch: 72 }, { step: 9, pitch: 84 }]);
   const seq = makeSequencer([makeTrack(notes)]);
 
   const exported = sequencerToMidi(seq);
   assert.equal(exported.notes, 16);
-  assert.equal(exported.flattened, 0, 'the glide is not the one that gives way');
-  assert.ok(exported.sharedChannel > 0, 'something had to share — just not the glide');
+  assert.equal(exported.flattened, 0, 'no glide is the one that gives way');
+  assert.equal(exported.sharedChannel, 1, 'the flat note shares — it has nothing to lose');
 
   const { sequencer } = midiToSequencer(exported.bytes);
-  const glide = schedule(sequencer).find((e) => e.pitch === 72);
-  assert.ok(glide, 'the gliding note came back');
-  assert.equal(glide.points.length, 2);
-  assert.equal(glide.points[1].pitch, 84, 'and it still reaches where it was going');
+  for (const glide of schedule(sequencer).filter((e) => e.pitch < 100)) {
+    assert.equal(glide.points.length, 2, `pitch ${glide.pitch} kept both points`);
+    assert.equal(glide.points[1].pitch, glide.pitch + 12, 'and reaches where it was going');
+  }
 });
 
 test('a note in front of a glide takes it away, and the loss is declared', () => {
   // The case the ordering cannot save: a flat note that starts BEFORE the glide
   // it has to share with. A reader tells the channel's owner by who arrived
   // first, so the glide has to be given up — never silently.
-  const notes: Point[][] = [];
-  // Every member channel taken by a glide that starts later than the flat notes.
+  // Two flat notes of ONE pitch spanning a run of later glides, so neither the
+  // channels nor the master can take the second one without displacing a glide.
+  const notes: Point[][] = [
+    [{ step: 0, pitch: 100 }, { step: 60, pitch: 100 }],
+    [{ step: 0, pitch: 100 }, { step: 60, pitch: 100 }],
+  ];
   for (let i = 0; i < 15; i += 1) {
-    notes.push([{ step: 4, pitch: 40 + i }, { step: 12, pitch: 52 + i }]);
+    notes.push([{ step: 2 + i * 3, pitch: 40 + i }, { step: 4 + i * 3, pitch: 52 + i }]);
   }
-  // Two flat notes of ONE pitch, so the second cannot go on the master either.
-  notes.push([{ step: 0, pitch: 100 }, { step: 15, pitch: 100 }]);
-  notes.push([{ step: 0, pitch: 100 }, { step: 15, pitch: 100 }]);
   const exported = sequencerToMidi(makeSequencer([makeTrack(notes)]));
   assert.equal(exported.notes, 17, 'every note is written');
   assert.equal(exported.dropped, 0, 'nothing is thrown away to save a glide');
@@ -821,8 +842,12 @@ test('splitting puts the parts in as few files as their polyphony needs', async 
     );
   const seq = makeSequencer([part(0, 40), part(1, 60)]);
 
+  // ❗ One file DOES hold twenty at once, on two tracks -- which is only true
+  // for a reader that gives each track its own instrument. Splitting is for the
+  // reader that does not: separate files, so the parts never meet whatever
+  // plays them.
   const whole = sequencerToMidi(seq);
-  assert.ok(whole.sharedChannel > 0, 'one file cannot hold twenty at once');
+  assert.equal(whole.sharedChannel, 0);
 
   const split = splitSequencerToMidi(seq);
   assert.equal(split.files.length, 2);
@@ -894,7 +919,7 @@ test('a zip of the split reads back as the files that went in', async () => {
   assert.equal(found[1].bytes.length, 1000);
 });
 
-test('per-part channels give every part all fifteen, in one file', () => {
+test('every part gets all fifteen member channels, in one file', () => {
   // ⚠️ The point a DAW makes true: a file's tracks share one set of sixteen
   // channels, but Reaper — and anything else that lands one project track per
   // MIDI track — hands each track its own instrument, and that instrument sees
@@ -906,12 +931,9 @@ test('per-part channels give every part all fifteen, in one file', () => {
     );
   const seq = makeSequencer([part(0, 40), part(1, 60)]);
 
-  const shared = sequencerToMidi(seq);
-  assert.ok(shared.sharedChannel > 0, 'twenty at once does not fit in fifteen');
-
-  const split = sequencerToMidi(seq, { channelsPerPart: true });
-  assert.equal(split.sharedChannel, 0, 'ten and ten do');
-  assert.equal(split.notes, shared.notes);
+  const split = sequencerToMidi(seq);
+  assert.equal(split.sharedChannel, 0, 'ten and ten fit, one part to a track');
+  assert.equal(split.notes, 20);
 
   // Both parts really are using the same channel numbers — that is the trade.
   const used = new Map<number, Set<number>>();
@@ -940,7 +962,7 @@ test('a per-part file still reads back correctly here', () => {
       { gridY: row, guid: 1000 + row },
     );
   const seq = makeSequencer([part(0, 40), part(1, 60)]);
-  const exported = sequencerToMidi(seq, { channelsPerPart: true });
+  const exported = sequencerToMidi(seq);
   assert.equal(exported.flattened, 0, 'and no glide had to be given up');
   const { sequencer } = midiToSequencer(exported.bytes);
   assert.deepEqual(music(sequencer), music(seq));
@@ -1076,11 +1098,8 @@ test('a part too polyphonic for one zone is split across tracks, and merged back
   }
   const seq = makeSequencer([makeTrack(notes, { guid: 7, gridY: 3, name: 'saw_wave' })]);
 
-  const one = sequencerToMidi(seq);
-  assert.ok(one.flattened > 0, 'one zone cannot hold twenty and keep the glide');
-
-  const split = sequencerToMidi(seq, { channelsPerPart: true });
-  assert.equal(split.flattened, 0, 'two lanes can');
+  const split = sequencerToMidi(seq);
+  assert.equal(split.flattened, 0, 'two lanes hold twenty glides where one cannot');
   assert.equal(split.dropped, 0);
   assert.equal(split.parts, 1, 'and it is still reported as one part');
 

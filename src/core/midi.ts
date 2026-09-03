@@ -102,28 +102,6 @@ export interface MidiExportOptions {
   readonly bakeSwing?: boolean;
   readonly ppq?: number;
   /**
-   * Give every part its own fifteen member channels instead of sharing them.
-   *
-   * ⚠️ **This is safe in a DAW and unsafe in a player.** A file's tracks share
-   * one set of sixteen channels -- the channel is in the status byte, not the
-   * track -- so two parts on channel 5 are the same channel 5 to anything that
-   * plays the file as one stream. But a DAW that imports a format 1 file as
-   * SEPARATE TRACKS gives each one its own instrument, and that instrument only
-   * ever sees its own track's events: Reaper does this, and so does every other
-   * DAW that lands one MIDI track per project track. There the parts never meet,
-   * and the fifteen channels are fifteen per part.
-   *
-   * What it buys, over the corpus: nothing is dragged at all and the notes that
-   * lose a glide fall from 1,535 to 825 -- the same as writing one file per
-   * part, without the 4,909 files.
-   *
-   * What it costs: played as a single stream -- a hardware module, a simple
-   * player, Reaper asked to import as one track -- parts collide on the same
-   * channels, and two notes of one pitch there have indistinguishable note-offs.
-   * So it is off by default.
-   */
-  readonly channelsPerPart?: boolean;
-  /**
    * A GUID to a readable instrument name, for the track names.
    *
    * ⚠️ **`PInstrument` has no name field worth printing.** `Track.name` comes
@@ -184,7 +162,15 @@ export interface MidiExportResult {
   /** MIDI tracks written, not counting the conductor. */
   readonly parts: number;
   readonly events: number;
-  /** Notes that had to share a member channel because all 15 were busy. */
+  /**
+   * Notes that had to share a member channel because all 15 were busy.
+   *
+   * ⚠️ **Rare now, and never a glide.** A part over fifteen at once is split
+   * across MIDI tracks, so running out takes a shape the polyphony count does
+   * not see: one long note whose span crosses a run of glides that start later,
+   * each of which the gliding pass has already parked on a channel of its own.
+   * 30 notes of the corpus's 953,791, all of them flat, none of them dragged.
+   */
   readonly sharedChannel: number;
   /**
    * Sharers that a neighbour's bend actually reaches.
@@ -236,10 +222,13 @@ export interface MidiExportResult {
   /**
    * Notes MPE could not carry at all.
    *
-   * Only one thing produces these: more than fifteen copies of the SAME pitch
-   * sounding at once, which leaves no channel where the note could be told
-   * apart from one already there. Sixteen unisons is not something a person
-   * plays, but a level can hold one, and dropping notes without saying so is
+   * ✅ **0 everywhere since lanes became unconditional.** What produced these
+   * was more than fifteen copies of one pitch sounding at once, leaving no
+   * channel where a note could be told apart from one already there; a part
+   * that dense is now written across enough MIDI tracks to hold it, and the
+   * corpus's one such note in `Avian` survives. It is kept, and no shape could
+   * be constructed that reaches it -- but proving something unreachable is not
+   * the same as it being unreachable, and dropping notes without saying so is
    * how a converter earns its reputation.
    */
   readonly dropped: number;
@@ -753,19 +742,31 @@ export function sequencerToMidi(
   });
 
   /**
-   * One pool, or one per lane; see `channelsPerPart`.
+   * One channel pool per lane, and a lane never meets another.
    *
-   * The counters are summed over whatever pools exist, so the rest of the
-   * function does not need to know which arrangement it is in.
+   * ⚠️ **A file's tracks do NOT get a channel space each** -- the header can
+   * declare 65,535 of them and the channel still lives in the status byte, so
+   * two tracks writing `0x93` address the same channel 4. What makes this safe
+   * is the reader: a DAW that imports a format 1 file as separate project
+   * tracks gives each one its own instrument, and that instrument only ever
+   * sees its own track's events. Reaper does this, and so does everything else
+   * that lands one project track per MIDI track.
+   *
+   * ❗ **So the file is written for that reader and for no other.** Played as a
+   * single stream -- a hardware module, a plain player -- parts collide on the
+   * same channels and two notes of one pitch have indistinguishable note-offs.
+   * `splitSequencerToMidi` is the option for a destination that cannot promise
+   * separate tracks: one file per group of parts, packed by polyphony.
+   *
+   * The counters are summed over the pools, so nothing downstream has to know
+   * how many there are.
    */
-  const perPart = options.channelsPerPart ?? false;
   const pools = new Map<number, VoicePool>();
   const poolFor = (lane: number) => {
-    const key = perPart ? lane : -1;
-    const found = pools.get(key);
+    const found = pools.get(lane);
     if (found) return found;
     const made = new VoicePool();
-    pools.set(key, made);
+    pools.set(lane, made);
     return made;
   };
   const tally = (pick: (p: VoicePool) => number) =>
@@ -837,14 +838,10 @@ export function sequencerToMidi(
    * The split is by NOTE, not by clip: a single clip can be polyphonic enough on
    * its own. Greedy in time order into the first lane with room, which is
    * optimal for intervals.
-   *
-   * Only in `channelsPerPart`. Sharing one pool across the file makes extra
-   * tracks pure cost, since they compete for the same fifteen channels either
-   * way, and the import merges them back regardless.
    */
   const laneOf = new Map<ScheduledNote, number>();
   const laneCount = parts.map(() => 1);
-  if (perPart) {
+  {
     const byPart: ScheduledNote[][] = parts.map(() => []);
     for (const event of all) {
       const part = partOfTrack.get(event.track);

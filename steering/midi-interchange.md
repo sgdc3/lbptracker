@@ -15,7 +15,7 @@ over the corpus (10 levels, 149 sequencers, 953,791 notes, 62,158 clips, 1,448,2
 
 ## The budget — where 24.49 MB of corpus goes
 
-`channelsPerPart`, `exact` on, which is what the page writes:
+`exact` on, which is what the page writes:
 
 | carrier | share | events |
 |---|---|---|
@@ -128,12 +128,11 @@ the only one that can go stale.** The others stay true however the music is edit
 records; edit the notes in a DAW and the import hands back the original clip instead of the edit.
 `MidiExportOptions.exact` is the switch, on by default, and the page says what off is for.
 
-⚠️ **The importer trusts the patch over the note events.** That is why shared mode comes back whole
-even though its MIDI genuinely lost 1,742 glides — and why `flattened`, `dropped` and `dragged`
-describe what a **foreign reader** loses, not what a round trip loses.
+⚠️ **The importer trusts the patch over the note events**, which is why `flattened`, `dropped`
+and `dragged` describe what a **foreign reader** loses, not what a round trip loses.
 
-The exporter earns it: it imports its own output and patches only what came back wrong. 686 clips
-of 62,158. Carrying every clip we could not *prove* would cost 22%.
+The exporter earns it: it imports its own output and patches only what came back wrong. **352 clips
+of 62,158.** Carrying every clip we could not *prove* would cost 22%.
 
 ## 3. Track name — meta type `0x03`
 

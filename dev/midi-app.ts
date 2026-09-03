@@ -41,7 +41,6 @@ const modeSelect = $<HTMLSelectElement>('mode');
 const bakeSwing = $<HTMLInputElement>('bakeSwing');
 const bendInput = $<HTMLInputElement>('bendRange');
 const splitSelect = $<HTMLSelectElement>('split');
-const perPart = $<HTMLInputElement>('perPart');
 const autoBend = $<HTMLInputElement>('autoBend');
 const exactBox = $<HTMLInputElement>('exact');
 const logBox = $<HTMLDivElement>('log');
@@ -92,7 +91,6 @@ function options() {
   return {
     mpe: modeSelect.value === 'mpe',
     bakeSwing: bakeSwing.checked,
-    channelsPerPart: perPart.checked,
     exact: exactBox.checked,
     // The level stores no name on a placement, so without this every track in
     // the file is called `guid 148321` and a DAW is unreadable.
@@ -259,7 +257,7 @@ const showBend = () => {
     : `±${bendInput.value}`;
   bendInput.disabled = autoBend.checked;
 };
-for (const el of [modeSelect, bakeSwing, bendInput, autoBend, splitSelect, perPart, exactBox]) {
+for (const el of [modeSelect, bakeSwing, bendInput, autoBend, splitSelect, exactBox]) {
   el.addEventListener('change', () => {
     showBend();
     convert();
