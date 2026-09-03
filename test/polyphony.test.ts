@@ -5,6 +5,7 @@ import {
   VOICES_UNLIMITED,
   VOICE_POOL_SIZE,
   allocateVoices,
+  LiveVoicePool,
   type PooledNote,
 } from '../src/core/polyphony.ts';
 
@@ -54,4 +55,57 @@ test('the cap can be turned off, which is a UI setting', () => {
   assert.ok(capped.some((r) => r.end < 100), 'capped, some are stolen');
   const free = allocateVoices(notes, VOICES_UNLIMITED);
   assert.ok(free.every((r) => r.end === 100), 'uncapped, none are');
+});
+
+// ⚠️ THE EQUIVALENCE THE LIVE PLAYER RESTS ON. `allocateVoices` decides the
+// voice pool's stealing for a whole song at once; `LiveVoicePool` decides it one
+// note at a time so the pool can be changed while a song plays. The moment these
+// two disagree, the live player and the renderer are different instruments.
+//
+// A seeded generator rather than a handful of cases: the interesting failures
+// are ties on `start`, ties on `score`, and notes that end exactly where the
+// next begins, and those are found by volume rather than by imagination.
+test('the incremental pool decides exactly what the offline one decides', () => {
+  let seed = 0x9e3779b9;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+
+  for (const poolSize of [1, 2, 4, 32, VOICES_UNLIMITED]) {
+    for (let round = 0; round < 40; round += 1) {
+      const notes: PooledNote[] = [];
+      const count = 5 + Math.floor(rand() * 120);
+      for (let i = 0; i < count; i += 1) {
+        // Coarse starts and lengths, so ties and exact abutments are common.
+        const start = Math.floor(rand() * 24);
+        const end = start + Math.floor(rand() * 8);
+        // Scores off a short ladder, so ties on score happen constantly.
+        notes.push({ start, end, score: Math.floor(rand() * 4) / 4 });
+      }
+
+      const offline = allocateVoices(notes, poolSize);
+
+      // The order `allocateVoices` sorts into, which is the order a scheduler
+      // posts in: by start, ties by the order they were added.
+      const order = notes
+        .map((n, index) => ({ n, index }))
+        .sort((a, b) => a.n.start - b.n.start || a.index - b.index);
+      const pool = new LiveVoicePool(poolSize);
+      const ends = new Map<number, number>();
+      for (const { n, index } of order) {
+        const { end, stole } = pool.add(index, n);
+        ends.set(index, end);
+        if (stole) ends.set(stole.index, stole.at);
+      }
+
+      for (const row of offline) {
+        assert.equal(
+          ends.get(row.index),
+          row.end,
+          `pool ${poolSize}, round ${round}, note ${row.index}`,
+        );
+      }
+    }
+  }
 });

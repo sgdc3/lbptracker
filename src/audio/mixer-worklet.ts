@@ -81,6 +81,8 @@ export type MixerMessage =
     }
   /** Close the gate on the voices carrying `tag`; see `Mixer.release`. */
   | { type: 'release'; tag: number }
+  /** Take a tagged voice away after `frames` more of its own sounding time. */
+  | { type: 'cutAt'; tag: number; frames: number }
   | { type: 'stopAll' };
 
 declare const sampleRate: number;
@@ -242,6 +244,9 @@ export class MixerProcessor extends AudioWorkletProcessor {
         break;
       case 'release':
         this.mixer.release(message.tag);
+        break;
+      case 'cutAt':
+        this.mixer.cutAt(message.tag, message.frames);
         break;
       case 'stopAll':
         this.mixer.stopAll();

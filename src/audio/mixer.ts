@@ -702,6 +702,25 @@ export class Mixer {
   }
 
   /**
+   * Take a tagged voice away in `frames` frames of its own sounding time.
+   *
+   * This is the voice pool's theft rather than a note ending: the record is
+   * handed to somebody else, so the voice stops where it is instead of
+   * releasing. A live scheduler needs it because the pool only learns that a
+   * voice must be cut when the note that steals it arrives, which is after the
+   * victim was handed over.
+   *
+   * ⚠️ `frames` counts SOUNDING frames, not wall frames: a voice still waiting
+   * out its `startFrame` has not spent any of them. That is the same clock
+   * `cutFrame` is converted to in `play`.
+   */
+  cutAt(tag: number, frames: number): void {
+    for (const voice of this.voices) {
+      if (voice.spec.tag === tag) voice.cut = Math.max(0, frames);
+    }
+  }
+
+  /**
    * Close the gate on every voice carrying `tag`, as a key coming up does.
    *
    * ⚠️ **This is the note's own gate, not a stop.** `life` and `hold` are what

@@ -133,3 +133,62 @@ export function allocateVoices(
 
   return notes.map((_, index) => ({ index, end: ends.get(index) ?? notes[index].end }));
 }
+
+/**
+ * The same allocator, fed one note at a time.
+ *
+ * ⚠️ **`allocateVoices` is causal** -- it walks notes in start order, retires
+ * the slots whose voices have ended, and steals the lowest-scoring survivor,
+ * never looking at a note it has not reached. That is the engine's own runtime
+ * behaviour (`0x1640`-`0x164d`), so the offline pass is a model of something
+ * that can be done live, and this is that same rule with the loop turned inside
+ * out.
+ *
+ * `add` returns the note's own end, plus the note whose voice it stole and the
+ * frame the theft happens at -- everything a live scheduler needs to revise a
+ * voice it has already handed over.
+ *
+ * ⚠️ **Notes must arrive in the order `allocateVoices` would have sorted them**:
+ * by `start`, ties broken by the order they were added. `test/polyphony.test.ts`
+ * pins the equivalence, because the moment these two disagree the live player
+ * and the renderer are different instruments.
+ */
+export class LiveVoicePool {
+  private readonly pool: ({ index: number; end: number; score: number } | undefined)[];
+  private readonly poolSize: number;
+
+  constructor(poolSize: number = VOICE_POOL_SIZE) {
+    // A parameter property would be tidier and `erasableSyntaxOnly` forbids it:
+    // this project type-strips rather than compiles, so nothing may survive
+    // erasure. See tsconfig.
+    this.poolSize = poolSize;
+    this.pool = new Array(Number.isFinite(poolSize) ? poolSize : 0).fill(undefined);
+  }
+
+  add(index: number, note: PooledNote): { end: number; stole?: { index: number; at: number } } {
+    if (!Number.isFinite(this.poolSize)) return { end: note.end };
+
+    for (let i = 0; i < this.pool.length; i += 1) {
+      const held = this.pool[i];
+      if (held && held.end <= note.start) this.pool[i] = undefined;
+    }
+
+    let chosen = this.pool.findIndex((slot) => slot === undefined);
+    let stole: { index: number; at: number } | undefined;
+    if (chosen === -1) {
+      // ⚠️ Best starts at 1.0 and best index at 0, exactly as at 0x1640-0x164d.
+      let best = 1;
+      chosen = 0;
+      for (let i = 0; i < this.pool.length; i += 1) {
+        const held = this.pool[i]!;
+        if (held.score < best) {
+          best = held.score;
+          chosen = i;
+        }
+      }
+      stole = { index: this.pool[chosen]!.index, at: note.start };
+    }
+    this.pool[chosen] = { index, end: note.end, score: note.score };
+    return { end: note.end, stole };
+  }
+}

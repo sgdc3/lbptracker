@@ -21,11 +21,13 @@ import path from 'node:path';
 
 import { buildMipChain } from '../src/audio/mipmap.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from '../src/audio/mixer.ts';
+import { allocateVoices, LiveVoicePool, VOICES_UNLIMITED } from '../src/core/polyphony.ts';
 import { readLevelProject, type LevelProject } from '../src/core/project.ts';
 import { RATE, renderSequencer, type LoadedInstrument } from '../src/core/render.ts';
 import { loadResource } from '../src/core/resource.ts';
 import { readInstrument, usedSlots } from '../src/core/rinstrument.ts';
 import { loopRegion, readWav } from '../src/core/wav.ts';
+import { swungFrame } from '../src/core/swing.ts';
 import { nodeInflate } from '../src/platform/node.ts';
 
 const LEVELS =
@@ -102,11 +104,20 @@ interface Planned {
   spec: VoiceSpec;
   life?: number;
   cut?: number;
+  /** What the voice pool needs, in its own units. */
+  poolStart: number;
+  poolEnd: number;
+  score: number;
+  /** Frames per step, so a pool decision in steps becomes a cut in frames. */
+  index: number;
 }
 const plan: Planned[] = [];
-await renderSequencer(seq, loadInstrument, {
+const planResult = await renderSequencer(seq, loadInstrument, {
   planOnly: true,
   panWidth: 1,
+  // Uncapped on purpose: the point of the exercise is to apply the pool live,
+  // so the plan must not have its cuts baked in.
+  voiceLimit: VOICES_UNLIMITED,
   onVoice: (voice, where) => {
     // ⚠️ **The spec's `random` is the render's own seeded PRNG, and it is
     // shared.** Handing the same spec to three mixers means each `new Voice`
@@ -129,6 +140,10 @@ await renderSequencer(seq, loadInstrument, {
     };
     for (const field of STRIP) delete stripped[field];
     plan.push({
+      poolStart: where.poolStart,
+      poolEnd: where.poolEnd,
+      score: where.score,
+      index: plan.length,
       at: where.startFrame,
       spec: stripped as unknown as VoiceSpec,
       life: voice.endFrame === undefined ? undefined : Math.max(0, voice.endFrame - where.startFrame),
@@ -137,6 +152,34 @@ await renderSequencer(seq, loadInstrument, {
   },
 });
 plan.sort((a, b) => a.at - b.at);
+const stepFrames = planResult.framesPerStep;
+const POOL = Number(process.env.LBP_POOL ?? 8);
+const swing = seq.swing;
+/** A pool decision, which the allocator gives in steps, as an absolute frame. */
+const cutFrameAt = (step: number) => Math.round(swungFrame(step, stepFrames, swing));
+
+// The reference: the cuts `allocateVoices` would have baked in for this pool,
+// applied to the uncapped plan. `renderDirect` then renders exactly what the
+// renderer would write at this pool size.
+if (process.env.LBP_LIVEPOOL === '1') {
+  const decided = allocateVoices(
+    plan.map((p) => ({ start: p.poolStart, end: p.poolEnd, score: p.score })),
+    POOL,
+  );
+  let stolen = 0;
+  for (const row of decided) {
+    const p = plan[row.index];
+    if (row.end < p.poolEnd) {
+      const abs = cutFrameAt(row.end);
+      p.cut = abs - p.at;
+      // The one-call reference plays `spec` verbatim, so its cut has to be
+      // there too -- in absolute frames, which is what that render counts in.
+      (p.spec as unknown as { cutFrame?: number }).cutFrame = abs;
+      stolen += 1;
+    }
+  }
+  console.log(`pool ${POOL}: ${stolen} of ${plan.length} voices stolen offline`);
+}
 const frames = Math.min(Math.round(SECONDS * RATE), Math.max(...plan.map((p) => p.at)) + RATE);
 console.log(`${plan.length} voices; comparing the first ${(frames / RATE).toFixed(1)} s`);
 
@@ -288,6 +331,63 @@ if (process.env.LBP_SCAN === '1') {
   process.exit(0);
 }
 
+/**
+ * The live path with the pool run at post time by `LiveVoicePool`, against a
+ * plan that has no cuts in it.
+ *
+ * ⚠️ This is the thing being proved: that deciding the stealing one note at a
+ * time, as the engine does, gives the same audio as deciding it for the whole
+ * song at once, as the renderer does.
+ */
+function renderLivePool(): [Float32Array, Float32Array] {
+  const mixer = new Mixer(RATE);
+  const left = new Float32Array(frames);
+  const right = new Float32Array(frames);
+  const block = Math.round(TICK * RATE);
+  const pool = new LiveVoicePool(POOL);
+  /** Voices handed over, so a steal can reach back and cut one. */
+  const live = new Map<number, number>();
+  let next = 0;
+  for (let start = 0; start < frames; start += block) {
+    const now = start;
+    const until = now + LOOKAHEAD * RATE;
+    while (next < plan.length && plan[next].at < until) {
+      const p = plan[next];
+      const { end, stole } = pool.add(p.index, {
+        start: p.poolStart,
+        end: p.poolEnd,
+        score: p.score,
+      });
+      const delay = Math.max(0, Math.round(p.at - now));
+      const cutFrames = end < p.poolEnd ? cutFrameAt(end) - p.at : undefined;
+      mixer.play({
+        ...p.spec,
+        tag: p.index,
+        startFrame: delay,
+        endFrame: p.life === undefined ? undefined : delay + p.life,
+        // ⚠️ From the live pool, never from `p.cut` -- that field holds the
+        // reference the other variants render, and using it here would compare
+        // the answer with itself.
+        cutFrame: cutFrames === undefined ? undefined : delay + cutFrames,
+      });
+      live.set(p.index, p.at);
+      if (stole) {
+        // The victim stops at the thief's start. `cut` counts the frames it
+        // still gets to sound, so measure from wherever it actually is.
+        const startAbs = live.get(stole.index);
+        if (startAbs !== undefined) {
+          const atAbs = cutFrameAt(stole.at);
+          mixer.cutAt(stole.index, Math.max(0, atAbs - Math.max(now, startAbs)));
+        }
+      }
+      next += 1;
+    }
+    const size = Math.min(block, frames - start);
+    mixer.render(left.subarray(start, start + size), right.subarray(start, start + size));
+  }
+  return [left, right];
+}
+
 const [dl, dr] = renderDirect();
 const [bl, br] = renderBlocked();
 const [sl, sr] = renderScheduled();
@@ -324,6 +424,10 @@ const compare = (label: string, a: Float32Array, b: Float32Array) => {
 };
 compare('blocked, played once', bl, br);
 compare('scheduled (live)', sl, sr);
+if (process.env.LBP_LIVEPOOL === '1') {
+  const [pl, pr] = renderLivePool();
+  compare('live pool', pl, pr);
+}
 console.log(`direct    rms ${rms(dl, dr).toFixed(6)}`);
 console.log(`scheduled rms ${rms(sl, sr).toFixed(6)}`);
 console.log(

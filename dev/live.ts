@@ -24,7 +24,8 @@ import { loaderFor, manifest, asset, type Manifest } from './assets.ts';
 import { seqPicker } from './seq-picker.ts';
 import { type VoiceSpec } from '../src/audio/mixer.ts';
 import { readLevelProject, type LevelProject } from '../src/core/project.ts';
-import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
+import { LiveVoicePool, VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
+import { swungFrame } from '../src/core/swing.ts';
 import { PAN_WIDTH, RATE, renderSequencer } from '../src/core/render.ts';
 import { webInflate } from '../src/platform/web.ts';
 
@@ -86,8 +87,21 @@ interface Planned {
   readonly voice: Omit<VoiceSpec, 'sample' | 'random' | 'startFrame' | 'endFrame' | 'cutFrame'>;
   /** Frames from this voice's own start, or undefined when it had none. */
   readonly life?: number;
-  readonly cut?: number;
   readonly lfoPhase: readonly [number, number, number];
+  /**
+   * What the voice pool needs, in its own units.
+   *
+   * ⚠️ **The plan carries no cuts.** It is built uncapped and the pool is
+   * applied as each voice is handed over, one note at a time, which is what the
+   * engine does and what lets the size be changed without rebuilding anything.
+   * `LiveVoicePool` is proved to decide exactly what `allocateVoices` decides
+   * (test/polyphony.test.ts), and `dev/live-sim.ts` proves the audio is
+   * bit-identical at pools of 2, 4, 8 and 32.
+   */
+  readonly poolStart: number;
+  readonly poolEnd: number;
+  readonly score: number;
+  readonly index: number;
 }
 
 let project: LevelProject | null = null;
@@ -170,8 +184,36 @@ const planOptions = () => ({
   // ❗ Raw pans in the plan: the worklet owns the width so it can be swept while
   // the song plays. Sending anything but 1 here would apply it twice.
   panWidth: 1,
-  voiceLimit: noCapBox.checked ? VOICES_UNLIMITED : Number(voicesInput.value),
+  // ❗ And no cap: the pool is applied live, per note. See `Planned`.
+  voiceLimit: VOICES_UNLIMITED,
 });
+
+/** The pool size the listener has asked for. */
+const poolSize = () => (noCapBox.checked ? VOICES_UNLIMITED : Number(voicesInput.value));
+
+let pool = new LiveVoicePool(poolSize());
+/** Song frame at which each handed-over voice started, so a theft can reach it. */
+const handed = new Map<number, number>();
+let stepFrames = 0;
+let swing = 0;
+const cutFrameAt = (step: number) => Math.round(swungFrame(step, stepFrames, swing));
+
+/**
+ * Rebuild the pool's state so it matches a playthrough that reached `upTo`.
+ *
+ * ⚠️ Changing the size cannot just start an empty pool from here: the engine's
+ * stealing depends on what it is holding, so a pool that forgot the last minute
+ * of the song would steal differently from one that had been this size all
+ * along. Replaying the decisions is pure arithmetic over the notes already
+ * passed -- no audio, no rebuild of the plan.
+ */
+function rebuildPool(upTo: number): void {
+  pool = new LiveVoicePool(poolSize());
+  for (const p of plan) {
+    if (p.at >= upTo) break;
+    pool.add(p.index, { start: p.poolStart, end: p.poolEnd, score: p.score });
+  }
+}
 
 const pushPanWidth = () =>
   node?.port.postMessage({ type: 'panWidth', width: Number(panWidthInput.value) / 100 });
@@ -288,7 +330,7 @@ async function prepare(restart = true): Promise<void> {
         (n) => draw() * 2 * Math.PI + (voice.lfoPhaseOffset?.[n] ?? 0),
       ) as unknown as readonly [number, number, number];
       const {
-        sample: _s, random: _r, startFrame: _f, endFrame, cutFrame, ...rest
+        sample: _s, random: _r, startFrame: _f, endFrame, cutFrame: _c, ...rest
       } = voice;
       const at = where.startFrame;
       built.push({
@@ -296,8 +338,11 @@ async function prepare(restart = true): Promise<void> {
         sampleId,
         voice: rest,
         life: endFrame === undefined ? undefined : Math.max(0, endFrame - at),
-        cut: cutFrame === undefined ? undefined : Math.max(0, cutFrame - at),
         lfoPhase: phase,
+        poolStart: where.poolStart,
+        poolEnd: where.poolEnd,
+        score: where.score,
+        index: built.length,
       });
     },
     onProgress: (phase, done, total) => {
@@ -313,6 +358,8 @@ async function prepare(restart = true): Promise<void> {
   songFrames = result.frames;
   songSeconds = result.seconds;
   framesPerStep = result.framesPerStep;
+  stepFrames = result.framesPerStep;
+  swing = seq.swing;
   pushEffects();
   pushPanWidth();
   drawDensity();
@@ -335,19 +382,16 @@ async function prepare(restart = true): Promise<void> {
   metersBox.innerHTML = [
     ['voices', built.length.toLocaleString()],
     ['notes', `${result.played.toLocaleString()} played, ${result.skipped} skipped`],
-    ['stolen by the pool', result.stolen.toLocaleString()],
+    // ⚠️ Not a count: the plan is uncapped and the stealing happens as the song
+    // plays, so there is no total to report until it has finished playing.
+    ['voice pool', noCapBox.checked ? 'uncapped' : voicesInput.value],
     ['samples', String(sent.size)],
     ['length', `${clock(songSeconds)} at ${seq.tempo} BPM`],
   ]
     .map(([k, v]) => `<span>${k} <b>${v}</b></span>`)
     .join('');
   markStale();
-  setStatus(
-    restart
-      ? `ready — ${built.length.toLocaleString()} voices scheduled, press play`
-      : `voice pool ${noCapBox.checked ? 'uncapped' : voicesInput.value} — ` +
-        `${built.length.toLocaleString()} voices, ${result.stolen.toLocaleString()} stolen`,
-  );
+  setStatus(`ready — ${built.length.toLocaleString()} voices scheduled, press play`);
 }
 
 /** A voice-per-second histogram, so the song has a shape before it plays. */
@@ -385,6 +429,8 @@ function seek(frames: number): void {
   // note in the middle and neither has this.
   nextIndex = plan.findIndex((p) => p.at >= cursorFrames);
   if (nextIndex < 0) nextIndex = plan.length;
+  handed.clear();
+  rebuildPool(cursorFrames);
   paint();
   if (was) start();
 }
@@ -431,17 +477,37 @@ function pump(): void {
     // The delay this voice waits before it starts, and its own end rebased onto
     // that delay so the mixer's `endFrame - startFrame` is still its length.
     const delay = Math.max(0, Math.round(p.at - now));
+    const { end, stole } = pool.add(p.index, {
+      start: p.poolStart,
+      end: p.poolEnd,
+      score: p.score,
+    });
+    const cut = end < p.poolEnd ? cutFrameAt(end) - p.at : undefined;
     node.port.postMessage({
       type: 'play',
       sampleId: p.sampleId,
       voice: {
         ...p.voice,
+        tag: p.index,
         startFrame: delay,
         endFrame: p.life === undefined ? undefined : delay + p.life,
-        cutFrame: p.cut === undefined ? undefined : delay + p.cut,
+        cutFrame: cut === undefined ? undefined : delay + cut,
       },
       lfoPhase: p.lfoPhase,
     });
+    handed.set(p.index, p.at);
+    if (stole) {
+      // The victim loses its record at the thief's start. `cutAt` counts the
+      // frames it still gets to sound, so measure from wherever it is now.
+      const startAbs = handed.get(stole.index);
+      if (startAbs !== undefined) {
+        node.port.postMessage({
+          type: 'cutAt',
+          tag: stole.index,
+          frames: Math.max(0, cutFrameAt(stole.at) - Math.max(now, startAbs)),
+        });
+      }
+    }
     nextIndex += 1;
   }
   if (now >= songFrames) {
@@ -526,12 +592,17 @@ panWidthInput.addEventListener('input', () => {
  * what is already sounding finishes as it was going to. Debounced, because it
  * is a slider and every pixel of it would otherwise start a rebuild.
  */
-let replanTimer = 0;
 const replanSoon = () => {
   showPlanOptions();
   if (!plan.length) return;
-  window.clearTimeout(replanTimer);
-  replanTimer = window.setTimeout(() => void prepare(false), 350);
+  // ❗ No rebuild at all any more: the plan has no cuts in it, so a new size is
+  // a new pool and nothing else. Replayed up to the playhead so it holds what a
+  // playthrough at this size would have been holding.
+  rebuildPool(songPosition());
+  setStatus(
+    `voice pool ${noCapBox.checked ? 'uncapped' : voicesInput.value} — ` +
+      `${plan.length.toLocaleString()} voices`,
+  );
 };
 voicesInput.addEventListener('input', replanSoon);
 noCapBox.addEventListener('change', replanSoon);

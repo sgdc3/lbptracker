@@ -191,7 +191,22 @@ export interface RenderOptions {
    */
   readonly onVoice?: (
     voice: VoiceSpec,
-    where: { guid: number; zone: number; startFrame: number },
+    where: {
+      guid: number;
+      zone: number;
+      startFrame: number;
+      /**
+       * What the voice pool sees: the note's occupancy in STEPS, and its score.
+       *
+       * A live scheduler that wants to run the pool itself needs exactly these
+       * three -- `allocateVoices` uses nothing else -- and it needs them in the
+       * allocator's own units, which are steps rather than frames because that
+       * is what the engine counts.
+       */
+      poolStart: number;
+      poolEnd: number;
+      score: number;
+    },
   ) => void;
   /**
    * Build the voices and stop, without mixing or running the effects.
@@ -646,7 +661,14 @@ export async function renderSequencer(
       };
       // One voice, offered to whoever asked and then mixed. A realtime player
       // schedules from here rather than rebuilding any of it.
-      onVoice?.(voice, { guid: event.guid, zone, startFrame: voice.startFrame ?? 0 });
+      onVoice?.(voice, {
+        guid: event.guid,
+        zone,
+        startFrame: voice.startFrame ?? 0,
+        poolStart: event.step,
+        poolEnd: event.step + (prep.occupancySteps ?? event.durationSteps),
+        score: channelVolume(seq, track) * velocityGain(event.volume),
+      });
       if (!planOnly) mixer.play(voice);
     }
     played += 1;
