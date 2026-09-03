@@ -220,12 +220,25 @@ modulation put it back; and the output level moves as a *ratio* against the valu
 with, because the spec's `gain` also carries the track level, the channel volume, the headroom, the
 velocity and the stack correction, none of which the modulation owns.
 
-⚠️ **`echoSend` and `reverbSend` still do not move.** They are applied per voice in
-`Mixer.render` rather than inside the voice, so making them follow the modulation means
-restructuring the send accumulation — and doing it at the resolution of a `Mixer.render` call would
-make the offline render and the live one disagree, which they are measured not to. The send moves
-on 50.5% of the affected notes and its widest swing is **0.210**, the smallest of the group. It is
-the one piece of this outstanding.
+**The echo send moves too, and it is the only send that can.**
+`voice+0x1c = clamp01(bipolar(Params[25], 2*echoSend - 1))`, so the instrument's own send is bent
+by the placement's field; `voice+0x24` is `reverbSend` alone and the modulation never touches it.
+The buses belong to the mixer, so a voice now reports one span per chunk with the send that was
+live for it, and the mixer sums each span at its own level. `Voice.maySend` decides whether the
+buses are needed by looking along the whole ramp, because a voice can open at send 0 and rise.
+
+⚠️ **And here is what that is worth, which is almost nothing — the figure recorded here before
+was measuring the wrong thing.** `Params[25]` in isolation swings up to **0.210** across the
+affected notes, and that is the number this section used to quote. The *effective* echo send swings
+at most **0.045**, on **68 notes in 5 sequencers** of the whole 22-level corpus. The reason is the
+bipolar offset: a placement with `echoSend == 0` gives offset **-1**, and `base + (-1)*base` is
+**0** whatever the modulation does. Most placements are exactly that, so the instrument's send is
+muted before the modulation gets a say. 25 s of `Ascetic` is bit-identical with and without the
+send half of this change.
+
+❗ **So do not cite `Params` swings as audible weight without the placement.** The whole audible
+weight of the modulation fix is in the filter, the level, the LFOs and the drive; the send is
+complete for correctness and inert in practice.
 
 **Verified from both ends.** 25 s of `Indestructible` — 6,126 notes, not one of them moving its
 modulation — renders to the **same md5** with and without this code, which is the invariant that

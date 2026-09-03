@@ -53,10 +53,11 @@ anything; all are places where an answer stopped just short.
   it and re-reads it every chunk.** `sub_0x3930` writes a slide rate for it at `0x3e8a` beside the
   ones for volume and pitch, and `sub_0x1c60` advances it by `slide × dt` at `0x1f4a` and reads the
   result four times. The cadence is per chunk per voice, under the DSP read callback at `sub_0x170`.
-  Full chain and addresses in `answered-questions.md` 6d. **Implemented the same day**:
-  `VoiceSpec.morph` carries the ramp and `Voice.render` re-derives per 128-frame chunk. What is
-  still outstanding is only `echoSend`/`reverbSend`, which are applied per voice outside the voice
-  — widest swing 0.210, on 50.5% of the affected notes.
+  Full chain and addresses in `answered-questions.md` 6d. **Implemented the same day, in full**:
+  `VoiceSpec.morph` carries the ramp, `Voice.render` re-derives per 128-frame chunk, and the echo
+  send follows it too — which turned out to be worth almost nothing, 68 notes in the corpus,
+  because a placement with `echoSend == 0` mutes the instrument's send whatever the modulation
+  does. Nothing outstanding.
 
 - **The `1/3` sub-step and `Swing`.** Triplets are settled and wired; `Swing` is a normalised 0..1
   ratio clamped at 0.99 and what the engine does with it is still unknown. It stays under question 3.

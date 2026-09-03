@@ -266,6 +266,16 @@ export interface VoiceSpec {
     /** Modulation at each control point, in frames from the voice's start. */
     readonly points: readonly { readonly frame: number; readonly value: number }[];
     /**
+     * The placement's echo send as the engine's bipolar offset, `2*send - 1`.
+     *
+     * ❗ The echo send is the only send the modulation touches:
+     * `voice+0x1c = clamp01(bipolar(Params[25], 2*echoSend - 1))`, where
+     * `Params[25]` is the instrument's own and the placement's field bends it.
+     * The reverb is `reverbSend` alone and never moves. See the sends note in
+     * `src/core/render.ts`.
+     */
+    readonly echoOffset: number;
+    /**
      * `Params[level]` at the modulation the spec's `gain` was built with.
      *
      * ❗ The gain carries the track level, the channel volume, the headroom,
@@ -325,6 +335,29 @@ export interface VoiceSpec {
  */
 const MORPH_FRAMES = 128;
 
+/** What one chunk of a voice wrote, and the sends that were live for it. */
+interface RenderedSpan {
+  readonly begin: number;
+  readonly end: number;
+  readonly echo: number;
+  readonly reverb: number;
+}
+
+/**
+ * The echo send at a given modulation.
+ *
+ * `clamp01(bipolar(Params[25], offset))` — the instrument's own send bent by
+ * the placement's field, which the engine stores as `2*echoSend - 1` so that
+ * 0.5 leaves the instrument alone, 0 mutes it and 1 forces unity. Both halves
+ * of that curve are in `src/core/render.ts`, which builds the opening value.
+ */
+function echoAt(morph: NonNullable<VoiceSpec['morph']>, mod: number): number {
+  const base = evaluateParam(morph.params[OUTPUT_PARAMS.send] ?? { x: 0, y: 0 }, mod);
+  const offset = morph.echoOffset;
+  const blended = offset < 0 ? base + offset * base : base + offset * (1 - base);
+  return blended < 0 ? 0 : blended > 1 ? 1 : blended;
+}
+
 class Voice {
   position = 0;
   readonly spec: VoiceSpec;
@@ -367,6 +400,16 @@ class Voice {
   private curLfos: readonly [LfoSettings, LfoSettings, LfoSettings] | undefined;
   private curDrive: number;
   private curGain: number;
+  private curEcho: number;
+  private curReverb: number;
+  /**
+   * Whether this voice can ever reach a send bus.
+   *
+   * ⚠️ **A morphing voice's echo send may start at zero and rise**, so the
+   * opening values are not enough to decide whether the buses are needed. This
+   * is the largest the echo gets anywhere along the note's own ramp.
+   */
+  readonly maySend: boolean;
 
   /**
    * Live expression: `Mixer.expression`, neutral until something sends some.
@@ -426,6 +469,16 @@ class Voice {
     this.curLfos = spec.lfos;
     this.curDrive = spec.drive ?? 0;
     this.curGain = spec.gain;
+    this.curEcho = spec.echoSend ?? 0;
+    this.curReverb = spec.reverbSend ?? 0;
+    let widestEcho = this.curEcho;
+    const morph = spec.morph;
+    if (morph !== undefined) {
+      for (const point of morph.points) {
+        widestEcho = Math.max(widestEcho, echoAt(morph, point.value));
+      }
+    }
+    this.maySend = widestEcho > 0 || this.curReverb > 0;
     const gains = panGains(spec.pan);
     this.left = gains.left * spec.gain;
     this.right = gains.right * spec.gain;
@@ -489,6 +542,7 @@ class Voice {
     const level = at(OUTPUT_PARAMS.level);
     const opening = morph.opening;
     this.curGain = opening > 0 ? (this.spec.gain * level) / opening : this.spec.gain;
+    this.curEcho = echoAt(morph, mod);
     const gains = panGains(this.spec.pan);
     this.left = gains.left * this.curGain;
     this.right = gains.right * this.curGain;
@@ -613,9 +667,12 @@ class Voice {
     frames: number,
     interpolate: Interpolator,
     engineSampler: boolean,
+    into?: RenderedSpan[],
   ): { begin: number; end: number } {
     if (this.spec.morph === undefined) {
-      return this.renderChunk(outLeft, outRight, frames, interpolate, engineSampler);
+      const span = this.renderChunk(outLeft, outRight, frames, interpolate, engineSampler);
+      into?.push({ begin: span.begin, end: span.end, echo: this.curEcho, reverb: this.curReverb });
+      return span;
     }
     let at = 0;
     let begin = -1;
@@ -633,6 +690,16 @@ class Voice {
       if (span.end > span.begin) {
         if (begin < 0) begin = at + span.begin;
         end = at + span.end;
+        // ⚠️ **One span per chunk, with the send that was live for it.** The
+        // buses belong to the mixer, so the voice cannot sum into them itself;
+        // reporting what it wrote and at what send is how a moving echo reaches
+        // them without the mixer having to know about chunks.
+        into?.push({
+          begin: at + span.begin,
+          end: at + span.end,
+          echo: this.curEcho,
+          reverb: this.curReverb,
+        });
       }
       // Short of the chunk means the voice ran out inside it.
       if (span.end < take) break;
@@ -1036,42 +1103,47 @@ export class Mixer {
     // A send bus is the same render scaled: rather than render a voice twice,
     // each voice writes into a scratch pair and that is added to dry and to
     // each bus at its own level. The scratch is per render, not per voice.
-    const needsSends =
-      sends !== undefined &&
-      this.voices.some((v) => (v.spec.echoSend ?? 0) > 0 || (v.spec.reverbSend ?? 0) > 0);
+    const needsSends = sends !== undefined && this.voices.some((v) => v.maySend);
     const scratchL = needsSends ? new Float32Array(frames) : left;
     const scratchR = needsSends ? new Float32Array(frames) : right;
 
+    // Reused across voices: one array, cleared per voice, rather than a fresh
+    // one for each of a corpus render's hundreds of thousands.
+    const spans: RenderedSpan[] = [];
     const total = this.voices.length;
     let done = 0;
     for (const voice of this.voices) {
       if (onVoice && (done & 0xff) === 0) onVoice(done, total);
       done += 1;
-      const echo = voice.spec.echoSend ?? 0;
-      const reverb = voice.spec.reverbSend ?? 0;
-      if (!needsSends || (echo === 0 && reverb === 0)) {
+      if (!needsSends || !voice.maySend) {
         voice.render(left, right, frames, this.interpolate, this.engineSampler);
         continue;
       }
-      // The scratch is left clean by whoever used it last, so only the span
-      // this voice writes needs clearing -- and only that span needs summing.
-      const span = voice.render(scratchL, scratchR, frames, this.interpolate, this.engineSampler);
-      for (let i = span.begin; i < span.end; i += 1) {
-        const l = scratchL[i];
-        const r = scratchR[i];
-        left[i] += l;
-        right[i] += r;
-        if (echo > 0 && sends?.echo) {
-          sends.echo[0][i] += l * echo;
-          sends.echo[1][i] += r * echo;
+      // The scratch is left clean by whoever used it last, so only the spans
+      // this voice writes need clearing -- and only those need summing. A voice
+      // whose modulation moves reports one span per chunk, each with its own
+      // echo send; every other voice reports exactly one.
+      spans.length = 0;
+      voice.render(scratchL, scratchR, frames, this.interpolate, this.engineSampler, spans);
+      for (const span of spans) {
+        const { echo, reverb } = span;
+        for (let i = span.begin; i < span.end; i += 1) {
+          const l = scratchL[i];
+          const r = scratchR[i];
+          left[i] += l;
+          right[i] += r;
+          if (echo > 0 && sends?.echo) {
+            sends.echo[0][i] += l * echo;
+            sends.echo[1][i] += r * echo;
+          }
+          if (reverb > 0 && sends?.reverb) {
+            sends.reverb[0][i] += l * reverb;
+            sends.reverb[1][i] += r * reverb;
+          }
         }
-        if (reverb > 0 && sends?.reverb) {
-          sends.reverb[0][i] += l * reverb;
-          sends.reverb[1][i] += r * reverb;
-        }
+        scratchL.fill(0, span.begin, span.end);
+        scratchR.fill(0, span.begin, span.end);
       }
-      scratchL.fill(0, span.begin, span.end);
-      scratchR.fill(0, span.begin, span.end);
     }
     onVoice?.(total, total);
     // A voice that ran out mid-block has already written what it had.

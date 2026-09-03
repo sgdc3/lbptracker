@@ -526,6 +526,7 @@ export async function renderSequencer(
       return {
         params: p,
         opening: P(OUTPUT_PARAMS.level),
+        echoOffset: 2 * track.echoSend - 1,
         points: event.points.map((point, index) => ({
           // The same clock `automation` uses: frames of the note's own sounding
           // time, swung, measured from its start.

@@ -799,6 +799,9 @@ test('a moving modulation moves what it feeds', async () => {
     gain: 1,
     morph: {
       params,
+      // 0.5 in the placement means "leave the instrument's own send alone", and
+      // the engine stores it as `2*send - 1`, so a neutral offset is 0.
+      echoOffset: 0,
       opening: 0.25,
       points: [{ frame: 0, value: 0 }, { frame: 512, value: 1 }],
     },
@@ -831,7 +834,7 @@ test('a modulation that does not move changes nothing at all', async () => {
   const withFlat = new Mixer(48000);
   withFlat.play({
     sample: flat, playbackRate: 1, pan: 0.5, gain: 1,
-    morph: { params, opening: 0.25, points: [{ frame: 0, value: 0 }, { frame: 512, value: 0 }] },
+    morph: { params, echoOffset: 0, opening: 0.25, points: [{ frame: 0, value: 0 }, { frame: 512, value: 0 }] },
   });
 
   const a = new Float32Array(640);
@@ -844,4 +847,76 @@ test('a modulation that does not move changes nothing at all', async () => {
     assert.equal(c[i], a[i], `frame ${i}`);
     assert.equal(d[i], b[i], `frame ${i}`);
   }
+});
+
+test('a moving modulation moves the echo send too', async () => {
+  const { OUTPUT_PARAMS } = await import('../src/core/params.ts');
+  // ⚠️ The echo is the only send the modulation reaches:
+  // `clamp01(bipolar(Params[25], 2*placementSend - 1))`. The reverb is the
+  // placement's field alone. Both readings are in `src/core/render.ts`.
+  //
+  // This is also the one that could not be done until the voice reported what
+  // it wrote: the buses belong to the mixer, and it summed each voice's whole
+  // span at one send.
+  const flat = { channels: [new Float32Array(2000).fill(1)], sampleRate: 48000 };
+  const params = Array.from({ length: 27 }, () => ({ x: 0, y: 0 }));
+  params[OUTPUT_PARAMS.send] = { x: 0, y: 1 };
+  // ❗ The level has to be held up, or the voice is silent and every assertion
+  // below compares one zero against another. The first version of this test did
+  // exactly that and passed.
+  params[OUTPUT_PARAMS.level] = { x: 1, y: 1 };
+
+  const mixer = new Mixer(48000);
+  mixer.play({
+    sample: flat, playbackRate: 1, pan: 0.5, gain: 1,
+    // The opening value, which is what the send is at modulation 0.
+    echoSend: 0,
+    morph: {
+      params,
+      echoOffset: 0,
+      opening: 1,
+      points: [{ frame: 0, value: 0 }, { frame: 512, value: 1 }],
+    },
+  });
+  const left = new Float32Array(640);
+  const right = new Float32Array(640);
+  const echo: [Float32Array, Float32Array] = [new Float32Array(640), new Float32Array(640)];
+  mixer.render(left, right, { echo });
+
+  // The dry signal is flat, so the bus is the send itself -- but only if there
+  // IS a dry signal, which is what the first assertion is for.
+  assert.ok(left[256] > 0.4, `the voice sounds: ${left[256]}`);
+  assert.ok(Math.abs(echo[0][0]) < 1e-6, `silent at the start: ${echo[0][0]}`);
+  assert.ok(
+    Math.abs(echo[0][128] - left[128] * 0.25) < 1e-6,
+    `a quarter of the way: ${echo[0][128]} against ${left[128]}`,
+  );
+  assert.ok(
+    Math.abs(echo[0][256] - left[256] * 0.5) < 1e-6,
+    `half way: ${echo[0][256]} against ${left[256]}`,
+  );
+  assert.ok(
+    Math.abs(echo[0][512] - left[512]) < 1e-6,
+    `all of it by the end: ${echo[0][512]} against ${left[512]}`,
+  );
+});
+
+test('a voice whose send only rises later still reaches the bus', async () => {
+  const { OUTPUT_PARAMS } = await import('../src/core/params.ts');
+  // ⚠️ `needsSends` used to be decided from the opening values, so a voice
+  // starting at send 0 was rendered straight into the dry mix and could never
+  // reach a bus however far its modulation took it. `Voice.maySend` looks along
+  // the whole ramp instead.
+  const flat = { channels: [new Float32Array(2000).fill(1)], sampleRate: 48000 };
+  const params = Array.from({ length: 27 }, () => ({ x: 0, y: 0 }));
+  params[OUTPUT_PARAMS.send] = { x: 0, y: 1 };
+  params[OUTPUT_PARAMS.level] = { x: 1, y: 1 };
+  const mixer = new Mixer(48000);
+  mixer.play({
+    sample: flat, playbackRate: 1, pan: 0.5, gain: 1, echoSend: 0,
+    morph: { params, echoOffset: 0, opening: 1, points: [{ frame: 0, value: 0 }, { frame: 256, value: 1 }] },
+  });
+  const echo: [Float32Array, Float32Array] = [new Float32Array(512), new Float32Array(512)];
+  mixer.render(new Float32Array(512), new Float32Array(512), { echo });
+  assert.ok(echo[0][400] > 0.4, `the bus fills once the send arrives: ${echo[0][400]}`);
 });
