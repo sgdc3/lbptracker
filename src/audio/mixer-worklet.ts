@@ -83,6 +83,17 @@ export type MixerMessage =
   | { type: 'release'; tag: number }
   /** Take a tagged voice away after `frames` more of its own sounding time. */
   | { type: 'cutAt'; tag: number; frames: number }
+  /**
+   * Forget the health counters and the frame the dropout detector compares to.
+   *
+   * ⚠️ **Sent when playback starts, because a suspended context looks exactly
+   * like a stall.** `process` is not called at all while an AudioContext is
+   * suspended, so the first call after `resume()` sees `currentFrame` jump by
+   * however long the pause lasted -- which the detector reads, correctly by its
+   * own rule, as a lost block. Every session therefore began with one dropout
+   * that meant nothing.
+   */
+  | { type: 'resetHealth' }
   | { type: 'stopAll' };
 
 declare const sampleRate: number;
@@ -266,6 +277,13 @@ export class MixerProcessor extends AudioWorkletProcessor {
         break;
       case 'cutAt':
         this.mixer.cutAt(message.tag, message.frames);
+        break;
+      case 'resetHealth':
+        this.lastFrame = -1;
+        this.dropouts = 0;
+        this.lostFrames = 0;
+        this.busyMs = 0;
+        this.windowStart = 0;
         break;
       case 'stopAll':
         this.mixer.stopAll();

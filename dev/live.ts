@@ -141,6 +141,8 @@ let audioLoad: number | null = null;
 /** Blocks the audio thread failed to deliver since playback started. */
 let dropouts = 0;
 let lostMs = 0;
+/** Voices the pool has taken back since playback started, counted as it goes. */
+let stolenLive = 0;
 
 function showLoad(): void {
   if (!playing && sounding === 0 && queued === 0) {
@@ -393,16 +395,27 @@ async function prepare(restart = true): Promise<void> {
   timeline.setAttribute('aria-valuemax', songSeconds.toFixed(1));
   metersBox.innerHTML = [
     ['voices', built.length.toLocaleString()],
-    ['notes', `${result.played.toLocaleString()} played, ${result.skipped} skipped`],
-    // ⚠️ Not a count: the plan is uncapped and the stealing happens as the song
-    // plays, so there is no total to report until it has finished playing.
-    ['voice pool', noCapBox.checked ? 'uncapped' : voicesInput.value],
+    // ⚠️ "skipped" means the instrument was not there, not that the pool dropped
+    // the note: `renderSequencer` counts a note as skipped when
+    // `loadInstrument` returns nothing for its GUID, which happens when that
+    // instrument is missing from the extracted assets. It reads 0 on a complete
+    // extraction, and the label says which question it is answering.
+    [
+      'notes',
+      `${result.played.toLocaleString()} played` +
+        (result.skipped > 0 ? `, ${result.skipped} with no instrument` : ''),
+    ],
+    // Counted as the song plays rather than read off a finished plan: the pool
+    // decides its stealing live now, so this is the only place the number
+    // exists. `stolenCell` is updated in `pump`.
+    ['stolen so far', '<b id="stolenCell">0</b>'],
     ['samples', String(sent.size)],
     ['length', `${clock(songSeconds)} at ${seq.tempo} BPM`],
   ]
-    .map(([k, v]) => `<span>${k} <b>${v}</b></span>`)
+    .map(([k, v]) => `<span>${k} ${v.startsWith('<b') ? v : `<b>${v}</b>`}</span>`)
     .join('');
   markStale();
+  showPlanOptions();
   setStatus(`ready — ${built.length.toLocaleString()} voices scheduled, press play`);
 }
 
@@ -443,6 +456,9 @@ function seek(frames: number): void {
   if (nextIndex < 0) nextIndex = plan.length;
   handed.clear();
   rebuildPool(cursorFrames);
+  stolenLive = 0;
+  const cell = document.getElementById('stolenCell');
+  if (cell) cell.textContent = '0';
   paint();
   if (was) start();
 }
@@ -450,6 +466,11 @@ function seek(frames: number): void {
 function start(): void {
   if (!context || !node || playing) return;
   void context.resume();
+  // The detector compares against the last block it saw, and a suspended
+  // context has not produced one since before the pause. Tell it to start over.
+  node.port.postMessage({ type: 'resetHealth' });
+  dropouts = 0;
+  lostMs = 0;
   startedAt = context.currentTime;
   playing = true;
   playButton.textContent = '⏸';
@@ -509,6 +530,9 @@ function pump(): void {
     });
     handed.set(p.index, p.at);
     if (stole) {
+      stolenLive += 1;
+      const cell = document.getElementById('stolenCell');
+      if (cell) cell.textContent = stolenLive.toLocaleString();
       // The victim loses its record at the thief's start. `cutAt` counts the
       // frames it still gets to sound, so measure from wherever it is now.
       const startAbs = handed.get(stole.index);
