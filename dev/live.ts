@@ -159,8 +159,15 @@ function showLoad(): void {
     ? 'no dropouts'
     : `${dropouts} dropout${dropouts === 1 ? '' : 's'}` +
       (lostMs >= 1 ? ` (${lostMs.toFixed(0)} ms lost)` : '');
+  const busy = audioLoad === null ? '' : `· audio ${(audioLoad * 100).toFixed(1)}% `;
+  // ⚠️ More sounding than the pool holds means something is not respecting it.
+  // Release tails are the honest reason -- a stolen voice keeps ringing while
+  // its envelope lets go -- so this is a flag to look at, not an error. Never
+  // flagged when the pool is uncapped, where there is nothing to exceed.
+  const cap = poolSize();
+  const over = Number.isFinite(cap) && sounding > cap;
   loadLabel.innerHTML =
-    `${sounding} sounding · ${queued} queued · ` +
+    `<span class="${over ? 'bad' : ''}">${sounding} sounding</span> · ${queued} queued ${busy}· ` +
     `<button type="button" class="drops${dropouts > 0 ? ' bad' : ''}" ` +
     `title="Click to reset the count">${health}</button>`;
 }

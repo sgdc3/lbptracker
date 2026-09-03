@@ -136,7 +136,6 @@ export class MixerProcessor extends AudioWorkletProcessor {
    * than guessed at. `currentTime` is not usable here -- it advances per block --
    * so this uses the wall clock the worklet scope exposes.
    */
-  private worstLoad = 0;
   /**
    * Whether the wall clock is readable from this scope at all.
    *
@@ -145,8 +144,28 @@ export class MixerProcessor extends AudioWorkletProcessor {
    * point of the meter is to tell "the audio thread is fine" apart from "nobody
    * checked".
    */
-  private readonly canTime =
-    typeof performance !== 'undefined' && typeof performance.now === 'function';
+  /**
+   * Whether a clock is readable at all from this scope.
+   *
+   * ⚠️ **`performance` is NOT exposed to an AudioWorkletGlobalScope** -- probed
+   * in Chrome, `typeof performance === 'undefined'` -- and neither is
+   * `AudioContext.renderCapacity` on the other side. `Date` is, because it is a
+   * language built-in rather than a Web API, and `Date.now()` there returns a
+   * real timestamp with 1 ms resolution.
+   *
+   * ⚠️ **1 ms against a 2.67 ms block is coarse**, so a single block measures 0
+   * or 1 and nothing in between. Summed across the ~37 blocks of a report
+   * window it comes out right on average, because a block's start has no
+   * relationship to the millisecond tick -- the estimate is noisy per window and
+   * unbiased over several, which is why the reported figure is smoothed.
+   */
+  private readonly canTime = typeof Date !== 'undefined';
+  /** Milliseconds spent inside `process` since the last report. */
+  private busyMs = 0;
+  /** Wall clock at the last report, for the window's own length. */
+  private windowStart = 0;
+  /** Smoothed busy fraction, so the readout does not flicker with the noise. */
+  private smoothed = 0;
   /**
    * The audio clock at the previous `process`, for spotting skipped blocks.
    *
@@ -255,7 +274,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
   }
 
   process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
-    const began = this.canTime ? performance.now() : 0;
+    const began = this.canTime ? Date.now() : 0;
     const output = outputs[0];
     if (!output || output.length === 0) return true;
     const left = output[0];
@@ -305,6 +324,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
   }
 
   private report(frames: number, began: number): void {
+    if (this.canTime) this.busyMs += Date.now() - began;
     if (this.lastFrame >= 0) {
       const advanced = currentFrame - this.lastFrame;
       if (advanced > frames) {
@@ -313,25 +333,33 @@ export class MixerProcessor extends AudioWorkletProcessor {
       }
     }
     this.lastFrame = currentFrame;
-    if (this.canTime) {
-      const spent = performance.now() - began;
-      const budget = (frames / sampleRate) * 1000;
-      const load = budget > 0 ? spent / budget : 0;
-      if (load > this.worstLoad) this.worstLoad = load;
-    }
     this.sinceReport += frames;
     if (this.sinceReport < sampleRate / 10) return;
     this.sinceReport = 0;
     const { total, sounding } = this.mixer.counts();
+    let load: number | null = null;
+    if (this.canTime) {
+      const now = Date.now();
+      const elapsed = this.windowStart > 0 ? now - this.windowStart : 0;
+      // Against the wall clock the window actually took, not against the audio
+      // time it represents: they agree while the thread keeps up, and when they
+      // do not, the wall clock is the honest denominator.
+      if (elapsed > 0) {
+        const raw = this.busyMs / elapsed;
+        this.smoothed = this.smoothed === 0 ? raw : this.smoothed * 0.7 + raw * 0.3;
+        load = this.smoothed;
+      }
+      this.windowStart = now;
+      this.busyMs = 0;
+    }
     this.port.postMessage({
       type: 'voices',
       total,
       sounding,
-      load: this.canTime ? this.worstLoad : null,
+      load,
       dropouts: this.dropouts,
       lostFrames: this.lostFrames,
     });
-    this.worstLoad = 0;
     this.dropouts = 0;
     this.lostFrames = 0;
   }

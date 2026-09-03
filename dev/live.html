@@ -40,12 +40,17 @@
   #load { color: var(--dimmer); font-size: .8rem; }
   /* The dropout count is a button so it can be reset, and has to look like the
      text beside it rather than like a control. */
-  .drops {
+  /* `#transport button` in ui.css is more specific than a bare class, so this
+     has to be at least as specific or the count gets a control's padding and a
+     2.4rem minimum width -- which is what made it sit oddly apart. */
+  #transport .drops {
     font: inherit; color: inherit; background: none; border: 0; padding: 0;
-    cursor: pointer; border-bottom: 1px dotted transparent;
+    min-width: 0; line-height: inherit; cursor: pointer;
+    border-bottom: 1px dotted transparent;
   }
-  .drops:hover { border-bottom-color: currentColor; }
-  .drops.bad { color: var(--bad); font-weight: 600; }
+  #transport .drops:hover { border-bottom-color: currentColor; }
+  #transport .drops.bad { color: var(--bad); font-weight: 600; }
+  #load .bad { color: var(--bad); font-weight: 600; }
   #vol { width: 7rem; }
 
   .live { display: grid; grid-template-columns: repeat(auto-fit, minmax(15.5rem, 1fr)); gap: 1rem 1.5rem; }
