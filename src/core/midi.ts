@@ -1208,9 +1208,21 @@ export function sequencerToMidi(
         const header: MidiEvent[] = [
           metaText(0, 0x03, label),
           // ❗ **The mixer on the controllers MIDI has for it.** Level, pan and
-          // the reverb send are CC 7, 10 and 91 -- so a DAW plays the level's
+          // both sends are CC 7, 10, 91 and 90 -- so a DAW plays the level's
           // own mix instead of every part flat and centred, and a fader move
-          // survives the trip back. The meta keeps the exact value beside them,
+          // survives the trip back.
+          //
+          // ⚠️ **CC 90 is UNDEFINED in the specification, and that is why it
+          // was chosen.** A delay send has no controller of its own anywhere in
+          // MIDI: 91 is reverb, 92 tremolo, 93 chorus, 94 celeste/detune, 95
+          // phaser. 94 was tried first because some synths read it as a delay
+          // depth -- but many more read it as detune, and a value landing on the
+          // wrong one of those is audibly wrong rather than merely ignored. 90
+          // sits in the undefined block (85-90), so nothing can mistake it for
+          // something else: a reader that does not know it ignores it, and one
+          // that does gets the send. Inert everywhere beats right sometimes and
+          // wrong the rest. That is a judgement, made deliberately -- not a
+          // measurement. The meta keeps the exact value beside them,
           // and the rule when they disagree is the tempo's: seven bits cannot
           // hold the editor's steps (pan is exact at 7 bits on 8.9% of the
           // corpus's placements), so the meta wins while the controller still
@@ -1226,12 +1238,13 @@ export function sequencerToMidi(
           controlChange(0, MASTER, 7, clamp7(t.level * 127)),
           controlChange(0, MASTER, 10, clamp7(t.pan * 127)),
           controlChange(0, MASTER, 91, clamp7(t.reverbSend * 127)),
+          controlChange(0, MASTER, 90, clamp7(t.echoSend * 127)),
           metaText(0, 0x01, TRK_TAG + JSON.stringify({
             // ⚠️ **No `name`.** It is the track name meta, and carrying a
             // second copy here meant the copy won: renaming a part in a DAW came
-            // back as the name the level had. The echo send stays because MIDI
-            // has no controller for a delay send -- 91 is reverb, 93 chorus, 94
-            // detune, 95 phaser, and none of them is this.
+            // back as the name the level had. Everything else that has a
+            // controller keeps its exact value here as well, because seven bits
+            // cannot hold the editor's steps -- see the CCs above.
             guid: t.guid, gridY: t.gridY,
             level: t.level, pan: t.pan, echoSend: t.echoSend, reverbSend: t.reverbSend,
             key: t.key, scale: t.scale, clips: part.clips,
@@ -1644,7 +1657,7 @@ function readPart(
   const mixer = new Map<number, number>();
   for (const event of track.events) {
     if ((event.data[0] & 0xf0) === 0xb0 && !mixer.has(event.data[1])) {
-      if ([7, 10, 91].includes(event.data[1])) mixer.set(event.data[1], event.data[2]);
+      if ([7, 10, 90, 91].includes(event.data[1])) mixer.set(event.data[1], event.data[2]);
     }
   }
   for (const event of track.events) {
@@ -1657,7 +1670,7 @@ function readPart(
           typeof meta[key] === 'number' ? (meta[key] as number) : fallback;
         part.guid = pick('guid', 0);
         part.gridY = pick('gridY', index);
-        part.echoSend = pick('echoSend', NEUTRAL.echoSend);
+
         // ❗ **The controller wins the moment it stops agreeing.** Written and
         // read as a pair: seven bits cannot hold the editor's steps, so a file
         // nobody touched keeps the meta's exact 0.25, and a file whose fader
@@ -1676,6 +1689,7 @@ function readPart(
         part.level = dialled(mixer.get(7), pick('level', NEUTRAL.level));
         part.pan = dialled(mixer.get(10), pick('pan', NEUTRAL.pan));
         part.reverbSend = dialled(mixer.get(91), pick('reverbSend', NEUTRAL.reverbSend));
+        part.echoSend = dialled(mixer.get(90), pick('echoSend', NEUTRAL.echoSend));
         // The part's resting bit, and the game's current default without one.
         part.rest = pick('rest', 1) === 0 ? 0 : 1;
         if (meta.fix !== null && typeof meta.fix === 'object') {

@@ -564,9 +564,11 @@ test('a plateau before a fade is still a plateau', () => {
   );
 });
 
-test('the mixer rides on CC 7, 10 and 91, and a fader move wins', () => {
+test('the mixer rides on CC 7, 10, 91 and 90, and a fader move wins', () => {
   const seq = makeSequencer([
-    makeTrack([[{ step: 0, pitch: 60 }]], { level: 0.25, pan: 0.35, reverbSend: 0.4 }),
+    makeTrack([[{ step: 0, pitch: 60 }]], {
+      level: 0.25, pan: 0.35, reverbSend: 0.4, echoSend: 0.65,
+    }),
   ]);
   const bytes = sequencerToMidi(seq).bytes;
 
@@ -578,6 +580,11 @@ test('the mixer rides on CC 7, 10 and 91, and a fader move wins', () => {
   assert.equal(ccs.get(7), Math.round(0.25 * 127));
   assert.equal(ccs.get(10), Math.round(0.35 * 127));
   assert.equal(ccs.get(91), Math.round(0.4 * 127));
+  // ⚠️ CC 90 is UNDEFINED in the specification, which is why it was chosen:
+  // a delay send has no controller of its own, and 94 -- tried first -- is read
+  // as celeste/detune by more synths than read it as delay. Inert everywhere
+  // beats right sometimes and wrong the rest. A judgement, not a measurement.
+  assert.equal(ccs.get(90), Math.round(0.65 * 127));
 
   // ⚠️ Untouched, the meta's exact value stands -- seven bits cannot hold
   // 0.35, and rounding it every trip would walk the pan across the stereo field.
@@ -585,6 +592,7 @@ test('the mixer rides on CC 7, 10 and 91, and a fader move wins', () => {
   assert.equal(back.tracks[0].level, 0.25);
   assert.equal(back.tracks[0].pan, 0.35);
   assert.equal(back.tracks[0].reverbSend, 0.4);
+  assert.equal(back.tracks[0].echoSend, 0.65);
 
   // Moved, the controller wins.
   const file = readMidi(bytes);

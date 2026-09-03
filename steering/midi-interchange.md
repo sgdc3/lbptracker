@@ -82,16 +82,24 @@ wins.** Three fields failed that and were fixed; one cannot be fixed.
 | change the tempo | ✅ | ⚠️ **was overwritten**; see §1 |
 | transpose the notes | ✅ | `Key` is undone by subtraction, and a transposition composes |
 | move the notes in time | ✅ | the cell list re-fits them; notes outside every declared cell open a new clip |
-| **level, pan, reverb send** | ✅ | ⚠️ **were ignored** — now CC 7, CC 10 and CC 91 on the master channel, so a DAW plays the level's own mix instead of every part flat and centred, and a fader move comes back |
-| the echo send | ❌ | MIDI has no controller for a delay send. 91 is reverb, 93 chorus, 94 detune, 95 phaser, and none of them is this. It stays in the meta |
+| **level, pan, both sends** | ✅ | ⚠️ **were ignored** — now CC 7, CC 10, CC 91 and CC 90 on the master channel, so a DAW plays the level's own mix instead of every part flat and centred, and a fader move comes back |
 | the instrument | ❌ | a program change is 7 bits and a GUID is six digits. Bank select could be abused into 21 bits; a DAW would then show "bank 1009, program 61", which is worse than honest |
+
+⚠️ **CC 90 is undefined in the specification, and that is why it was chosen.** A delay send has
+no controller of its own anywhere in MIDI: 91 is reverb, 92 tremolo, 93 chorus, 94 celeste/detune,
+95 phaser. **94 was tried first** — some synths read it as a delay depth — and dropped, because
+many more read it as detune, and a value landing on the wrong one of those is audibly wrong rather
+than merely ignored. 90 sits in the undefined block (85-90): a reader that does not know it ignores
+it, and one that does gets the send. **Inert everywhere beats right sometimes and wrong the rest.**
+That is a judgement, made deliberately — not a measurement — and it is recorded here as one so
+nobody later mistakes it for a fact out of the game.
 
 ❗ **The mixer needs BOTH the controller and the meta, and a rule for when they disagree.** Seven
 bits cannot hold the editor's steps: over 62,158 corpus placements, `level` is exact at 7 bits on
-70.2%, `reverbSend` on 80.5% and **`pan` on 8.9%** — the values are round decimals (0.25, 0.35,
-0.46). So the meta keeps the exact number and the controller wins only once it stops agreeing with
-it, which is the same rule the tempo uses. An untouched file keeps 0.35; an edited one gets the
-fader.
+70.2%, `echoSend` on 96.4%, `reverbSend` on 80.5% and **`pan` on 8.9%** — the values are round
+decimals (0.25, 0.35, 0.46). So the meta keeps the exact number and the controller wins only once
+it stops agreeing with it, which is the same rule the tempo uses. An untouched file keeps 0.35; an
+edited one gets the fader.
 
 ⚠️ **CC 7 carries `level` alone, not level times the channel volume.** Folding the mixer stage
 in would make it un-invertible, and 308 of the corpus's 338 sequencers run one channel at a uniform
