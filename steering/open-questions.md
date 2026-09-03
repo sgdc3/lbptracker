@@ -689,10 +689,49 @@ the `1/sqrt2` fold is the *downmixer's* and is the ITU-R BS.775 coefficient, whi
 a compliant emulator share. So a stereo listener hears this narrowing either way, and the tracker is
 right to reproduce it.
 
-⚠️ **The experiment that would show the eight channels directly**, and it is cheap: shadPS4 only
-downmixes when the host device is stereo. Point it at a device reporting more than two channels and
-SDL gets the raw 8-channel stream -- capture that and the centre channel can be read straight off,
-turning the last derived step into a measured one.
+### Where the last link is, and the three dead ends already walked
+
+⚠️ **No experiment is available.** The listener has no multichannel host device, so the 8-channel
+stream cannot be captured, and no PS4 hardware, so the fold cannot be compared against another
+downmixer. This has to come out of FMOD's code in the eboot.
+
+The channel's own setup **is** read, `v0xa0b2e0`. `[channel+0x11c]` selects how its output is placed:
+
+| value | meaning | data |
+|---|---|---|
+| 1 | an explicit speaker **mix** | eight floats at `[channel+0x1a8]`..`[+0x1c4]` |
+| 2 | an explicit speaker **levels** array | `[channel+0x208]` |
+| 0 | a plain **pan** | `[channel+0x1a4]`, clamped to +-1 |
+
+The sequencer's channel is case **0**: `setDefaults` gave it pan `0.0` and nothing ever calls
+`setSpeakerMix` or `setSpeakerLevels` on it. At `v0xa0b4cf` that branch clamps the pan, writes
+`[channel+0x11c] = 0`, and forwards the value through a **virtual at `+0x98`** on the attached DSP
+unit and on each of the channel's others. **So the matrix is built per-DSP-unit behind a vtable, and
+that call is where the next attempt has to go** -- resolving the DSP unit's vtable, not searching for
+constants.
+
+Three routes were walked and are dead; do not repeat them:
+
+- **`v0xa47400` is `SpeakerLevelsPool::free`, not the allocator.** Its two callers (`v0xa0af30`,
+  `v0xa0b454`) are both channel teardown, releasing `[channel+0x208]`. The pool is not a way in.
+- **The eight-element float rows at `v0xe46ae0`** (8x `0.5`, then 8x `0.70711`, then 8x `-0.0`) look
+  exactly like a speaker table and are not one: the `lea`s that reach that neighbourhood resolve to
+  the strings `"ID3"` and `"fLaC"`, so these are SIMD constants in the codec block. `v0xe1c440` is a
+  genuine cosine table at 30-degree steps, but nothing has tied it to this path.
+- **Searching for the address of the output plugin's `Init`** found nothing because nothing takes
+  it; it is called through a C++ adjustor thunk. Same trap will apply to any other FMOD callback.
+
+### The leading hypothesis, and why it is not written down as fact
+
+A textbook quad->7.1 upmix computes `C = (FL + FR) / 2`, which is **exactly** what the measurement
+requires, to six figures, with no free parameter left over. It is the obvious thing for FMOD to do
+and it fits perfectly. ⚠️ **It is still a guess.** Nothing in the eboot has been read that does
+it, and this project has already been burnt once this week by an inference from architecture
+("a shared library cannot know about our types") that the disassembly then refuted.
+
+One observation does support an output-stage fold over a per-voice one: the captures' residual is
+0.0008 **over the whole file**, tails included, so every part of the signal gets the same treatment
+rather than the dry path alone. That is what a fold below the mix looks like.
 
 ### What has been eliminated, with the address that eliminated it
 
