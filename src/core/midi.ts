@@ -202,6 +202,17 @@ export interface MidiExportResult {
 const clamp7 = (v: number) => (v < 0 ? 0 : v > 127 ? 127 : Math.round(v));
 
 /**
+ * The note's modulation onto CC 74, and back.
+ *
+ * ⚠️ **It is a FOUR-bit field**, `(byte3 & 0x0f) / 15`, riding on a seven-bit
+ * controller. The pair below is exact over all sixteen values -- `test/midi.test.ts`
+ * checks every one -- which is what lets a round trip return the same nibble
+ * rather than one a step away.
+ */
+const modTo7 = (mod: number) => clamp7(mod * 127);
+const modFrom7 = (value: number) => value / 127;
+
+/**
  * What has to happen first when several things land on one tick.
  *
  * ⚠️ **Notes are not written in time order any more.** Gliding notes are
@@ -712,6 +723,12 @@ export function sequencerToMidi(
       step: p.step,
       semitones: toMidi(p.pitch) - base,
       volume: p.volume,
+      // ⚠️ **Per point, because the engine ramps it.** `sub_0x3930` writes a
+      // slide rate for the modulation beside the ones for volume and pitch and
+      // `sub_0x1c60` advances it every chunk, so a note that moves it changes
+      // its filter, level, LFOs and drive as it sounds. Carrying only the
+      // opening value lost that on 34,449 corpus notes -- every one of them.
+      modulation: p.modulation,
     }));
     const points: typeof raw = [];
     for (const point of raw) {
@@ -725,7 +742,7 @@ export function sequencerToMidi(
 
     // MPE's own ordering: the note's opening expression, then the note-on. A
     // receiver that saw the note first would sound one frame of it unbent.
-    out.push(controlChange(startTick, channel, 74, clamp7(event.modulation * 127)));
+    out.push(controlChange(startTick, channel, 74, modTo7(event.modulation)));
     if (exclusive) {
       out.push(pitchBend(startTick, channel, bendValue(opening.semitones)));
       out.push(channelPressure(startTick, channel, clamp7(opening.volume)));
@@ -755,7 +772,10 @@ export function sequencerToMidi(
     for (let i = 0; i + 1 < points.length; i += 1) {
       const from = points[i];
       const to = points[i + 1];
-      const moves = from.semitones !== to.semitones || from.volume !== to.volume;
+      const moves =
+        from.semitones !== to.semitones ||
+        from.volume !== to.volume ||
+        from.modulation !== to.modulation;
       if (!moves) continue;
       const span = to.step - from.step;
       // Spans are whole thirds, because both ends are `step + subStep/3`.
@@ -775,11 +795,15 @@ export function sequencerToMidi(
         if (tick <= startTick || tick >= endTick) continue;
         const semitones = from.semitones + (to.semitones - from.semitones) * t;
         const volume = from.volume + (to.volume - from.volume) * t;
+        const modulation = from.modulation + (to.modulation - from.modulation) * t;
         if (from.semitones !== to.semitones) {
           out.push(pitchBend(tick, channel, bendValue(semitones)));
         }
         if (from.volume !== to.volume) {
           out.push(channelPressure(tick, channel, clamp7(volume)));
+        }
+        if (from.modulation !== to.modulation) {
+          out.push(controlChange(tick, channel, 74, modTo7(modulation)));
         }
       }
     }
@@ -904,9 +928,10 @@ interface RawNote {
   readonly startTick: number;
   endTick: number;
   readonly modulation: number;
-  /** Bend and pressure while it sounded, absolute ticks. */
+  /** Bend, pressure and CC 74 while it sounded, absolute ticks. */
   readonly bends: { tick: number; semitones: number }[];
   readonly presses: { tick: number; volume: number }[];
+  readonly mods: { tick: number; value: number }[];
 }
 
 /** A part being assembled, before it is cut into clips. */
@@ -1211,7 +1236,7 @@ function readPart(
         openingBend: claimsBend ? bend[channel] : undefined,
         startTick: event.tick, endTick: event.tick,
         modulation: modulation[channel],
-        bends: [], presses: [],
+        bends: [], presses: [], mods: [],
       };
       if (claimsBend || claimsPress) {
         bendTick[channel] = -1;
@@ -1233,7 +1258,12 @@ function readPart(
       pressureTick[channel] = event.tick;
       for (const note of owners(channel)) note.presses.push({ tick: event.tick, volume: a });
     } else if (kind === 0xb0) {
-      if (a === 74) modulation[channel] = b / 127;
+      if (a === 74) {
+        modulation[channel] = modFrom7(b);
+        // Sounding notes take it as a control point; a note that has not begun
+        // takes it as its opening value, above.
+        for (const note of owners(channel)) note.mods.push({ tick: event.tick, value: modFrom7(b) });
+      }
       else if (a === 120 || a === 123) {
         for (const k of [...sounding.keys()]) end(k, event.tick);
       }
@@ -1275,8 +1305,8 @@ const thirdsOf = (tick: number, ticksPerStep: number) =>
  * the engine interpolates linearly, so the note sounds the same either way.
  */
 function simplify(
-  points: { thirds: number; pitch: number; volume: number }[],
-): { thirds: number; pitch: number; volume: number }[] {
+  points: { thirds: number; pitch: number; volume: number; mod: number }[],
+): { thirds: number; pitch: number; volume: number; mod: number }[] {
   if (points.length <= 2) return points;
   const keep = points.map(() => false);
   keep[0] = true;
@@ -1297,6 +1327,9 @@ function simplify(
       const by = Math.max(
         Math.abs(from.pitch + (to.pitch - from.pitch) * t - points[i].pitch),
         Math.abs(from.volume + (to.volume - from.volume) * t - points[i].volume),
+        // ❗ On the nibble's own scale, so half a unit means the same thing for
+        // all three fields: the modulation is 0..1 in steps of 1/15.
+        Math.abs((from.mod + (to.mod - from.mod) * t - points[i].mod) * 15),
       );
       if (by > worstBy) {
         worstBy = by;
@@ -1354,22 +1387,33 @@ function cutIntoClips(
       // pressure was at that instant, and the other way round. Merging first and
       // walking once is what makes that true; filling each stream in on its own
       // reads the wrong neighbour whenever the two interleave.
-      const moves = [
-        ...raw.bends.map((b) => ({ tick: b.tick, pitch: base + Math.round(b.semitones), volume: undefined as number | undefined })),
-        ...raw.presses.map((p) => ({ tick: p.tick, pitch: undefined as number | undefined, volume: p.volume })),
+      type Move = {
+        tick: number;
+        pitch?: number;
+        volume?: number;
+        mod?: number;
+      };
+      const moves: Move[] = [
+        ...raw.bends.map((b) => ({ tick: b.tick, pitch: base + Math.round(b.semitones) })),
+        ...raw.presses.map((p) => ({ tick: p.tick, volume: p.volume })),
+        ...raw.mods.map((m) => ({ tick: m.tick, mod: m.value })),
       ].sort((x, y) => x.tick - y.tick);
 
-      const collected = new Map<number, { thirds: number; pitch: number; volume: number }>();
+      const collected = new Map<number, { thirds: number; pitch: number; volume: number; mod: number }>();
       let pitch = base + Math.round(raw.openingBend ?? 0);
       let volume = raw.opening ?? raw.velocity;
-      collected.set(startThirds, { thirds: startThirds, pitch, volume });
+      let mod = raw.modulation;
+      collected.set(startThirds, { thirds: startThirds, pitch, volume, mod });
       for (const move of moves) {
         if (move.pitch !== undefined) pitch = move.pitch;
         if (move.volume !== undefined) volume = move.volume;
+        if (move.mod !== undefined) mod = move.mod;
         const thirds = Math.min(Math.max(thirdsOf(move.tick, ticksPerStep), startThirds), endThirds);
-        collected.set(thirds, { thirds, pitch, volume });
+        collected.set(thirds, { thirds, pitch, volume, mod });
       }
-      if (!collected.has(endThirds)) collected.set(endThirds, { thirds: endThirds, pitch, volume });
+      if (!collected.has(endThirds)) {
+        collected.set(endThirds, { thirds: endThirds, pitch, volume, mod });
+      }
       const points = simplify([...collected.values()].sort((x, y) => x.thirds - y.thirds));
       // ⚠️ **A note that starts already bent keeps BOTH pitches**, the written
       // one and the bent one, on the same position. The MIDI note number is the
@@ -1381,7 +1425,9 @@ function cutIntoClips(
       // pair round-trips.
       const openingBend = Math.round(raw.openingBend ?? 0);
       if (openingBend !== 0) {
-        points.unshift({ thirds: startThirds, pitch: base, volume: points[0].volume });
+        points.unshift({
+          thirds: startThirds, pitch: base, volume: points[0].volume, mod: points[0].mod,
+        });
       }
       return { startThirds, endThirds, points, modulation: raw.modulation };
     })
@@ -1446,7 +1492,7 @@ function cutIntoClips(
         // The fourth byte is the packed field: modulation in the low nibble,
         // and bit 6 is the sub-step's high bit. Bits 4..5 select one of four
         // per-block tables and nothing here models them, so they stay clear.
-        bytes[at + 3] = Math.round(note.modulation * 15) | (subStep === 2 ? 0x40 : 0);
+        bytes[at + 3] = Math.round(point.mod * 15) | (subStep === 2 ? 0x40 : 0);
         at += NOTE_RECORD_SIZE;
       });
     }

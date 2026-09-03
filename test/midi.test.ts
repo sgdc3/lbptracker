@@ -873,3 +873,54 @@ test('a part too polyphonic for one zone is split across tracks, and merged back
   assert.equal(sequencer.tracks[0].name, 'saw_wave', 'under the part name, not a lane name');
   assert.deepEqual(music(sequencer), music(seq));
 });
+
+test('every one of the sixteen modulation values survives CC 74', () => {
+  // ⚠️ The modulation is a FOUR-bit field riding on a seven-bit controller, so
+  // the mapping has to be exact rather than close: `round(k*127/15)` back
+  // through `round(v/127*15)` must return k for every k, or a round trip
+  // returns a nibble one step from the one it was given.
+  const notes: Point[][] = [];
+  for (let k = 0; k <= 15; k += 1) notes.push([{ step: k * 2, pitch: 60, modulation: k / 15 }]);
+  const seq = makeSequencer([makeTrack(notes)]);
+  const { sequencer } = midiToSequencer(sequencerToMidi(seq).bytes);
+  const got = schedule(sequencer)
+    .sort((a, b) => a.step - b.step)
+    .map((e) => Math.round(e.modulation * 15));
+  assert.deepEqual(got, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+});
+
+test('a modulation ramp comes back as a ramp', () => {
+  // ⚠️ This was dropped until the engine was read: `sub_0x3930` writes a slide
+  // rate for the modulation beside the ones for volume and pitch, so a note
+  // that moves it changes its filter, level, LFOs and drive as it sounds. The
+  // exporter carried only the opening value, which lost the ramp on all 34,449
+  // corpus notes that have one.
+  const seq = makeSequencer([
+    makeTrack([[
+      { step: 0, pitch: 60, modulation: 0 },
+      { step: 16, pitch: 60, modulation: 1 },
+    ]]),
+  ]);
+  const { sequencer } = midiToSequencer(sequencerToMidi(seq).bytes);
+  const note = schedule(sequencer)[0];
+  assert.equal(note.points.length, 2, `expected the two points back, got ${note.points.length}`);
+  assert.equal(Math.round(note.points[0].modulation * 15), 0);
+  assert.equal(Math.round(note.points[1].modulation * 15), 15);
+  assert.equal(note.points[1].step, 16, 'and the ramp still ends where it did');
+  // The record's own nibble, which is what the game reads.
+  const records = sequencer.tracks[0].notes[0].points;
+  assert.deepEqual(records.map((r) => r.timbre & 0x0f), [0, 15]);
+});
+
+test('a modulation that holds still writes no extra points', () => {
+  const seq = makeSequencer([
+    makeTrack([[
+      { step: 0, pitch: 48, modulation: 0.4 },
+      { step: 8, pitch: 60, modulation: 0.4 },
+    ]]),
+  ]);
+  const { sequencer } = midiToSequencer(sequencerToMidi(seq).bytes);
+  const note = schedule(sequencer)[0];
+  assert.equal(note.points.length, 2, 'the glide, and nothing the modulation added');
+  for (const p of note.points) assert.equal(Math.round(p.modulation * 15), 6);
+});
