@@ -660,3 +660,114 @@ test('the optional decay is off by default and exact when set', () => {
   const dropDb = 20 * Math.log10(l1[47999] / l1[0]);
   assert.ok(Math.abs(dropDb + 20) < 0.1, `expected -20 dB after a second, got ${dropDb.toFixed(2)}`);
 });
+
+// ----------------------------------------------------------- live expression
+
+/**
+ * `Mixer.expression` is MPE's three dimensions arriving while a note sounds.
+ *
+ * Each test pins the live control against the equivalent *baked* voice -- a
+ * higher `playbackRate`, a lower `gain`, a different cutoff -- because that is
+ * the claim worth making: expressing a voice must land in exactly the same
+ * arithmetic the spec would have, not merely somewhere nearby.
+ */
+const FLAT_ENV = { attack: 0, decay: 0, sustain: 1, release: 0 };
+
+function rendered(mixer: Mixer, frames: number): Float32Array {
+  const left = new Float32Array(frames);
+  const right = new Float32Array(frames);
+  mixer.render(left, right);
+  return left;
+}
+
+test('a live bend of +12 semitones is exactly a doubled rate', () => {
+  const sample = ramp(256);
+  const bent = new Mixer(44100);
+  bent.play({ sample, playbackRate: 1, gain: 1, pan: 0.5, tag: 7 });
+  bent.expression(7, 12);
+  // A tag nobody is carrying must be a no-op, not a throw and not a broadcast.
+  bent.expression(999, -24);
+
+  const fast = new Mixer(44100);
+  fast.play({ sample, playbackRate: 2, gain: 1, pan: 0.5 });
+
+  const a = rendered(bent, 32);
+  const b = rendered(fast, 32);
+  for (let i = 0; i < 32; i += 1) {
+    assert.ok(Math.abs(a[i] - b[i]) < 1e-9, `frame ${i}: ${a[i]} vs ${b[i]}`);
+  }
+});
+
+test('live pressure is exactly a lower gain', () => {
+  const sample = ramp(256);
+  const pressed = new Mixer(44100);
+  pressed.play({ sample, playbackRate: 1, gain: 1, pan: 0.5, tag: 1 });
+  pressed.expression(1, undefined, 0.25);
+
+  const quiet = new Mixer(44100);
+  quiet.play({ sample, playbackRate: 1, gain: 0.25, pan: 0.5 });
+
+  const a = rendered(pressed, 32);
+  const b = rendered(quiet, 32);
+  for (let i = 0; i < 32; i += 1) {
+    assert.ok(Math.abs(a[i] - b[i]) < 1e-9, `frame ${i}: ${a[i]} vs ${b[i]}`);
+  }
+});
+
+test('an omitted dimension keeps the value it had', () => {
+  // ⚠️ The whole reason the fields are optional: a controller sends bend,
+  // pressure and slide as separate messages, so the second must not reset what
+  // the first set. This failed to matter until it did -- a bend followed by a
+  // pressure would have snapped the note back to its written pitch.
+  const sample = ramp(256);
+  const both = new Mixer(44100);
+  both.play({ sample, playbackRate: 1, gain: 1, pan: 0.5, tag: 4 });
+  both.expression(4, 12);
+  both.expression(4, undefined, 0.5);
+
+  const baked = new Mixer(44100);
+  baked.play({ sample, playbackRate: 2, gain: 0.5, pan: 0.5 });
+
+  const a = rendered(both, 32);
+  const b = rendered(baked, 32);
+  for (let i = 0; i < 32; i += 1) {
+    assert.ok(Math.abs(a[i] - b[i]) < 1e-9, `frame ${i}: ${a[i]} vs ${b[i]}`);
+  }
+});
+
+test('live timbre offsets the cutoff, and clamps into range', () => {
+  const sample = ramp(512);
+  const settings = { cutoff: 0.3, resonance: 0.2, keyTrack: 0, envAmount: 0 };
+  const play = (mixer: Mixer, cutoff: number, tag?: number) =>
+    mixer.play({
+      sample, playbackRate: 1, gain: 1, pan: 0.5, tag,
+      filter: { settings: { ...settings, cutoff }, envelope: FLAT_ENV },
+    });
+
+  // ⚠️ The expressed voice takes the per-frame ladder path and the baked one the
+  // solved-once path, which is exactly what makes this worth asserting: with
+  // `envAmount` 0 and a still rate the two must agree to the last bit.
+  const slid = new Mixer(44100);
+  play(slid, settings.cutoff, 9);
+  slid.expression(9, undefined, undefined, 0.4);
+  const baked = new Mixer(44100);
+  play(baked, 0.7);
+
+  const a = rendered(slid, 64);
+  const b = rendered(baked, 64);
+  for (let i = 0; i < 64; i += 1) {
+    assert.ok(Math.abs(a[i] - b[i]) < 1e-9, `frame ${i}: ${a[i]} vs ${b[i]}`);
+  }
+
+  // Past the top the offset clamps rather than running the ladder off its range.
+  const over = new Mixer(44100);
+  play(over, 0.9, 11);
+  over.expression(11, undefined, undefined, 5);
+  const wide = new Mixer(44100);
+  play(wide, 1);
+  const c = rendered(over, 64);
+  const d = rendered(wide, 64);
+  for (let i = 0; i < 64; i += 1) {
+    assert.ok(Math.abs(c[i] - d[i]) < 1e-9, `clamped frame ${i}`);
+  }
+});

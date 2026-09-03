@@ -84,6 +84,23 @@ export type MixerMessage =
   /** Take a tagged voice away after `frames` more of its own sounding time. */
   | { type: 'cutAt'; tag: number; frames: number }
   /**
+   * Move a sounding voice's live expression; see `Mixer.expression`.
+   *
+   * ⚠️ **One message per dimension per controller frame is the wrong shape.**
+   * An MPE controller sends bend, pressure and slide as separate MIDI messages
+   * at up to a few hundred hertz each, and every one of them crosses a thread
+   * boundary. The fields are all optional so a sender may coalesce a frame's
+   * worth into one message; omitted ones keep their current value rather than
+   * resetting, which is what makes coalescing safe.
+   */
+  | {
+      type: 'expression';
+      tag: number;
+      bend?: number;
+      pressure?: number;
+      timbre?: number;
+    }
+  /**
    * Forget the health counters and the frame the dropout detector compares to.
    *
    * ⚠️ **Sent when playback starts, because a suspended context looks exactly
@@ -277,6 +294,9 @@ export class MixerProcessor extends AudioWorkletProcessor {
         break;
       case 'cutAt':
         this.mixer.cutAt(message.tag, message.frames);
+        break;
+      case 'expression':
+        this.mixer.expression(message.tag, message.bend, message.pressure, message.timbre);
         break;
       case 'resetHealth':
         this.lastFrame = -1;

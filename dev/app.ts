@@ -347,11 +347,28 @@ function currentLfos() {
  * it when the key, the mouse or the MIDI note comes up. One tag per sounding
  * note; retriggering the same note releases the old one first, which is what a
  * keyboard does and what stops a stuck key ringing forever.
+ *
+ * ⚠️ **Keyed by channel AND note, not by note.** Under MPE the same pitch
+ * sounds on two channels at once -- two fingers on one key, bent apart -- and a
+ * map keyed by pitch would have had the second note-on release the first.
  */
-let nextTag = 1;
-const sounding = new Map<number, number>();
+interface Held {
+  readonly note: number;
+  readonly tag: number;
+  /** The last expression posted for this voice; see `sendExpression`. */
+  bend: number;
+  pressure: number;
+  timbre: number;
+}
 
-function noteOn(note: number, velocity = 96): void {
+/** The channel the computer keyboard and the mouse play on: past MIDI's 0-15. */
+const LOCAL = 16;
+const keyOf = (channel: number, note: number) => channel * 128 + note;
+
+let nextTag = 1;
+const sounding = new Map<number, Held>();
+
+function noteOn(note: number, velocity = 96, channel = LOCAL): void {
   const v = voiceFor(note);
   if (!v || !node || !context) return;
   // The browser-resampler control has no note-off; it stays timed, and says so.
@@ -359,9 +376,9 @@ function noteOn(note: number, velocity = 96): void {
     playNote(note);
     return;
   }
-  noteOff(note);
+  noteOff(note, channel);
   const tag = nextTag++;
-  sounding.set(note, tag);
+  sounding.set(keyOf(channel, note), { note, tag, bend: 0, pressure: 1, timbre: 0 });
   const adsr = overrideAdsr() ?? currentAdsr();
   node.port.postMessage({
     type: 'play',
@@ -382,21 +399,30 @@ function noteOn(note: number, velocity = 96): void {
       tag,
     },
   });
+  // ⚠️ **An MPE controller sends the note's opening bend, press and slide
+  // BEFORE the note-on**, so the channel is already holding them here: a note
+  // struck halfway up a glide has to start there rather than snap to it.
+  sendExpression(channel);
   setKeyDown(note, true);
   $('detail').textContent = describe(note);
 }
 
-function noteOff(note: number): void {
-  const tag = sounding.get(note);
-  if (tag === undefined) return;
-  sounding.delete(note);
-  node?.port.postMessage({ type: 'release', tag });
-  setKeyDown(note, false);
+function noteOff(note: number, channel = LOCAL): void {
+  const key = keyOf(channel, note);
+  const held = sounding.get(key);
+  if (held === undefined) return;
+  sounding.delete(key);
+  node?.port.postMessage({ type: 'release', tag: held.tag });
+  // Another channel may still be holding this pitch -- which is the point of
+  // MPE -- so the key on screen comes up only when the last of them lets go.
+  let stillHeld = false;
+  for (const other of sounding.values()) if (other.note === note) stillHeld = true;
+  if (!stillHeld) setKeyDown(note, false);
 }
 
 /** Let go of everything, for Escape and for a lost focus. */
 function panic(): void {
-  for (const note of [...sounding.keys()]) noteOff(note);
+  for (const key of [...sounding.keys()]) noteOff(key % 128, Math.floor(key / 128));
   node?.port.postMessage({ type: 'stopAll' });
 }
 
@@ -656,6 +682,263 @@ function shiftedOctave(): void {
   }
 }
 
+/* ----------------------------------------------------------------------- MPE
+ *
+ * MIDI Polyphonic Expression: one MIDI channel per sounding note, so pitch
+ * bend, pressure and CC74 stop being channel-wide and become the note's own.
+ * On a Seaboard, a LinnStrument or an Osmose that is the whole instrument --
+ * without it, bending one finger bends every note under the others.
+ *
+ * ⚠️ **None of this is the game.** LBP3 has no MIDI at all. What the bench is
+ * doing is reaching the engine's own per-voice quantities from a controller:
+ * bend multiplies the rate exactly as a note's written glide does, and pressure
+ * multiplies the gain exactly as its written volume glide does, so two of the
+ * three dimensions land on paths the engine already has. The third, CC74, does
+ * not -- see `Mixer.expression`, where that mapping is labelled as ours.
+ */
+
+/** A master channel and the member channels that carry its notes. */
+interface Zone {
+  readonly master: number;
+  readonly members: readonly number[];
+}
+
+let zone: Zone | undefined;
+
+/**
+ * What each channel is currently being expressed with, as the controller left
+ * it. Bend is the raw -1..1 fraction, before any range is applied, because the
+ * range can change under a held note and the fraction is what the wheel said.
+ *
+ * ⚠️ **Seventeen long, not sixteen.** `LOCAL` is a channel here too, so the
+ * computer keyboard and the mouse go through the same path as a controller and
+ * read neutral values rather than off the end of the array -- where a typed
+ * array gives `undefined`, `undefined * bendRange` gives NaN, and a NaN rate is
+ * a note that never sounds.
+ */
+const chanBend = new Float64Array(LOCAL + 1);
+const chanPress = new Float64Array(LOCAL + 1).fill(1);
+/** CC74, 0..1, centred at 0.5 -- the value a controller idles at. */
+const chanSlide = new Float64Array(LOCAL + 1).fill(0.5);
+/** The RPN each channel has selected; 127/127 is MIDI's "none". */
+const rpnMsb = new Int32Array(16).fill(127);
+const rpnLsb = new Int32Array(16).fill(127);
+
+/**
+ * Semitones at full bend, per note.
+ *
+ * Starts at a plain wheel's 2 rather than at MPE's own 48: until a zone message
+ * arrives there is no reason to believe the controller is an MPE one, and four
+ * octaves on an ordinary wheel is unplayable. A zone -- announced or picked --
+ * moves it to 48.
+ */
+let bendRange = 2;
+/** Semitones at full bend on the master channel, which moves the whole zone. */
+let masterBendRange = 2;
+
+const mpeMode = () => $<HTMLSelectElement>('mpeMode').value;
+
+/**
+ * The three dimensions a note on `channel` is being played with right now.
+ *
+ * The master channel's own bend is added to every member's, which is what makes
+ * a zone-wide pitch wheel work while each finger keeps its own bend. It uses
+ * its own range: a wheel that moved four octaves would be unplayable, and MPE
+ * defaults the master to ±2 for that reason.
+ */
+function expressionOn(channel: number): [number, number, number] {
+  const fromMaster =
+    zone !== undefined && channel !== zone.master ? chanBend[zone.master] * masterBendRange : 0;
+  return [
+    chanBend[channel] * bendRange + fromMaster,
+    ticked('mpePress') ? chanPress[channel] : 1,
+    ticked('mpeSlide') ? chanSlide[channel] - 0.5 : 0,
+  ];
+}
+
+/**
+ * Push a channel's dimensions to every voice it is holding.
+ *
+ * ⚠️ **Unchanged values are dropped.** Controllers resend, generously: a
+ * Seaboard idles at a few hundred messages a second per finger, and every one
+ * that reaches the worklet is a thread hop for nothing. Comparing against what
+ * was last posted for that voice is what keeps a ten-finger chord from
+ * flooding the audio thread.
+ */
+function sendExpression(channel: number): void {
+  if (!node) return;
+  const [bend, pressure, timbre] = expressionOn(channel);
+  let moved = false;
+  for (const [key, held] of sounding) {
+    if (Math.floor(key / 128) !== channel) continue;
+    if (held.bend === bend && held.pressure === pressure && held.timbre === timbre) continue;
+    held.bend = bend;
+    held.pressure = pressure;
+    held.timbre = timbre;
+    moved = true;
+    node.port.postMessage({ type: 'expression', tag: held.tag, bend, pressure, timbre });
+  }
+  // Only real movement reaches the readout. Every note-on calls this, and a
+  // keyboard played with no controller attached would otherwise repaint a line
+  // of zeroes on each key.
+  if (moved) showMpeLive(channel, bend, pressure, timbre);
+}
+
+/** A master-channel move reaches every note in the zone. */
+function sendZoneExpression(): void {
+  if (zone === undefined) return;
+  for (const member of zone.members) sendExpression(member);
+}
+
+/** Re-push everything, for when a mapping is switched rather than moved. */
+function resendExpression(): void {
+  const channels = new Set<number>();
+  for (const key of sounding.keys()) channels.add(Math.floor(key / 128));
+  for (const channel of channels) sendExpression(channel);
+}
+
+/**
+ * Configure a zone, as the MPE Configuration Message does.
+ *
+ * `count` is the number of MEMBER channels, so a lower zone of 15 is master on
+ * channel 1 and notes on 2..16. Zero switches the zone off, which is how a
+ * controller says it is leaving MPE.
+ */
+function setZone(master: number, count: number): void {
+  panic();
+  const n = Math.min(Math.max(count, 0), 15);
+  if (n === 0) zone = undefined;
+  else if (master === 0) zone = { master: 0, members: Array.from({ length: n }, (_, i) => 1 + i) };
+  else zone = { master: 15, members: Array.from({ length: n }, (_, i) => 15 - n + i) };
+  showMpe();
+}
+
+/**
+ * Put the bend range control on `semitones`, adding the option when a
+ * controller announces a value the list does not have.
+ */
+function setBendRange(semitones: number): void {
+  bendRange = Math.max(1, Math.min(96, Math.round(semitones)));
+  const select = $<HTMLSelectElement>('bendRange');
+  if (![...select.options].some((o) => Number(o.value) === bendRange)) {
+    const option = document.createElement('option');
+    option.value = String(bendRange);
+    option.textContent = `±${bendRange} — from the controller`;
+    select.append(option);
+  }
+  select.value = String(bendRange);
+  // A range that moves under a held note moves the note: the wheel has not
+  // changed, but what it means has.
+  resendExpression();
+  showMpe();
+}
+
+/**
+ * A control change, including the two RPNs that matter.
+ *
+ * ⚠️ **Which channel RPN 0 is addressed to is read pragmatically here**,
+ * not from a reading of the MPE text: on the master channel it sets the
+ * zone-wide range, on any other it sets the per-note one. Controllers vary, and
+ * the picker on the page is the override when one disagrees.
+ */
+function controlChange(channel: number, cc: number, value: number): void {
+  if (cc === 120 || cc === 123) {
+    panic();
+    return;
+  }
+  if (cc === 74) {
+    chanSlide[channel] = value / 127;
+    if (zone !== undefined && channel === zone.master) sendZoneExpression();
+    else sendExpression(channel);
+    return;
+  }
+  if (cc === 101) {
+    rpnMsb[channel] = value;
+    return;
+  }
+  if (cc === 100) {
+    rpnLsb[channel] = value;
+    return;
+  }
+  // Data entry MSB. The LSB (CC 38) carries the bend range's cents, which
+  // nothing here needs at a semitone's resolution.
+  if (cc !== 6) return;
+  const selected = (rpnMsb[channel] << 7) | rpnLsb[channel];
+  if (selected === 6) {
+    // The MPE Configuration Message -- the one RPN that can arrive on a channel
+    // that is not yet part of any zone.
+    if (mpeMode() !== 'auto') return;
+    log(`MPE: zone message on ch ${channel + 1}, ${value} member channel${value === 1 ? '' : 's'}`);
+    setZone(channel === 15 ? 15 : 0, value);
+    if (value > 0) setBendRange(48);
+  } else if (selected === 0) {
+    if (zone !== undefined && channel === zone.master) {
+      masterBendRange = Math.max(1, Math.min(96, value));
+      showMpe();
+    } else {
+      setBendRange(value);
+    }
+    log(`MPE: bend range on ch ${channel + 1} is ±${value} semitones`);
+  }
+}
+
+/** The zone, in words, under the pickers that set it. */
+function showMpe(): void {
+  const state = $('mpeState');
+  if (zone === undefined) {
+    state.textContent =
+      mpeMode() === 'auto'
+        ? `plain MIDI — listening for a zone message. Bend ±${bendRange} st, whole channel.`
+        : `plain MIDI — one bend for the whole channel, ±${bendRange} st.`;
+    return;
+  }
+  const first = zone.members[0] + 1;
+  const last = zone.members[zone.members.length - 1] + 1;
+  state.textContent =
+    `${zone.master === 0 ? 'lower' : 'upper'} zone — master ch ${zone.master + 1}, ` +
+    `notes on ch ${Math.min(first, last)}–${Math.max(first, last)}. ` +
+    `Bend ±${bendRange} st per note, ±${masterBendRange} st for the whole zone.`;
+}
+
+/**
+ * The live readout, at the frame rate rather than the controller's.
+ *
+ * A Seaboard sends faster than the screen refreshes, so writing this on every
+ * message is work the eye cannot see. The last values win and one frame paints.
+ */
+let liveChannel = -1;
+let liveBend = 0;
+let livePress = 1;
+let liveSlide = 0.5;
+let livePending = false;
+function showMpeLive(channel: number, bend: number, pressure: number, timbre: number): void {
+  liveChannel = channel;
+  liveBend = bend;
+  livePress = pressure;
+  liveSlide = timbre + 0.5;
+  if (livePending) return;
+  livePending = true;
+  requestAnimationFrame(() => {
+    livePending = false;
+    const where = liveChannel === LOCAL ? 'local' : `ch ${liveChannel + 1}`;
+    $('mpeLive').textContent =
+      `${where} · bend ${liveBend >= 0 ? '+' : ''}${liveBend.toFixed(2)} st · ` +
+      `press ${livePress.toFixed(2)} · slide ${liveSlide.toFixed(2)}`;
+  });
+}
+
+/** The zone the mode picker asks for, and the range that mode implies. */
+function applyMpeMode(): void {
+  const mode = mpeMode();
+  if (mode === 'lower') setZone(0, 15);
+  else if (mode === 'upper') setZone(15, 15);
+  else setZone(0, 0);
+  // 48 semitones on a wheel is four octaves and unplayable; on a member channel
+  // it is MPE's own default and what every MPE controller assumes. So the
+  // default follows the mode, visibly, and stays overridable.
+  setBendRange(mode === 'lower' || mode === 'upper' ? 48 : 2);
+}
+
 /**
  * Web MIDI, when the browser has it and the user allows it.
  *
@@ -712,10 +995,24 @@ function listenTo(id: string): void {
     const [status, a, b] = event.data ?? [];
     if (status === undefined) return;
     const kind = status & 0xf0;
+    const channel = status & 0x0f;
     // 0x90 with velocity 0 is a note-off; every controller sends it that way.
-    if (kind === 0x90 && b > 0) noteOn(a, b);
-    else if (kind === 0x80 || (kind === 0x90 && b === 0)) noteOff(a);
-    else if (kind === 0xb0 && (a === 120 || a === 123)) panic();
+    if (kind === 0x90 && b > 0) noteOn(a, b, channel);
+    else if (kind === 0x80 || (kind === 0x90 && b === 0)) noteOff(a, channel);
+    else if (kind === 0xe0) {
+      // Pitch bend: 14 bits over two bytes, low seven first, centred at 8192.
+      chanBend[channel] = (((b << 7) | a) - 8192) / 8192;
+      if (zone !== undefined && channel === zone.master) sendZoneExpression();
+      else sendExpression(channel);
+    } else if (kind === 0xd0) {
+      // Channel pressure -- MPE's Z, and per-note precisely because the channel
+      // IS the note. `a` is the value; channel pressure has no second data byte.
+      chanPress[channel] = a / 127;
+      if (zone !== undefined && channel === zone.master) sendZoneExpression();
+      else sendExpression(channel);
+    } else if (kind === 0xb0) {
+      controlChange(channel, a, b);
+    }
   };
   state.textContent = `listening to ${port.name}`;
   state.classList.add('on');
@@ -924,6 +1221,15 @@ async function init(): Promise<void> {
     el.addEventListener('change', show);
     show();
   }
+
+  $<HTMLSelectElement>('mpeMode').addEventListener('change', applyMpeMode);
+  $<HTMLSelectElement>('bendRange').addEventListener('change', (e) => {
+    setBendRange(Number((e.target as HTMLSelectElement).value));
+  });
+  for (const id of ['mpePress', 'mpeSlide']) {
+    $(id).addEventListener('change', resendExpression);
+  }
+  showMpe();
 
   const midiSelect = $<HTMLSelectElement>('midiIn');
   midiSelect.addEventListener('mousedown', () => {

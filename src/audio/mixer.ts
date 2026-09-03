@@ -308,6 +308,21 @@ class Voice {
   private readonly ladderR = new MoogLadder();
   private readonly secondsPerFrame: number;
   private decayGain = 1;
+  /**
+   * Live expression: `Mixer.expression`, neutral until something sends some.
+   *
+   * `bendRate` is the multiplier, not the semitones, because the loop wants the
+   * multiplier and a bend arrives thousands of times less often than a frame.
+   */
+  private expressive = false;
+  private bendRate = 1;
+  private pressure = 1;
+  /**
+   * What the ladder actually reads. It ALIASES the spec's settings until a live
+   * timbre offset arrives, so a voice nobody expresses allocates nothing and
+   * every offline render is untouched.
+   */
+  private filterSettings: FilterSettings | undefined;
   private readonly left: number;
   private readonly right: number;
 
@@ -343,9 +358,37 @@ class Voice {
     ];
     this.position = spec.startPosition ?? 0;
     this.secondsPerFrame = 1 / outputRate;
+    this.filterSettings = spec.filter?.settings;
     const gains = panGains(spec.pan);
     this.left = gains.left * spec.gain;
     this.right = gains.right * spec.gain;
+  }
+
+  /**
+   * Move this voice's live expression. See `Mixer.expression` for the contract.
+   *
+   * ⚠️ **The mip level is deliberately NOT re-picked.** It is chosen once from
+   * the opening rate, which is exactly what the engine does for its own note
+   * glides: `automation` moves `rate` every frame and never touches
+   * `this.mipLevel`. A bend that crosses an octave therefore reads the same
+   * copy the note started on, and sounds like the game's glide rather than
+   * like a different sampler cutting in halfway through.
+   */
+  setExpression(bend?: number, pressure?: number, timbre?: number): void {
+    this.expressive = true;
+    if (bend !== undefined) this.bendRate = 2 ** (bend / 12);
+    if (pressure !== undefined) this.pressure = pressure;
+    const filter = this.spec.filter;
+    if (timbre !== undefined && filter) {
+      // A copy, not a mutation: `spec.filter.settings` is the instrument's and
+      // is shared by every voice playing it. Allocated in the message handler,
+      // never in `process`.
+      const cutoff = filter.settings.cutoff + timbre;
+      this.filterSettings = {
+        ...filter.settings,
+        cutoff: cutoff < 0 ? 0 : cutoff > 1 ? 1 : cutoff,
+      };
+    }
   }
 
   /**
@@ -455,20 +498,27 @@ class Voice {
     // rate through `keyTrack`, so a voice whose rate moves has a moving cutoff
     // even with no filter envelope at all. A note that glides, or an instrument
     // with LFO 1 on the pitch, has to solve the ladder per frame like any other.
+    // ⚠️ `this.expressive` belongs here: a live bend moves the rate and a live
+    // timbre moves the cutoff, and either one makes the solved-once ladder wrong
+    // for every frame after the first. One flag rather than two because a voice
+    // somebody is expressing is being expressed continuously -- there is no
+    // case worth optimising where the bend moves and the cutoff must not follow.
     const rateMoves =
       lfo0 ||
+      this.expressive ||
       (automation !== undefined && automation.some((point) => point.pitch !== automation[0].pitch));
+    const settings = this.filterSettings;
     const filterFixed =
-      filter !== undefined && filter.settings.envAmount === 0 && !rateMoves;
+      filter !== undefined && settings !== undefined && settings.envAmount === 0 && !rateMoves;
 
     // The drive is per note, so its two constants are solved once per voice.
     // `k === 0` is the bypass and skips the branch entirely.
     const driveK = driveCoefficient(this.spec.drive ?? 0);
     const driveOnePlusK = 1 + driveK;
     let fixedBypass = false;
-    if (filter && filterFixed) {
+    if (settings && filterFixed) {
       // The envelope level is unused here, so any value gives the same answer.
-      const fixed = filterAtInto(filter.settings, 0, playbackRate, this.filterScratch);
+      const fixed = filterAtInto(settings, 0, playbackRate, this.filterScratch);
       fixedBypass = fixed.freq > FILTER_BYPASS_CUTOFF;
       if (!fixedBypass) ladderCoefficientsInto(fixed.freq, fixed.res, this.ladderScratch);
     }
@@ -569,6 +619,12 @@ class Voice {
         if (semitones !== 0) rate *= 2 ** (semitones / 12);
         fade *= gain;
       }
+      // Live expression, on top of the note's own glide and beneath the LFOs --
+      // the same place, and the same two quantities, as the automation above.
+      if (this.expressive) {
+        rate *= this.bendRate;
+        fade *= this.pressure;
+      }
       this.elapsed += 1;
       if (lfos) {
         // An LFO at zero depth is never read, so advancing its phase is pure
@@ -603,7 +659,7 @@ class Voice {
           l = this.ladderL.process(l, this.ladderScratch);
           r = mono ? l : this.ladderR.process(r, this.ladderScratch);
         }
-      } else if (filter) {
+      } else if (settings && filter) {
         const level = this.filterEnv.advance(this.secondsPerFrame, held, filter.envelope);
         // ⚠️ `rate`, not `playbackRate`: the rate the voice is playing at **this
         // frame**, after the note's own glide and LFO 1. Feeding the constant
@@ -620,7 +676,7 @@ class Voice {
         // `LBP_NO_KEYTRACK` exists because the term may be inert altogether. What
         // is not in doubt is that between the opening rate and the current one,
         // only the current one lets a glide sweep.
-        const { freq, res } = filterAtInto(filter.settings, level, rate, this.filterScratch);
+        const { freq, res } = filterAtInto(settings, level, rate, this.filterScratch);
         if (freq <= FILTER_BYPASS_CUTOFF) {
           const coefficients = ladderCoefficientsInto(freq, res, this.ladderScratch);
           l = this.ladderL.process(l, coefficients);
@@ -717,6 +773,33 @@ export class Mixer {
   cutAt(tag: number, frames: number): void {
     for (const voice of this.voices) {
       if (voice.spec.tag === tag) voice.cut = Math.max(0, frames);
+    }
+  }
+
+  /**
+   * Move the live expression of every voice carrying `tag`.
+   *
+   * This is MPE's three dimensions, and it exists because the two the engine
+   * already has -- the note's own pitch glide and volume glide -- are baked
+   * into `VoiceSpec.automation` before the voice is built, which is fine for a
+   * sequencer whose notes know their whole shape in advance and useless for a
+   * keyboard where the shape arrives while the note sounds.
+   *
+   * - `bend` is semitones, signed, and multiplies the rate exactly as a glide
+   *   does. There is no limit here: the range belongs to whoever is reading the
+   *   controller, and 48 semitones is the MPE default.
+   * - `pressure` multiplies the voice gain, 0..1, alongside the glide's own.
+   * - `timbre` is an OFFSET added to the instrument's cutoff, -1..1, clamped
+   *   into range. ⚠️ **This one is not the engine's**: nothing in the game
+   *   moves a cutoff from outside a note. It is here because MPE's Y dimension
+   *   has to land somewhere and brightness is what it conventionally means.
+   *
+   * An omitted field is left where it was, so a controller sending only bend
+   * does not silently reset the pressure it never sent.
+   */
+  expression(tag: number, bend?: number, pressure?: number, timbre?: number): void {
+    for (const voice of this.voices) {
+      if (voice.spec.tag === tag) voice.setExpression(bend, pressure, timbre);
     }
   }
 

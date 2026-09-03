@@ -73,6 +73,10 @@
   #log .bad { color: var(--bad); }
   #midiState { color: var(--dimmer); font-size: .85rem; }
   #midiState.on { color: var(--accent); }
+  #mpeLive {
+    font: .78rem/1.5 ui-monospace, Consolas, monospace; color: var(--accent);
+    margin-left: auto; white-space: nowrap;
+  }
   .hintline { color: var(--dimmer); font-size: .82rem; margin: .55rem 0 0; }
   .hintline kbd {
     font: .78rem/1 ui-monospace, Consolas, monospace; color: var(--ink);
@@ -113,6 +117,39 @@
       <select id="midiIn"><option value="">none</option></select>
       <span id="midiState">not requested</span>
     </div>
+    <div class="row">
+      <label for="mpeMode">MPE</label>
+      <select id="mpeMode">
+        <option value="auto" selected>auto &mdash; take the zone the controller announces</option>
+        <option value="lower">lower zone &mdash; master ch 1, notes on 2&ndash;16</option>
+        <option value="upper">upper zone &mdash; master ch 16, notes on 1&ndash;15</option>
+        <option value="off">off &mdash; plain MIDI, one channel</option>
+      </select>
+      <label for="bendRange">bend range</label>
+      <select id="bendRange">
+        <option value="1">&plusmn;1</option>
+        <option value="2" selected>&plusmn;2 &mdash; a plain wheel</option>
+        <option value="7">&plusmn;7</option>
+        <option value="12">&plusmn;12</option>
+        <option value="24">&plusmn;24</option>
+        <option value="48">&plusmn;48 &mdash; the MPE default</option>
+        <option value="96">&plusmn;96</option>
+      </select>
+      <label class="check" title="MPE's Z: channel pressure, per note"><input type="checkbox" id="mpePress" checked> press &rarr; volume</label>
+      <label class="check" title="MPE's Y: CC 74, per note"><input type="checkbox" id="mpeSlide" checked> slide &rarr; cutoff</label>
+    </div>
+    <div class="row" style="margin-top:.5rem">
+      <span class="hintline" id="mpeState" style="margin:0"></span>
+      <span id="mpeLive"></span>
+    </div>
+    <p class="hintline">
+      MPE gives every sounding note its own MIDI channel, so a bend, a press or a slide belongs to
+      one finger instead of to the whole keyboard &mdash; which is what a Seaboard, a LinnStrument
+      or an Osmose needs to play at all. Bend and press reach the engine where its own written
+      glides do, the rate and the gain; <strong>slide&rsquo;s landing on the cutoff is this
+      page&rsquo;s convention, not the game&rsquo;s</strong> &mdash; LBP3 has no MIDI to be faithful
+      to. Instruments that leave their filter wide open will not answer it.
+    </p>
     <div id="status"></div>
     <div id="splits"></div>
   </section>
