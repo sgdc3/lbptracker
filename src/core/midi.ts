@@ -1244,20 +1244,32 @@ function readPart(
   }
 
   /**
-   * Where a note-on happens, per channel.
+   * Which CC 74 events are a note's own opening modulation.
    *
-   * ⚠️ **A CC 74 at one of these ticks belongs to the note that is starting,
-   * not to the one already sounding.** The exporter writes every note's opening
-   * modulation, sharer or not, immediately before its note-on -- so without this
-   * a newcomer's CC 74 was pushed onto the OWNER's ramp as a control point, and
-   * bent the modulation of a note it has nothing to do with. That was shared
-   * mode's last 89 undeclared notes.
+   * ⚠️ **A newcomer's CC 74 must not join the ramp of whoever owns the
+   * channel.** The exporter writes every note's opening modulation, sharer or
+   * not, immediately before its note-on -- so taking every CC 74 as a control
+   * point bent the modulation of notes that had nothing to do with it.
+   *
+   * ⚠️ **And it is the LAST one before the note-on, not every one at that
+   * tick.** Excluding the whole tick was the first attempt and it threw away the
+   * owner's own final ramp sample whenever a note happened to start on the same
+   * instant the ramp ended -- three notes in `Orb` and `Blackfire` whose
+   * modulation stopped one step short of where it was going. In the stream the
+   * two are adjacent and in order: the owner's sample, then the newcomer's.
    */
-  const startsAt = new Set<number>();
-  for (const event of track.events) {
-    const status = event.data[0];
-    if ((status & 0xf0) === 0x90 && event.data[2] > 0) {
-      startsAt.add(event.tick * 16 + (status & 0x0f));
+  const events = track.events;
+  const opensANote = new Set<number>();
+  for (let i = 0; i < events.length; i += 1) {
+    const status = events[i].data[0];
+    if ((status & 0xf0) !== 0x90 || events[i].data[2] === 0) continue;
+    const channel = status & 0x0f;
+    for (let j = i - 1; j >= 0 && events[j].tick === events[i].tick; j -= 1) {
+      const before = events[j].data;
+      if ((before[0] & 0xf0) === 0xb0 && (before[0] & 0x0f) === channel && before[1] === 74) {
+        opensANote.add(j);
+        break;
+      }
     }
   }
 
@@ -1312,7 +1324,8 @@ function readPart(
     return owner !== undefined && on.includes(owner) ? [owner] : [];
   };
 
-  for (const event of track.events) {
+  for (let index = 0; index < events.length; index += 1) {
+    const event = events[index];
     const status = event.data[0];
     if (status < 0x80 || status >= 0xf0) continue;
     const kind = status & 0xf0;
@@ -1363,10 +1376,10 @@ function readPart(
     } else if (kind === 0xb0) {
       if (a === 74) {
         modulation[channel] = modFrom7(b);
-        // Sounding notes take it as a control point -- unless a note is
-        // starting on this channel at this very tick, in which case it is that
-        // note's opening value and none of the owner's business.
-        if (!startsAt.has(event.tick * 16 + channel)) {
+        // Sounding notes take it as a control point -- unless this is the one
+        // that opens a note starting here, which is that note's own value and
+        // none of the owner's business.
+        if (!opensANote.has(index)) {
           for (const note of owners(channel)) {
             note.mods.push({ tick: event.tick, value: modFrom7(b) });
           }

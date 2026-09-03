@@ -219,13 +219,11 @@ be *inexact* rather than *wrong*, and where it comes from.
 
 ⚠️ **`channelsPerPart` is the mode those numbers describe.** Sharing the channels across the file
 is the safe default for a player that hears one stream, and it cannot be lossless: fifteen channels
-against fifty simultaneous notes. What it can be is fully declared, and it now is —
-**3 notes in 953,791 (0.0003%) change without something having said so**, against 1,742 glides
-(0.18%) it declares (of which 1,745 actually change: it over-declares by a handful whose glide was
-too small for the quantiser to see, which is the safe direction). Two more things it reports, which are warnings about what a *synth* will hear
-rather than losses in the round trip, because the importer knows whose each is: 1,352 notes a
-neighbour's bend reaches, and 4,522 whose timbre a sharer's CC 74 moves.
-
+against fifty simultaneous notes. What it can be is fully declared, and it now is exactly:
+**1,742 glides declared lost, 1,742 notes actually changed, nothing on either side of that.** Two
+more things it reports are warnings about what a *synth* will hear rather than losses in the round
+trip, because the importer knows whose each is: 1,352 notes a neighbour's bend reaches, and 4,522
+whose timbre a sharer's CC 74 moves.
 ⚠️ **Do not subtract `dragged` or `timbred` from the curve differences.** They measure a
 different thing, and netting them off made shared mode read 4,433 notes *better* than declared,
 which is as misleading as reading worse.
@@ -246,11 +244,17 @@ Each of these was found by measuring, and each is worth knowing because none was
    flat but whose modulation moves was allocated as flat, and if it then had to share it lost the
    ramp with nothing counting it — 608 undeclared notes. CC 74 belongs to the channel exactly as
    bend and pressure do, so it earns a channel for the same reason.
-4. **A newcomer's CC 74 was landing on the owner's ramp.** The exporter writes every note's opening
+4. **A newcomer's CC 74 was landing on the owner's ramp — and the first fix for it was one event
+   too greedy.** The exporter writes every note's opening
    modulation immediately before its note-on, sharer or not, and the importer pushed any CC 74 to
    whichever note owned the channel — so a note starting mid-ramp bent the modulation of one it has
-   nothing to do with. Ticks where a note starts on that channel are now known in advance and the
-   value is left to the note it belongs to: 89 undeclared notes down to 8.
+   nothing to do with. 89 undeclared notes down to 8.
+
+   ⚠️ **Excluding the whole tick then threw away the owner's own final ramp sample**, whenever a
+   note happened to start on the instant a ramp ended — three notes in `Orb` and `Blackfire` whose
+   modulation stopped one step short of where it was going. It is the **last** CC 74 before the
+   note-on that belongs to the newcomer, not every one at that tick; in the stream the two are
+   adjacent and in order. 8 down to 0.
 5. **The verifier was measuring the wrong things, repeatedly — the note pairing is the part of it
    that has been wrong most often.** It compared the first record's modulation rather than the one
    the note sounds; its pairing cost ignored the modulation entirely, so it paired notes that differ

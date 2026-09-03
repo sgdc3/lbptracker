@@ -976,3 +976,52 @@ test('a coincident pair at the note’s start keeps both pitches', () => {
   assert.equal(points[0].pitch, 17, 'the key that was struck');
   assert.equal(points[1].pitch, 16, 'and where it went in the same instant');
 });
+
+test('a ramp that ends where another note starts keeps its last value', () => {
+  // ⚠️ Both halves of one trap, on one channel. The exporter writes every
+  // note's opening modulation immediately before its note-on, so a newcomer's
+  // CC 74 must not join the ramp of whoever owns the channel — but it is the
+  // LAST CC 74 before the note-on that belongs to the newcomer, not every one
+  // at that tick. Excluding the whole tick threw away the owner's own final
+  // sample whenever a note happened to start on the instant its ramp ended:
+  // three notes in `Orb` and `Blackfire` stopped one step short.
+  const on = (tick: number, ch: number, note: number, vel: number) =>
+    ({ tick, data: Uint8Array.of(0x90 | ch, note, vel) });
+  const off = (tick: number, ch: number, note: number) =>
+    ({ tick, data: Uint8Array.of(0x80 | ch, note, 64) });
+  const cc = (tick: number, ch: number, n: number, v: number) =>
+    ({ tick, data: Uint8Array.of(0xb0 | ch, n, v) });
+
+  const bytes = writeMidi({
+    format: 1,
+    division: 480,
+    tracks: [{
+      events: [
+        // An MPE zone, so the reader routes by channel owner.
+        cc(0, 0, 101, 0), cc(0, 0, 100, 6), cc(0, 0, 6, 15),
+        cc(0, 1, 74, 127), on(0, 1, 60, 100),
+        cc(480, 1, 74, 20),      // the owner's ramp, arriving
+        cc(480, 1, 74, 127),     // and the newcomer's own opening, right behind
+        on(480, 1, 64, 100),
+        off(720, 1, 64),
+        off(960, 1, 60),
+      ],
+    }],
+  });
+
+  const { sequencer } = midiToSequencer(bytes);
+  const notes = schedule(sequencer).sort((a, b) => a.pitch - b.pitch);
+  const owner = notes.find((n) => n.pitch === 60);
+  const newcomer = notes.find((n) => n.pitch === 64);
+  assert.ok(owner && newcomer);
+
+  // 20/127 lands on nibble 2; the ramp has to arrive there rather than stop short.
+  assert.equal(Math.round(owner.points[0].modulation * 15), 15, 'the owner opens full');
+  assert.equal(
+    Math.round(owner.points[owner.points.length - 1].modulation * 15),
+    2,
+    `the owner's ramp arrives: ${JSON.stringify(owner.points.map((p) => Math.round(p.modulation * 15)))}`,
+  );
+  // And the newcomer keeps its own, rather than inheriting the ramp it landed on.
+  assert.equal(Math.round(newcomer.modulation * 15), 15, 'the newcomer keeps its own');
+});
