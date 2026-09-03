@@ -25,7 +25,7 @@ over the corpus (10 levels, 149 sequencers, 953,791 notes, 62,158 clips, 1,448,2
 | note on | 15.58% | 953,791 |
 | note off | 15.58% | 953,791 |
 | **`LBP-TRK` meta** — placement and cells | **5.18%** | 4,911 |
-| **`LBP-TRK` `fix`** — verbatim records | **0.72%** | 160 |
+| **`LBP-TRK` `fix`** — verbatim records | **0.15%** | 47 |
 | track name meta | 0.33% | 5,060 |
 | **`LBP-SEQ` meta** — the sequencer | **0.12%** | 149 |
 | tempo, time signature, end of track | 0.09% | 5,358 |
@@ -103,9 +103,34 @@ same identity so the import merges them. It cost **2 extra tracks across the who
 
 | | clips | could MIDI say it? |
 |---|---|---|
-| ~~the same notes in a different **order** inside the clip~~ | ~~325~~ **not carried** | **no**, and it is not worth carrying: 317 of them are in no order the music determines — `Ascetic` has a cell holding steps 64, 0, 96, 32 in that order. `sameNotes` now treats two clips holding the same chains as the same clip, and the patch dropped from 649 clips to **352** |
-| a different **set** of notes in the cell | 42 | **no** — clips of a part overlap, so a note genuinely fits two cells and either answer puts it in the same place |
-| a note whose own **records** differ | 282 | mostly **no**: a control point the author wrote that sits exactly on the line between its neighbours produces no MIDI event, so nothing distinguishes it from its own absence |
+| ~~the same notes in a different **order** inside the clip~~ | ~~325~~ **not carried** | 317 of them are in no order the music determines — `Ascetic` has a cell holding steps 64, 0, 96, 32 in that order. `sameNotes` treats two clips holding the same chains as the same clip |
+| ~~a control point where nothing moves~~ | ~~509 notes~~ **0** | **yes, and it is now said in MIDI** — see below |
+| a note whose own **records** differ | 90 | a ramp re-cut onto the staircase its own rounding makes (93 notes), and the resting bit on the 31 clips that are not uniform |
+| a different **set** of notes in the cell | 87 | **no** — clips of a part overlap, so a note genuinely fits two cells and either answer puts it in the same place |
+
+### A repeated value is a control point
+
+✅ **The largest category came out of the patch and into MIDI, 2026-09-04**, and it paid for
+itself twice over: the patch fell from **352 clips to 177**, `fix` from 82 kB to **34 kB**, and the
+whole file from 24.38 MB to **23.97 MB**.
+
+The rule is one sentence: **the resampler never sends the same value twice, so a message carrying
+the value already in force can only be a control point.** A rounded ramp is a staircase, so
+resampling naturally produces runs of equal values; suppressing them costs a receiver nothing
+(sending 57 twice is a no-op) and it is what makes the repeat readable. The exporter then emits one
+deliberate repeat wherever a control point sits in a flat run of three, and `simplify` never drops
+a point the file stated outright.
+
+⚠️ **Two traps, both found by the numbers moving the wrong way:**
+
+- **Marking every stationary point** rather than only those inside a flat run cost **half a
+  megabyte** over the corpus to save forty kilobytes of patch — 281,000 markers where 8,600 were
+  needed. A point where a flat run meets a moving one is a corner and the simplifier keeps it
+  anyway.
+- **De-duplicating the event that OPENS a moving segment** took the patch from 352 clips to
+  **1,077**. That event is a deliberate repeat too: it states where the ramp begins, which is
+  usually where the plateau before it ended. A note that sat at 96 for two steps and then faded
+  came back fading from its very first frame. `k === 0` is exempt.
 
 ❗ **Order WITHIN a chain still counts.** `sameNotes` splits on the end flag and keeps each chain's
 bytes verbatim rather than going through `groupNotes`, because `makeNote` sorts a chain into
@@ -131,8 +156,8 @@ records; edit the notes in a DAW and the import hands back the original clip ins
 ⚠️ **The importer trusts the patch over the note events**, which is why `flattened`, `dropped`
 and `dragged` describe what a **foreign reader** loses, not what a round trip loses.
 
-The exporter earns it: it imports its own output and patches only what came back wrong. **352 clips
-of 62,158.** Carrying every clip we could not *prove* would cost 22%.
+The exporter earns it: it imports its own output and patches only what came back wrong. **177 clips
+of 62,158, 34 kB.** Carrying every clip we could not *prove* would cost 22%.
 
 ## 3. Track name — meta type `0x03`
 

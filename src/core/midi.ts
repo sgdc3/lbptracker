@@ -1039,6 +1039,22 @@ export function sequencerToMidi(
       continue;
     }
 
+    /**
+     * The last value actually sent for each field, so a REPEAT can mean
+     * something.
+     *
+     * ❗ **The resampler never sends a value twice, and that is what lets a
+     * repeated one mark a control point.** A rounded ramp is a staircase, so
+     * resampling naturally produces runs of equal values; suppressing them
+     * costs a receiver nothing (sending 57 twice is a no-op) and buys the one
+     * signal MIDI otherwise has no room for: an author's control point where
+     * nothing moves. 526 of the corpus's lost control points sit on a flat run
+     * -- against 6 on a moving ramp -- so this is nearly all of them.
+     */
+    let sentBend = bendValue(opening.semitones);
+    let sentPress = clamp7(opening.volume);
+    let sentMod = modTo7(opening.modulation);
+
     for (let i = 0; i + 1 < points.length; i += 1) {
       const from = points[i];
       const to = points[i + 1];
@@ -1046,7 +1062,33 @@ export function sequencerToMidi(
         from.semitones !== to.semitones ||
         from.volume !== to.volume ||
         from.modulation !== to.modulation;
-      if (!moves) continue;
+      if (!moves) {
+        // ❗ **A control point where nothing moves is still a control point**,
+        // and one strictly inside a flat run is the only kind that gets lost.
+        // The value holds either way, so this event changes nothing a receiver
+        // hears -- it is a repeat, and by the rule above only a control point
+        // can produce one. Without it the record vanished: a note written as
+        // four identical records came back as two.
+        //
+        // ⚠️ **Only strictly inside**, which is the difference between 8,600
+        // markers and 281,000. A point where a flat run meets a moving one is a
+        // corner and the importer's simplifier keeps it anyway; marking every
+        // stationary point cost half a megabyte over the corpus to save forty
+        // kilobytes of patch, a trade twelve times the wrong way round.
+        // The point is `to`, and its neighbours are `from` and the one after it.
+        // Three equal values in a row means the middle one is redundant for
+        // interpolation and the importer would simplify it away.
+        const after = points[i + 2];
+        const same = (a: typeof to, b: typeof to) =>
+          a.semitones === b.semitones && a.volume === b.volume && a.modulation === b.modulation;
+        if (after !== undefined && same(to, after)) {
+          const tick = at(event.step + to.step);
+          if (tick > startTick && tick < endTick) {
+            out.push(channelPressure(tick, channel, sentPress));
+          }
+        }
+        continue;
+      }
       const span = to.step - from.step;
       // Spans are whole thirds, because both ends are `step + subStep/3`.
       const thirds = Math.round(span * 3);
@@ -1066,14 +1108,27 @@ export function sequencerToMidi(
         const semitones = from.semitones + (to.semitones - from.semitones) * t;
         const volume = from.volume + (to.volume - from.volume) * t;
         const modulation = from.modulation + (to.modulation - from.modulation) * t;
+        // ⚠️ **`k === 0` is exempt from the de-duplication, because it is a
+        // deliberate repeat.** A moving segment has to state where it starts,
+        // and where it starts is usually where the plateau before it ended --
+        // the same value. Suppressing it took the patch from 352 clips to
+        // 1,077: a note that sat at 96 for two steps and then faded came back
+        // fading from its very first frame, which is the trap the loop's own
+        // comment above already warned about.
         if (from.semitones !== to.semitones) {
-          out.push(pitchBend(tick, channel, bendValue(semitones)));
+          const value = bendValue(semitones);
+          if (k === 0 || value !== sentBend) out.push(pitchBend(tick, channel, value));
+          sentBend = value;
         }
         if (from.volume !== to.volume) {
-          out.push(channelPressure(tick, channel, clamp7(volume)));
+          const value = clamp7(volume);
+          if (k === 0 || value !== sentPress) out.push(channelPressure(tick, channel, value));
+          sentPress = value;
         }
         if (from.modulation !== to.modulation) {
-          out.push(controlChange(tick, channel, 74, modTo7(modulation)));
+          const value = modTo7(modulation);
+          if (k === 0 || value !== sentMod) out.push(controlChange(tick, channel, 74, value));
+          sentMod = value;
         }
       }
     }
@@ -1799,9 +1854,12 @@ const thirdsOf = (tick: number, ticksPerStep: number) =>
  */
 function simplify(
   points: { thirds: number; pitch: number; volume: number; mod: number }[],
+  stated: ReadonlySet<number> = new Set(),
 ): { thirds: number; pitch: number; volume: number; mod: number }[] {
   if (points.length <= 2) return points;
-  const keep = points.map(() => false);
+  // ❗ A point the file states outright is kept whatever the geometry says --
+  // it is there BECAUSE it is redundant. See `stated` in `cutIntoClips`.
+  const keep = points.map((point) => stated.has(point.thirds));
   keep[0] = true;
   keep[points.length - 1] = true;
   const stack: [number, number][] = [[0, points.length - 1]];
@@ -1913,6 +1971,27 @@ function cutIntoClips(
         ...raw.mods.map((m) => ({ tick: m.tick, mod: m.value })),
       ].sort((x, y) => x.tick - y.tick);
 
+      /**
+       * Positions the file states outright rather than implies.
+       *
+       * ❗ **A repeated value is a control point.** The exporter never resamples
+       * the same value twice -- see `sentPress` there -- so a message carrying
+       * the value already in force can only be a control point where nothing
+       * moved. Those are the records that used to vanish: a note written as four
+       * identical records came back as two, and 526 of the corpus's lost control
+       * points are this shape.
+       */
+      const stated = new Set<number>();
+      {
+        let held = raw.opening ?? raw.velocity;
+        for (const press of raw.presses) {
+          if (clamp7(press.volume) === clamp7(held)) {
+            stated.add(Math.min(Math.max(thirdsOf(press.tick, ticksPerStep), startThirds), endThirds));
+          }
+          held = press.volume;
+        }
+      }
+
       const collected = new Map<number, { thirds: number; pitch: number; volume: number; mod: number }>();
       let pitch = base + Math.round(raw.openingBend ?? 0);
       let volume = raw.opening ?? raw.velocity;
@@ -1928,7 +2007,10 @@ function cutIntoClips(
       if (!collected.has(endThirds)) {
         collected.set(endThirds, { thirds: endThirds, pitch, volume, mod });
       }
-      const points = simplify([...collected.values()].sort((x, y) => x.thirds - y.thirds));
+      const points = simplify(
+        [...collected.values()].sort((x, y) => x.thirds - y.thirds),
+        stated,
+      );
       // ⚠️ **A note that starts already bent keeps BOTH pitches**, the written
       // one and the bent one, on the same position. The MIDI note number is the
       // key that was struck and the bend is where it went, and the two are not

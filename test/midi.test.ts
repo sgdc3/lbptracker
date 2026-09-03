@@ -520,6 +520,48 @@ test('a coincident pair states both modulations, in order', () => {
   );
 });
 
+test('a control point survives even where nothing moves', () => {
+  // ❗ **A repeated value is a control point**, and that is only readable
+  // because the resampler never sends the same value twice. A rounded ramp is a
+  // staircase, so resampling naturally produces runs of equal values;
+  // suppressing them costs a receiver nothing and buys the one signal MIDI has
+  // no other room for. 509 of the corpus's lost control points were this shape.
+  const seq = makeSequencer([
+    makeTrack([[
+      { step: 0, pitch: 41, volume: 60 },
+      { step: 1, pitch: 41, volume: 60 },
+      { step: 2, pitch: 41, volume: 60 },
+      { step: 3, pitch: 41, volume: 60 },
+    ]]),
+  ]);
+  const back = midiToSequencer(sequencerToMidi(seq, { exact: false }).bytes).sequencer;
+  assert.deepEqual(
+    back.tracks[0].notes[0].points.map((p) => [p.step, p.pitch, p.volume]),
+    [[0, 41, 60], [1, 41, 60], [2, 41, 60], [3, 41, 60]],
+    'all four records, not just the two the curve needs',
+  );
+});
+
+test('a plateau before a fade is still a plateau', () => {
+  // ⚠️ **The event that opens a moving segment is a deliberate repeat too**,
+  // and de-duplicating it took the corpus patch from 352 clips to 1,077: a note
+  // that sat at 96 for two steps and then faded came back fading from its very
+  // first frame. `k === 0` is exempt for that reason.
+  const seq = makeSequencer([
+    makeTrack([[
+      { step: 0, pitch: 60, volume: 96 },
+      { step: 8, pitch: 60, volume: 96 },
+      { step: 16, pitch: 60, volume: 0 },
+    ]]),
+  ]);
+  const back = midiToSequencer(sequencerToMidi(seq, { exact: false }).bytes).sequencer;
+  assert.deepEqual(
+    back.tracks[0].notes[0].points.map((p) => [p.step, p.volume]),
+    [[0, 96], [8, 96], [16, 0]],
+    'the fade starts at step 8, not at the note-on',
+  );
+});
+
 test('the record patch is written only for what MIDI could not say', () => {
   // A plain clip needs none of it, and says so.
   const plain = sequencerToMidi(makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]])]));

@@ -213,7 +213,7 @@ Measured 2026-09-03 over the corpus, both channel modes, `dev/verify-midi.ts`:
 
 ```
 62.158 clips, 1.448.224 records: 0 came back different
-352 clips carried verbatim, 0 unpatchable, 24.4 MB
+177 clips carried verbatim, 0 unpatchable, 24.0 MB
 ```
 
 and it is a **fixed point from the first trip**: three round trips give 1,448,224 records and the
@@ -232,10 +232,13 @@ Three things got it there, in the order they were found:
 2. **The order records are written in**, which is position ascending then pitch **descending** on
    27,124 of 27,124 tied clips. Sorting on position alone left 1,944 clips holding the right notes
    in the wrong order.
-3. **A verbatim record patch for the remainder.** The exporter imports its own output, compares
+3. **A repeated value is a control point.** The resampler never sends one value twice, so a
+   message carrying the value already in force can only be a control point where nothing moved.
+   That recovered 509 notes and made the file *smaller*; see
+   [midi-interchange.md](midi-interchange.md).
+4. **A verbatim record patch for the remainder.** The exporter imports its own output, compares
    clip by clip, and writes the originals base64 in the `LBP-TRK` meta's `fix` for the ones that
-   differ — **352 clips of 62,158** once the comparison stopped counting the order chains sit in,
-   which is authoring order and nothing recovers it.
+   differ — **177 clips of 62,158**, 34 kB, 0.15% of the file.
 
 ⚠️ **A patch is not the same kind of thing as the metas around it.** `LBP-SEQ` and `LBP-TRK`
 describe the *placement* — the mixer, the board, the key — and stay true however the notes are
@@ -247,7 +250,7 @@ present in the patch.
 
 ⚠️ So `flattened`, `dropped` and `dragged` describe what a **foreign reader** loses, not what a
 round trip loses — the honest reading of them, and always was. `LBP_MIDI_LOOSE=1` turns the patch
-off and measures MIDI alone: worst deviation pitch 0.167, volume 0.500, and 352 clips that would
+off and measures MIDI alone: worst deviation pitch 0.167, volume 0.500, and 177 clips that would
 have needed a patch.
 
 ⚠️ **`Track.records` is the file's own bytes and `Track.notes` is not a re-encoding of them.**
@@ -377,13 +380,13 @@ either file. `LBP_MIDI_LOOSE=1` turns the record patch off so the MIDI-alone num
 |---|---|
 | sequencers disagreeing | **0** of 149 |
 | clips whose records differ | **0** of 62,158 |
-| clips carried verbatim | 352 (0.57%) |
+| clips carried verbatim | 177 (0.28%) |
 | notes sharing a channel | 30, all of them flat |
 | … dragged by a neighbour's bend | 0 |
 | … whose timbre a sharer moved | 0 |
 | glides MIDI alone could not carry | 0 |
 | notes MPE could not carry at all | 0 |
-| size | 24.4 MB |
+| size | 24.0 MB |
 
 - 88,893 notes (9.32%) carry a glide and **none of them loses it, even in the MIDI events alone**.
 - ⚠️ **Report `dragged`, not `sharedChannel`.** The raw sharing count was five times larger when
