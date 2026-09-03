@@ -157,11 +157,52 @@ Per sequencer it is very uneven, which is worth knowing before concluding a rend
 | 723339 "Ascetic" | 28,998 | 10 (0.0%) | 0 |
 | 737099 "This Is Halloween" | 29,260 | **2,488 (8.5%)** | 2,440 |
 
-⚠️ **The first point's value only.** 70,028 of the corpus's 2,027,633 notes (3.45%) change
-modulation across their own control points, and those render at their opening value. Pitch and
-volume are interpolated between points; modulation is not, because it feeds things read once when
-the voice starts — the envelope times, the filter settings, the unison stack. Whether the engine
-re-reads it mid-note is unmeasured.
+### The engine ramps it, and re-reads it every chunk — MEASURED 2026-09-03, NOT YET IMPLEMENTED
+
+⚠️ **This section said the opposite until today, and the reason it gave was a reason and not a
+measurement:** "modulation is not interpolated, because it feeds things read once when the voice
+starts". The whole chain is now read out of `fmodextinput.prx`, and every step of it treats the
+modulation exactly as it treats volume and pitch.
+
+`sub_0x3930`, the note-block walker, sets three slide rates from one span and one reciprocal:
+
+```
+0x3e50   xmm6 = 1 / span                    ; span = pos(next) - pos(current), thirds allowed
+0x3e66   [rbx+0x2c] = (nextVolume - voice.volume) / span
+0x3e78   [rbx+0x30] = (nextPitch  - voice.pitch ) / span
+0x3e8a   [rbx+0x34] = (nextMod    - voice.mod   ) / span
+```
+
+and zeroes all three when there is no next record (`0x3f06` clears `+0x2c` and `+0x30` in one
+8-byte store, `0x3f0e` clears `+0x34`).
+
+`sub_0x1c60`, the per-voice renderer, then consumes them:
+
+```
+0x1eb2   xmm0 = [r12+0x2c]                  ; volumeSlide
+0x1eb9   xmm1 = [r12+0x34]                  ; modulationSlide
+0x1ec0   xmm2 = dt * xmm0
+0x1ec4   xmm3 = dt * xmm1
+0x1f3b   [rbp-0xa60] = [r12+0x0c] + xmm2    ; volume this chunk
+0x1f4a   [rbp-0xaa4] = [r12+0x28] + xmm3    ; MODULATION this chunk
+```
+
+and reads that stashed modulation **four times** afterwards — `0x208e`, `0x222c`, `0x25d5`,
+`0x2713` — which are the `Params` evaluations.
+
+**The cadence, which is what decides how expensive fixing this is.** `sub_0x1c60` is called in a
+loop over the voice array inside `sub_0xa90` (stride `0xd0`, running to `0x1a28` — the 32 voice
+records), and `sub_0xa90` is called once per DSP block from `sub_0x170`, the read callback, which
+asserts `r8d == 4` and `r9d == 4` and traps with `int 0x41` otherwise — the 4-in/4-out DSP.
+`sub_0xa90` itself walks the block in chunks, decrementing a frame counter at `0x0c99` and
+advancing the output pointer by four channels. So the modulation is advanced and the parameters
+re-evaluated **once per chunk per voice** — not per sample, and not once per voice.
+
+⚠️ **So `src/core/render.ts` is wrong, not merely simplified**, on the 70,028 notes (3.45%) that
+move their modulation: it holds the opening value for the whole voice. The fix is bounded by that
+cadence — re-evaluate the modulation-dependent parameters per block rather than per voice, which
+is what our own worklet already renders in — but it is a change to the voice architecture and is
+not done.
 
 ## 13. The voice pool — 32 voices, steal the quietest — MEASURED AND IMPLEMENTED
 

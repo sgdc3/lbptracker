@@ -49,25 +49,13 @@ anything; all are places where an answer stopped just short.
   are unreachable as zones, which is what "1 zone, 4 samples" means. What is still open is only
   whether the engine reaches them as *layers*: this project plays slot 0 five times, and four
   octave-spaced samples going unused on a five-layer patch is suspicious on its own.
-- **Per-note modulation across a note's own points.** 70,028 of 2,027,633 corpus notes (3.45%) change
-  modulation between their control points, and those render at their opening value.
+- ~~**Per-note modulation across a note's own points.**~~ **SETTLED 2026-09-03: the engine ramps
+  it and re-reads it every chunk.** `sub_0x3930` writes a slide rate for it at `0x3e8a` beside the
+  ones for volume and pitch, and `sub_0x1c60` advances it by `slide × dt` at `0x1f4a` and reads the
+  result four times. The cadence is per chunk per voice, under the DSP read callback at `sub_0x170`.
+  Full chain and addresses in `answered-questions.md` 6d. **What is left is not a question but a
+  fix**: `render.ts` holds the opening value for the whole voice and is wrong on 3.45% of notes.
 
-  ⚠️ **HALF SETTLED, 2026-09-03: the engine ramps it.** `sub_0x3930` in `fmodextinput.prx`
-  computes all three slide rates from the same span and the same reciprocal, in three identical
-  pairs — `[rbx+0x2c]` volume at `0x3e66`, `[rbx+0x30]` pitch at `0x3e78`, `[rbx+0x34]` **the
-  modulation** at `0x3e8a` — and catches all three up by `rate × elapsed` at `0x3edd`, `0x3eea` and
-  `0x3ef7`, the last of those writing `[rbx+0x28]`. There is no asymmetry anywhere in the function.
-  The reason recorded against interpolating it, "modulation feeds things read once when the voice
-  starts", was a *reason* and not a measurement, and it is now contradicted.
-
-  **So `src/core/render.ts` is wrong on the 3.45% of notes that move it**, and that is a bug rather
-  than a simplification.
-
-  What is still open is what CONSUMES the ramped `+0x28`. Every parameter it feeds — the two ADSRs'
-  times, the filter settings, `Numstack`, the sends — is currently evaluated once when a voice
-  starts, and if the engine re-evaluates them per frame that is a different voice architecture, not
-  a one-line fix. Next: find the readers of `+0x28` that are not `sub_0x3930` itself, and see
-  whether any of them runs per frame.
 - **The `1/3` sub-step and `Swing`.** Triplets are settled and wired; `Swing` is a normalised 0..1
   ratio clamped at 0.99 and what the engine does with it is still unknown. It stays under question 3.
 - **The voice pool did not explain the density report it was found chasing.** It cuts 248 of 1,684
