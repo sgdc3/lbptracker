@@ -54,6 +54,7 @@ const staleNote = $<HTMLParagraphElement>('staleNote');
 const tempoInput = $<HTMLInputElement>('tempo');
 const swingInput = $<HTMLInputElement>('swing');
 const channelsBox = $<HTMLDivElement>('channels');
+const numChannelsInput = $<HTMLInputElement>('numChannels');
 
 const setStatus = (text: string, bad = false) => {
   statusLine.textContent = text;
@@ -219,6 +220,7 @@ let overrides: {
   tempo?: number;
   swing?: number;
   volumes?: number[];
+  numChannels?: number;
 } = {};
 
 const withOverrides = <
@@ -231,6 +233,7 @@ const withOverrides = <
     ...seq,
     tempo: overrides.tempo ?? seq.tempo,
     swing: overrides.swing ?? seq.swing,
+    numChannels: overrides.numChannels ?? seq.numChannels,
     volumes,
   };
 };
@@ -461,26 +464,10 @@ async function prepare(restart = true): Promise<void> {
   if (restart) {
     tempoInput.value = String(Math.round(original.tempo));
     swingInput.value = String(Math.round(original.swing * 100));
-    // As many faders as the song declares channels, and no more: a channel it
-    // does not have carries nothing, and a slider for it would be a lie. The
-    // track count beside each is there because the mapping surprises people --
-    // a board row feeds `row mod NumChannels`, so rows far apart share a fader.
-    const count = Math.min(CHANNEL_COUNT, Math.max(1, original.numChannels));
-    const perChannel = new Array<number>(count).fill(0);
-    for (const t of original.tracks) {
-      perChannel[((t.gridY % count) + count) % count] += 1;
-    }
-    channelsBox.innerHTML = Array.from({ length: count }, (_, i) => {
-      const v = i < original.volumes.length ? original.volumes[i] : 1;
-      const used = perChannel[i];
-      return (
-        `<div class="knob"><label for="ch${i}" title="${used} track${used === 1 ? '' : 's'} ` +
-        `on this channel">ch ${i} · ${used}</label>` +
-        `<input type="range" id="ch${i}" class="chan" data-ch="${i}" min="0" max="150" ` +
-        `value="${Math.round(v * 100)}"${used === 0 ? ' disabled' : ''}>` +
-        `<output id="ch${i}Label">${v.toFixed(2)}</output></div>`
-      );
-    }).join('');
+    numChannelsInput.value = String(
+      Math.min(CHANNEL_COUNT, Math.max(1, original.numChannels)),
+    );
+    buildFaders(original, original.volumes);
     $('numChannels').textContent = `NumChannels ${original.numChannels}`;
     showSongOptions();
   }
@@ -707,12 +694,46 @@ panWidthInput.addEventListener('input', () => {
  * is a slider and every pixel of it would otherwise start a rebuild.
  */
 /**
+ * One fader per channel the song has, with how many tracks land on each.
+ *
+ * ⚠️ **The count is the point of the display.** A board row feeds
+ * `row mod NumChannels`, so rows far apart share a fader and raising the channel
+ * count fans the same rows out rather than adding parts. Seeing 1150 tracks on
+ * one fader, then 600 and 550 on two, is what makes that legible.
+ *
+ * Existing positions are carried over so that changing the count does not throw
+ * away a mix -- a channel that survives keeps its level.
+ */
+function buildFaders(
+  seq: { tracks: readonly { gridY: number }[]; volumes: readonly number[] },
+  levels: readonly number[],
+): void {
+  const count = Math.min(CHANNEL_COUNT, Math.max(1, Number(numChannelsInput.value)));
+  const perChannel = new Array<number>(count).fill(0);
+  for (const t of seq.tracks) {
+    perChannel[((t.gridY % count) + count) % count] += 1;
+  }
+  channelsBox.innerHTML = Array.from({ length: count }, (_, i) => {
+    const v = i < levels.length ? levels[i] : 1;
+    const used = perChannel[i];
+    return (
+      `<div class="knob"><label for="ch${i}" title="${used} track${used === 1 ? '' : 's'} ` +
+      `on this channel">ch ${i} · ${used}</label>` +
+      `<input type="range" id="ch${i}" class="chan" data-ch="${i}" min="0" max="150" ` +
+      `value="${Math.round(v * 100)}"${used === 0 ? ' disabled' : ''}>` +
+      `<output id="ch${i}Label">${v.toFixed(2)}</output></div>`
+    );
+  }).join('');
+}
+
+/**
  * Labels for the song's own settings, and the debounced rebuild they need.
  *
  * Slower than the pool's debounce because this one actually re-renders the
  * voices, where the pool is only arithmetic.
  */
 const showSongOptions = () => {
+  $('numChannelsLabel').textContent = numChannelsInput.value;
   $('tempoLabel').textContent = `${tempoInput.value} BPM`;
   $('swingLabel').textContent = (Number(swingInput.value) / 100).toFixed(2);
   for (const el of channelsBox.querySelectorAll<HTMLInputElement>('.chan')) {
@@ -728,6 +749,7 @@ const songChanged = () => {
   overrides = {
     tempo: Number(tempoInput.value),
     swing: Number(swingInput.value) / 100,
+    numChannels: Number(numChannelsInput.value),
     volumes: [...channelsBox.querySelectorAll<HTMLInputElement>('.chan')].map(
       (el) => Number(el.value) / 100,
     ),
@@ -735,6 +757,22 @@ const songChanged = () => {
   window.clearTimeout(songTimer);
   songTimer = window.setTimeout(() => void prepare(false), 450);
 };
+
+/**
+ * Changing the count redraws the faders before the rest of the handler reads
+ * them, keeping the levels of the channels that survive.
+ */
+numChannelsInput.addEventListener('input', () => {
+  const uid = picker.value();
+  const seq = project?.sequencers.find((s) => s.uid === uid);
+  if (seq) {
+    const kept = [...channelsBox.querySelectorAll<HTMLInputElement>('.chan')].map(
+      (el) => Number(el.value) / 100,
+    );
+    buildFaders(seq, kept.length ? kept : seq.volumes);
+  }
+  songChanged();
+});
 
 tempoInput.addEventListener('input', songChanged);
 swingInput.addEventListener('input', songChanged);

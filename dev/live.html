@@ -192,12 +192,18 @@
         </p>
       </div>
       <div class="group">
-        <h3>channel volumes <span id="numChannels" class="picker-detail"></span></h3>
-        <div id="channels"></div>
+        <h3>channels</h3>
+        <div class="knob">
+          <label for="numChannels">how many</label>
+          <input type="range" id="numChannels" min="1" max="8" step="1" value="1">
+          <output id="numChannelsLabel">1</output>
+        </div>
+        <div id="channels" style="margin-top:.45rem"></div>
         <p class="hintline">
-          The sequencer&rsquo;s own mixer, one fader per channel the song declares. A board row
-          feeds channel <em>row mod NumChannels</em>, so with one channel every row goes through
-          the one fader; the count beside each is how many tracks land on it.
+          <code>NumChannels</code> and the song&rsquo;s own mixer. A board row feeds channel
+          <em>row mod NumChannels</em>, so with one channel every row goes through the one fader,
+          and raising it fans the same rows out &mdash; the count beside each fader is how many
+          tracks land on it. 308 of the 338 sequencers in the corpus declare one.
         </p>
       </div>
     </div>
