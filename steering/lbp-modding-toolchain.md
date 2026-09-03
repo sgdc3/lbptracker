@@ -204,29 +204,31 @@ for reasons that are correct.
 
 ### What is still between here and an exact round trip
 
-**As of 2026-09-03, in `channelsPerPart` there is nothing measurable left.** The corpus check reads
-**0 sequencers disagreeing, 0 notes with a changed curve** over 953,791 notes — no glide lost, none
-dragged, none dropped, none clamped, none lengthened, and the worst deviations on the whole corpus
-are **pitch 1/6 of a semitone, volume half a step, modulation 0**. What follows is what is known to
-be *inexact* rather than *wrong*, and where it comes from.
+**In `channelsPerPart`, nothing that affects the sound.** Over 953,791 notes the corpus check reads
+**0 sequencers disagreeing and 0 notes with a changed curve** — no glide lost, none dragged,
+dropped, clamped or lengthened; 62,158 clips out and 62,158 back; and every field of `Sequencer`
+and `Track` carried, which `test/midi.test.ts` pins so that adding one and forgetting the header
+meta fails there rather than in a DAW. The worst deviations anywhere are **pitch 1/6 of a semitone,
+volume half a step, modulation 0**.
 
-| left | how much | why |
+⚠️ **What still differs is how 592 notes (0.062%) are ENCODED, not what they play.** The record
+list comes back different while the curve does not:
+
+| | notes | what it is |
 |---|---|---|
-| pitch off by up to 1/6 semitone | one shape, in `Diode` | a ramp that ARRIVES at the instant a coincident pair supersedes it: the value it reaches is never heard, so the reconstruction aims at the last value that is. `test/midi.test.ts` pins the case |
-| records that differ while the sound does not | 592 notes (0.06%) | a coincident pair's first record, which the engine replaces in the same instant. Its modulation cannot be carried because nothing in the file can hear it |
-| `Scale` | 0 placements in the corpus | `quantise` is a projection and is measured not idempotent — there is no pitch to un-snap to |
-| `timbre` bits 4-5, volume > 127 | 0 in the corpus | 7 bits either way; a side channel is the only route |
+| a superseded record | 53 | a coincident pair's first record, which the engine replaces in the same instant. Nothing can hear it, so nothing in the file can carry it |
+| a re-cut ramp | 539 | a rounded ramp reconstructed with a different set of control points. **The reconstruction is TIGHTER to the curve than the original encoding, not looser** — it tracks the staircase the rounding actually makes, where the original named two endpoints. Both play the same thing to within half a volume step |
 
-⚠️ **`channelsPerPart` is the mode those numbers describe.** Sharing the channels across the file
-is the safe default for a player that hears one stream, and it cannot be lossless: fifteen channels
-against fifty simultaneous notes. What it can be is fully declared, and it now is exactly:
-**1,742 glides declared lost, 1,742 notes actually changed, nothing on either side of that.** Two
-more things it reports are warnings about what a *synth* will hear rather than losses in the round
-trip, because the importer knows whose each is: 1,352 notes a neighbour's bend reaches, and 4,522
-whose timbre a sharer's CC 74 moves.
-⚠️ **Do not subtract `dragged` or `timbred` from the curve differences.** They measure a
-different thing, and netting them off made shared mode read 4,433 notes *better* than declared,
-which is as misleading as reading worse.
+⚠️ **And it converges rather than growing**, which is the property that matters if a file goes
+round more than once. Records over three trips: **1,448,224 → 1,448,178 → 1,448,168 → 1,448,168**,
+the byte size identical at 24.30 MB each time, and 35 notes still moving between the first and
+second trip against 5 between the second and third. The second trip is a fixed point for all
+practical purposes; the count settles slightly *below* the original because genuinely redundant
+collinear points are dropped.
+
+Two things are carried by nothing and cost nothing, because the corpus never uses them: `Scale`
+(`quantise` is a projection and is measured not idempotent, so there is no pitch to un-snap to) and
+`timbre` bits 4-5 with volume > 127 (7 bits either way; only a side channel would do it).
 
 ### How the last of it was closed, in order
 
