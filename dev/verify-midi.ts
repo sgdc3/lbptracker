@@ -20,7 +20,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { midiToSequencer, sequencerToMidi } from '../src/core/midi.ts';
+import { midiToSequencer, sameNotes, sequencerToMidi } from '../src/core/midi.ts';
 import { schedule, type Sequencer } from '../src/core/project.ts';
 import { readLevelProject } from '../src/core/project.ts';
 import { blockRoot, notePitch } from '../src/core/scale.ts';
@@ -173,21 +173,25 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
     const problems: string[] = [];
     let missing = 0;
 
-    // ❗ **The bytes, which is the strongest thing this can say.** The music
+    // ❗ **The records, which is the strongest thing this can say.** The music
     // comparison below is what the round trip was built to satisfy; this is
-    // whether the file that comes back IS the file that went in, record for
+    // whether the file that comes back holds the notes that went in, record for
     // record, and it is the patch's whole purpose. `Track.records` is the
     // level's own note data -- never a re-encoding of `notes`, which sorts a
     // chain's records into position order and real files do not.
+    //
+    // ⚠️ **Tolerant of the order the chains sit in, and only of that.** That
+    // order is the order the author placed the notes in -- 317 corpus clips are
+    // in no order the music determines -- so counting it reported 325 clips as
+    // damaged for a difference no note has. Order WITHIN a chain still counts.
+    // `sameNotes` is the exporter's own rule, imported rather than restated.
     const afterRecords = new Map<string, Uint8Array>();
     for (const t of imported.sequencer.tracks) afterRecords.set(clipKey(t), t.records);
     for (const t of seq.tracks) {
       totals.clips += 1;
       totals.records += t.records.length / 4;
       const theirs = afterRecords.get(clipKey(t));
-      if (theirs !== undefined
-        && theirs.length === t.records.length
-        && theirs.every((v, i) => v === t.records[i])) continue;
+      if (theirs !== undefined && sameNotes(t.records, theirs)) continue;
       totals.clipsChanged += 1;
       // Without the patch this is expected -- that is what the patch is for --
       // so it is counted either way and only fails the run when it is on.

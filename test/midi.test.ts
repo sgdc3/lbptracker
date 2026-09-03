@@ -75,6 +75,10 @@ function makeSequencer(tracks: Track[], over: Partial<Sequencer> = {}): Sequence
  * finest position the record format has.
  */
 function music(sequencer: Sequencer) {
+  // ⚠️ **Sorted, because the order notes sit in a clip is authoring order.**
+  // `schedule` walks a track's records in file order, and this project treats
+  // two clips holding the same notes as the same clip -- see `sameNotes` -- so a
+  // comparison that counted the order would fail on a difference no note has.
   return schedule(sequencer).map((event) => {
     const track = sequencer.tracks[event.track];
     const root = blockRoot(track.key);
@@ -101,7 +105,12 @@ function music(sequencer: Sequencer) {
       modulation: Math.round(event.modulation * 15),
       samples,
     };
-  });
+  }).sort((a, b) =>
+    a.step - b.step
+    || a.pitch - b.pitch
+    || a.durationSteps - b.durationSteps
+    || a.volume - b.volume
+    || a.modulation - b.modulation);
 }
 
 /** Export then import, with everything at its default. */

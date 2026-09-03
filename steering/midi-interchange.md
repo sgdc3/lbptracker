@@ -103,9 +103,14 @@ same identity so the import merges them. It cost **2 extra tracks across the who
 
 | | clips | could MIDI say it? |
 |---|---|---|
-| the same notes in a different **order** inside the clip | 325 | **no** — 317 of them are not in any order the music determines; it is the order the author placed them in. The three measured sort keys already recover the rest |
+| ~~the same notes in a different **order** inside the clip~~ | ~~325~~ **not carried** | **no**, and it is not worth carrying: 317 of them are in no order the music determines — `Ascetic` has a cell holding steps 64, 0, 96, 32 in that order. `sameNotes` now treats two clips holding the same chains as the same clip, and the patch dropped from 649 clips to **352** |
 | a different **set** of notes in the cell | 42 | **no** — clips of a part overlap, so a note genuinely fits two cells and either answer puts it in the same place |
 | a note whose own **records** differ | 282 | mostly **no**: a control point the author wrote that sits exactly on the line between its neighbours produces no MIDI event, so nothing distinguishes it from its own absence |
+
+❗ **Order WITHIN a chain still counts.** `sameNotes` splits on the end flag and keeps each chain's
+bytes verbatim rather than going through `groupNotes`, because `makeNote` sorts a chain into
+position order and a chain stored out of it puts its end flag somewhere else — which is a real
+difference, not an authoring one. Records after the last end flag stay where they are.
 
 ✅ **One category came out of it and into MIDI.** A coincident pair's FIRST modulation used to be
 dropped as authoring debris; it is not, because `voice+0x28` is read once at voice start for

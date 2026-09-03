@@ -286,6 +286,47 @@ function fromBase64(text: string): Uint8Array {
   return out;
 }
 
+/**
+ * A clip's records as the set of note chains it holds, order between them lost.
+ *
+ * ⚠️ **The order chains appear in is authoring order and nothing recovers
+ * it.** 317 of the corpus's clips are not written in any order the music
+ * determines -- `Ascetic` has a cell holding steps 64, 0, 96, 32 in that order
+ * -- so a comparison that counts it reports 325 clips as damaged for a
+ * difference no note has. Two clips holding the same chains are the same clip.
+ *
+ * ❗ **Order WITHIN a chain still counts**, which is why this splits on the end
+ * flag and keeps each chain's bytes verbatim rather than going through
+ * `groupNotes`: `makeNote` sorts a chain into position order, and a chain whose
+ * records are stored out of it puts its end flag somewhere else. Records after
+ * the last end flag are a run of their own and stay where they are.
+ */
+function chainsOf(records: Uint8Array): { chains: string[]; trailing: string } {
+  const chains: string[] = [];
+  let from = 0;
+  for (let at = 0; at < records.length; at += NOTE_RECORD_SIZE) {
+    if ((records[at + 1] & 0x80) === 0) continue;
+    chains.push(String(records.subarray(from, at + NOTE_RECORD_SIZE)));
+    from = at + NOTE_RECORD_SIZE;
+  }
+  chains.sort();
+  return { chains, trailing: String(records.subarray(from)) };
+}
+
+/**
+ * Whether two clips hold the same notes, however they are ordered.
+ *
+ * Exported so `dev/verify-midi.ts` gates on the same rule the exporter decides
+ * a patch by; two definitions of "the same clip" would drift apart.
+ */
+export function sameNotes(a: Uint8Array, b: Uint8Array): boolean {
+  const one = chainsOf(a);
+  const two = chainsOf(b);
+  return one.trailing === two.trailing
+    && one.chains.length === two.chains.length
+    && one.chains.every((chain, i) => chain === two.chains[i]);
+}
+
 /** What `partsOf` groups on, plus the cell: a clip's identity across a trip. */
 const clipKey = (t: Track) =>
   [t.guid, t.gridY, t.level, t.pan, t.echoSend, t.reverbSend, t.key, t.scale, t.gridX].join('|');
@@ -1204,7 +1245,8 @@ function divergences(
         continue;
       }
       after.delete(clipKey(track));
-      if (mine.length === theirs.length && mine.every((v, i) => v === theirs[i])) continue;
+      // ❗ The same notes in a different order are the same clip. See `chainsOf`.
+      if (sameNotes(mine, theirs)) continue;
       fix[String(track.gridX)] = toBase64(mine);
       count += 1;
     }
