@@ -119,14 +119,21 @@ let nextIndex = 0;
  */
 let sounding = 0;
 let queued = 0;
+/** Worst block cost as a fraction of realtime; over 1 means the device starved. */
+let audioLoad = 0;
 
 function showLoad(): void {
   if (!playing && sounding === 0 && queued === 0) {
     loadLabel.textContent = plan.length ? 'ready' : 'idle';
     return;
   }
-  loadLabel.textContent =
-    `${sounding} sounding` + (queued > 0 ? ` · ${queued} queued` : '');
+  // Both numbers, always: a field that appears and disappears as it crosses
+  // zero draws the eye to the wrong thing and shifts everything beside it.
+  // One decimal, because a worklet running twenty voices sits under 1% and a
+  // rounded zero reads as "not measured" rather than "nothing to worry about".
+  const cpu = audioLoad > 0 ? `${(audioLoad * 100).toFixed(1)}%` : '<0.1%';
+  loadLabel.textContent = `${sounding} sounding · ${queued} queued · cpu ${cpu}`;
+  loadLabel.style.color = audioLoad > 0.8 ? 'var(--bad)' : '';
 }
 
 /**
@@ -150,9 +157,14 @@ const TICK = 100;
  * plan stale rather than doing nothing quietly.
  */
 const planOptions = () => ({
-  panWidth: Number(panWidthInput.value) / 100,
+  // ❗ Raw pans in the plan: the worklet owns the width so it can be swept while
+  // the song plays. Sending anything but 1 here would apply it twice.
+  panWidth: 1,
   voiceLimit: noCapBox.checked ? VOICES_UNLIMITED : Number(voicesInput.value),
 });
+
+const pushPanWidth = () =>
+  node?.port.postMessage({ type: 'panWidth', width: Number(panWidthInput.value) / 100 });
 
 let preparedWith = '';
 const markStale = () => {
@@ -169,12 +181,15 @@ async function ensureAudio(): Promise<AudioWorkletNode> {
   master = new GainNode(context, { gain: Number(volSlider.value) });
   node.connect(master).connect(context.destination);
   node.port.onmessage = (event: MessageEvent) => {
-    const data = event.data as { type: string; id?: string; total?: number; sounding?: number };
+    const data = event.data as {
+      type: string; id?: string; total?: number; sounding?: number; load?: number;
+    };
     if (data.type === 'missingSample') setError(`the worklet has no sample "${data.id}"`);
     // The only place that knows what is actually sounding is the audio thread.
     if (data.type === 'voices') {
       sounding = data.sounding ?? 0;
       queued = (data.total ?? 0) - sounding;
+      audioLoad = data.load ?? 0;
       showLoad();
     }
   };
@@ -279,6 +294,7 @@ async function prepare(): Promise<void> {
   songSeconds = result.seconds;
   framesPerStep = result.framesPerStep;
   pushEffects();
+  pushPanWidth();
   drawDensity();
   seek(0);
 
@@ -459,9 +475,34 @@ const showPlanOptions = () => {
   voicesInput.disabled = noCapBox.checked;
   markStale();
 };
-panWidthInput.addEventListener('input', showPlanOptions);
-voicesInput.addEventListener('input', showPlanOptions);
-noCapBox.addEventListener('change', showPlanOptions);
+panWidthInput.addEventListener('input', () => {
+  showPlanOptions();
+  pushPanWidth();
+});
+/**
+ * The pool cannot be live, so it re-plans itself instead of waiting to be asked.
+ *
+ * ⚠️ The allocator needs the whole note list at once to decide what gets
+ * stolen, so there is no way to change the size without rebuilding the plan.
+ * Debounced, because it is a slider and every pixel of it would otherwise start
+ * a render; the playhead and whether it was playing are both kept.
+ */
+let replanTimer = 0;
+const replanSoon = () => {
+  showPlanOptions();
+  if (!plan.length) return;
+  window.clearTimeout(replanTimer);
+  replanTimer = window.setTimeout(() => {
+    const at = songPosition();
+    const wasPlaying = playing;
+    void prepare().then(() => {
+      seek(at);
+      if (wasPlaying) start();
+    });
+  }, 400);
+};
+voicesInput.addEventListener('input', replanSoon);
+noCapBox.addEventListener('change', replanSoon);
 showPlanOptions();
 
 prepareButton.addEventListener('click', () => {

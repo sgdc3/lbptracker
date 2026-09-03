@@ -47,6 +47,19 @@ export type MixerMessage =
   // interpolators switch it off so they can be heard against it.
   | { type: 'interpolator'; name: InterpolatorName | 'engine' }
   /**
+   * How much of each voice's written pan survives, `0.5 + (p - 0.5) * width`.
+   *
+   * ⚠️ **It lives here rather than in the spec so that it can be turned while a
+   * song plays.** A scheduler that baked it into every voice would have to
+   * rebuild its whole plan to move it, and the number is exactly the kind a
+   * listener wants to sweep. Voices already sounding keep the width they were
+   * born with; notes are short enough that a move is heard within a beat.
+   *
+   * ❗ A caller that applies the width itself must send 1 here, or it is applied
+   * twice. See `PAN_WIDTH` in src/core/render.ts.
+   */
+  | { type: 'panWidth'; width: number }
+  /**
    * Rebuild the output stage. Everything here is a sequencer field, so a
    * keyboard can offer exactly what a song can set.
    *
@@ -96,6 +109,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
    */
   private echo: Echo | null = null;
   private reverb: Reverb | null = null;
+  private panWidth = 1;
   private echoOn = false;
   private reverbOn = false;
   private clip = true;
@@ -107,6 +121,18 @@ export class MixerProcessor extends AudioWorkletProcessor {
    * number a person reads ten times a second at most.
    */
   private sinceReport = 0;
+  /**
+   * The worst `process()` cost seen since the last report, as a fraction of the
+   * block's own duration.
+   *
+   * ⚠️ **A live renderer can fail in a way an offline one cannot**: if a block
+   * takes longer than it lasts, the device gets nothing and the gap is audible
+   * as notes cutting out at random. It is worth knowing whether that is what is
+   * happening before blaming the scheduler, so the number is measured rather
+   * than guessed at. `currentTime` is not usable here -- it advances per block --
+   * so this uses the wall clock the worklet scope exposes.
+   */
+  private worstLoad = 0;
   /** Send buses, grown on demand. A render quantum is 128 frames today. */
   private echoL = new Float32Array(128);
   private echoR = new Float32Array(128);
@@ -142,18 +168,28 @@ export class MixerProcessor extends AudioWorkletProcessor {
           this.port.postMessage({ type: 'missingSample', id: message.sampleId });
           return;
         }
-        this.mixer.play(
-          message.lfoPhase
-            ? {
-                ...message.voice,
-                sample,
-                lfoPhaseOffset: message.lfoPhase,
-                random: () => 0,
-              }
-            : { ...message.voice, sample },
-        );
+        {
+          const pan =
+            this.panWidth === 1
+              ? message.voice.pan
+              : 0.5 + (message.voice.pan - 0.5) * this.panWidth;
+          this.mixer.play(
+            message.lfoPhase
+              ? {
+                  ...message.voice,
+                  sample,
+                  pan,
+                  lfoPhaseOffset: message.lfoPhase,
+                  random: () => 0,
+                }
+              : { ...message.voice, sample, pan },
+          );
+        }
         break;
       }
+      case 'panWidth':
+        this.panWidth = message.width;
+        break;
       case 'interpolator':
         this.mixer.setEngineSampler(message.name === 'engine');
         if (message.name !== 'engine') {
@@ -187,6 +223,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
   }
 
   process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+    const began = typeof performance === 'undefined' ? 0 : performance.now();
     const output = outputs[0];
     if (!output || output.length === 0) return true;
     const left = output[0];
@@ -195,7 +232,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
     if (!this.echo && !this.reverb && !this.clip) {
       this.mixer.render(left, right);
       if (output.length > 1 && right === left) right.set(left);
-      this.report(left.length);
+      this.report(left.length, began);
       return true;
     }
 
@@ -231,16 +268,23 @@ export class MixerProcessor extends AudioWorkletProcessor {
       right[i] = dryR + (r ? r.right : 0);
     }
     if (output.length > 1 && right === left) right.set(left);
-    this.report(left.length);
+    this.report(left.length, began);
     return true; // stay alive across silence; the graph decides when to stop
   }
 
-  private report(frames: number): void {
+  private report(frames: number, began: number): void {
+    if (began > 0) {
+      const spent = performance.now() - began;
+      const budget = (frames / sampleRate) * 1000;
+      const load = budget > 0 ? spent / budget : 0;
+      if (load > this.worstLoad) this.worstLoad = load;
+    }
     this.sinceReport += frames;
     if (this.sinceReport < sampleRate / 10) return;
     this.sinceReport = 0;
     const { total, sounding } = this.mixer.counts();
-    this.port.postMessage({ type: 'voices', total, sounding });
+    this.port.postMessage({ type: 'voices', total, sounding, load: this.worstLoad });
+    this.worstLoad = 0;
   }
 }
 

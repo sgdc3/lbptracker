@@ -96,7 +96,7 @@
       <button id="prepare" class="primary" disabled>Prepare</button>
     </div>
     <details id="switches">
-      <summary>Engine switches &mdash; these are decided when you prepare</summary>
+      <summary>Engine switches</summary>
       <div class="live" style="margin-top:.9rem">
         <div class="group">
           <h3>pan width</h3>
@@ -106,8 +106,10 @@
             <output id="panWidthLabel">0.59</output>
           </div>
           <p class="hintline">
-            How much of a written pan survives to the game&rsquo;s stereo output. The measured
-            default is <code>2 &minus; &radic;2</code>; 1.00 plays the file&rsquo;s own pans.
+            Live &mdash; sweep it while it plays. How much of a written pan survives to the
+            game&rsquo;s stereo output; the measured default is <code>2 &minus; &radic;2</code>, and
+            1.00 plays the file&rsquo;s own pans. Notes already sounding keep the width they
+            started with.
           </p>
         </div>
         <div class="group">
@@ -121,13 +123,14 @@
             <label class="check"><input id="optNoCap" type="checkbox"> unlimited</label>
           </div>
           <p class="hintline">
-            The engine&rsquo;s is 32, and its stealing is decided while the song is prepared.
+            The engine&rsquo;s is 32. Its stealing is decided over the whole song at once, so
+            moving this rebuilds the plan &mdash; it does that by itself, keeping your place.
             Uncapping it plays every note, which is not the game.
           </p>
         </div>
       </div>
       <p class="hintline" id="staleNote" hidden>
-        &#9888; Changed since this song was prepared &mdash; press <b>Prepare</b> again to hear it.
+        &#9888; Rebuilding the plan for the new pool size&hellip;
       </p>
     </details>
 
