@@ -78,12 +78,34 @@ wins.** Three fields failed that and were fixed; one cannot be fixed.
 | edit | survives? | |
 |---|---|---|
 | rename the song | ✅ | the conductor's track name is the only source |
-| rename a part | ✅ | ⚠️ **was overwritten** — the meta carried a second copy and won, so a renamed part came back as `guid 129085`. The suffix a lane's track carries (`saw_wave (2)`) is stripped on the way in, exactly, because the meta says which lane it is |
+| **move a part to another row** | ✅ | it is in the track name; there is no MIDI message for a board row at all |
+| **change a part's instrument** | ✅ | ⚠️ **could not be done** — a program change is 7 bits against a six-digit GUID. It is in the track name too, and `midiToSequencer`'s `instrumentGuid` resolver turns it back |
 | change the tempo | ✅ | ⚠️ **was overwritten**; see §1 |
 | transpose the notes | ✅ | `Key` is undone by subtraction, and a transposition composes |
 | move the notes in time | ✅ | the cell list re-fits them; notes outside every declared cell open a new clip |
 | **level, pan, both sends** | ✅ | ⚠️ **were ignored** — now CC 7, CC 10, CC 91 and CC 90 on the master channel, so a DAW plays the level's own mix instead of every part flat and centred, and a fader move comes back |
-| the instrument | ❌ | a program change is 7 bits and a GUID is six digits. Bank select could be abused into 21 bits; a DAW would then show "bank 1009, program 61", which is worse than honest |
+**All ten survive.** The one that took a scheme rather than a message is the last two rows:
+
+### The track name is `row 4 - saw_wave`
+
+❗ **The label is the part's identity, not decoration.** Two of a placement's fields have no MIDI
+message at all — the board row, and the instrument, whose GUID is six digits against a program
+change's seven bits (bank select could be abused into 21 bits, but a DAW would then show "bank
+1009, program 61", which is worse than honest). So both live in the track name, which is the one
+thing about a track a DAW always lets you edit.
+
+Reading the instrument back needs the caller: only the `.rinst` manifest knows what `saw_wave` is,
+and `midiToSequencer`'s `instrumentGuid` is that map read backwards. Without one the meta's GUID
+stands and a rename changes only the row — which is also what happens to a name that resolves to
+nothing, because **a typo in a track name must not silence a part**.
+
+⚠️ **The label carries the INSTRUMENT, never `Track.name`.** The Thing's own label is empty on
+every placement of all 22 corpus levels; putting it in the track name would hide the instrument on
+the one placement that had one, and leave a rename with nothing to mean. It rides in the meta,
+where nothing else claims it.
+
+⚠️ A lane's track is `row 3 - saw_wave (2)`, and the suffix comes straight back off — the meta
+says which lane it is, so what to strip is known exactly rather than guessed at with a pattern.
 
 ⚠️ **CC 90 is undefined in the specification, and that is why it was chosen.** A delay send has
 no controller of its own anywhere in MIDI: 91 is reverb, 92 tremolo, 93 chorus, 94 celeste/detune,

@@ -733,8 +733,25 @@ export function sequencerToMidi(
   const at = (position: number) =>
     Math.round(bakeSwing ? swungFrame(position, ticksPerStep, sequencer.swing) : position * ticksPerStep);
 
-  const nameOf = (track: Track) =>
-    track.name || options.instrumentName?.(track.guid) || `guid ${track.guid}`;
+  /**
+   * A part's MIDI track name: **`row 4 - saw_wave`**.
+   *
+   * ❗ **The label is the part's identity, not decoration**, and it is the only
+   * way a DAW can move a part to another row or another instrument. A program
+   * change cannot carry the second of those -- seven bits against a six-digit
+   * GUID -- and there is no MIDI message at all for the first, so the name is
+   * where they go. `midiToSequencer` reads both back, and an `instrumentGuid`
+   * resolver turns the name into a GUID again.
+   *
+   * ⚠️ **The instrument, never the placement's own name.** `Track.name` is
+   * the Thing's label and is empty on every placement of all 22 corpus levels;
+   * putting it here instead would hide the instrument on the one placement that
+   * had one, and there would be nothing left for a rename to mean. It rides in
+   * the meta, where nothing else claims it.
+   */
+  const instrumentOf = (track: Track) =>
+    options.instrumentName?.(track.guid) || `guid ${track.guid}`;
+  const nameOf = (track: Track) => `row ${track.gridY} - ${instrumentOf(track)}`;
   const parts = partsOf(sequencer);
   const partOfTrack = new Map<number, number>();
   parts.forEach((part, index) => {
@@ -1246,6 +1263,8 @@ export function sequencerToMidi(
             // controller keeps its exact value here as well, because seven bits
             // cannot hold the editor's steps -- see the CCs above.
             guid: t.guid, gridY: t.gridY,
+            // The Thing's own label, which the track name does not carry.
+            ...(t.name ? { name: t.name } : {}),
             level: t.level, pan: t.pan, echoSend: t.echoSend, reverbSend: t.reverbSend,
             key: t.key, scale: t.scale, clips: part.clips,
             // Written only when it is not the game's current default, which is
@@ -1456,7 +1475,29 @@ const NEUTRAL = { level: 1, pan: 0.5, echoSend: 0, reverbSend: 0 };
  */
 const CHROMATIC_C = { key: 12, scale: 0 };
 
-export function midiToSequencer(bytes: Uint8Array, fallbackName = 'imported'): MidiImportResult {
+export interface MidiImportOptions {
+  /** What to call a sequencer whose file does not name one. */
+  readonly fallbackName?: string;
+  /**
+   * A track label's instrument name back to a GUID.
+   *
+   * ❗ **This is what makes changing the instrument in a DAW possible.** A
+   * program change is seven bits and a GUID is six digits, so the instrument
+   * travels in the track name -- `row 4 - saw_wave` -- and only the caller
+   * knows what `saw_wave` is. It is the same map that named it on the way out,
+   * read backwards; without one the meta's GUID simply stands and a rename
+   * changes nothing, which is the old behaviour.
+   */
+  readonly instrumentGuid?: (name: string) => number | undefined;
+}
+
+export function midiToSequencer(
+  bytes: Uint8Array,
+  options: string | MidiImportOptions = {},
+): MidiImportResult {
+  // A bare string is the old second argument; it named the sequencer.
+  const opts: MidiImportOptions = typeof options === 'string' ? { fallbackName: options } : options;
+  const fallbackName = opts.fallbackName ?? 'imported';
   const file = readMidi(bytes);
   const ticksPerStep = file.division / STEPS_PER_QUARTER;
 
@@ -1524,7 +1565,7 @@ export function midiToSequencer(bytes: Uint8Array, fallbackName = 'imported'): M
    */
   const byIdentity = new Map<string, RawPart>();
   for (const track of file.tracks) {
-    const found = readPart(track, bendRange, parts.length, zoned);
+    const found = readPart(track, bendRange, parts.length, zoned, opts);
     if (found === undefined) continue;
     unmatched += found.unmatched;
     const part = found.part;
@@ -1629,12 +1670,18 @@ function zoneOf(tracks: readonly MidiTrack[]): { zoned: boolean; bendRange?: num
  * channel is the note there, so pairing on pitch alone would cross two fingers
  * playing the same key.
  */
+/** `row 4 - saw_wave`, and what it says. */
+const LABEL = /^row (-?\d+) - ([\s\S]+)$/;
+
 function readPart(
   track: MidiTrack,
   bendRange: number,
   index: number,
   zoned: boolean,
+  options: MidiImportOptions,
 ): { part: RawPart; unmatched: number } | undefined {
+  /** The track's own name, before anything is read out of it. */
+  let label = '';
   const part: RawPart = {
     name: `track ${index + 1}`,
     guid: 0,
@@ -1662,7 +1709,11 @@ function readPart(
   }
   for (const event of track.events) {
     const text = metaString(event);
-    if (text?.type === 0x03 && text.text) part.name = text.text;
+    if (text?.type === 0x03 && text.text) {
+      label = text.text;
+      // A file that is not ours has nothing else to call the part.
+      part.name = text.text;
+    }
     if (text?.type === 0x01 && text.text.startsWith(TRK_TAG)) {
       try {
         const meta = JSON.parse(text.text.slice(TRK_TAG.length)) as Record<string, unknown>;
@@ -1677,15 +1728,34 @@ function readPart(
         // moved gets what the fader says. The same rule the tempo uses.
         const dialled = (cc: number | undefined, exact: number) =>
           cc === undefined || cc === clamp7(exact * 127) ? exact : cc / 127;
-        // ❗ A lane's track is named `part (n)` so a DAW's track list reads; the
+        // ❗ A lane's track is named `... (n)` so a DAW's track list reads; the
         // suffix is the exporter's and comes straight back off. The meta says
         // which lane this is, so what to strip is known exactly rather than
         // guessed at with a pattern.
         const lane = pick('lane', -1);
         const suffix = ` (${lane + 1})`;
-        if (lane >= 0 && part.name.endsWith(suffix)) {
-          part.name = part.name.slice(0, -suffix.length);
+        if (lane >= 0 && label.endsWith(suffix)) label = label.slice(0, -suffix.length);
+
+        // ❗ **`row 4 - saw_wave` is where the row and the instrument live**,
+        // because MIDI has no message for either: nothing at all for a board
+        // row, and a program change is seven bits against a six-digit GUID. So
+        // the track name is the one thing a DAW can edit to move a part, and it
+        // is read back here.
+        //
+        // ⚠️ The meta still carries both, and the same rule settles a
+        // disagreement as for the tempo and the mixer: the label wins only when
+        // it says something different. A name that resolves to no GUID leaves
+        // the meta's alone rather than dropping the instrument -- a typo in a
+        // track name must not silence a part.
+        const parsed = LABEL.exec(label);
+        if (parsed) {
+          const row = Number(parsed[1]);
+          if (Number.isInteger(row)) part.gridY = row;
+          const guid = options.instrumentGuid?.(parsed[2]);
+          if (guid !== undefined) part.guid = guid;
         }
+        // The Thing's own label, which the track name never carried.
+        part.name = typeof meta.name === 'string' ? meta.name : '';
         part.level = dialled(mixer.get(7), pick('level', NEUTRAL.level));
         part.pan = dialled(mixer.get(10), pick('pan', NEUTRAL.pan));
         part.reverbSend = dialled(mixer.get(91), pick('reverbSend', NEUTRAL.reverbSend));

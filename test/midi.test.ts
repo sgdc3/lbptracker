@@ -606,23 +606,23 @@ test('the mixer rides on CC 7, 10, 91 and 90, and a fader move wins', () => {
   assert.equal(midiToSequencer(edited).sequencer.tracks[0].pan, 0);
 });
 
-test('renaming a part in a DAW survives the trip back', () => {
-  // ⚠️ The `LBP-TRK` meta used to carry a second copy of the name, and the
-  // copy won: a part renamed in a DAW came back as the name the level had --
-  // which for the corpus is no name at all, so `guid 129085`. The track name
-  // meta is the only source now.
-  const seq = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]], { name: 'kalimba' })]);
+test('a part with no meta at all takes its name from the track', () => {
+  // A file from somewhere else has no `LBP-TRK`, so the track name is all there
+  // is -- and it is taken whole, since `row N - ` is our own scheme and a
+  // stranger's file will not follow it.
+  const seq = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]])]);
   const file = readMidi(sequencerToMidi(seq).bytes);
-  const renamed = writeMidi({
+  const stripped = writeMidi({
     format: 1, division: file.division,
-    tracks: file.tracks.map((t, i) => (i === 0 ? t : {
-      events: t.events.map((e) => {
-        const m = metaString(e);
-        return m?.type === 0x03 ? metaText(e.tick, 0x03, 'My Bass') : e;
-      }),
+    tracks: file.tracks.map((t) => ({
+      events: t.events
+        .filter((e) => metaString(e)?.type !== 0x01)
+        .map((e) => (metaString(e)?.type === 0x03 ? metaText(e.tick, 0x03, 'Whatever') : e)),
     })),
   });
-  assert.equal(midiToSequencer(renamed).sequencer.tracks[0].name, 'My Bass');
+  const back = midiToSequencer(stripped);
+  assert.equal(back.ours, false);
+  assert.equal(back.sequencer.tracks[0].name, 'Whatever');
 });
 
 test('the record patch is written only for what MIDI could not say', () => {
@@ -872,17 +872,56 @@ test('the header survives a re-export, so a file can go round twice', () => {
   assert.equal(twice.numChannels, 2);
 });
 
-test('the track name reaches the file and comes back', () => {
-  const seq = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]], { name: 'lbp3/piano', guid: 4242 })]);
+test('a track is named for its row and instrument, and the Thing name rides along', () => {
+  // ❗ The label is `row N - INSTRUMENT` because those two have no MIDI message
+  // of their own and the name is the only thing a DAW can edit to change them.
+  // `Track.name` is the Thing's own label -- empty on every corpus placement --
+  // and it goes in the meta, where nothing else claims it.
+  const seq = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]], {
+    name: 'lbp3/piano', guid: 4242, gridY: 7,
+  })]);
   const { exported, imported } = roundTrip(seq);
   const names = readMidi(exported.bytes)
     .tracks.flatMap((t) => t.events)
     .map(metaString)
     .filter((m) => m?.type === 0x03)
     .map((m) => m?.text);
-  assert.ok(names.includes('lbp3/piano'), `track names: ${names.join(', ')}`);
+  assert.ok(names.includes('row 7 - guid 4242'), `track names: ${names.join(', ')}`);
   assert.equal(imported.sequencer.tracks[0].name, 'lbp3/piano');
+  assert.equal(imported.sequencer.tracks[0].gridY, 7);
   assert.equal(imported.sequencer.tracks[0].guid, 4242, 'and the GUID, so it plays the same sample');
+});
+
+test('renaming a track moves the part to another row and instrument', () => {
+  // ❗ **The one thing a DAW could not do before.** A program change is seven
+  // bits against a six-digit GUID and there is no message at all for a board
+  // row, so both live in the track name -- and only the caller's own manifest
+  // can turn `piano` back into a GUID.
+  const seq = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]], { guid: 4242, gridY: 7 })]);
+  const bytes = sequencerToMidi(seq, {
+    instrumentName: (guid) => (guid === 4242 ? 'saw_wave' : 'piano'),
+  }).bytes;
+  const file = readMidi(bytes);
+  const renamed = writeMidi({
+    format: 1, division: file.division,
+    tracks: file.tracks.map((t, i) => (i === 0 ? t : {
+      events: t.events.map((e) => {
+        const m = metaString(e);
+        return m?.type === 0x03 ? metaText(e.tick, 0x03, 'row 2 - piano') : e;
+      }),
+    })),
+  });
+  const moved = midiToSequencer(renamed, {
+    instrumentGuid: (name) => (name === 'piano' ? 9999 : undefined),
+  }).sequencer;
+  assert.equal(moved.tracks[0].gridY, 2, 'the row moved');
+  assert.equal(moved.tracks[0].guid, 9999, 'and so did the instrument');
+
+  // ⚠️ A name nothing resolves leaves the GUID alone: a typo in a track name
+  // must not silence a part.
+  const typo = midiToSequencer(renamed, { instrumentGuid: () => undefined }).sequencer;
+  assert.equal(typo.tracks[0].guid, 4242, 'the meta still says what to play');
+  assert.equal(typo.tracks[0].gridY, 2, 'but the row is plain enough to read');
 });
 
 test('a glide keeps its channel when flat notes are competing for it', () => {
@@ -1088,14 +1127,13 @@ test('a track is named after its instrument when the level does not name it', ()
   const names = (file: ReturnType<typeof readMidi>) =>
     file.tracks.flatMap((t) => t.events).map(metaString).filter((m) => m?.type === 0x03).map((m) => m?.text);
 
-  assert.ok(names(bare).includes('guid 148321'), 'the GUID is the fallback, not the goal');
-  assert.ok(names(named).includes('baiyon_drums_1'));
-  // And it survives a round trip, so re-importing shows the name too.
+  assert.ok(names(bare).includes('row 0 - guid 148321'), 'the GUID is the fallback, not the goal');
+  assert.ok(names(named).includes('row 0 - baiyon_drums_1'));
+  // And the GUID still says what to play, whatever the label reads.
   const back = midiToSequencer(
     sequencerToMidi(seq, { instrumentName: () => 'baiyon_drums_1' }).bytes,
   );
-  assert.equal(back.sequencer.tracks[0].name, 'baiyon_drums_1');
-  assert.equal(back.sequencer.tracks[0].guid, 148321, 'and the GUID still says what to play');
+  assert.equal(back.sequencer.tracks[0].guid, 148321);
 });
 
 test('the board cells come back, because the file remembers them', () => {
@@ -1201,9 +1239,9 @@ test('a part too polyphonic for one zone is split across tracks, and merged back
   for (let i = 0; i < 20; i += 1) {
     notes.push([{ step: 0, pitch: 40 + i }, { step: 15, pitch: 52 + i }]);
   }
-  const seq = makeSequencer([makeTrack(notes, { guid: 7, gridY: 3, name: 'saw_wave' })]);
+  const seq = makeSequencer([makeTrack(notes, { guid: 7, gridY: 3 })]);
 
-  const split = sequencerToMidi(seq);
+  const split = sequencerToMidi(seq, { instrumentName: () => 'saw_wave' });
   assert.equal(split.flattened, 0, 'two lanes hold twenty glides where one cannot');
   assert.equal(split.dropped, 0);
   assert.equal(split.parts, 1, 'and it is still reported as one part');
@@ -1214,13 +1252,13 @@ test('a part too polyphonic for one zone is split across tracks, and merged back
     .map(metaString)
     .filter((m) => m?.type === 0x03)
     .map((m) => m?.text);
-  assert.ok(named.includes('saw_wave (1)'), `lanes are named: ${named.join(', ')}`);
-  assert.ok(named.includes('saw_wave (2)'));
+  assert.ok(named.includes('row 3 - saw_wave (1)'), `lanes are named: ${named.join(', ')}`);
+  assert.ok(named.includes('row 3 - saw_wave (2)'));
 
   // And they come back as one placement, with the glide intact.
   const { sequencer } = midiToSequencer(split.bytes);
   assert.equal(sequencer.tracks.length, 1, 'the lanes merged back into one clip');
-  assert.equal(sequencer.tracks[0].name, 'saw_wave', 'under the part name, not a lane name');
+  assert.equal(sequencer.tracks[0].gridY, 3, 'on the row the label named, not a lane');
   assert.deepEqual(music(sequencer), music(seq));
 });
 

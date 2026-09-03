@@ -363,7 +363,18 @@ async function openMidi(file: File): Promise<void> {
   $('inReport').classList.remove('on');
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
-    imported = midiToSequencer(bytes, file.name.replace(/\.midi?$/i, ''));
+    imported = midiToSequencer(bytes, {
+      fallbackName: file.name.replace(/\.midi?$/i, ''),
+      // ❗ The same manifest that named the GUIDs on the way out, read
+      // backwards: it is what lets a track renamed `row 4 - piano` in a DAW
+      // come back playing the piano.
+      instrumentGuid: (name) => {
+        for (const [guid, entry] of rinstIndex ?? []) {
+          if (entry.file.replace('.rinst', '') === name) return guid;
+        }
+        return undefined;
+      },
+    });
     rinstIndex = rinstIndex ?? (await manifest('fixtures/rinst'));
 
     const lost: string[] = [];
