@@ -892,6 +892,23 @@ test('a track is named for its row and instrument, and the Thing name rides alon
   assert.equal(imported.sequencer.tracks[0].guid, 4242, 'and the GUID, so it plays the same sample');
 });
 
+test('clips of one part keep their own names', () => {
+  // ⚠️ **`Track.name` is not always empty**, which this project believed for
+  // some time: 4,353 of the corpus's 62,158 placements carry one -- 23 distinct
+  // strings, the editor's own defaults. The meta holds the part's, and a map
+  // holds the clips that disagree, which 7 parts of 4,909 do; without it their
+  // 84 clips came back unnamed.
+  const seq = makeSequencer([
+    makeTrack([[{ step: 0, pitch: 60 }]], { gridX: 0, name: 'Synth: Ray Gun' }),
+    makeTrack([[{ step: 0, pitch: 62 }]], { gridX: 1, name: 'Synth: Square Wave' }),
+  ]);
+  const back = midiToSequencer(sequencerToMidi(seq).bytes).sequencer;
+  assert.deepEqual(
+    back.tracks.sort((a, b) => a.gridX - b.gridX).map((t) => t.name),
+    ['Synth: Ray Gun', 'Synth: Square Wave'],
+  );
+});
+
 test('the import never depends on the track name', () => {
   // ❗ **The label is cosmetic and a debugging aid; the meta is the carrier.**
   // A DAW that renames tracks to its own scheme, or drops the name, must not

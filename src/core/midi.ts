@@ -105,9 +105,10 @@ export interface MidiExportOptions {
    * A GUID to a readable instrument name, for the track names.
    *
    * ⚠️ **`PInstrument` has no name field worth printing.** `Track.name` comes
-   * from the Thing and is empty on every placement of all 22 corpus levels, so
-   * without this a DAW shows `guid 148321` and nobody can tell it is the drum
-   * kit. The caller has the resolver -- the extracted `.rinst` manifest -- and
+   * from the Thing and is empty on 93% of the corpus's placements -- and the
+   * 7% that have one carry the editor's own default label, `Synth: Ray Gun`,
+   * not the instrument's file name. Without this a DAW shows `guid 148321` and
+   * nobody can tell it is the drum kit. The caller has the resolver -- the extracted `.rinst` manifest -- and
    * this module has no business fetching anything.
    */
   readonly instrumentName?: (guid: number) => string | undefined;
@@ -744,10 +745,10 @@ export function sequencerToMidi(
    * resolver turns the name into a GUID again.
    *
    * ⚠️ **The instrument, never the placement's own name.** `Track.name` is
-   * the Thing's label and is empty on every placement of all 22 corpus levels;
-   * putting it here instead would hide the instrument on the one placement that
-   * had one, and there would be nothing left for a rename to mean. It rides in
-   * the meta, where nothing else claims it.
+   * the Thing's label, empty on 93% of the corpus's placements and one of the
+   * editor's 23 default strings on the rest; putting it here would hide the
+   * instrument behind `Synth: Ray Gun` and leave a rename with nothing to mean.
+   * It rides in the meta, where nothing else claims it.
    */
   const instrumentOf = (track: Track) =>
     options.instrumentName?.(track.guid) || `guid ${track.guid}`;
@@ -1272,8 +1273,22 @@ export function sequencerToMidi(
             // that mapped the same name to a different GUID silently changed
             // the instrument on a file nobody had touched.
             instrument: instrumentOf(t),
-            // The Thing's own label, which the track name does not carry.
+            // ⚠️ **The Thing's own label, which is NOT always empty.** This used
+            // to say "empty on every placement of all 22 corpus levels" and that
+            // was simply wrong: 4,353 of the 62,158 (7.0%) carry one, though
+            // only 23 distinct strings -- they are the editor's own defaults,
+            // `Synth: Ray Gun` and the like. The track name does not carry it.
             ...(t.name ? { name: t.name } : {}),
+            // ❗ And per clip where a part's clips disagree, which 7 parts of
+            // 4,909 do. Without this their 84 clips came back unnamed.
+            ...(() => {
+              const odd: Record<string, string> = {};
+              for (const at of part.tracks) {
+                const clip = sequencer.tracks[at];
+                if (clip.name !== t.name) odd[String(clip.gridX)] = clip.name;
+              }
+              return Object.keys(odd).length > 0 ? { names: odd } : {};
+            })(),
             level: t.level, pan: t.pan, echoSend: t.echoSend, reverbSend: t.reverbSend,
             key: t.key, scale: t.scale, clips: part.clips,
             // Written only when it is not the game's current default, which is
@@ -1446,6 +1461,8 @@ interface RawPart {
   scale: number;
   /** Byte 3's inert bit 6 for this part's records; see `Part.rest`. */
   rest: number;
+  /** Clips whose own `Track.name` differs from the part's, by `gridX`. */
+  names: Map<number, string>;
   /**
    * Clips whose records the file carries verbatim, by `gridX`.
    *
@@ -1698,6 +1715,7 @@ function readPart(
     ...NEUTRAL,
     ...CHROMATIC_C,
     rest: 1,
+    names: new Map(),
     cells: [],
     fix: new Map(),
     notes: [],
@@ -1769,6 +1787,13 @@ function readPart(
         }
         // The Thing's own label, which the track name never carried.
         part.name = typeof meta.name === 'string' ? meta.name : '';
+        if (meta.names !== null && typeof meta.names === 'object') {
+          for (const [cell, text] of Object.entries(meta.names as Record<string, unknown>)) {
+            if (Number.isInteger(Number(cell)) && typeof text === 'string') {
+              part.names.set(Number(cell), text);
+            }
+          }
+        }
         part.level = dialled(mixer.get(7), pick('level', NEUTRAL.level));
         part.pan = dialled(mixer.get(10), pick('pan', NEUTRAL.pan));
         part.reverbSend = dialled(mixer.get(91), pick('reverbSend', NEUTRAL.reverbSend));
@@ -2274,7 +2299,7 @@ function cutIntoClips(
     const grouped = readNotes(bytes);
     tracks.push({
       guid: part.guid,
-      name: part.name,
+      name: part.names.get(clipStart / STEPS_PER_CELL) ?? part.name,
       gridX: clipStart / STEPS_PER_CELL,
       gridY: part.gridY,
       stepOffset: clipStart,

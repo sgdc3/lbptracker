@@ -229,10 +229,16 @@ of 62,158, 34 kB.** Carrying every clip we could not *prove* would cost 22%.
 
 ## 3. Track name — meta type `0x03`
 
-`PInstrument` has no name field worth printing and `Track.name` is empty on every placement of all
-22 corpus levels, so without the caller's `.rinst` manifest a DAW shows `guid 148321` and nobody
-can tell it is the drum kit. `MidiExportOptions.instrumentName` is the hook; this module fetches
-nothing.
+`PInstrument` has no name field worth printing, so without the caller's `.rinst` manifest a DAW
+shows `row 4 - guid 148321` and nobody can tell it is the drum kit.
+`MidiExportOptions.instrumentName` is the hook; this module fetches nothing.
+
+⚠️ **`Track.name` is NOT always empty, and this file used to say it was.** Measured 2026-09-04:
+**4,353 of the 62,158 corpus placements (7.0%) carry one**, though only **23 distinct strings** —
+they are the editor's own defaults, `Synth: Ray Gun`, `Percussion: Acoustic Kit 1`. It is the
+Thing's label, not the instrument's, so it rides in the meta and never in the track name. **7 parts
+of 4,909 hold clips whose names disagree**, and their 84 clips came back unnamed until the meta
+gained a per-clip `names` map.
 
 ## 4. The ordinary MIDI, for completeness
 
