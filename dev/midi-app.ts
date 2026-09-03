@@ -43,6 +43,7 @@ const bendInput = $<HTMLInputElement>('bendRange');
 const splitSelect = $<HTMLSelectElement>('split');
 const perPart = $<HTMLInputElement>('perPart');
 const autoBend = $<HTMLInputElement>('autoBend');
+const exactBox = $<HTMLInputElement>('exact');
 const logBox = $<HTMLDivElement>('log');
 
 let project: LevelProject | undefined;
@@ -92,6 +93,7 @@ function options() {
     mpe: modeSelect.value === 'mpe',
     bakeSwing: bakeSwing.checked,
     channelsPerPart: perPart.checked,
+    exact: exactBox.checked,
     // The level stores no name on a placement, so without this every track in
     // the file is called `guid 148321` and a DAW is unreadable.
     instrumentName: (guid: number) => rinstIndex?.get(guid)?.file.replace('.rinst', ''),
@@ -190,6 +192,9 @@ function convert(): void {
     ...(exported.sharedChannel > 0
       ? [{ value: exported.sharedChannel.toLocaleString(), label: 'shared a channel' }]
       : []),
+    ...(exported.patched > 0
+      ? [{ value: exported.patched.toLocaleString(), label: 'clips carried whole' }]
+      : []),
     ...(lost.length === 0 ? [{ value: '✓', label: 'nothing lost' }] : []),
   ]);
   $('lost').innerHTML = lost.map((line) => `<li>${line}</li>`).join('');
@@ -219,6 +224,8 @@ const asSplit = (seq: { name: string; uid: number }, result: MidiExportResult): 
     dropped: result.dropped,
     clampedPitch: result.clampedPitch,
     clampedBend: result.clampedBend,
+    patched: result.patched,
+    unpatched: result.unpatched,
   };
 };
 
@@ -252,7 +259,7 @@ const showBend = () => {
     : `±${bendInput.value}`;
   bendInput.disabled = autoBend.checked;
 };
-for (const el of [modeSelect, bakeSwing, bendInput, autoBend, splitSelect, perPart]) {
+for (const el of [modeSelect, bakeSwing, bendInput, autoBend, splitSelect, perPart, exactBox]) {
   el.addEventListener('change', () => {
     showBend();
     convert();

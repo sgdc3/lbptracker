@@ -1397,6 +1397,51 @@ inferred masks.
 and what the voice record's `+0x3e`/`+0x3f` pair counts — start and end of the note in thirds of a
 step. That closes the lead recorded earlier against open question 3.
 
+### Bit 30 has a resting value, and it is the editor's, not the engine's
+
+⚠️ **`subStep = bit7 << bit30`, so bit 30 says nothing at all on a record whose bit 7 is clear — and
+the editor writes it there anyway.** Measured 2026-09-03 over the ten levels that parse, 1,448,224
+records: of the 1,439,351 sitting at sub-step 0, **971,954 carry bit 30 and 467,397 do not**. The
+engine cannot tell them apart; a byte comparison can.
+
+What decides it is the **file**, not the note. Per level, with the resource revision:
+
+| revision | bit 30 set at sub-step 0 | clear |
+|---|---|---|
+| 0x3b8 | 0 | 263,412 |
+| 0x3e2 | 83,653 | 203,945 |
+| 0x3e6 | 161,397 | 40 |
+| 0x3e7, 0x3ec, 0x3ee, 0x3ef, 0x3f4, 0x3f8, 0x3f9 | all | 0 |
+
+The oldest level sets it on nothing, everything from 0x3e7 up sets it on everything, and the two
+either side of the change hold both — which is what a level saved across an editor change looks
+like. It is uniform within a note in **953,777 of 953,791**, within a clip in **62,075 of 62,106**,
+and within a whole sequencer in **141 of 149**.
+
+⚠️ **Do not confuse this with the sub-step.** A record at sub-step 1 must have bit 30 CLEAR and one
+at sub-step 2 must have it SET, whatever the file rests at. Every level that sets the resting bit
+still carries both thirds — `0x3ee` has 163 records at one third and 166 at two — so the sub-step
+decoding is not an artefact of this.
+
+⚠️ **It was worth measuring because dropping it is invisible until it isn't.** Nothing sounds
+different, and `src/core/midi.ts` reconstructing byte 3 as `modulation | (subStep === 2 ? 0x40 : 0)`
+made **78% of the corpus's clips** come back as a different file. It now travels per clip in the
+`LBP-TRK` meta.
+
+### The order records are written in
+
+Measured the same day, over the 27,124 corpus clips that hold two notes at one position: the
+author's order is **position ascending, then pitch DESCENDING**, on **27,124 of 27,124**. (42 are
+also consistent with ascending, and in those every tie is a unison.) Clips are in position order at
+all in 58,693 of 59,029.
+
+⚠️ **`Note.points` is not the file's order either.** `makeNote` sorts a chain's records into
+position order, and real files do store them out of it — `Wayward` has a two-record note written
+step 28 first and step 23 second, **with the end flag on the second**. Re-encoding the sorted note
+therefore puts the end flag in the middle and leaves the last record trailing. `Track.records`
+carries the file's own bytes for exactly this reason; anything comparing or rewriting records byte
+for byte has to use it.
+
 ### Where the DSP's state comes from — measured 2026-09-02
 
 **The eboot owns it, all 6,992 bytes of it, and hands it to the PRX by pointer.**

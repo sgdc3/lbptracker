@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { readNotes, NOTE_RECORD_SIZE } from '../src/core/notes.ts';
 import { STEPS_PER_CELL, schedule, type Sequencer, type Track } from '../src/core/project.ts';
-import { blockRoot, notePitch } from '../src/core/scale.ts';
+import { blockRoot, notePitch, quantise, unquantise, MAX_SCALE } from '../src/core/scale.ts';
 import {
   DEFAULT_PPQ,
   STEPS_PER_QUARTER,
@@ -42,7 +42,7 @@ function makeTrack(notes: Point[][], over: Partial<Track> = {}): Track {
   return {
     guid: 1234, name: 'test', gridX: 0, gridY: 0, stepOffset: 0,
     level: 1, pan: 0.5, echoSend: 0, reverbSend: 0, key: 0, scale: 0,
-    notes: grouped.notes, trailingRecords: grouped.trailing.length,
+    notes: grouped.notes, records: bytes, trailingRecords: grouped.trailing.length,
     ...over,
   };
 }
@@ -324,11 +324,14 @@ test('a glide comes back as the two points it was written with', () => {
   assert.equal(points[1].pitch, 60);
 });
 
-test('Key is put back; Scale cannot be, and the notes still sound right', () => {
+test('Key and Scale both come back, by different means', () => {
   // ⚠️ The exporter folds both into the note numbers so the file plays
   // anywhere. Undoing that is the difference between a transposition and a
   // projection: `blockRoot(key) - 12` is invertible, `quantise` is measured NOT
-  // to be idempotent, so a scaled placement has no pitch to un-snap to.
+  // to be idempotent, so the scale is undone by taking the LOWEST note that
+  // snaps to the one the file names -- which always sounds right and only
+  // reproduces the author's own field where they wrote on the scale. The record
+  // patch covers the rest, which is why the default export is exact either way.
 
   // A key alone: the placement comes back exactly as it was written.
   const keyed = makeSequencer([
@@ -343,17 +346,114 @@ test('Key is put back; Scale cannot be, and the notes still sound right', () => 
   );
   assert.deepEqual(music(back), music(keyed));
 
-  // A scale: chromatic on the way back, sounding exactly what the file says.
   const scaled = makeSequencer([
     makeTrack([[{ step: 0, pitch: 61 }], [{ step: 4, pitch: 66 }]], { key: 14, scale: 2 }),
   ]);
   const t = scaled.tracks[0];
   const heard = [61, 66].map((p) => notePitch(p, t.scale, blockRoot(t.key)));
-  const flat = midiToSequencer(sequencerToMidi(scaled).bytes).sequencer;
-  assert.equal(flat.tracks[0].scale, 0, 'no scale to un-snap to');
-  assert.equal(flat.tracks[0].key, 12, 'so it comes back chromatic C');
-  assert.deepEqual(flat.tracks[0].notes.map((n) => n.points[0].pitch), heard);
-  assert.deepEqual(music(flat), music(scaled));
+
+  // Without the patch: the placement is right and sounds right, but 61 and 66
+  // are off the natural minor and come back as the tones they snapped to.
+  const loose = midiToSequencer(sequencerToMidi(scaled, { exact: false }).bytes).sequencer;
+  assert.equal(loose.tracks[0].scale, 2, 'the scale is restored');
+  assert.equal(loose.tracks[0].key, 14, 'and the key with it');
+  assert.deepEqual(loose.tracks[0].notes.map((n) => n.points[0].pitch), [60, 65]);
+  assert.deepEqual(
+    loose.tracks[0].notes.map((n) => notePitch(n.points[0].pitch, 2, blockRoot(14))),
+    heard,
+    'a different field, the same sound',
+  );
+  assert.deepEqual(music(loose), music(scaled));
+
+  // With it, which is the default: the author's own fields come back.
+  const exact = sequencerToMidi(scaled);
+  assert.equal(exact.patched, 1, 'the clip could not be said in MIDI alone');
+  const tight = midiToSequencer(exact.bytes).sequencer;
+  assert.deepEqual(tight.tracks[0].notes.map((n) => n.points[0].pitch), [61, 66]);
+  assert.deepEqual([...tight.tracks[0].records], [...scaled.tracks[0].records]);
+});
+
+test('an off-scale note has a preimage only where the scale reaches it', () => {
+  // The tables are non-decreasing, so a tone the scale contains is its own
+  // lowest preimage and `unquantise` is the identity on it.
+  for (let scale = 0; scale <= MAX_SCALE; scale += 1) {
+    for (let note = 0; note < 128; note += 1) {
+      const snapped = quantise(note, scale);
+      assert.equal(
+        quantise(unquantise(snapped, scale), scale),
+        snapped,
+        `scale ${scale} note ${note}`,
+      );
+    }
+  }
+  // Natural minor reaches no 1, 4, 6, 9 or 11, and those come back untouched.
+  for (const off of [1, 4, 6, 9, 11]) assert.equal(unquantise(60 + off, 2), 60 + off);
+});
+
+test('byte 3 keeps its resting bit 6, per clip', () => {
+  // ⚠️ Inert -- the engine reads it only when byte 0's bit 7 is set -- and
+  // still a fact about the file: eight of the ten corpus levels set it on every
+  // record and the oldest sets it on none. Dropping it made 78% of the corpus's
+  // clips come back different.
+  const set = makeTrack([[{ step: 0, pitch: 60 }]], { gridX: 0 });
+  const clear = makeTrack([[{ step: 0, pitch: 60 }]], { gridX: 1 });
+  set.records[3] |= 0x40;
+  clear.records[3] &= ~0x40;
+  const seq = makeSequencer([set, clear]);
+  const back = midiToSequencer(sequencerToMidi(seq).bytes).sequencer;
+  const at = (x: number) => back.tracks.find((t) => t.gridX === x)!;
+  assert.equal(at(0).records[3] & 0x40, 0x40, 'the set clip keeps it');
+  assert.equal(at(1).records[3] & 0x40, 0, 'the clear clip keeps it clear');
+});
+
+test('a sub-step record still owns bit 6, whatever the clip rests at', () => {
+  // ❗ The bit is the sub-step's high half when byte 0's bit 7 is set, so a
+  // record at a third must have it CLEAR and one at two thirds must have it SET,
+  // no matter what the rest of the clip does.
+  const seq = makeSequencer([
+    makeTrack([
+      [{ step: 0, pitch: 60 }],
+      [{ step: 1, subStep: 1, pitch: 62 }],
+      [{ step: 2, subStep: 2, pitch: 64 }],
+    ]),
+  ]);
+  seq.tracks[0].records[3] |= 0x40;
+  const back = midiToSequencer(sequencerToMidi(seq).bytes).sequencer;
+  const points = back.tracks[0].notes.map((n) => n.points[0]);
+  assert.deepEqual(points.map((p) => p.subStep), [0, 1, 2]);
+  assert.deepEqual(points.map((p) => p.timbre & 0x40), [0x40, 0, 0x40]);
+});
+
+test('the two fields MIDI has no room for come back through the patch', () => {
+  // ⚠️ **Both are zero in all 1,448,224 corpus records**, so this is the only
+  // place either is exercised: a volume above 127, which MIDI has no velocity
+  // for, and `timbre` bits 4-5, the per-block table select that picks one of
+  // four level/pan/send records and that nothing in `render.ts` reads either.
+  // They cost nothing to carry because the patch already exists for the clips
+  // that need it -- but a level unlike any of the 22 would need them.
+  const built = makeTrack([[{ step: 0, pitch: 60 }], [{ step: 4, pitch: 62 }]]);
+  built.records[2] = 200;
+  built.records[7] |= 0x30;
+  const grouped = readNotes(built.records);
+  const track: Track = {
+    ...built, notes: grouped.notes, trailingRecords: grouped.trailing.length,
+  };
+  const seq = makeSequencer([track]);
+
+  const loose = midiToSequencer(sequencerToMidi(seq, { exact: false }).bytes).sequencer;
+  assert.equal(loose.tracks[0].records[2], 127, 'MIDI alone clamps the volume');
+  assert.equal(loose.tracks[0].records[7] & 0x30, 0, 'and cannot say the table select');
+
+  const tight = midiToSequencer(sequencerToMidi(seq).bytes).sequencer;
+  assert.deepEqual([...tight.tracks[0].records], [...track.records]);
+});
+
+test('the record patch is written only for what MIDI could not say', () => {
+  // A plain clip needs none of it, and says so.
+  const plain = sequencerToMidi(makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]])]));
+  assert.equal(plain.patched, 0);
+  assert.equal(plain.unpatched, 0);
+  assert.ok(!new TextDecoder().decode(plain.bytes).includes('"fix"'));
 });
 
 test('the mixer travels in the header — divergence 5', () => {

@@ -38,6 +38,19 @@ const LEVELS = process.env.LBP_LEVELS ?? 'C:/Users/sgdc3/Desktop/LBP/toolkit/too
  */
 const perPart = process.env.LBP_MIDI_PERPART === '1';
 
+/**
+ * `LBP_MIDI_LOOSE=1` exports without the verbatim record patch.
+ *
+ * ⚠️ **The two settings measure different things and both are worth
+ * having.** With the patch on -- the default, and what the app writes -- the
+ * round trip is exact down to the bytes, which makes `flattened` and `dropped`
+ * descriptions of what a FOREIGN reader loses rather than of what comes back.
+ * With it off, the file is MIDI and nothing else, and the counters mean what
+ * they used to: this is the setting that says how much of the music survives
+ * without our metas.
+ */
+const loose = process.env.LBP_MIDI_LOOSE === '1';
+
 /** The note stream, in the terms a MIDI file can carry. */
 function music(sequencer: Sequencer) {
   return schedule(sequencer).map((event) => {
@@ -105,7 +118,12 @@ let bent = 0;
 const totals = {
   shared: 0, dropped: 0, clampedPitch: 0, clampedBend: 0, bytes: 0, lengthened: 0,
   flattened: 0, deviating: 0, automated: 0, dragged: 0, timbred: 0,
+  clips: 0, clipsChanged: 0, records: 0, patched: 0, unpatched: 0,
 };
+
+/** What `partsOf` groups on, plus the cell: a clip's identity across a trip. */
+const clipKey = (t: Sequencer['tracks'][number]) =>
+  [t.guid, t.gridY, t.level, t.pan, t.echoSend, t.reverbSend, t.key, t.scale, t.gridX].join('|');
 
 for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
   if (!entry.isFile()) continue;
@@ -122,7 +140,10 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
   for (const seq of project.sequencers) {
     if (seq.tracks.length === 0) continue;
     sequencers += 1;
-    const exported = sequencerToMidi(seq, { channelsPerPart: perPart });
+    const exported = sequencerToMidi(seq, {
+      channelsPerPart: perPart,
+      ...(loose ? { exact: false } : {}),
+    });
     const imported = midiToSequencer(exported.bytes);
     totals.shared += exported.sharedChannel;
     totals.flattened += exported.flattened;
@@ -136,6 +157,8 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
     totals.clampedBend += exported.clampedBend;
     totals.bytes += exported.bytes.length;
     totals.lengthened += imported.lengthened;
+    totals.patched += exported.patched;
+    totals.unpatched += exported.unpatched;
 
     // ⚠️ **Compared as a multiset, not in order.** `schedule` sorts by step and
     // then by track index, and the import legitimately renumbers tracks: clips
@@ -149,7 +172,37 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
     notes += before.length;
     const problems: string[] = [];
     let missing = 0;
-    if (after.length !== before.length - exported.dropped) {
+
+    // ❗ **The bytes, which is the strongest thing this can say.** The music
+    // comparison below is what the round trip was built to satisfy; this is
+    // whether the file that comes back IS the file that went in, record for
+    // record, and it is the patch's whole purpose. `Track.records` is the
+    // level's own note data -- never a re-encoding of `notes`, which sorts a
+    // chain's records into position order and real files do not.
+    const afterRecords = new Map<string, Uint8Array>();
+    for (const t of imported.sequencer.tracks) afterRecords.set(clipKey(t), t.records);
+    for (const t of seq.tracks) {
+      totals.clips += 1;
+      totals.records += t.records.length / 4;
+      const theirs = afterRecords.get(clipKey(t));
+      if (theirs !== undefined
+        && theirs.length === t.records.length
+        && theirs.every((v, i) => v === t.records[i])) continue;
+      totals.clipsChanged += 1;
+      // Without the patch this is expected -- that is what the patch is for --
+      // so it is counted either way and only fails the run when it is on.
+      if (!loose && problems.length < 3) {
+        problems.push(`clip at ${t.gridX},${t.gridY}: records differ`);
+      }
+    }
+
+    // ⚠️ **A dropped note comes BACK when the patch is on**, because the
+    // clip that lost it diverges and is therefore carried verbatim. So the
+    // count is a range, not an equality: never fewer than the export declared
+    // it could carry, never more than went in. Holding it to the equality
+    // blamed `Avian` for the one note MPE cannot express and the patch restores.
+    const fewest = before.length - (loose ? exported.dropped : 0);
+    if (after.length < fewest || after.length > before.length) {
       problems.push(`${before.length} notes out, ${after.length} back`);
     }
     /**
@@ -283,28 +336,40 @@ console.log(
     `moved by one; ${totals.dropped} could not be carried, ${totals.clampedPitch} ` +
     `pitches and ${totals.clampedBend} bends clamped, ${totals.lengthened} lengthened to the grid`,
 );
+console.log(
+  loose
+    ? `no record patch: MIDI events alone -- ${totals.clipsChanged} of ` +
+      `${totals.clips.toLocaleString()} clips would have needed one`
+    : `${totals.clips.toLocaleString()} clips, ${totals.records.toLocaleString()} records: ` +
+      `${totals.clipsChanged} came back different; ` +
+      `${totals.patched.toLocaleString()} clips carried verbatim, ${totals.unpatched} unpatchable`,
+);
 /**
  * What this gates on, and what it only reports.
  *
- * Gated, because they are exact: every note comes back, on the same third of a
- * step, at the same pitch, for the same length, with the same modulation, and
- * an intact note's curve stays within the half unit that integer fields round
- * by.
+ * ❗ **With the patch on, the gate is the bytes.** Every clip of the corpus
+ * has to come back record for record; the music comparison stays because it is
+ * what says the file is right for a reader that has never heard of us, but a
+ * byte difference is now a failure on its own.
+ *
+ * Gated on either setting, because they are exact: every note comes back, on
+ * the same third of a step, at the same pitch, for the same length, with the
+ * same modulation, and an intact note's curve stays within the half unit that
+ * integer fields round by.
  *
  * Reported, because the two counters are not strictly nested: `flattened` is
  * what the export declared it could not carry whole, and `deviating` is what
- * measurably changed. A flattened note whose glide was smaller than the
- * quantiser lands in the first and not the second, so the difference can fall
- * either way. It currently runs at **2 notes in 953,791** unaccounted for --
- * 0.0002%, and not chased further; every category found so far is fixed and
- * has a note in `src/core/midi.ts` saying what it was.
+ * measurably changed. ⚠️ **With the patch on they are not comparable at
+ * all** -- a flattened note's records are carried verbatim, so it comes back
+ * whole and `deviating` is 0 while `flattened` is not. That is the point of the
+ * patch, and `LBP_MIDI_LOOSE=1` is how to measure what MIDI alone carries.
  */
 // ⚠️ `dragged` and `timbred` are NOT subtracted here. They say what a synth
 // will hear from a shared channel, not what this round trip loses -- the
 // importer knows whose bend and whose modulation each is -- so counting them
 // against the curve differences made shared mode look 4,433 notes better than
 // declared, which is as misleading as looking worse.
-const unexplained = totals.deviating - totals.flattened;
+const unexplained = loose ? totals.deviating - totals.flattened : totals.deviating;
 if (unexplained !== 0) {
   console.log(
     `${unexplained > 0 ? unexplained : -unexplained} notes ` +
@@ -313,7 +378,9 @@ if (unexplained !== 0) {
   );
 }
 process.exit(
-  failed === 0 && worstPitch <= 0.5 + 1e-9 && worstVolume <= 0.5 + 1e-9 && worstMod <= 0.5 + 1e-9
+  failed === 0
+    && worstPitch <= 0.5 + 1e-9 && worstVolume <= 0.5 + 1e-9 && worstMod <= 0.5 + 1e-9
+    && (loose || (totals.clipsChanged === 0 && totals.unpatched === 0))
     ? 0
     : 1,
 );

@@ -195,40 +195,78 @@ a MIDI channel per sounding note, so a bend belongs to the note instead of to th
 `src/core/smf.ts` underneath it is the container only: chunks, variable-length quantities, running
 status. `dev/midi.html` is the page.
 
-⚠️ **What a round trip preserves is the music, not the bytes.** `Key` and `Scale` are folded into
-the note numbers on the way out, because a MIDI file has to play in something that has never heard
-of an LBP scale, so an import comes back chromatic in C — sounding the same, written differently.
-Clip boundaries move too: a step field is seven bits, so an imported part is re-cut into 128-step
-clips wherever they fall. **Do not write a byte-equality test against a round trip**; it will fail
-for reasons that are correct.
+⚠️ **What the MIDI EVENTS carry is the music; the bytes ride in the metas.** `Key` and `Scale`
+are folded into the note numbers on the way out, because a MIDI file has to play in something that
+has never heard of an LBP scale — so the events alone give a placement back sounding the same and
+written differently. Everything above that is a text meta: the mixer and the board in `LBP-SEQ` and
+`LBP-TRK`, and the records themselves in `fix` for the clips MIDI cannot spell.
 
-### What is still between here and an exact round trip
+⚠️ **This entry used to end "do not write a byte-equality test against a round trip; it will
+fail for reasons that are correct".** That was true and it is not any more, and the way it stopped
+being true is worth keeping: the reasons were enumerated one at a time until only two were left
+that no MIDI event could express, and at that point carrying them as data was cheaper than
+carrying the argument. `dev/verify-midi.ts` now gates on byte equality.
 
-**In `channelsPerPart`, nothing that affects the sound.** Over 953,791 notes the corpus check reads
-**0 sequencers disagreeing and 0 notes with a changed curve** — no glide lost, none dragged,
-dropped, clamped or lengthened; 62,158 clips out and 62,158 back; and every field of `Sequencer`
-and `Track` carried, which `test/midi.test.ts` pins so that adding one and forgetting the header
-meta fails there rather than in a DAW. The worst deviations anywhere are **pitch 1/6 of a semitone,
-volume half a step, modulation 0**.
+### The round trip is exact — 0 records different in 1,448,224
 
-⚠️ **What still differs is how 592 notes (0.062%) are ENCODED, not what they play.** The record
-list comes back different while the curve does not:
+Measured 2026-09-03 over the corpus, both channel modes, `dev/verify-midi.ts`:
 
-| | notes | what it is |
-|---|---|---|
-| a superseded record | 53 | a coincident pair's first record, which the engine replaces in the same instant. Nothing can hear it, so nothing in the file can carry it |
-| a re-cut ramp | 539 | a rounded ramp reconstructed with a different set of control points. **The reconstruction is TIGHTER to the curve than the original encoding, not looser** — it tracks the staircase the rounding actually makes, where the original named two endpoints. Both play the same thing to within half a volume step |
+```
+62.158 clips, 1.448.224 records: 0 came back different
+per part : 686 clips carried verbatim, 0 unpatchable, 24.49 MB
+shared   : 1.188 clips carried verbatim, 0 unpatchable, 24.30 MB
+```
 
-⚠️ **And it converges rather than growing**, which is the property that matters if a file goes
-round more than once. Records over three trips: **1,448,224 → 1,448,178 → 1,448,168 → 1,448,168**,
-the byte size identical at 24.30 MB each time, and 35 notes still moving between the first and
-second trip against 5 between the second and third. The second trip is a fixed point for all
-practical purposes; the count settles slightly *below* the original because genuinely redundant
-collinear points are dropped.
+and it is a **fixed point from the first trip**: three round trips give 1,448,224 records and
+24.49 MB every time, with all 149 sequencers byte-identical between trip 1 and trip 2. The music
+comparison that used to be the strongest statement here now reads **0 sequencers disagreeing, worst
+deviation pitch 0.000, volume 0.000, modulation 0.000** — the deviations it used to report are
+gone because the records themselves come back.
 
-Two things are carried by nothing and cost nothing, because the corpus never uses them: `Scale`
-(`quantise` is a projection and is measured not idempotent, so there is no pitch to un-snap to) and
-`timbre` bits 4-5 with volume > 127 (7 bits either way; only a side channel would do it).
+Three things got it there, in the order they were found:
+
+1. **Byte 3's resting bit 30.** The engine reads it only when byte 0's bit 7 is set, and the editor
+   writes it anyway — 971,954 of the 1,439,351 sub-step-0 records carry it, decided by the level's
+   revision rather than by the note. Reconstructing byte 3 without it made **78% of clips** come
+   back different. It travels per clip in `LBP-TRK`. Full measurement in
+   [sequencer-data-model.md](sequencer-data-model.md).
+2. **The order records are written in**, which is position ascending then pitch **descending** on
+   27,124 of 27,124 tied clips. Sorting on position alone left 1,944 clips holding the right notes
+   in the wrong order.
+3. **A verbatim record patch for the remainder.** The exporter imports its own output, compares
+   clip by clip, and writes the originals base64 in the `LBP-TRK` meta's `fix` for the ones that
+   differ. 686 clips of 62,158, **0.73% of the bytes**, and it takes the last 1,206 notes to 0.
+
+⚠️ **A patch is not the same kind of thing as the metas around it.** `LBP-SEQ` and `LBP-TRK`
+describe the *placement* — the mixer, the board, the key — and stay true however the notes are
+edited. A patch describes the *records*, so a DAW that edits the notes leaves it stale and the
+import will hand back the original clip rather than the edit. That is why `exact: false` exists and
+why the page says what it is for. **The importer trusts the patch over the note events**, which is
+also why shared mode now comes back whole: a flattened note's glide is gone from the MIDI and
+present in the patch.
+
+⚠️ So `flattened`, `dropped` and `dragged` no longer describe what a ROUND TRIP loses — they
+describe what a **foreign reader** loses, which is the honest reading of them and always was.
+`LBP_MIDI_LOOSE=1` turns the patch off and measures MIDI alone: worst deviation pitch 0.167,
+volume 0.500, 686 clips (per part) or 1,188 (shared) that would have needed a patch, and shared
+mode's 1,742 declared losses exactly equalling its 1,742 changed curves.
+
+⚠️ **`Track.records` is the file's own bytes and `Track.notes` is not a re-encoding of them.**
+`makeNote` sorts a chain into position order and real files do not always store it that way, so
+re-encoding a note can move the end flag into the middle of the chain. Every byte-level comparison
+here goes through `records`; the first version of the diff did not, and it invented 66% of notes
+diverging and a 4 MB patch.
+
+**Two fields cost nothing only because the corpus never uses them**, and the patch is what carries
+them if a level ever does: `timbre` bits 4-5 — the per-block table select — are zero in all
+1,448,224 records, and no record carries a volume above 127 where MIDI has seven bits.
+`test/midi.test.ts` is the only place either is exercised.
+
+**`Scale` is now restored too.** It used to be dropped outright, on the grounds that `quantise` is a
+projection with no inverse. It still has none — `unquantise` in `src/core/scale.ts` is a *section*,
+taking the lowest note that snaps to the one the file names — but that always sounds right, and
+where the author wrote off the scale the patch carries the record. 0 placements in the corpus set
+it, so this is measured on fixtures.
 
 ### How the last of it was closed, in order
 
@@ -274,39 +312,47 @@ Each of these was found by measuring, and each is worth knowing because none was
    The phantom counts this produced, in order: 142 sequencers, 458 notes, then 8. **None of them
    were real.**
 
-Measured in the per-part mode, which is the good one. Each of these is fixable;
-none is fixed, and the cost is why:
+Measured in the per-part mode, which is the good one. **Every row is now done**, and the last
+four went the same way — not by finding more MIDI, but by carrying the records:
 
 | left | how much | what it would take |
 |---|---|---|
 | ~~glides lost inside one part~~ | ~~825 notes~~ **0** | **done.** A part whose own polyphony passes 15 is written across several MIDI tracks — `laneOf` in the exporter, merged back on the `LBP-TRK` identity. It cost **2 extra tracks across the whole corpus**, 5,058 to 5,060, and took the clip count to exact |
-| control points not identical | 2,432 notes (0.255%) | the resampling round trip: a rounded ramp can put its step a third of a step early, and the simplifier drops points within half a unit of the line. Exact only by carrying the true points in a meta — which duplicates the note data — or by not resampling, which makes a glide a jump in every DAW |
+| ~~control points not identical~~ | ~~2,432 notes~~ → ~~592~~ **0** | **done, in two steps.** Keeping the pitch fractional until a record is written took 2,432 to 592 — rounding it before the simplifier saw it turned the ramp into a staircase and kept the tread rather than the control point. The last 592 were a ramp re-cut onto the staircase the rounding really makes (tighter to the curve than the original, so it could not be loosened away) and a coincident record nothing can hear; both are now carried verbatim. ⚠️ The fear here — "carrying the true points duplicates the note data" — was right about the mechanism and wrong about the size: only the clips that need it are carried, which is **0.73%** |
 | ~~per-point modulation~~ | ~~34,449 notes~~ **8** | **done.** It rides on CC 74, one event per change, resampled with the glides; 34,441 of the 34,449 ramps come back. The 4-bit nibble to 7-bit controller map is exact over all sixteen values and `test/midi.test.ts` checks every one. ⚠️ It stopped being safe to drop the moment the renderer started ramping it — see `answered-questions.md` 6d |
 | ~~which clip a note sat in~~ | ~~1 clip of 62,158~~ **0** | **done**, as a side effect of the lanes: 62,158 clips out, 62,158 back |
-| coincident points mid-note | 2 notes | explicit encoding for a zero-length segment. Exact, small, pointless |
-| `timbre` bits 4-5, volume > 127 | 0 in the corpus | a side-channel meta; MIDI has 7 bits for either. Only matters on a level unlike any of the 22 |
-| unexplained | 2 notes (0.0002%) | not diagnosed |
+| ~~coincident points mid-note~~ | ~~2 notes~~ **0** | **done.** The record patch, which needs no special case for a zero-length segment |
+| ~~`timbre` bits 4-5, volume > 127~~ | ~~0 in the corpus~~ **carried** | **done**, for nothing: both ride in the patch that already exists for the clips that need one. `test/midi.test.ts` is the only place either is exercised |
+| ~~`Scale`~~ | ~~0 placements~~ **restored** | **done.** `unquantise` picks the lowest note that snaps to the one written — a section of the projection, not an inverse — which always sounds right, and the patch carries the author's own field where they wrote off the scale |
+| ~~unexplained~~ | ~~2 notes~~ **0** | gone with the rest |
 
-⚠️ **The shape of an exact converter is not more MIDI, it is a bigger side channel.** Everything
-above except the first is already known to the exporter and unspeakable in MIDI events; carrying it
-means putting the sequencer's own data in text metas beside the music, which `LBP-SEQ` and
-`LBP-TRK` already do for the mixer and the board. That is a legitimate design and a different one
-from "a MIDI file that happens to be lossless" — decide which is wanted before building it.
+✅ **The shape of an exact converter was not more MIDI, it was a bigger side channel** — and the
+prediction written here before it was built held up exactly. What it did not predict is the *size*:
+the fear was that carrying records "duplicates the note data", and the answer is that the exporter
+reads its own output back and duplicates only what came back wrong. **686 clips of 62,158, 0.73% of
+the bytes.** A self-verifying export is what makes the side channel cheap; without it the honest
+version costs 22%, because you have to carry every clip you cannot prove.
 
-### What a round trip loses, in full
+⚠️ **And it is still two products, which the `exact` flag chooses between.** A MIDI file that
+happens to round-trip is not the same thing as a MIDI file, and the difference shows the moment
+somebody edits the notes: the patch then describes records the edits no longer match, and the
+import hands back the original. Off is right when the file is going somewhere that will change it.
 
-Measured over the corpus's 1,448,224 records in 953,791 notes, 62,158 placements. Anything not
-listed here comes back exactly, and `test/midi.test.ts` pins the field list so that adding one to
-`Sequencer` or `Track` and forgetting the header meta fails there rather than in a DAW.
+### What MIDI ALONE loses — `LBP_MIDI_LOOSE=1`, no record patch
+
+Measured over the corpus's 1,448,224 records in 953,791 notes, 62,158 placements. **With the patch
+on, none of this survives the trip: 0 records differ.** The table is what a reader that ignores our
+metas hears, and what the file degrades to if a DAW edits it.
 
 | lost | how much | why |
 |---|---|---|
-| `Scale` only | 0 placements in the corpus set it | folded into the note numbers so the file plays anywhere, and **`quantise` is measured not to be idempotent**, so there is no pitch to un-snap to. `Key` *is* put back — a transposition is invertible where a projection is not |
+| `Scale`'s own pitch fields | 0 placements in the corpus set it | folded into the note numbers so the file plays anywhere. `unquantise` picks the lowest note that snaps to the one written, which always SOUNDS right; the author's own field survives only where they wrote on the scale. `Key` is exact — a transposition is invertible where a projection is not |
 | which clip a note sat in | 1 clip of 62,158, and 42 more hold a different number of notes (0.07%) | the residue of a genuine ambiguity: clips of one part overlap, so a few notes fit two of them and either answer puts them at the same place on the timeline |
 | per-point modulation | 8 notes of 34,449 that vary it | carried on CC 74 per change; the eight that do not survive move it by less than the quantiser can see |
 | coincident control points | 302 notes (0.03%) | two records on one position collapse to the later, which is what the engine's `t = span > 0 ? … : 1` does |
-| a glide, to a shared channel | 825 (0.09%) per part, 1,535 (0.16%) shared | fifteen member channels against thirty-two voices; always counted, never silent |
-| pitch and volume resolution | within half a unit | bend is rounded to whole semitones and positions to thirds of a step, which is the record grid |
+| a glide, to a shared channel | 0 per part, 1,742 (0.18%) shared | fifteen member channels against thirty-two voices; always counted, never silent |
+| pitch and volume resolution | within half a unit — measured worst 0.167 semitones and 0.500 | bend is rounded to whole semitones and positions to thirds of a step, which is the record grid |
+| `timbre` bits 4-5, volume > 127 | 0 in the corpus | MIDI has seven bits for either |
 
 ⚠️ **The board layout is carried by the `LBP-TRK` meta, not by a CC.** MIDI has no controller for
 "this note belongs to that clip" and a CC would be the wrong tool anyway — seven bits, and a synth
@@ -317,39 +363,47 @@ is ignored by everything that does not know it and exact for everything that doe
 holds `[gridX, steps]` per clip. On the cells alone **86.50% of the corpus's notes fit more than
 one clip**, because clips of a part overlap heavily: a cell is 16 steps and a clip may hold 128.
 Adding each clip's own extent takes that to **0.09%**, for one number per clip. Measured end to
-end, 62,158 clips come back as 62,157, all on cells the author used, 99.93% of them holding exactly
-the notes they held.
+end, **62,158 clips come back as 62,158**, every one on the cell the author used and holding
+exactly the notes it held.
 
 ⚠️ **Emit every declared cell, including the empty ones.** 52 placements in the corpus hold no
 notes at all — an instrument dropped on the board and never written in — and nothing in a MIDI file
 can bring one back except the cell list. Skipping them is what made the count 62,106 rather than
-62,157, and it looked like an ambiguity rather than the omission it was.
-
-⚠️ **Two fields cost nothing only because the corpus never uses them**, and that is worth knowing
-before trusting the table on a newer level: `timbre` bits 4-5 — the per-block table select — are
-**zero in all 1,448,224 records**, and no record carries a volume above 127. Both would be dropped
-if they appeared; neither is read by `render.ts` either.
+62,158, and it looked like an ambiguity rather than the omission it was.
 
 The measurement, from `dev/verify-midi.ts` over the corpus on 2026-09-03 — run it after touching
-either file. `LBP_MIDI_PERPART=1` measures the mode a DAW should be given:
+either file. `LBP_MIDI_PERPART=1` measures the mode a DAW should be given, and
+`LBP_MIDI_LOOSE=1` turns the record patch off so the MIDI-alone numbers stay visible:
 
-- 149 sequencers, **953,791 notes**, none lost, none moved, no pitch, duration or modulation
-  changed; an intact note's curve stays inside the half unit its integer fields round by.
-- 88,893 notes (9.32%) carry a glide. In `channelsPerPart` **none of them lose it**. Sharing the
-  channels across the file instead costs 1,537 of them (0.16%) — an MPE zone has fifteen member channels and this engine has thirty-two voices, so a
-  dense passage runs out. A note that has to share writes no bend and no pressure at all, because
-  both belong to the channel and a newcomer setting them drags whatever is already sounding there.
-  The count is reported by `sequencerToMidi`, never swallowed.
-- 27,036 notes share a channel, but **only 1,245 of them (0.13%) are ever reached by the
-  neighbour's bend** — the rest sit on a channel that stays centred for their whole life and lose
-  nothing. ⚠️ **Report `dragged`, not `sharedChannel`.** The raw sharing count is five times larger
-  and implies a damage that is not there: on `Ascetic` 124 notes share and 6 are touched.
-- 22.7 MB of MIDI; 0 pitches clamped, 0 bends clamped, 0 lengthened, **1 note that MPE cannot
-  carry** — seventeen copies of one pitch at once, in `Avian`, with nowhere left where a note-off
-  could tell them apart.
-- **7 notes in 953,791 (0.0007%) change without being declared** and are not explained. Every
-  category found so far is fixed and carries a note in the code saying what it was; this residue
-  is below the level worth more session time and is printed by the script rather than hidden.
+|  | per part | shared |
+|---|---|---|
+| sequencers disagreeing | 0 | 0 |
+| clips whose records differ | **0** of 62,158 | **0** of 62,158 |
+| clips carried verbatim | 686 (1.10%) | 1,188 (1.91%) |
+| notes sharing a channel | 30 | 27,210 |
+| … of those, dragged by a neighbour's bend | 0 | 1,352 (0.14%) |
+| … whose timbre a sharer moved | 0 | 4,522 (0.47%) |
+| glides MIDI alone could not carry | 0 | 1,742 (0.18%) |
+| notes MPE could not carry at all | 0 | 1 |
+| size | 24.5 MB | 24.3 MB |
+
+- 88,893 notes (9.32%) carry a glide. In `channelsPerPart` **none of them lose it even in the MIDI
+  events**. Sharing the channels across the file costs 1,742 of them — an MPE zone has fifteen
+  member channels and this engine has thirty-two voices, so a dense passage runs out. A note that
+  has to share writes no bend and no pressure at all, because both belong to the channel and a
+  newcomer setting them drags whatever is already sounding there. The count is reported by
+  `sequencerToMidi`, never swallowed — and the patch then brings the records back anyway.
+- ⚠️ **Report `dragged`, not `sharedChannel`.** The raw sharing count is five times larger and
+  implies a damage that is not there: on `Ascetic` 124 notes share and 6 are touched.
+- The one note MPE cannot carry is seventeen copies of one pitch at once, in `Avian`, with nowhere
+  left where a note-off could tell them apart. ⚠️ **It comes back**, because the clip that lost
+  it differs and is therefore carried verbatim — which is why `dev/verify-midi.ts` checks the note
+  count against a RANGE rather than against `before - dropped`. Holding it to the equality blamed
+  `Avian` for a note the patch had already restored.
+- **The residue that used to sit here is gone.** It read "7 notes in 953,791 (0.0007%) change
+  without being declared, and are not explained"; with the records carried, nothing changes at all.
+  `LBP_MIDI_LOOSE=1` still shows what MIDI alone does, and there the declaration is exact in shared
+  mode: 1,742 declared, 1,742 changed.
 
 ⚠️ **A MIDI file's tracks do NOT get sixteen channels each, but a DAW gives them sixteen
 anyway.** The header can declare 65,535 tracks and they are still one shared channel space — the
@@ -357,8 +411,8 @@ channel is in the status byte, not the track — which is why a dense song runs 
 imports a format 1 file as one project track per MIDI track hands each track its own instrument,
 and that instrument only ever sees its own track's events. Reaper does this. So
 `channelsPerPart` gives every part all fifteen member channels in a **single file**, and measured
-over the corpus that is **dragged 0 and 825 notes short of a glide (0.086%)** against 1,245 and
-1,535 when they are shared — identical to writing one file per part, without the 4,909 files. It is
+over the corpus that is **dragged 0 and no note short of a glide** against 1,352 and 1,742 when
+they are shared — identical to writing one file per part, without the 4,909 files. It is
 off by default because a single-stream player (hardware, a plain player, Reaper told to import as
 one track) would hear the parts collide. `splitSequencerToMidi` is the option that needs no promise
 about the reader: separate files, packed by polyphony, 249 for the corpus where 149 sufficed.

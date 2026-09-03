@@ -101,6 +101,18 @@ export interface Track {
   readonly scale: number;
   readonly notes: readonly Note[];
   /**
+   * The clip's note data exactly as the file holds it.
+   *
+   * ⚠️ **`notes` is not a faithful re-encoding of this and must not be used
+   * as one.** `makeNote` sorts a chain's records into position order, and real
+   * files do store them out of it -- `Wayward` has a two-record note written
+   * step 28 first and step 23 second, with the end flag on the SECOND, so
+   * re-encoding the sorted note puts the flag in the middle and the last record
+   * becomes trailing. Anything comparing or rewriting records byte for byte
+   * (the MIDI exporter's patch, above all) has to come here.
+   */
+  readonly records: Uint8Array;
+  /**
    * Records that followed the last end flag. Reported rather than dropped --
    * a non-empty tail means either the record format or this reader is wrong,
    * and silently discarding it would hide that.
@@ -151,6 +163,7 @@ export function trackFrom(placement: Placement): Track {
     key: instrument.key,
     scale: instrument.scale,
     notes: grouped.notes,
+    records: instrument.notes,
     trailingRecords: grouped.trailing.length,
   };
 }

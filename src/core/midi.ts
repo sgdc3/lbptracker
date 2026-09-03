@@ -31,7 +31,7 @@
  * wherever they fall.
  */
 
-import { readNotes, NOTE_RECORD_SIZE, type NoteRecord } from './notes.ts';
+import { encodeRecord, readNotes, NOTE_RECORD_SIZE, type NoteRecord } from './notes.ts';
 import {
   CHANNEL_COUNT,
   STEPS_PER_CELL,
@@ -40,7 +40,7 @@ import {
   type Sequencer,
   type Track,
 } from './project.ts';
-import { blockRoot, notePitch } from './scale.ts';
+import { blockRoot, notePitch, unquantise } from './scale.ts';
 import { swungFrame } from './swing.ts';
 import {
   channelPressure,
@@ -154,6 +154,28 @@ export interface MidiExportOptions {
    * returned as ten.
    */
   readonly glideStep?: number;
+  /**
+   * Verify the export by importing it, and carry whatever did not survive.
+   *
+   * ⚠️ **This is what makes the round trip byte-exact rather than merely
+   * faithful.** Everything MIDI can say is said in MIDI; a handful of clips
+   * still come back with their records cut differently -- a ramp re-simplified
+   * onto the staircase its own rounding makes, a coincident record the engine
+   * would replace in the same instant, a note that fits two overlapping clips.
+   * None of it is audible, all of it is a different file. So the exporter runs
+   * its own importer, compares the records clip by clip, and writes the
+   * originals verbatim for the ones that differ.
+   *
+   * Measured over the corpus: **686 clips of 62,158 (1.10%)**, costing
+   * **0.735%** of the file, and it is what takes 1,206 differing notes to 0.
+   * The cost of leaving it on is that every export runs an import as well.
+   *
+   * On by default. `false` writes a plain MIDI file with the mixer and board
+   * metas but no record patch -- which still round-trips the MUSIC exactly, and
+   * is what to use if the file is going somewhere that will edit it, since a
+   * patch describes records that the edited notes no longer match.
+   */
+  readonly exact?: boolean;
 }
 
 export interface MidiExportResult {
@@ -196,6 +218,22 @@ export interface MidiExportResult {
    */
   readonly flattened: number;
   /**
+   * Clips whose records are carried verbatim because MIDI could not say them.
+   *
+   * Zero means the file's own note events reproduce every record exactly. See
+   * `MidiExportOptions.exact`.
+   */
+  readonly patched: number;
+  /**
+   * Clips the reconstruction invented, which a patch cannot repair.
+   *
+   * A patch replaces a clip the author had; a clip that only the round trip
+   * produces has no original to replace, and its notes would then exist twice.
+   * The exporter refuses to patch a part in that state and says so here rather
+   * than writing a file that imports to more notes than it holds.
+   */
+  readonly unpatched: number;
+  /**
    * Notes MPE could not carry at all.
    *
    * Only one thing produces these: more than fifteen copies of the SAME pitch
@@ -208,6 +246,49 @@ export interface MidiExportResult {
 }
 
 const clamp7 = (v: number) => (v < 0 ? 0 : v > 127 ? 127 : Math.round(v));
+
+/**
+ * Base64, ours, because a text meta has to be text.
+ *
+ * Not `btoa`: that is a DOM function with a Node deprecation notice on it, and
+ * this module runs in both. Twenty lines is cheaper than a platform hook.
+ */
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function toBase64(bytes: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i];
+    const b = bytes[i + 1];
+    const c = bytes[i + 2];
+    out += B64[a >> 2];
+    out += B64[((a & 3) << 4) | ((b ?? 0) >> 4)];
+    out += b === undefined ? '=' : B64[((b & 15) << 2) | ((c ?? 0) >> 6)];
+    out += c === undefined ? '=' : B64[c & 63];
+  }
+  return out;
+}
+
+function fromBase64(text: string): Uint8Array {
+  const clean = text.replace(/[^A-Za-z0-9+/]/g, '');
+  const out = new Uint8Array(Math.floor((clean.length * 3) / 4));
+  let at = 0;
+  for (let i = 0; i < clean.length; i += 4) {
+    const n =
+      (B64.indexOf(clean[i]) << 18) |
+      (B64.indexOf(clean[i + 1]) << 12) |
+      (B64.indexOf(clean[i + 2] ?? 'A') << 6) |
+      B64.indexOf(clean[i + 3] ?? 'A');
+    if (at < out.length) out[at++] = (n >> 16) & 0xff;
+    if (at < out.length) out[at++] = (n >> 8) & 0xff;
+    if (at < out.length) out[at++] = n & 0xff;
+  }
+  return out;
+}
+
+/** What `partsOf` groups on, plus the cell: a clip's identity across a trip. */
+const clipKey = (t: Track) =>
+  [t.guid, t.gridY, t.level, t.pan, t.echoSend, t.reverbSend, t.key, t.scale, t.gridX].join('|');
 
 /**
  * The note's modulation onto CC 74, and back.
@@ -268,7 +349,43 @@ interface Part {
    * importer has to guess. With each clip's own extent as well that falls to
    * **0.09%**: 99.91% of notes fit exactly one. One number per clip.
    */
-  readonly clips: [number, number][];
+  readonly clips: ([number, number] | [number, number, number])[];
+  /**
+   * Byte 3's bit 6 at rest, which the engine reads only when bit 7 is set.
+   *
+   * ⚠️ **It is a real per-record bit that carries no sound, and dropping it
+   * made 78% of the corpus's clips come back different.** A record's position
+   * is `step + subStep/3` with `subStep = bit7 << bit30`, so bit 30 -- byte 3's
+   * bit 6 -- means "the second third" only on a record whose bit 7 is set. On
+   * every other record it is inert, and the editor still writes it: measured
+   * over 1,448,224 corpus records, 971,954 of the 1,439,351 records at sub-step
+   * 0 carry it and 467,397 do not.
+   *
+   * What decides it is the level, not the note. Eight of the ten level files
+   * set it on every record, one (revision **0x3b8**, the oldest) on none, and
+   * the two either side of the change -- 0x3e2 and 0x3e6 -- hold both, which is
+   * what a level saved across an editor change looks like. So it is carried as
+   * a default here, overridden per clip in the `clips` tuple's third slot for
+   * the 31 clips of 62,106 that are not uniform.
+   *
+   * ❗ It applies to sub-step 0 only. A record at sub-step 1 must have the bit
+   * CLEAR or it reads as sub-step 2, and one at sub-step 2 must have it set.
+   */
+  readonly rest: number;
+}
+
+/** Whether byte 3's bit 6 is set on a track's inert (sub-step 0) records. */
+function restingBit(track: Track): number {
+  let set = 0;
+  let clear = 0;
+  for (const note of track.notes) {
+    for (const record of note.points) {
+      if (record.subStep !== 0) continue;
+      if ((record.timbre & 0x40) !== 0) set += 1;
+      else clear += 1;
+    }
+  }
+  return set >= clear && set > 0 ? 1 : 0;
 }
 
 function partsOf(sequencer: Sequencer): Part[] {
@@ -286,12 +403,26 @@ function partsOf(sequencer: Sequencer): Part[] {
     const found = byKey.get(key);
     if (found) {
       found.tracks.push(index);
-      found.clips.push([track.gridX, steps]);
+      found.clips.push([track.gridX, steps, restingBit(track)]);
     } else {
-      byKey.set(key, { track, tracks: [index], clips: [[track.gridX, steps]] });
+      byKey.set(key, {
+        track, tracks: [index], clips: [[track.gridX, steps, restingBit(track)]], rest: 0,
+      });
     }
   });
-  return [...byKey.values()];
+  // The part's own default is whichever its clips mostly use, and a clip only
+  // spells the bit out when it disagrees.
+  return [...byKey.values()].map((part) => {
+    let set = 0;
+    for (const clip of part.clips) if (clip[2] === 1) set += 1;
+    const rest = set * 2 >= part.clips.length ? 1 : 0;
+    return {
+      ...part,
+      rest,
+      clips: part.clips.map((clip) =>
+        clip[2] === rest ? ([clip[0], clip[1]] as [number, number]) : clip),
+    };
+  });
 }
 
 /**
@@ -939,31 +1070,64 @@ export function sequencerToMidi(
     );
   }
 
-  const tracks: MidiTrack[] = [{ events: sortEvents(head, rank) }];
-  parts.forEach((part, index) => {
-    const t = part.track;
-    for (let lane = 0; lane < laneCount[index]; lane += 1) {
-      // A lane is a continuation of the part, and says so in both places: the
-      // name so a DAW's track list reads, and the meta so the import merges.
-      const label = laneCount[index] > 1 ? `${nameOf(t)} (${lane + 1})` : nameOf(t);
-      const header: MidiEvent[] = [
-        metaText(0, 0x03, label),
-        metaText(0, 0x01, TRK_TAG + JSON.stringify({
-          guid: t.guid, name: nameOf(t), gridY: t.gridY,
-          level: t.level, pan: t.pan, echoSend: t.echoSend, reverbSend: t.reverbSend,
-          key: t.key, scale: t.scale, clips: part.clips,
-          ...(laneCount[index] > 1 ? { lane } : {}),
-        })),
-      ];
-      tracks.push({ events: [...header, ...sortEvents(bodies[laneBase[index] + lane], rank)] });
-    }
-  });
+  /**
+   * The file, with an optional verbatim record patch per part.
+   *
+   * Built as a function because the patch can only be computed by importing
+   * what this produces, so the file is assembled twice: once to find out what
+   * MIDI could not say, and once to say it. Nothing but the `LBP-TRK` metas
+   * differs between the two, so the second import reconstructs exactly what the
+   * first one did and the patch it carries still describes the right clips.
+   */
+  const assemble = (patch?: Map<number, Record<string, string>>): MidiTrack[] => {
+    const tracks: MidiTrack[] = [{ events: sortEvents(head, rank) }];
+    parts.forEach((part, index) => {
+      const t = part.track;
+      for (let lane = 0; lane < laneCount[index]; lane += 1) {
+        // A lane is a continuation of the part, and says so in both places: the
+        // name so a DAW's track list reads, and the meta so the import merges.
+        const label = laneCount[index] > 1 ? `${nameOf(t)} (${lane + 1})` : nameOf(t);
+        // ❗ On the FIRST lane only. Lanes merge into whichever part the import
+        // meets first, so a copy on each is bytes nobody reads.
+        const fix = lane === 0 ? patch?.get(index) : undefined;
+        const header: MidiEvent[] = [
+          metaText(0, 0x03, label),
+          metaText(0, 0x01, TRK_TAG + JSON.stringify({
+            guid: t.guid, name: nameOf(t), gridY: t.gridY,
+            level: t.level, pan: t.pan, echoSend: t.echoSend, reverbSend: t.reverbSend,
+            key: t.key, scale: t.scale, clips: part.clips,
+            // Written only when it is not the game's current default, which is
+            // what a file from a DAW should become. See `Part.rest`.
+            ...(part.rest === 1 ? {} : { rest: part.rest }),
+            ...(laneCount[index] > 1 ? { lane } : {}),
+            ...(fix ? { fix } : {}),
+          })),
+        ];
+        tracks.push({ events: [...header, ...sortEvents(bodies[laneBase[index] + lane], rank)] });
+      }
+    });
+    return tracks;
+  };
 
-  const bytes = writeMidi({ format: 1, division: ppq, tracks });
+  let tracks = assemble();
+  let bytes = writeMidi({ format: 1, division: ppq, tracks });
+  let patched = 0;
+  let unpatched = 0;
+  if (options.exact !== false) {
+    const diff = divergences(sequencer, parts, midiToSequencer(bytes).sequencer);
+    patched = diff.patched;
+    unpatched = diff.unpatched;
+    if (patched > 0) {
+      tracks = assemble(diff.patch);
+      bytes = writeMidi({ format: 1, division: ppq, tracks });
+    }
+  }
   return {
     bytes,
     notes,
     parts: parts.length,
+    patched,
+    unpatched,
     events: tracks.reduce((sum, t) => sum + t.events.length, 0),
     sharedChannel: tally((p) => p.shared),
     dragged: tally((p) => p.dragged),
@@ -974,6 +1138,75 @@ export function sequencerToMidi(
     droppedGlides,
     dropped: tally((p) => p.refused),
   };
+}
+
+/**
+ * Which clips a round trip does not return byte for byte.
+ *
+ * ⚠️ **Compared as records, not as music.** The music already matches --
+ * that is what `dev/verify-midi.ts` measures -- and what is left is how the
+ * same curve is cut into records. Three things do it, all of them harmless and
+ * all of them a different file: a rounded ramp re-simplified onto the staircase
+ * the rounding actually makes (tighter to the curve than the original, which is
+ * why it cannot simply be loosened away), a coincident record the engine
+ * replaces in the same instant, and a note that fits two overlapping clips.
+ *
+ * ❗ **A part that gained a clip is refused rather than patched.** A patch
+ * replaces a clip the author had; if the reconstruction invented one, its notes
+ * have nowhere to be removed from and patching the rest would import them
+ * twice. That is counted and reported, never papered over.
+ */
+function divergences(
+  sequencer: Sequencer,
+  parts: readonly Part[],
+  back: Sequencer,
+): { patch: Map<number, Record<string, string>>; patched: number; unpatched: number } {
+  const after = new Map<string, Uint8Array>();
+  for (const track of back.tracks) after.set(clipKey(track), track.records);
+
+  const patch = new Map<number, Record<string, string>>();
+  let patched = 0;
+  let unpatched = 0;
+  parts.forEach((part, index) => {
+    const fix: Record<string, string> = {};
+    let count = 0;
+    let invented = 0;
+    for (const at of part.tracks) {
+      const track = sequencer.tracks[at];
+      const mine = track.records;
+      const theirs = after.get(clipKey(track));
+      if (theirs === undefined) {
+        // The cell list is written from these very tracks, so a clip with no
+        // counterpart means the import merged or moved one -- not patchable.
+        invented += 1;
+        continue;
+      }
+      after.delete(clipKey(track));
+      if (mine.length === theirs.length && mine.every((v, i) => v === theirs[i])) continue;
+      fix[String(track.gridX)] = toBase64(mine);
+      count += 1;
+    }
+    if (invented > 0) {
+      unpatched += count + invented;
+      return;
+    }
+    if (count > 0) {
+      patch.set(index, fix);
+      patched += count;
+    }
+  });
+  // Anything left in `after` is a clip the round trip produced and the level
+  // does not have; the part it belongs to cannot be patched safely.
+  for (const [key] of after) {
+    const owner = parts.findIndex((part) =>
+      part.tracks.some((at) => clipKey(sequencer.tracks[at]).split('|').slice(0, 8).join('|')
+        === key.split('|').slice(0, 8).join('|')));
+    if (owner >= 0 && patch.delete(owner)) {
+      unpatched += 1;
+      patched -= 1;
+    }
+  }
+  return { patch, patched, unpatched };
 }
 
 /* ------------------------------------------------------------------- import */
@@ -1030,8 +1263,24 @@ interface RawPart {
   reverbSend: number;
   key: number;
   scale: number;
-  /** The clips this part had, `[gridX, steps]`, when the file remembers them. */
-  cells: [number, number][];
+  /** Byte 3's inert bit 6 for this part's records; see `Part.rest`. */
+  rest: number;
+  /**
+   * Clips whose records the file carries verbatim, by `gridX`.
+   *
+   * ⚠️ **A patched clip ignores the notes reconstructed for it.** The
+   * exporter only writes one after checking that every clip of the part is
+   * accounted for, so a note that landed in the wrong clip is corrected on both
+   * sides at once -- see `divergences`. It is written by
+   * `MidiExportOptions.exact` and is the difference between a round trip that
+   * plays the same and one that IS the same.
+   */
+  fix: Map<number, Uint8Array>;
+  /**
+   * The clips this part had, `[gridX, steps, rest]`, when the file remembers
+   * them. `rest` is byte 3's inert bit 6 -- see `Part.rest`.
+   */
+  cells: [number, number, number][];
   notes: RawNote[];
 }
 
@@ -1198,7 +1447,9 @@ function readPart(
     gridY: index,
     ...NEUTRAL,
     ...CHROMATIC_C,
+    rest: 1,
     cells: [],
+    fix: new Map(),
     notes: [],
   };
   for (const event of track.events) {
@@ -1216,27 +1467,46 @@ function readPart(
         part.echoSend = pick('echoSend', NEUTRAL.echoSend);
         part.reverbSend = pick('reverbSend', NEUTRAL.reverbSend);
         if (typeof meta.name === 'string') part.name = meta.name;
+        // The part's resting bit, and the game's current default without one.
+        part.rest = pick('rest', 1) === 0 ? 0 : 1;
+        if (meta.fix !== null && typeof meta.fix === 'object') {
+          for (const [cell, text] of Object.entries(meta.fix as Record<string, unknown>)) {
+            const at = Number(cell);
+            if (Number.isInteger(at) && typeof text === 'string') {
+              const raw = fromBase64(text);
+              // A truncated patch is worse than none: it would cut records in
+              // half. Whole records only, and the rest of the clip stands.
+              if (raw.length % NOTE_RECORD_SIZE === 0) part.fix.set(at, raw);
+            }
+          }
+        }
         if (Array.isArray(meta.clips)) {
           // ⚠️ Files written before the length was added carry bare cell
           // numbers. A whole clip is the honest fallback for those.
           part.cells = (meta.clips as unknown[]).flatMap((clip) => {
-            if (typeof clip === 'number') return [[clip, 128] as [number, number]];
+            if (typeof clip === 'number') return [[clip, 128, part.rest] as [number, number, number]];
             if (Array.isArray(clip) && typeof clip[0] === 'number') {
-              return [[clip[0], typeof clip[1] === 'number' ? clip[1] : 128] as [number, number]];
+              return [[
+                clip[0],
+                typeof clip[1] === 'number' ? clip[1] : 128,
+                clip[2] === 0 || clip[2] === 1 ? clip[2] : part.rest,
+              ] as [number, number, number]];
             }
             return [];
           });
         }
-        // ⚠️ **`Key` is restored, `Scale` is not, and the difference is that
-        // one is invertible.** The exporter folds both into the note numbers so
-        // the file plays anywhere; getting the placement back means undoing
+        // ⚠️ **Both `Key` and `Scale` are restored, but they come back by
+        // different means.** The exporter folds both into the note numbers so
+        // the file plays anywhere, and getting the placement back means undoing
         // that. `blockRoot(key) - 12` is a transposition and subtracting it is
-        // exact. `quantise` is a projection onto a scale and is **measured not
-        // to be idempotent**, so there is no pitch to un-snap to -- a scaled
-        // placement therefore still comes back chromatic, with the notes it
-        // sounded. No placement in the 22-level corpus sets `Scale`.
-        const scale = pick('scale', 0);
-        if (scale === 0) part.key = pick('key', CHROMATIC_C.key);
+        // exact; `quantise` is a projection and has no inverse, so the scale is
+        // undone by `unquantise`, which picks the lowest note that snaps to the
+        // one the file names. That sounds right always and reproduces the
+        // author's own pitch field only where they wrote on the scale -- the
+        // rest is what the record patch is for. No placement in the 22-level
+        // corpus sets `Scale`, so this is measured on fixtures, not on it.
+        part.key = pick('key', CHROMATIC_C.key);
+        part.scale = pick('scale', 0);
       } catch {
         // Not ours after all.
       }
@@ -1573,7 +1843,12 @@ function cutIntoClips(
       }
       return { startThirds, endThirds, points, modulation: raw.modulation };
     })
-    .sort((a, b) => a.startThirds - b.startThirds);
+    // ⚠️ **Ties break on pitch DESCENDING, which is measured, not chosen.**
+    // Of the 27,124 corpus clips that hold two notes at one position, **27,124**
+    // are written high note first; 42 are also consistent with ascending, and
+    // those are the ones where every tie is a unison. Sorting on the start alone
+    // left 1,944 clips holding the right notes in the wrong order.
+    .sort((a, b) => a.startThirds - b.startThirds || b.points[0].pitch - a.points[0].pitch);
 
   /**
    * Where the clips go.
@@ -1592,6 +1867,8 @@ function cutIntoClips(
    * the one before.
    */
   const cells = [...part.cells].sort((a, b) => a[0] - b[0]);
+  /** The clip being written, and the inert bit 6 its records carry. */
+  let resting = part.rest;
   /** Every clip that could hold a note, nearest cell last. */
   const fitting = (startStep: number, endStep: number): number[] => {
     // The clips' own windows first, and whole clips only if nothing fits --
@@ -1610,17 +1887,21 @@ function cutIntoClips(
 
   // What the exporter added to every note number, and this has to take away.
   const transpose = blockRoot(part.key) - 12;
+  /** The note field that sounds at `pitch`, undoing the key and the scale. */
+  const unsounded = (pitch: number) => unquantise(pitch - transpose, part.scale);
 
   const tracks: Track[] = [];
   let clipStart = 0;
   let open: typeof notes = [];
   const flush = (allowEmpty = false) => {
     if (open.length === 0 && !allowEmpty) return;
-    const bytes = new Uint8Array(
+    // ❗ A clip the file spelled out takes it verbatim, notes and all.
+    const verbatim = part.fix.get(clipStart / STEPS_PER_CELL);
+    const bytes = verbatim ?? new Uint8Array(
       open.reduce((sum, n) => sum + n.points.length, 0) * NOTE_RECORD_SIZE,
     );
     let at = 0;
-    for (const note of open) {
+    for (const note of verbatim ? [] : open) {
       note.points.forEach((point, index) => {
         const thirds = point.thirds - clipStart * 3;
         const step = Math.floor(thirds / 3);
@@ -1629,12 +1910,15 @@ function cutIntoClips(
         bytes[at] = (step & 0x7f) | (subStep > 0 ? 0x80 : 0);
         // ❗ Back through the placement's own key, so `notePitch` puts the note
         // where the file says it sounds. `transpose` is 0 for a chromatic C.
-        bytes[at + 1] = (clamp7(point.pitch - transpose) & 0x7f) | (last ? 0x80 : 0);
+        bytes[at + 1] = (clamp7(unsounded(point.pitch)) & 0x7f) | (last ? 0x80 : 0);
         bytes[at + 2] = clamp7(point.volume);
         // The fourth byte is the packed field: modulation in the low nibble,
-        // and bit 6 is the sub-step's high bit. Bits 4..5 select one of four
-        // per-block tables and nothing here models them, so they stay clear.
-        bytes[at + 3] = Math.round(point.mod * 15) | (subStep === 2 ? 0x40 : 0);
+        // and bit 6 is the sub-step's high bit -- which the engine reads only
+        // when byte 0's bit 7 is set, and which the editor writes at rest
+        // anyway. Bits 4..5 select one of four per-block tables and nothing
+        // here models them, so they stay clear.
+        const high = subStep === 1 ? 0 : subStep === 2 ? 0x40 : resting * 0x40;
+        bytes[at + 3] = Math.round(point.mod * 15) | high;
         at += NOTE_RECORD_SIZE;
       });
     }
@@ -1652,6 +1936,7 @@ function cutIntoClips(
       key: part.key,
       scale: part.scale,
       notes: grouped.notes,
+      records: bytes,
       trailingRecords: grouped.trailing.length,
     });
     open = [];
@@ -1687,13 +1972,15 @@ function cutIntoClips(
     // instrument dropped on the board and never written in -- and there is
     // nothing in a MIDI file to bring them back except the cell list itself.
     // Without this the round trip quietly returned 62,106 clips for 62,158.
-    for (const [cell] of cells) {
+    for (const [cell, , rest] of cells) {
       const at = cell * STEPS_PER_CELL;
       clipStart = at;
+      resting = rest;
       open = byCell.get(at) ?? [];
       byCell.delete(at);
       flush(true);
     }
+    resting = part.rest;
     for (const [at, group] of [...byCell].sort((a, b) => a[0] - b[0])) {
       clipStart = at;
       open = group;
@@ -1748,6 +2035,8 @@ export interface MidiSplit {
   readonly dropped: number;
   readonly clampedPitch: number;
   readonly clampedBend: number;
+  readonly patched: number;
+  readonly unpatched: number;
 }
 
 /**
@@ -1826,6 +2115,8 @@ export function splitSequencerToMidi(
     dropped: sum((r) => r.dropped),
     clampedPitch: sum((r) => r.clampedPitch),
     clampedBend: sum((r) => r.clampedBend),
+    patched: sum((r) => r.patched),
+    unpatched: sum((r) => r.unpatched),
   };
 }
 

@@ -77,6 +77,37 @@ export function quantise(note: number, scale: number): number {
 }
 
 /**
+ * A note that `quantise` would snap to `note`, or `note` itself if none does.
+ *
+ * ⚠️ **This is a section of the quantiser, not an inverse, and it cannot
+ * be one.** `quantise` is a projection: on the major table both 0 and 1 land on
+ * 0, so a snapped note names a SET of notes that produce it and nothing in the
+ * result says which the author wrote. The convention here is the lowest of
+ * them, which is what the tables' own shape makes natural -- every row is
+ * non-decreasing, so the lowest preimage of a tone is the tone itself wherever
+ * the scale contains it, and `unquantise(quantise(n)) === quantise(n)`.
+ *
+ * ❗ So a scaled placement's own pitch fields survive a round trip only where
+ * the author wrote scale tones; anything they wrote off the scale comes back as
+ * the tone it sounded. That is a real loss and the MIDI exporter covers it a
+ * different way -- it carries the clip's records verbatim -- but the pitch here
+ * still has to be a note that SOUNDS right, which this guarantees and a bare
+ * copy of the sounded pitch would not.
+ *
+ * A target the scale never produces (the major table reaches no 1, 3, 6, 8 or
+ * 10) has no preimage at all; it comes back unchanged, which is the same thing
+ * scale 0 does.
+ */
+export function unquantise(note: number, scale: number): number {
+  if (scale < 1 || scale > MAX_SCALE) return note;
+  const octave = Math.trunc(note / 12);
+  const within = note - octave * 12;
+  if (within < 0 || within > 11) return note;
+  const found = SCALE_TABLES[scale].indexOf(within);
+  return found < 0 ? note : octave * 12 + found;
+}
+
+/**
  * How far `Key` transposes a placement, in semitones.
  *
  * **Measured, both ends of it, 2026-09-02.**
