@@ -117,6 +117,13 @@ where nothing else claims it.
 ⚠️ A lane's track is `row 3 - saw_wave (2)`, and the suffix comes straight back off — the meta
 says which lane it is, so what to strip is known exactly rather than guessed at with a pattern.
 
+❗ **The tracks come out in board order**, row ascending then cell then GUID. `gridY` is the Thing's
+own y negated — `boardToGrid` computes `floor(-y / 105)` — so row 0 is the top of the board and
+ascending reads top to bottom, the way the sequencer draws it. The rows run 0..24 and are never
+negative. ⚠️ **The level's own order is not board order**: of the corpus's 149 sequencers,
+exactly **one** already had its tracks ascending, so before this a DAW's track list was in whatever
+order the Thing graph happened to store.
+
 ⚠️ **CC 90 is undefined in the specification, and that is why it was chosen.** A delay send has
 no controller of its own anywhere in MIDI: 91 is reverb, 92 tremolo, 93 chorus, 94 celeste/detune,
 95 phaser. **94 was tried first** — some synths read it as a delay depth — and dropped, because

@@ -904,9 +904,28 @@ test('clips of one part keep their own names', () => {
   ]);
   const back = midiToSequencer(sequencerToMidi(seq).bytes).sequencer;
   assert.deepEqual(
-    back.tracks.sort((a, b) => a.gridX - b.gridX).map((t) => t.name),
+    [...back.tracks].sort((x, y) => x.gridX - y.gridX).map((t) => t.name),
     ['Synth: Ray Gun', 'Synth: Square Wave'],
   );
+});
+
+test('the MIDI tracks come out in board order', () => {
+  // ❗ `gridY` is the Thing's own y, negated -- `boardToGrid` computes
+  // `floor(-y / 105)` -- so row 0 is the top of the board and ascending is top
+  // to bottom, which is how the sequencer draws it.
+  //
+  // ⚠️ The level's own order is not board order: of the corpus's 149
+  // sequencers, exactly one already had its tracks ascending.
+  const seq = makeSequencer([
+    makeTrack([[{ step: 0, pitch: 60 }]], { gridY: 5, gridX: 0, guid: 11 }),
+    makeTrack([[{ step: 0, pitch: 62 }]], { gridY: 1, gridX: 4, guid: 22 }),
+    makeTrack([[{ step: 0, pitch: 64 }]], { gridY: 1, gridX: 0, guid: 33 }),
+  ]);
+  const names = readMidi(sequencerToMidi(seq).bytes).tracks
+    .slice(1)
+    .map((t) => t.events.map(metaString).find((m) => m?.type === 0x03)?.text);
+  // Row before cell, cell before GUID.
+  assert.deepEqual(names, ['row 1 - guid 33', 'row 1 - guid 22', 'row 5 - guid 11']);
 });
 
 test('the import never depends on the track name', () => {

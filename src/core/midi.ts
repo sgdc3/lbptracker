@@ -753,7 +753,28 @@ export function sequencerToMidi(
   const instrumentOf = (track: Track) =>
     options.instrumentName?.(track.guid) || `guid ${track.guid}`;
   const nameOf = (track: Track) => `row ${track.gridY} - ${instrumentOf(track)}`;
-  const parts = partsOf(sequencer);
+  /**
+   * The parts in board order, so a DAW's track list reads like the board.
+   *
+   * ❗ **`gridY` is the Thing's own y, negated**: `boardToGrid` computes
+   * `floor(-y / 105)`, so row 0 is the top of the board and the number grows
+   * downward. Ascending is therefore top to bottom, which is how the sequencer
+   * draws it and how a listener describes it.
+   *
+   * ⚠️ **The level's own order is not board order.** Placements come out of
+   * the Thing graph in whatever order the level stored them: of the corpus's
+   * 149 sequencers, exactly **one** already has its tracks in ascending row
+   * order. The rows run 0..24 and are never negative.
+   *
+   * The cell breaks a tie so two parts on one row read left to right, and the
+   * GUID breaks what is left so the order is total and the file is
+   * reproducible.
+   */
+  const cellOf = (part: Part) => Math.min(...part.clips.map((clip) => clip[0]));
+  const parts = partsOf(sequencer).sort((a, b) =>
+    a.track.gridY - b.track.gridY
+    || cellOf(a) - cellOf(b)
+    || a.track.guid - b.track.guid);
   const partOfTrack = new Map<number, number>();
   parts.forEach((part, index) => {
     for (const track of part.tracks) partOfTrack.set(track, index);
