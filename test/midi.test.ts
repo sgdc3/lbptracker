@@ -835,3 +835,41 @@ test('a clip with no notes at all still comes back', () => {
     'both cells, and the empty one is still empty',
   );
 });
+
+test('a part too polyphonic for one zone is split across tracks, and merged back', async () => {
+  const { readMidi: read } = await import('../src/core/smf.ts');
+  // ⚠️ Twenty notes of one part gliding at once. Fifteen member channels is
+  // the ceiling, so five of them have nowhere to go — 825 notes across the
+  // corpus lost a glide exactly here, and the two-pass allocator cannot help
+  // when every note wants a channel of its own. Two tracks give the part thirty
+  // channels, and a DAW plays them on two instances of the same instrument,
+  // which is the same sound.
+  const notes: Point[][] = [];
+  for (let i = 0; i < 20; i += 1) {
+    notes.push([{ step: 0, pitch: 40 + i }, { step: 15, pitch: 52 + i }]);
+  }
+  const seq = makeSequencer([makeTrack(notes, { guid: 7, gridY: 3, name: 'saw_wave' })]);
+
+  const one = sequencerToMidi(seq);
+  assert.ok(one.flattened > 0, 'one zone cannot hold twenty and keep the glide');
+
+  const split = sequencerToMidi(seq, { channelsPerPart: true });
+  assert.equal(split.flattened, 0, 'two lanes can');
+  assert.equal(split.dropped, 0);
+  assert.equal(split.parts, 1, 'and it is still reported as one part');
+
+  const file = read(split.bytes);
+  const named = file.tracks
+    .flatMap((t) => t.events)
+    .map(metaString)
+    .filter((m) => m?.type === 0x03)
+    .map((m) => m?.text);
+  assert.ok(named.includes('saw_wave (1)'), `lanes are named: ${named.join(', ')}`);
+  assert.ok(named.includes('saw_wave (2)'));
+
+  // And they come back as one placement, with the glide intact.
+  const { sequencer } = midiToSequencer(split.bytes);
+  assert.equal(sequencer.tracks.length, 1, 'the lanes merged back into one clip');
+  assert.equal(sequencer.tracks[0].name, 'saw_wave', 'under the part name, not a lane name');
+  assert.deepEqual(music(sequencer), music(seq));
+});

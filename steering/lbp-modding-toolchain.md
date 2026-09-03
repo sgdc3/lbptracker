@@ -209,10 +209,10 @@ none is fixed, and the cost is why:
 
 | left | how much | what it would take |
 |---|---|---|
-| glides lost inside one part | 825 notes (0.086%) | a part whose own polyphony passes 15 needs more than one MIDI track; a DAW loads both onto instruments of the same instrument, and the import already merges by `LBP-TRK`. Exact, moderate work |
-| control points not identical | 7,556 notes (0.79%) | the resampling round trip: a rounded ramp can put its step a third of a step early, and the simplifier drops points within half a unit of the line. Exact only by carrying the true points in a meta — which duplicates the note data — or by not resampling, which makes a glide a jump in every DAW |
+| ~~glides lost inside one part~~ | ~~825 notes~~ **0** | **done.** A part whose own polyphony passes 15 is written across several MIDI tracks — `laneOf` in the exporter, merged back on the `LBP-TRK` identity. It cost **2 extra tracks across the whole corpus**, 5,058 to 5,060, and took the clip count to exact |
+| control points not identical | 2,684 notes (0.281%) | the resampling round trip: a rounded ramp can put its step a third of a step early, and the simplifier drops points within half a unit of the line. Exact only by carrying the true points in a meta — which duplicates the note data — or by not resampling, which makes a glide a jump in every DAW |
 | per-point modulation | 34,449 notes (3.6%) | one CC 74 per note today. Needs `ScheduledNote.points[].modulation`, then a CC per change. Exact, moderate work. **Inaudible under our own engine**, which reads only the opening value |
-| which clip a note sat in | 1 clip of 62,158, 42 with a different count | carry each clip's note count as well as its cell and length, and solve the assignment against it. Exact, small |
+| ~~which clip a note sat in~~ | ~~1 clip of 62,158~~ **0** | **done**, as a side effect of the lanes: 62,158 clips out, 62,158 back |
 | coincident points mid-note | 2 notes | explicit encoding for a zero-length segment. Exact, small, pointless |
 | `timbre` bits 4-5, volume > 127 | 0 in the corpus | a side-channel meta; MIDI has 7 bits for either. Only matters on a level unlike any of the 22 |
 | unexplained | 2 notes (0.0002%) | not diagnosed |
@@ -265,8 +265,8 @@ either file. `LBP_MIDI_PERPART=1` measures the mode a DAW should be given:
 
 - 149 sequencers, **953,791 notes**, none lost, none moved, no pitch, duration or modulation
   changed; an intact note's curve stays inside the half unit its integer fields round by.
-- 88,893 notes (9.32%) carry a glide. **1,537 of them (0.16%) lose it to a channel they had to
-  share** — an MPE zone has fifteen member channels and this engine has thirty-two voices, so a
+- 88,893 notes (9.32%) carry a glide. In `channelsPerPart` **none of them lose it**. Sharing the
+  channels across the file instead costs 1,537 of them (0.16%) — an MPE zone has fifteen member channels and this engine has thirty-two voices, so a
   dense passage runs out. A note that has to share writes no bend and no pressure at all, because
   both belong to the channel and a newcomer setting them drags whatever is already sounding there.
   The count is reported by `sequencerToMidi`, never swallowed.

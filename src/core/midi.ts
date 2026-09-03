@@ -524,17 +524,16 @@ export function sequencerToMidi(
     for (const track of part.tracks) partOfTrack.set(track, index);
   });
 
-  const bodies: MidiEvent[][] = parts.map(() => []);
   /**
-   * One pool, or one per part; see `channelsPerPart`.
+   * One pool, or one per lane; see `channelsPerPart`.
    *
    * The counters are summed over whatever pools exist, so the rest of the
    * function does not need to know which arrangement it is in.
    */
   const perPart = options.channelsPerPart ?? false;
   const pools = new Map<number, VoicePool>();
-  const poolFor = (part: number) => {
-    const key = perPart ? part : -1;
+  const poolFor = (lane: number) => {
+    const key = perPart ? lane : -1;
     const found = pools.get(key);
     if (found) return found;
     const made = new VoicePool();
@@ -584,6 +583,65 @@ export function sequencerToMidi(
     event.hasPitchAutomation || event.hasVolumeAutomation || clamp7(event.volume) === 0;
 
   const all = schedule(sequencer);
+
+  /**
+   * Which MIDI track each note is written to.
+   *
+   * ⚠️ **A part is not always one track.** Fifteen member channels is the
+   * ceiling on how many notes of a part can sound at once and keep their own
+   * bend, and a part can pass it on its own -- the corpus's busiest single part
+   * reaches 26. Splitting such a part across two tracks gives it thirty, and a
+   * DAW that lands one project track per MIDI track plays them on two instances
+   * of the same instrument, which is the same sound. Without this, 825 notes
+   * lost a glide with nowhere else they could have gone.
+   *
+   * The split is by NOTE, not by clip: a single clip can be polyphonic enough on
+   * its own. Greedy in time order into the first lane with room, which is
+   * optimal for intervals.
+   *
+   * Only in `channelsPerPart`. Sharing one pool across the file makes extra
+   * tracks pure cost, since they compete for the same fifteen channels either
+   * way, and the import merges them back regardless.
+   */
+  const laneOf = new Map<ScheduledNote, number>();
+  const laneCount = parts.map(() => 1);
+  if (perPart) {
+    const byPart: ScheduledNote[][] = parts.map(() => []);
+    for (const event of all) {
+      const part = partOfTrack.get(event.track);
+      if (part !== undefined) byPart[part].push(event);
+    }
+    byPart.forEach((own, index) => {
+      const sounding: number[][] = [];
+      for (const event of own) {
+        const from = at(event.step);
+        const until = Math.max(from + 1, at(event.step + event.durationSteps));
+        let lane = 0;
+        while (lane < sounding.length) {
+          sounding[lane] = sounding[lane].filter((end) => end > from);
+          if (sounding[lane].length < MEMBERS.length) break;
+          lane += 1;
+        }
+        if (lane === sounding.length) sounding.push([]);
+        sounding[lane].push(until);
+        laneOf.set(event, lane);
+      }
+      laneCount[index] = Math.max(1, sounding.length);
+    });
+  }
+  /** Where each part's lanes begin in `bodies`. */
+  const laneBase: number[] = [];
+  let bodyCount = 0;
+  for (const count of laneCount) {
+    laneBase.push(bodyCount);
+    bodyCount += count;
+  }
+  const bodies: MidiEvent[][] = Array.from({ length: bodyCount }, () => []);
+  const bodyOf = (event: ScheduledNote): number | undefined => {
+    const part = partOfTrack.get(event.track);
+    return part === undefined ? undefined : laneBase[part] + (laneOf.get(event) ?? 0);
+  };
+
   const gliding = all.filter(needsChannel);
   const flat = all.filter((e) => !needsChannel(e));
   const order = [...gliding, ...flat];
@@ -599,8 +657,8 @@ export function sequencerToMidi(
   if (mpe) {
     for (const event of order) {
       if (event === flat[0]) for (const p of pools.values()) p.rewind();
-      const part = partOfTrack.get(event.track);
-      if (part === undefined) continue;
+      const body = bodyOf(event);
+      if (body === undefined) continue;
       const track = sequencer.tracks[event.track];
       const value = notePitch(event.pitch, track.scale, blockRoot(track.key));
       if (value < 0 || value > 127) clampedPitch += 1;
@@ -608,7 +666,7 @@ export function sequencerToMidi(
       const startTick = at(event.step);
       const endTick = Math.max(startTick + 1, at(event.step + event.durationSteps));
       const place = { channel: -1, exclusive: true, base };
-      const taken = poolFor(part).take(startTick, base, endTick, needsChannel(event), place);
+      const taken = poolFor(body).take(startTick, base, endTick, needsChannel(event), place);
       place.channel = taken.channel;
       place.exclusive = place.exclusive && taken.exclusive;
       placements.set(event, place);
@@ -616,7 +674,7 @@ export function sequencerToMidi(
   }
 
   for (const event of order) {
-    const partIndex = partOfTrack.get(event.track);
+    const partIndex = bodyOf(event);
     if (partIndex === undefined) continue;
     const track = sequencer.tracks[event.track];
     const root = blockRoot(track.key);
@@ -776,15 +834,21 @@ export function sequencerToMidi(
   const tracks: MidiTrack[] = [{ events: sortEvents(head, rank) }];
   parts.forEach((part, index) => {
     const t = part.track;
-    const header: MidiEvent[] = [
-      metaText(0, 0x03, nameOf(t)),
-      metaText(0, 0x01, TRK_TAG + JSON.stringify({
-        guid: t.guid, name: nameOf(t), gridY: t.gridY,
-        level: t.level, pan: t.pan, echoSend: t.echoSend, reverbSend: t.reverbSend,
-        key: t.key, scale: t.scale, clips: part.clips,
-      })),
-    ];
-    tracks.push({ events: [...header, ...sortEvents(bodies[index], rank)] });
+    for (let lane = 0; lane < laneCount[index]; lane += 1) {
+      // A lane is a continuation of the part, and says so in both places: the
+      // name so a DAW's track list reads, and the meta so the import merges.
+      const label = laneCount[index] > 1 ? `${nameOf(t)} (${lane + 1})` : nameOf(t);
+      const header: MidiEvent[] = [
+        metaText(0, 0x03, label),
+        metaText(0, 0x01, TRK_TAG + JSON.stringify({
+          guid: t.guid, name: nameOf(t), gridY: t.gridY,
+          level: t.level, pan: t.pan, echoSend: t.echoSend, reverbSend: t.reverbSend,
+          key: t.key, scale: t.scale, clips: part.clips,
+          ...(laneCount[index] > 1 ? { lane } : {}),
+        })),
+      ];
+      tracks.push({ events: [...header, ...sortEvents(bodies[laneBase[index] + lane], rank)] });
+    }
   });
 
   const bytes = writeMidi({ format: 1, division: ppq, tracks });
@@ -909,11 +973,35 @@ export function midiToSequencer(bytes: Uint8Array, fallbackName = 'imported'): M
 
   const parts: RawPart[] = [];
   let unmatched = 0;
+  /**
+   * Lanes of one part come back as one part.
+   *
+   * ⚠️ **A part too polyphonic for fifteen channels is written as several
+   * MIDI tracks** -- see `laneOf` in the exporter -- and they carry the same
+   * `LBP-TRK` identity precisely so that this can put them together again.
+   * Everything in the key is a field `partsOf` grouped on, so two tracks sharing
+   * it were one part; a file from a DAW has no meta and no two tracks can match,
+   * because `gridY` falls back to the track's own index.
+   */
+  const byIdentity = new Map<string, RawPart>();
   for (const track of file.tracks) {
-    const part = readPart(track, bendRange, parts.length, zoned);
-    if (part === undefined) continue;
-    unmatched += part.unmatched;
-    if (part.part.notes.length > 0) parts.push(part.part);
+    const found = readPart(track, bendRange, parts.length, zoned);
+    if (found === undefined) continue;
+    unmatched += found.unmatched;
+    const part = found.part;
+    if (part.notes.length === 0 && part.cells.length === 0) continue;
+    const identity = [
+      part.guid, part.gridY, part.level, part.pan,
+      part.echoSend, part.reverbSend, part.key, part.scale,
+      part.cells.map((c) => c.join(':')).join(','),
+    ].join('|');
+    const already = byIdentity.get(identity);
+    if (already) {
+      already.notes.push(...part.notes);
+      continue;
+    }
+    byIdentity.set(identity, part);
+    parts.push(part);
   }
 
   const built = parts.map((part) => cutIntoClips(part, ticksPerStep));
