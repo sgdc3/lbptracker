@@ -27,7 +27,7 @@ over the corpus (10 levels, 149 sequencers, 953,791 notes, 62,158 clips, 1,448,2
 | **`LBP-TRK` meta** — placement and cells | **5.18%** | 4,911 |
 | **`LBP-TRK` `fix`** — verbatim records | **0.72%** | 160 |
 | track name meta | 0.33% | 5,060 |
-| **`LBP-SEQ` meta** — the sequencer | **0.17%** | 149 |
+| **`LBP-SEQ` meta** — the sequencer | **0.12%** | 149 |
 | tempo, time signature, end of track | 0.09% | 5,358 |
 | RPN / MPE configuration | 0.02% | 1,341 |
 
@@ -36,15 +36,27 @@ gives a level its board back.
 
 ## 1. `LBP-SEQ ` — one text meta on the conductor track
 
-Meta type `0x01`, the tag then JSON. Everything on `Sequencer` that is not a track:
+Meta type `0x01`, the tag then JSON. **Only what MIDI has no message for**:
 
-`v` · `uid` · `name` · `tempo` · `swing` · `swingBaked` · `echoFeedback` · `echoTime` · `echoMix` ·
-`reverb` · `loop` · `startPoint` · `numChannels` · `volumes` · `stepsPerQuarter` · `bendRange` ·
-`mpe`
+`v` · `uid` · `swing` · `swingBaked` · `echoFeedback` · `echoTime` · `echoMix` · `reverb` · `loop` ·
+`startPoint` · `numChannels` · `volumes`
 
-All of them are read back except `stepsPerQuarter` and `swingBaked`, which describe how the file
-was written rather than what the sequencer holds. The tempo is *also* a real MIDI tempo event, so a
-DAW gets it without knowing us; the meta's copy wins on import.
+✅ **Five fields left in 2026-09-03 because MIDI already says them**, and the rule they taught is
+worth more than the 12 kB: **a duplicated field is a field that can disagree with itself.**
+
+| was in the header | says it instead | why it had to go |
+|---|---|---|
+| `name` | the conductor's track-name meta | ❗ write the REAL name, empty or not — 10 of the 149 corpus sequencers have none, and a friendly default would rename them on the way back |
+| `tempo` | the tempo event | ⚠️ **it was an actual bug**: exported at 120, re-tempoed to 174 in a DAW, imported at 120, because the meta won. Measured, not suspected |
+| `bendRange` | RPN 0 on a **member** channel | ❗ not the master's, which is a different and smaller range — ours writes 2, and reading that one would flatten every glide by 24× |
+| `mpe` | the MCM, RPN 6 on the master | already the fallback; now the only source |
+| `stepsPerQuarter` | nothing | written and never read |
+
+⚠️ **The tempo message stores microseconds per quarter, so it is not a float you get back.** 174
+BPM reads as 173.99979, and the field would drift on every trip. The import asks which whole BPM
+encodes to exactly the microseconds in the file and takes that one — not a guess, and all 149 corpus
+tempos are whole (70..240). A genuinely fractional tempo keeps its fraction to within 1e-4 BPM,
+which is the one thing this cost.
 
 ⚠️ `test/midi.test.ts` pins the field list. Adding a field to `Sequencer` and forgetting it here
 fails there, rather than silently in a DAW six months later.
