@@ -211,7 +211,7 @@ none is fixed, and the cost is why:
 |---|---|---|
 | ~~glides lost inside one part~~ | ~~825 notes~~ **0** | **done.** A part whose own polyphony passes 15 is written across several MIDI tracks — `laneOf` in the exporter, merged back on the `LBP-TRK` identity. It cost **2 extra tracks across the whole corpus**, 5,058 to 5,060, and took the clip count to exact |
 | control points not identical | 2,684 notes (0.281%) | the resampling round trip: a rounded ramp can put its step a third of a step early, and the simplifier drops points within half a unit of the line. Exact only by carrying the true points in a meta — which duplicates the note data — or by not resampling, which makes a glide a jump in every DAW |
-| per-point modulation | 34,449 notes (3.6%) | one CC 74 per note today. Needs `ScheduledNote.points[].modulation`, then a CC per change. Exact, moderate work. **Inaudible under our own engine**, which reads only the opening value |
+| per-point modulation | 34,449 notes (3.6%) | one CC 74 per note today. Needs `ScheduledNote.points[].modulation`, then a CC per change. Exact, moderate work. ⚠️ **Do not call this inaudible.** It is inaudible under *our* renderer, which reads only the opening value — and the voice record carries a **slide rate for the modulation** at `+0x34`, beside the ones for volume and pitch, so the engine probably ramps it and our renderer is the thing that is wrong. See open question 2 |
 | ~~which clip a note sat in~~ | ~~1 clip of 62,158~~ **0** | **done**, as a side effect of the lanes: 62,158 clips out, 62,158 back |
 | coincident points mid-note | 2 notes | explicit encoding for a zero-length segment. Exact, small, pointless |
 | `timbre` bits 4-5, volume > 127 | 0 in the corpus | a side-channel meta; MIDI has 7 bits for either. Only matters on a level unlike any of the 22 |
@@ -233,7 +233,7 @@ listed here comes back exactly, and `test/midi.test.ts` pins the field list so t
 |---|---|---|
 | `Scale` only | 0 placements in the corpus set it | folded into the note numbers so the file plays anywhere, and **`quantise` is measured not to be idempotent**, so there is no pitch to un-snap to. `Key` *is* put back — a transposition is invertible where a projection is not |
 | which clip a note sat in | 1 clip of 62,158, and 42 more hold a different number of notes (0.07%) | the residue of a genuine ambiguity: clips of one part overlap, so a few notes fit two of them and either answer puts them at the same place on the timeline |
-| per-point modulation | 34,449 notes (3.6%) vary it | one CC 74 per note, at its opening value — which is also all `render.ts` reads, so **nothing audible** |
+| per-point modulation | 34,449 notes (3.6%) vary it | one CC 74 per note, at its opening value — which is also all `render.ts` reads. ⚠️ That makes it inaudible *here*, not in the game: the voice record has a slide rate for the modulation at `+0x34`. Open question 2 |
 | coincident control points | 302 notes (0.03%) | two records on one position collapse to the later, which is what the engine's `t = span > 0 ? … : 1` does |
 | a glide, to a shared channel | 825 (0.09%) per part, 1,535 (0.16%) shared | fifteen member channels against thirty-two voices; always counted, never silent |
 | pitch and volume resolution | within half a unit | bend is rounded to whole semitones and positions to thirds of a step, which is the record grid |

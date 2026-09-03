@@ -50,8 +50,19 @@ anything; all are places where an answer stopped just short.
   whether the engine reaches them as *layers*: this project plays slot 0 five times, and four
   octave-spaced samples going unused on a five-layer patch is suspicious on its own.
 - **Per-note modulation across a note's own points.** 70,028 of 2,027,633 corpus notes (3.45%) change
-  modulation between their control points, and those render at their opening value. Whether the
-  engine re-reads it mid-note is unmeasured.
+  modulation between their control points, and those render at their opening value.
+
+  ⚠️ **There is an anchor for this and it points the other way.** The voice record's `+0x2c`,
+  `+0x30` and `+0x34` are **slide rates per unit time for volume, pitch and the modulation** — the
+  same three quantities, side by side, and the first two are the ramps we already reproduce. A rate
+  for the third is hard to read as anything but the engine ramping it too, which would make our
+  renderer wrong on those 3.45% rather than the data harmless. The reason recorded against it,
+  "modulation feeds things read once when the voice starts", is a *reason*, not a measurement, and
+  it does not explain why a slide rate for it exists.
+
+  To settle it: `+0x34` is written somewhere, and whatever writes it is computing
+  `(next.mod − this.mod) / span` the way the volume and pitch rates are. Find that site, then find
+  what reads `+0x28` per frame rather than per voice.
 - **The `1/3` sub-step and `Swing`.** Triplets are settled and wired; `Swing` is a normalised 0..1
   ratio clamped at 0.99 and what the engine does with it is still unknown. It stays under question 3.
 - **The voice pool did not explain the density report it was found chasing.** It cuts 248 of 1,684
