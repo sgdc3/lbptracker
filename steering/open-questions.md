@@ -52,17 +52,22 @@ anything; all are places where an answer stopped just short.
 - **Per-note modulation across a note's own points.** 70,028 of 2,027,633 corpus notes (3.45%) change
   modulation between their control points, and those render at their opening value.
 
-  ⚠️ **There is an anchor for this and it points the other way.** The voice record's `+0x2c`,
-  `+0x30` and `+0x34` are **slide rates per unit time for volume, pitch and the modulation** — the
-  same three quantities, side by side, and the first two are the ramps we already reproduce. A rate
-  for the third is hard to read as anything but the engine ramping it too, which would make our
-  renderer wrong on those 3.45% rather than the data harmless. The reason recorded against it,
-  "modulation feeds things read once when the voice starts", is a *reason*, not a measurement, and
-  it does not explain why a slide rate for it exists.
+  ⚠️ **HALF SETTLED, 2026-09-03: the engine ramps it.** `sub_0x3930` in `fmodextinput.prx`
+  computes all three slide rates from the same span and the same reciprocal, in three identical
+  pairs — `[rbx+0x2c]` volume at `0x3e66`, `[rbx+0x30]` pitch at `0x3e78`, `[rbx+0x34]` **the
+  modulation** at `0x3e8a` — and catches all three up by `rate × elapsed` at `0x3edd`, `0x3eea` and
+  `0x3ef7`, the last of those writing `[rbx+0x28]`. There is no asymmetry anywhere in the function.
+  The reason recorded against interpolating it, "modulation feeds things read once when the voice
+  starts", was a *reason* and not a measurement, and it is now contradicted.
 
-  To settle it: `+0x34` is written somewhere, and whatever writes it is computing
-  `(next.mod − this.mod) / span` the way the volume and pitch rates are. Find that site, then find
-  what reads `+0x28` per frame rather than per voice.
+  **So `src/core/render.ts` is wrong on the 3.45% of notes that move it**, and that is a bug rather
+  than a simplification.
+
+  What is still open is what CONSUMES the ramped `+0x28`. Every parameter it feeds — the two ADSRs'
+  times, the filter settings, `Numstack`, the sends — is currently evaluated once when a voice
+  starts, and if the engine re-evaluates them per frame that is a different voice architecture, not
+  a one-line fix. Next: find the readers of `+0x28` that are not `sub_0x3930` itself, and see
+  whether any of them runs per frame.
 - **The `1/3` sub-step and `Swing`.** Triplets are settled and wired; `Swing` is a normalised 0..1
   ratio clamped at 0.99 and what the engine does with it is still unknown. It stays under question 3.
 - **The voice pool did not explain the density report it was found chasing.** It cuts 248 of 1,684

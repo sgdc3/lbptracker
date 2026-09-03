@@ -1484,18 +1484,42 @@ replace them with a rule.**
 
 ### The three ramps are note-to-note, not an envelope
 
-`sub_0x38e0` reads the **current and the next** note word (`[r12]` and `[r12+4]`), takes the span
-between their positions, and sets all three slide rates to reach the next record's values:
+**Measured at `sub_0x3930` in `fmodextinput.prx`, 2026-09-03**, function start found by the largest
+`E8` target at or below the stores; the block below is in sync with a byte scan for the store
+encodings, and the function ends in a clean epilogue at `0x3f23`. ⚠️ Steering called this
+`sub_0x38e0` until now, which is a stale label — see the PRX delta warning in `tools/prxdis.py`.
+
+It reads the **current and the next** note word (`[r12]` and `[r12+4]`), takes the span between
+their positions, and sets all three slide rates to reach the next record's values:
 
 ```
-span = pos(next) - pos(current)                  ; in steps, thirds allowed
-voice.volumeSlide = (velocityNext/127 - voice.volume) / span
-voice.pitchSlide  = (pitchNext        - voice.pitch ) / span
-voice.panSlide    = (modNext/15       - voice.pan   ) / span
+0x3e1e-0x3e44   span = pos(next) - pos(current)      ; step + subStep/3, v0x45ac = 1/3
+0x3e50          xmm6 = 1 / span
+
+0x3e54-0x3e66   [rbx+0x2c] = (nextVolume - voice.volume) / span
+0x3e6b-0x3e78   [rbx+0x30] = (nextPitch  - voice.pitch ) / span
+0x3e7d-0x3e8a   [rbx+0x34] = (nextMod    - voice.mod   ) / span
 ```
 
-and when there is no next record it writes **zero** to all three. So a note glides linearly between
-its control points and holds flat otherwise.
+and when there is no next record it writes **zero** to all three — `0x3f06` clears `+0x2c` and
+`+0x30` with one 8-byte store and `0x3f0e` clears `+0x34`. So a note glides linearly between its
+control points and holds flat otherwise.
+
+⚠️ **All three, and that includes the modulation.** When the playhead is already partway between
+two records the same function catches all three up by `rate × elapsed`, in three identical pairs:
+
+```
+0x3edd-0x3ee5   [rbx+0x0c] += volumeSlide × elapsed     ; volume
+0x3eea-0x3ef2   [rbx+0x08] += pitchSlide  × elapsed     ; pitch
+0x3ef7-0x3eff   [rbx+0x28] += modSlide    × elapsed     ; the MODULATION
+```
+
+The third one used to be written down here as `panSlide`, because `+0x28` was read as a pan until
+`sub_0x3930` was disassembled. It is the note's modulation — the value that picks a point inside
+every `Params` range — and **the engine ramps it exactly as it ramps volume and pitch**.
+`src/core/render.ts` holds it at the note's opening value and is therefore wrong on the 3.45% of
+notes that move it. See open question 2 for what is still unmeasured: what consumes the ramped
+value.
 
 **This is the sequencer's pitch bend, and it is not a garnish — measured over the corpus's
 2,027,633 notes:**
