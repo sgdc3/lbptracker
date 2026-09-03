@@ -8,12 +8,15 @@
  * `playbackRate`, nothing that could differ between engines.
  */
 
+import { PAN_WIDTH } from '../src/core/render.ts';
+
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const seqSelect = $<HTMLSelectElement>('seq');
 const useRange = $<HTMLInputElement>('useRange');
 const rangeFields = $<HTMLSpanElement>('rangeFields');
 const fromInput = $<HTMLInputElement>('from');
 const toInput = $<HTMLInputElement>('to');
+const panWidthInput = $<HTMLInputElement>('panWidth');
 const goButton = $<HTMLButtonElement>('go');
 const saveButton = $<HTMLButtonElement>('save');
 const statusLine = $<HTMLDivElement>('status');
@@ -26,6 +29,21 @@ const dropZone = $<HTMLDivElement>('drop');
 const dropTitle = $<HTMLElement>('dropTitle');
 const dropHint = $<HTMLElement>('dropHint');
 const fileInput = $<HTMLInputElement>('file');
+
+/**
+ * The pan width starts at the measured default. It is a box rather than a fixed
+ * constant because only the *effect* is measured -- see `PAN_WIDTH` -- so being
+ * able to render the same section at 1 and compare is worth a text field.
+ */
+panWidthInput.value = String(Number(PAN_WIDTH.toFixed(6)));
+
+/** `null` when the box does not hold a number in 0..1. */
+const readPanWidth = (): number | null => {
+  const text = panWidthInput.value.trim();
+  if (text === '') return PAN_WIDTH;
+  const value = Number(text);
+  return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
+};
 
 const worker = new Worker(new URL('./render-worker.ts', import.meta.url), { type: 'module' });
 
@@ -247,11 +265,19 @@ goButton.addEventListener('click', () => {
     setStatus('the end has to come after the start', true);
     return;
   }
+  const panWidth = readPanWidth();
+  if (panWidth === null) {
+    panWidthInput.classList.add('bad');
+    goButton.disabled = false;
+    setStatus('pan width is a number from 0 to 1', true);
+    return;
+  }
   setBusy(true);
   setBar(0);
   worker.postMessage({
     type: 'render',
     uid: Number(seqSelect.value),
+    panWidth,
     // An empty end means "to the end of the song", which the renderer spells as
     // a length of zero.
     from: from ?? 0,

@@ -169,6 +169,11 @@ export interface RenderOptions {
    *
    * The game **never hard-pans**: at a written pan of 1.0 its opposite channel
    * comes back at -11.66 dB, not silence. See {@link PAN_WIDTH} for the numbers.
+   *
+   * It is a knob in all three front ends -- the `pan width` box on the render
+   * page, `LBP_PAN_WIDTH` for `dev/render-level.ts`, and this option -- because
+   * only the *effect* is measured. Until the mechanism is read, rendering the
+   * same section at `1` and comparing is the check that keeps it honest.
    */
   readonly panWidth?: number;
 }

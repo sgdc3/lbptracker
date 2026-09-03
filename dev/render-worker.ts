@@ -131,6 +131,8 @@ self.onmessage = async (event: MessageEvent) => {
     uid?: number;
     seconds?: number;
     from?: number;
+    /** `RenderOptions.panWidth`; absent leaves the measured default. */
+    panWidth?: number;
     file?: File;
   };
   try {
@@ -163,6 +165,8 @@ self.onmessage = async (event: MessageEvent) => {
       const result = await renderSequencer(seq, await loaderFor(), {
         secondsArg: message.seconds ?? 0,
         fromArg: message.from ?? 0,
+        // Absent means the measured default; the page always sends one.
+        ...(message.panWidth === undefined ? {} : { panWidth: message.panWidth }),
         onProgress: (phase, done, total) => {
           post({ type: 'progress', phase, done, total });
         },
