@@ -192,13 +192,12 @@
         </p>
       </div>
       <div class="group">
-        <h3>channel volumes</h3>
+        <h3>channel volumes <span id="numChannels" class="picker-detail"></span></h3>
         <div id="channels"></div>
         <p class="hintline">
-          The sequencer&rsquo;s own mixer. A board row is a channel <em>modulo 8</em>, so a song
-          spread down the board puts notes on every one of them &mdash; the count beside each is
-          how many tracks it carries, and a channel with none is greyed out. The file stores six
-          volumes; the last two keep the value the engine starts them at.
+          The sequencer&rsquo;s own mixer, one fader per channel the song declares. A board row
+          feeds channel <em>row mod NumChannels</em>, so with one channel every row goes through
+          the one fader; the count beside each is how many tracks land on it.
         </p>
       </div>
     </div>

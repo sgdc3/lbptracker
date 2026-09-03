@@ -359,7 +359,17 @@ test('the corpus’s sub-steps are the two balanced thirds, not a flag', async (
 
 // ------------------------------------------------------------ mixer channels
 
-test('a track’s channel is its board row modulo eight', async () => {
+// ⚠️ **This test asserted `row modulo EIGHT` until 2026-09-03**, which is what
+// the plugin does and not what the song means: the eight records are the
+// plugin's, and `mod 8` there is a bounds guard on a value the eboot has already
+// reduced. A listener playing the game pointed out that a sequencer set to one
+// channel puts everything through that channel's fader -- which `% 8` does not
+// do, and which 308 of the corpus's 338 sequencers depend on.
+//
+// The cases below that separate the two readings are the ones with a row at or
+// past `NumChannels` but under eight: `at(6)` was 0.75 under the old law and is
+// `volumes[2]` under this one.
+test('a track’s channel is its board row modulo NumChannels', async () => {
   const { channelVolume, CHANNEL_HEADROOM } = await import('../src/core/project.ts');
   const seq = {
     numChannels: 4,
@@ -371,18 +381,33 @@ test('a track’s channel is its board row modulo eight', async () => {
   assert.equal(at(0), CHANNEL_HEADROOM * 1);
   assert.equal(at(1), CHANNEL_HEADROOM * 0.7);
   assert.equal(at(3), CHANNEL_HEADROOM * 0.2);
-  // The engine takes the row modulo eight (0x3afc-0x3b0b), which is what makes a
-  // 24-row board safe against a NumChannels of at most 6.
-  assert.equal(at(8), at(0));
-  assert.equal(at(9), at(1));
+  // Wrapping at NumChannels, so every row lands on a channel the song has.
+  assert.equal(at(4), at(0));
+  assert.equal(at(6), at(2));
+  assert.equal(at(7), at(3));
   assert.equal(at(24), at(0));
-  // Records past Volume[5] keep the engine's initialised 0.75, i.e. volume 1.
-  assert.equal(at(6), CHANNEL_HEADROOM);
-  assert.equal(at(7), CHANNEL_HEADROOM);
+  assert.equal(at(6), CHANNEL_HEADROOM * 0.5, 'row 6 is channel 2, not an unused record');
+
+  // One channel means one fader for the whole board, which is the case that
+  // matters: it is what 308 of 338 sequencers are.
+  const flat = { numChannels: 1, volumes: [0.5, 1, 1, 1, 1, 1] } as never as typeof seq;
+  const flatAt = (gridY: number) =>
+    channelVolume(flat, { gridY } as never as Parameters<typeof channelVolume>[1]);
+  assert.equal(flatAt(0), CHANNEL_HEADROOM * 0.5);
+  assert.equal(flatAt(3), CHANNEL_HEADROOM * 0.5, 'every row goes through channel 0');
+  assert.equal(flatAt(17), CHANNEL_HEADROOM * 0.5);
+
   // ⚠️ Even an all-ones sequencer is not unity: the headroom is always there.
-  const flat = { numChannels: 1, volumes: [1, 1, 1, 1, 1, 1] } as never as typeof seq;
+  const ones = { numChannels: 1, volumes: [1, 1, 1, 1, 1, 1] } as never as typeof seq;
   assert.equal(
-    channelVolume(flat, { gridY: 3 } as never as Parameters<typeof channelVolume>[1]),
+    channelVolume(ones, { gridY: 3 } as never as Parameters<typeof channelVolume>[1]),
     0.75,
+  );
+
+  // A file claiming no channels still plays, through the one it must have.
+  const none = { numChannels: 0, volumes: [0.25] } as never as typeof seq;
+  assert.equal(
+    channelVolume(none, { gridY: 9 } as never as Parameters<typeof channelVolume>[1]),
+    CHANNEL_HEADROOM * 0.25,
   );
 });

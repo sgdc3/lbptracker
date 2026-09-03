@@ -215,16 +215,25 @@ const planOptions = () => ({
  * over in STEPS rather than seconds, because a tempo change moves the seconds
  * a musical position corresponds to.
  */
-let overrides: { tempo?: number; swing?: number; volumes?: number[] } = {};
+let overrides: {
+  tempo?: number;
+  swing?: number;
+  volumes?: number[];
+} = {};
 
-const withOverrides = <T extends { tempo: number; swing: number; volumes: readonly number[] }>(
+const withOverrides = <
+  T extends { tempo: number; swing: number; volumes: readonly number[]; numChannels: number },
+>(
   seq: T,
-): T => ({
-  ...seq,
-  tempo: overrides.tempo ?? seq.tempo,
-  swing: overrides.swing ?? seq.swing,
-  volumes: overrides.volumes ?? seq.volumes,
-});
+): T => {
+  const volumes = overrides.volumes ?? seq.volumes;
+  return {
+    ...seq,
+    tempo: overrides.tempo ?? seq.tempo,
+    swing: overrides.swing ?? seq.swing,
+    volumes,
+  };
+};
 
 /** The pool size the listener has asked for. */
 const poolSize = () => (noCapBox.checked ? VOICES_UNLIMITED : Number(voicesInput.value));
@@ -452,20 +461,16 @@ async function prepare(restart = true): Promise<void> {
   if (restart) {
     tempoInput.value = String(Math.round(original.tempo));
     swingInput.value = String(Math.round(original.swing * 100));
-    // ⚠️ **CHANNEL_COUNT sliders, not `volumes.length`.** The file stores six
-    // volumes but the engine indexes them with `gridY % 8`, and records past
-    // `Volume[5]` keep its initialised value -- so channels 6 and 7 exist, carry
-    // notes, and had no control at all when this was built from the array.
-    //
-    // The note counts are there because the mapping surprises people: a board
-    // row is a channel modulo 8, so a song spread over rows 0..18 puts notes on
-    // every channel and no single one of them is "the song". On Ascetic channel
-    // 0 holds 323 of 1150 tracks.
-    const perChannel = new Array<number>(CHANNEL_COUNT).fill(0);
+    // As many faders as the song declares channels, and no more: a channel it
+    // does not have carries nothing, and a slider for it would be a lie. The
+    // track count beside each is there because the mapping surprises people --
+    // a board row feeds `row mod NumChannels`, so rows far apart share a fader.
+    const count = Math.min(CHANNEL_COUNT, Math.max(1, original.numChannels));
+    const perChannel = new Array<number>(count).fill(0);
     for (const t of original.tracks) {
-      perChannel[((t.gridY % CHANNEL_COUNT) + CHANNEL_COUNT) % CHANNEL_COUNT] += 1;
+      perChannel[((t.gridY % count) + count) % count] += 1;
     }
-    channelsBox.innerHTML = Array.from({ length: CHANNEL_COUNT }, (_, i) => {
+    channelsBox.innerHTML = Array.from({ length: count }, (_, i) => {
       const v = i < original.volumes.length ? original.volumes[i] : 1;
       const used = perChannel[i];
       return (
@@ -476,6 +481,7 @@ async function prepare(restart = true): Promise<void> {
         `<output id="ch${i}Label">${v.toFixed(2)}</output></div>`
       );
     }).join('');
+    $('numChannels').textContent = `NumChannels ${original.numChannels}`;
     showSongOptions();
   }
   markStale();

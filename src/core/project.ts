@@ -234,27 +234,36 @@ export const CHANNEL_COUNT = 8;
  * 0x3b3c  xmm0 = [state + 0x1a68 + 12*channel]   ; that channel's volume
  * ```
  *
- * The eight records against a `NumChannels` that never exceeds 6 is what the
- * `mod 8` is for, and it is why a board row of 24 is not out of range.
+ * ✔ **The wrap is `NumChannels`, and the plugin's `mod 8` is a bounds guard.**
+ * Corrected 2026-09-03 by a listener who plays the game: a sequencer set to one
+ * channel puts everything through that channel's fader, which `gridY % 8` does
+ * not do.
  *
- * ⚠️ **The last link is inferred: that `header + 0x04` is the board row.** What
- * the eboot writes there has not been read -- the linear disassembly of the
- * sequencer module desynchronises, and no indexed 16-byte store was found. The
- * row is the candidate because it is the only per-track integer that ranges wide
- * enough to need wrapping: across the corpus `gridY` runs 0..24 while
- * `NumChannels` is 1 on 308 of 338 sequencers.
+ * ⚠️ **Only the `mod 8` was ever measured**, and this file used to read more
+ * into it than it said. The plugin holds eight channel records and clamps into
+ * them; **what the eboot writes at `header + 0x04` was never read** -- the linear
+ * disassembly of the sequencer module desynchronises and no indexed 16-byte
+ * store was found -- so "that value is the board row" was an inference, and it
+ * was flagged as one. Both readings survive the plugin: if the eboot has already
+ * reduced the row to `0..NumChannels-1`, its `mod 8` never changes anything.
  *
- * ⚠️ **This is also what refutes the guess this file used to carry.** "A row is
- * very likely a mixer channel" was recorded as a direct index, and the corpus
- * says it cannot be: **88% of tracks have a `gridY` outside `0..NumChannels-1`**,
- * and boards run to 25 distinct rows against at most 6 channels. Taken modulo 8
- * the same field fits perfectly.
+ * The corpus argument that killed the *direct* index still stands and now points
+ * here instead: **88% of tracks have a `gridY` outside `0..NumChannels-1`** and
+ * boards run to 25 distinct rows, so the row cannot BE the channel -- but taken
+ * modulo `NumChannels` it lands in range by construction, for every track.
  *
- * Only 30 of 338 sequencers use more than one channel, and 28 of those carry a
- * non-unit volume -- typically a descending ramp like `1.00, 0.70, 0.50, 0.20`.
+ * 308 of 338 sequencers set `NumChannels` to 1. Under the old reading their
+ * eight faders each did a little and none did much; under this one a single
+ * fader does all of it, which is what the game shows.
+ *
+ * Only 30 of 338 use more than one channel, and 28 of those carry a non-unit
+ * volume -- typically a descending ramp like `1.00, 0.70, 0.50, 0.20`.
  */
 export function channelVolume(sequencer: Sequencer, track: Track): number {
-  const channel = ((track.gridY % CHANNEL_COUNT) + CHANNEL_COUNT) % CHANNEL_COUNT;
+  // A sequencer claiming no channels still has one to play through, and the
+  // plugin only has eight records however many the field claims.
+  const count = Math.min(CHANNEL_COUNT, Math.max(1, sequencer.numChannels));
+  const channel = ((track.gridY % count) + count) % count;
   // Records past `Volume[5]` keep the engine's initialised 0.75, which is the
   // same as a volume of 1.0 through the headroom factor.
   const volume = channel < sequencer.volumes.length ? sequencer.volumes[channel] : 1;
