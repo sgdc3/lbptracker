@@ -1036,14 +1036,22 @@ export function sequencerToMidi(
 
   /* --------------------------------------------------------- the conductor */
   const head: MidiEvent[] = [
-    metaText(0, 0x03, sequencer.name || 'LBP sequencer'),
+    // ❗ **The real name, empty or not.** This is where the sequencer's name
+    // lives now, so substituting a friendly default for a blank one would
+    // rename 10 of the corpus's 149 sequencers on the way back. A DAW showing an
+    // unnamed conductor track is the level being honest about itself.
+    metaText(0, 0x03, sequencer.name),
     tempoEvent(0, sequencer.tempo),
     timeSignature(0, 4, 2),
+    // ⚠️ **Only what MIDI has no message for.** The name is the track name
+    // meta, the tempo is the tempo event, the bend range is RPN 0, and whether
+    // this is an MPE file is the MCM -- all four used to be duplicated here, and
+    // a duplicated field is a field that can disagree with itself. `tempo` did:
+    // a file re-tempoed in a DAW imported at the level's old tempo, because the
+    // meta won. `stepsPerQuarter` was written and never read.
     metaText(0, 0x01, SEQ_TAG + JSON.stringify({
-      v: 1,
+      v: 2,
       uid: sequencer.uid,
-      name: sequencer.name,
-      tempo: sequencer.tempo,
       swing: sequencer.swing,
       swingBaked: bakeSwing,
       echoFeedback: sequencer.echoFeedback,
@@ -1054,9 +1062,6 @@ export function sequencerToMidi(
       startPoint: sequencer.startPoint,
       numChannels: sequencer.numChannels,
       volumes: sequencer.volumes,
-      stepsPerQuarter: STEPS_PER_QUARTER,
-      bendRange,
-      mpe,
     })),
   ];
   if (mpe) {
@@ -1307,13 +1312,37 @@ export function midiToSequencer(bytes: Uint8Array, fallbackName = 'imported'): M
   const file = readMidi(bytes);
   const ticksPerStep = file.division / STEPS_PER_QUARTER;
 
+  /**
+   * The tempo, from the tempo event, snapped back to a whole BPM where one fits.
+   *
+   * ⚠️ **The header used to carry a copy of this and win, which silently
+   * threw a DAW's tempo change away** -- measured: exported at 120, re-tempoed
+   * to 174, imported at 120. MIDI has a first-class message for the tempo, so
+   * the meta has no business holding a second opinion.
+   *
+   * ❗ The message stores MICROSECONDS PER QUARTER, so 174 BPM comes back as
+   * 173.99979 and a plain read would drift the field on every trip. The snap is
+   * not a guess: it asks whether some whole BPM encodes to exactly the
+   * microseconds in the file, and takes that one if so. All 149 corpus tempos
+   * are whole (70..240), and a genuinely fractional tempo keeps the fraction.
+   */
+  const wholeBpm = (bpm: number): number => {
+    const usec = Math.round(60_000_000 / bpm);
+    const near = Math.round(bpm);
+    return near > 0 && Math.round(60_000_000 / near) === usec ? near : bpm;
+  };
+
   let tempo = 120;
+  /** The conductor track's own name meta: the sequencer's name. */
+  let title: string | undefined;
   let header: Record<string, unknown> | undefined;
-  for (const track of file.tracks) {
+  file.tracks.forEach((track, index) => {
     for (const event of track.events) {
       const found = tempoFrom(event);
-      if (found !== undefined && header === undefined) tempo = found;
+      if (found !== undefined) tempo = wholeBpm(found);
       const text = metaString(event);
+      // ❗ Track 0 only. Every other track's name meta is an instrument.
+      if (index === 0 && text?.type === 0x03 && title === undefined) title = text.text;
       if (text?.type === 0x01 && text.text.startsWith(SEQ_TAG)) {
         try {
           header = JSON.parse(text.text.slice(SEQ_TAG.length)) as Record<string, unknown>;
@@ -1323,12 +1352,15 @@ export function midiToSequencer(bytes: Uint8Array, fallbackName = 'imported'): M
         }
       }
     }
-  }
+  });
   const num = (key: string, fallback: number) =>
     typeof header?.[key] === 'number' ? (header[key] as number) : fallback;
-  if (header !== undefined) tempo = num('tempo', tempo);
-  const zoned = header?.mpe === true || hasMpeZone(file.tracks);
-  const bendRange = num('bendRange', zoned ? DEFAULT_BEND_RANGE : 2);
+  const zone = zoneOf(file.tracks);
+  const zoned = zone.zoned;
+  // RPN 0 on a member channel is where MPE puts the per-note bend range, and it
+  // is written on every file this module produces. `num('bendRange', ...)` is
+  // kept for the v1 files that carried it in the header instead.
+  const bendRange = zone.bendRange ?? num('bendRange', zoned ? DEFAULT_BEND_RANGE : 2);
 
   const parts: RawPart[] = [];
   let unmatched = 0;
@@ -1379,7 +1411,8 @@ export function midiToSequencer(bytes: Uint8Array, fallbackName = 'imported'): M
   return {
     sequencer: {
       uid: num('uid', 0),
-      name: typeof header?.name === 'string' ? (header.name as string) : fallbackName,
+      // The track name meta, then a v1 header's copy, then the caller's default.
+      name: title ?? (typeof header?.name === 'string' ? (header.name as string) : fallbackName),
       tempo,
       swing: num('swing', 0),
       echoFeedback: num('echoFeedback', 0),
@@ -1410,20 +1443,33 @@ export function midiToSequencer(bytes: Uint8Array, fallbackName = 'imported'): M
  * even in a file that is not ours -- and a file that is ours says so in its
  * header as well, because a DAW that re-saves it may not keep the RPN.
  */
-function hasMpeZone(tracks: readonly MidiTrack[]): boolean {
+function zoneOf(tracks: readonly MidiTrack[]): { zoned: boolean; bendRange?: number } {
+  let zoned = false;
+  let bendRange: number | undefined;
   for (const track of tracks) {
-    let selected = -1;
+    // RPN state is per channel: a file can be setting the zone on the master
+    // and the range on a member with the two sequences interleaved.
+    const selected = new Map<number, number>();
     for (const event of track.events) {
       const status = event.data[0];
       if ((status & 0xf0) !== 0xb0) continue;
       const channel = status & 0x0f;
-      if (channel !== 0 && channel !== 15) continue;
-      if (event.data[1] === 101) selected = event.data[2] << 7;
-      else if (event.data[1] === 100) selected = Math.max(0, selected) | event.data[2];
-      else if (event.data[1] === 6 && selected === 6 && event.data[2] > 0) return true;
+      const master = channel === 0 || channel === 15;
+      if (event.data[1] === 101) selected.set(channel, event.data[2] << 7);
+      else if (event.data[1] === 100) {
+        selected.set(channel, Math.max(0, selected.get(channel) ?? -1) | event.data[2]);
+      } else if (event.data[1] === 6) {
+        const rpn = selected.get(channel);
+        // The MCM: RPN 6 on a master channel, with the member count.
+        if (master && rpn === 6 && event.data[2] > 0) zoned = true;
+        // ❗ RPN 0 on a MEMBER channel is the zone's per-note bend range. The
+        // master's own RPN 0 is a different, smaller range -- ours writes 2 --
+        // and reading that one instead would flatten every glide by 24x.
+        if (!master && rpn === 0 && event.data[2] > 0) bendRange = event.data[2];
+      }
     }
   }
-  return false;
+  return { zoned, bendRange };
 }
 
 /**

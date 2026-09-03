@@ -6,11 +6,12 @@ import { STEPS_PER_CELL, schedule, type Sequencer, type Track } from '../src/cor
 import { blockRoot, notePitch, quantise, unquantise, MAX_SCALE } from '../src/core/scale.ts';
 import {
   DEFAULT_PPQ,
+  META_TAGS,
   STEPS_PER_QUARTER,
   midiToSequencer,
   sequencerToMidi,
 } from '../src/core/midi.ts';
-import { metaString, readMidi, writeMidi, writeVar, varLength } from '../src/core/smf.ts';
+import { metaString, readMidi, tempoEvent, writeMidi, writeVar, varLength } from '../src/core/smf.ts';
 
 /* ---------------------------------------------------------------- fixtures */
 
@@ -498,6 +499,77 @@ test('every sequencer and placement field that survives, does', () => {
   }
   assert.equal(back.tracks[0].key, seq.tracks[0].key, 'track.key');
   assert.equal(back.tracks[0].scale, seq.tracks[0].scale, 'track.scale');
+});
+
+test('the header carries nothing MIDI has a message for', () => {
+  // ⚠️ **A duplicated field is a field that can disagree with itself**, and
+  // this one did: the header's `tempo` beat the tempo event, so a file
+  // re-tempoed in a DAW imported at the level's old tempo. The name, the tempo,
+  // the bend range and the MPE flag all have first-class MIDI carriers and none
+  // of them belongs here. `stepsPerQuarter` was written and never read.
+  const seq = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]])], { name: 'A Song', tempo: 173 });
+  const found = readMidi(sequencerToMidi(seq).bytes).tracks
+    .flatMap((t) => t.events)
+    .map(metaString)
+    .find((m) => m?.type === 0x01 && m.text.startsWith(META_TAGS.sequencer));
+  assert.ok(found, 'the header meta is there');
+  const header = JSON.parse(found.text.slice(META_TAGS.sequencer.length));
+  for (const gone of ['name', 'tempo', 'bendRange', 'mpe', 'stepsPerQuarter']) {
+    assert.ok(!(gone in header), `${gone} is still in the header`);
+  }
+  // And each is still recoverable, from the message MIDI has for it.
+  const back = midiToSequencer(sequencerToMidi(seq).bytes).sequencer;
+  assert.equal(back.name, 'A Song');
+  assert.equal(back.tempo, 173);
+});
+
+test('the tempo is the tempo event, and a DAW that changes it wins', () => {
+  const seq = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]])], { tempo: 120 });
+  const file = readMidi(sequencerToMidi(seq).bytes);
+  const retempoed = writeMidi({
+    format: 1, division: file.division,
+    tracks: file.tracks.map((t, i) => (i !== 0 ? t : {
+      events: t.events.map((e) => (e.data[0] === 0xff && e.data[1] === 0x51 ? tempoEvent(0, 174) : e)),
+    })),
+  });
+  assert.equal(midiToSequencer(retempoed).sequencer.tempo, 174, 'the DAW set 174');
+
+  // ❗ And a tempo nothing touched keeps its exact value. The message stores
+  // MICROSECONDS per quarter, so a plain read of 174 gives 173.99979 and the
+  // field would drift on every trip; the snap asks which whole BPM encodes to
+  // exactly those microseconds. All 149 corpus tempos are whole, 70..240.
+  for (const tempo of [70, 120, 173, 222, 240]) {
+    const one = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]])], { tempo });
+    assert.equal(midiToSequencer(sequencerToMidi(one).bytes).sequencer.tempo, tempo);
+  }
+  // A fractional tempo is the one thing this costs, and it costs 1e-4 BPM.
+  const odd = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]])], { tempo: 137.5 });
+  const backOdd = midiToSequencer(sequencerToMidi(odd).bytes).sequencer.tempo;
+  assert.ok(Math.abs(backOdd - 137.5) < 0.002, `137.5 came back as ${backOdd}`);
+});
+
+test('an unnamed sequencer comes back unnamed', () => {
+  // 10 of the corpus's 149 have no name, and the conductor track's name meta is
+  // where the name lives now -- so substituting a friendly default would rename
+  // them on the way back.
+  const seq = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]])], { name: '' });
+  assert.equal(midiToSequencer(sequencerToMidi(seq).bytes).sequencer.name, '');
+});
+
+test('the bend range is read from a member channel, not the master', () => {
+  // ❗ MPE puts the per-note range on RPN 0 of a MEMBER channel; the master has
+  // its own, smaller one -- ours writes 2 -- and reading that instead would
+  // flatten every glide by 24x. The file writes both, in that order.
+  const seq = makeSequencer([
+    makeTrack([[{ step: 0, pitch: 40 }, { step: 8, pitch: 100 }]]),
+  ]);
+  const out = sequencerToMidi(seq);
+  const back = midiToSequencer(out.bytes).sequencer;
+  assert.deepEqual(
+    back.tracks[0].notes[0].points.map((p) => p.pitch),
+    seq.tracks[0].notes[0].points.map((p) => p.pitch),
+    'a 60-semitone glide needs the member range, not the master 2',
+  );
 });
 
 test('a part longer than a clip is re-cut, and the music does not move', () => {
