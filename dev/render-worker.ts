@@ -25,9 +25,7 @@
  * cheaper than that was.
  */
 
-import { buildMipChain } from '../src/audio/mipmap.ts';
-import { type SampleBuffer } from '../src/audio/mixer.ts';
-import { loadResource } from '../src/core/resource.ts';
+import { loaderFor, manifest, type Manifest } from './assets.ts';
 import {
   RATE,
   renderSequencer,
@@ -35,33 +33,8 @@ import {
   type LoadedInstrument,
 } from '../src/core/render.ts';
 import { readLevelProject, type LevelProject } from '../src/core/project.ts';
-import { readInstrument, usedSlots } from '../src/core/rinstrument.ts';
-import { readWav, writeWav, loopRegion } from '../src/core/wav.ts';
+import { writeWav } from '../src/core/wav.ts';
 import { webInflate } from '../src/platform/web.ts';
-
-type Manifest = Map<number, { file: string }>;
-
-/**
- * A path under the site root, resolved against this module rather than the page.
- *
- * ⚠️ A bare relative URL in a worker resolves against the **worker's own
- * directory**, not the document's, so `fetch('fixtures/…')` from `/dev/` asks for
- * `/dev/fixtures/…` and 404s. A leading slash would work on the dev server and
- * break under any static host that serves the app from a prefix. `import.meta.url`
- * is the one form that is right in both.
- *
- * ⚠️ **Every segment is percent-encoded, and `new URL` is not enough on its
- * own.** Three of the game's 216 samples have a `#` in the name --
- * `violin_spic_string4_f#4.smp`, `choir_f#3_v2.smp`, `choir_g#4_v2.smp` -- and
- * `new URL` treats that as the start of a fragment, so the request goes out for
- * `…/violin_spic_string4_f` and comes back 404. The 404 body is then handed to
- * `readWav`, which says `not a RIFF/WAVE file` and names nothing. Any level
- * using the violin or the choir failed to render in the browser and rendered
- * perfectly under Node, which reads the same files by path. 48 more samples have
- * a space; those survived, because `new URL` does encode a space.
- */
-const asset = (p: string) =>
-  new URL(p.split('/').map(encodeURIComponent).join('/'), new URL('../', import.meta.url)).href;
 
 let project: LevelProject | null = null;
 let rinstIndex: Manifest | null = null;
@@ -71,59 +44,6 @@ const post = (message: unknown, transfer: Transferable[] = []) =>
   (self as unknown as Worker).postMessage(message, transfer);
 
 const say = (text: string) => post({ type: 'status', text });
-
-async function manifest(dir: string): Promise<Manifest> {
-  const rows = (await (await fetch(asset(`${dir}/manifest.json`))).json()) as {
-    guid: number;
-    file: string;
-  }[];
-  return new Map(rows.map((r) => [r.guid, r]));
-}
-
-async function loaderFor(): Promise<(guid: number) => Promise<LoadedInstrument | null>> {
-  const cache = new Map<number, LoadedInstrument | null>();
-  /**
-   * Fetch one asset, and fail with its name and status rather than with whatever
-   * the parser makes of an error page. A 404 body reaching `readWav` produced
-   * `not a RIFF/WAVE file` and no clue which of 216 samples was missing.
-   */
-  const bytes = async (url: string) => {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`${response.status} fetching ${decodeURIComponent(new URL(url).pathname)}`);
-    }
-    return new Uint8Array(await response.arrayBuffer());
-  };
-  return async (guid: number) => {
-    const hit = cache.get(guid);
-    if (hit !== undefined) return hit;
-    const row = rinstIndex!.get(guid);
-    if (!row) {
-      cache.set(guid, null);
-      return null;
-    }
-    const resource = await loadResource(await bytes(asset(`fixtures/rinst/${row.file}`)), webInflate);
-    const inst = readInstrument(resource.data);
-    const slots = [];
-    for (const { slot, guid: sampleGuid } of usedSlots(inst)) {
-      const s = smpIndex!.get(sampleGuid);
-      if (!s) continue;
-      const wav = readWav(await bytes(asset(`fixtures/smp/${s.file}`)));
-      slots.push({
-        base: slot.baseNote,
-        wav: {
-          channels: wav.channels,
-          sampleRate: wav.sampleRate,
-          loop: wav.loop ? loopRegion(wav.loop, wav.channels[0].length) : undefined,
-          mips: wav.channels.map((c) => buildMipChain(c)),
-        } satisfies SampleBuffer,
-      });
-    }
-    const loaded = { inst, slots };
-    cache.set(guid, loaded);
-    return loaded;
-  };
-}
 
 self.onmessage = async (event: MessageEvent) => {
   const message = event.data as {
@@ -177,7 +97,7 @@ self.onmessage = async (event: MessageEvent) => {
 
       const started = performance.now();
       say(`rendering "${seq.name}" — ${seq.tracks.length} tracks, ${seq.lengthSteps} steps…`);
-      const result = await renderSequencer(seq, await loaderFor(), {
+      const result = await renderSequencer(seq, await loaderFor(rinstIndex!, smpIndex!), {
         secondsArg: message.seconds ?? 0,
         fromArg: message.from ?? 0,
         // Each absent field means the measured default; the page always sends them.

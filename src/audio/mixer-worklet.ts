@@ -26,7 +26,22 @@ export interface SamplePayload {
 
 export type MixerMessage =
   | { type: 'load'; sample: SamplePayload }
-  | { type: 'play'; sampleId: string; voice: Omit<VoiceSpec, 'sample'> }
+  /**
+   * `lfoPhase` is the three LFO start phases, in radians, already including
+   * whatever spread the spec asked for.
+   *
+   * ⚠️ **A `VoiceSpec.random` cannot cross a thread** -- it is a function, and
+   * `postMessage` drops it -- so a scheduler that wants the render's exact LFO
+   * phases has to compute them on its own side and send the numbers. When they
+   * are present the voice's own randomness is switched off, which is the whole
+   * point: the phases ARE the offsets.
+   */
+  | {
+      type: 'play';
+      sampleId: string;
+      voice: Omit<VoiceSpec, 'sample'>;
+      lfoPhase?: readonly [number, number, number];
+    }
   // 'engine' is not an interpolator: it selects the game's own sampler, which
   // is linear plus octave mipmaps and is the faithful setting. The named
   // interpolators switch it off so they can be heard against it.
@@ -119,7 +134,16 @@ export class MixerProcessor extends AudioWorkletProcessor {
           this.port.postMessage({ type: 'missingSample', id: message.sampleId });
           return;
         }
-        this.mixer.play({ ...message.voice, sample });
+        this.mixer.play(
+          message.lfoPhase
+            ? {
+                ...message.voice,
+                sample,
+                lfoPhaseOffset: message.lfoPhase,
+                random: () => 0,
+              }
+            : { ...message.voice, sample },
+        );
         break;
       }
       case 'interpolator':

@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LBP Tracker — live</title>
+<link rel="stylesheet" href="./ui.css">
+<style>
+  /* Only what is particular to the live player; the rest is in ui.css. */
+  #drop {
+    border: 1.5px dashed var(--line); border-radius: var(--radius); padding: 1.8rem 1rem;
+    text-align: center; cursor: pointer; background: var(--panel-2);
+    transition: border-color .12s, background .12s;
+  }
+  #drop:hover, #drop.over { border-color: var(--accent); background: #1f262e; }
+  #drop strong { display: block; margin-bottom: .25rem; font-size: 1.02rem; }
+  #drop span { color: var(--dim); font-size: .9rem; }
+  #drop.busy { opacity: .5; pointer-events: none; }
+  #drop.loaded { padding: .95rem 1rem; border-style: solid; }
+  #drop.loaded strong { display: inline; margin: 0; }
+  #file { display: none; }
+
+  /* The transport is a seek bar over a step ruler: a song is steps, not seconds,
+     so the ruler marks bars and the readout gives both. */
+  #timeline {
+    position: relative; height: 74px; background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 8px 8px 0 0;
+    overflow: hidden; cursor: pointer;
+  }
+  #timeline:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  #density { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #head { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink); }
+  #transport {
+    display: flex; align-items: center; gap: .6rem; padding: .5rem .65rem;
+    background: var(--panel-2); border: 1px solid var(--line); border-top: 0;
+    border-radius: 0 0 8px 8px;
+  }
+  #transport button { padding: .3rem .7rem; line-height: 1.2; min-width: 2.4rem; }
+  #clock { color: var(--dim); font-size: .9rem; }
+  #load { color: var(--dimmer); font-size: .8rem; }
+  #vol { width: 7rem; }
+
+  .live { display: grid; grid-template-columns: repeat(auto-fit, minmax(15.5rem, 1fr)); gap: 1rem 1.5rem; }
+  .group { min-width: 0; border: 1px solid var(--line-soft); border-radius: 8px; padding: .7rem .8rem; }
+  .group > h3 {
+    margin: 0 0 .55rem; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--dimmer);
+  }
+  .knob { display: grid; grid-template-columns: 5.6rem 1fr 3.6rem; gap: .5rem; align-items: center; }
+  .knob + .knob { margin-top: .3rem; }
+  .knob label { font-size: .84rem; }
+  .knob input[type="range"] { width: 100%; min-width: 0; }
+  .knob output { font: .78rem/1 ui-monospace, Consolas, monospace; color: var(--dim); text-align: right; }
+  .hintline { color: var(--dimmer); font-size: .82rem; margin: .55rem 0 0; }
+  #meters { display: flex; gap: 1.2rem; flex-wrap: wrap; font: .82rem/1.5 ui-monospace, Consolas, monospace; color: var(--dim); }
+  #meters b { color: var(--ink); font-weight: 500; }
+  #errorCard { display: none; }
+  #errorCard.show { display: block; }
+</style>
+</head>
+<body>
+<nav class="nav">
+  <a class="brand" href="./index.html">LBP Tracker</a>
+  <a class="tab" href="./index.html">Keyboard</a>
+  <a class="tab" href="./live.html" aria-current="page">Live</a>
+  <a class="tab" href="./render.html">Renderer</a>
+  <span class="spacer"></span>
+  <span class="where">everything runs on your machine</span>
+</nav>
+<main>
+  <header>
+    <h1>Play a song as it is synthesised</h1>
+    <p class="sub">
+      The same engine as the renderer, only just in time: notes are scheduled into the audio thread
+      a fraction of a second ahead instead of being written to a file first. Press play and it
+      starts &mdash; no render to wait for, no WAV &mdash; and the effects can be turned while it
+      runs. <strong>Everything happens on your own computer.</strong>
+    </p>
+  </header>
+
+  <section>
+    <p class="step"><b>1</b> Open a level</p>
+    <div id="drop">
+      <strong id="dropTitle">Open a level</strong>
+      <span id="dropHint">Click here, or drop a level file onto this box.</span>
+      <input id="file" type="file">
+    </div>
+  </section>
+
+  <section>
+    <p class="step"><b>2</b> Pick a song</p>
+    <div class="row">
+      <label for="seq">sequencer</label>
+      <select id="seq" disabled><option>no level open</option></select>
+      <span class="spacer"></span>
+      <button id="prepare" class="primary" disabled>Prepare</button>
+    </div>
+    <div id="status">open a level to begin</div>
+  </section>
+
+  <section>
+    <p class="step"><b>3</b> Play</p>
+    <div id="timeline" tabindex="0" role="slider" aria-label="Seek through the song"
+         aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="nothing prepared">
+      <canvas id="density" width="1200" height="74"></canvas>
+      <div id="head" style="left:0"></div>
+    </div>
+    <div id="transport">
+      <button id="play" aria-label="Play" disabled>&#9654;</button>
+      <button id="rewind" aria-label="Back to the start" disabled>&#9198;</button>
+      <span id="clock" class="mono">0:00 / 0:00</span>
+      <span class="spacer"></span>
+      <span id="load">idle</span>
+      <input id="vol" type="range" min="0" max="1" step="0.01" value="0.7" aria-label="Volume">
+    </div>
+    <p class="hintline">
+      <kbd>Space</kbd> plays and pauses, click the bar to seek. The voice pool is the engine&rsquo;s
+      32 and its stealing was decided when the song was prepared, so what you hear is what the
+      renderer would write.
+    </p>
+    <div id="meters" style="margin-top:.8rem"></div>
+  </section>
+
+  <section>
+    <p class="step"><b>4</b> Turn the output stage while it runs</p>
+    <div class="live">
+      <div class="group">
+        <h3>echo</h3>
+        <div class="knob">
+          <label for="echoTime">time (beats)</label>
+          <input type="range" id="echoTime" min="0" max="80" step="1" value="10">
+          <output id="echoTimeLabel">1.00</output>
+        </div>
+        <div class="knob">
+          <label for="echoFb">feedback</label>
+          <input type="range" id="echoFb" min="0" max="95" value="54">
+          <output id="echoFbLabel">0.54</output>
+        </div>
+        <div class="knob">
+          <label for="echoMix">mix</label>
+          <input type="range" id="echoMix" min="0" max="100" value="60">
+          <output id="echoMixLabel">0.60</output>
+        </div>
+      </div>
+      <div class="group">
+        <h3>reverb &amp; output</h3>
+        <div class="knob">
+          <label for="reverbSet">setting</label>
+          <input type="range" id="reverbSet" min="0" max="15" step="1" value="5">
+          <output id="reverbSetLabel">5</output>
+        </div>
+        <div class="row" style="margin-top:.55rem">
+          <label class="check"><input type="checkbox" id="optEcho" checked> echo</label>
+          <label class="check"><input type="checkbox" id="optReverb" checked> reverb</label>
+          <label class="check"><input type="checkbox" id="optClip" checked> output clip</label>
+        </div>
+        <p class="hintline">
+          Every default is the song&rsquo;s own, read from the sequencer when you prepared it.
+          Turning one rebuilds that effect, which drops its tail.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section id="errorCard">
+    <p class="step">Error</p>
+    <pre id="error"></pre>
+  </section>
+</main>
+<script type="module" src="./live.ts"></script>
+</body>
+</html>
