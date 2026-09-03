@@ -27,8 +27,14 @@ const goButton = $<HTMLButtonElement>('go');
 const saveButton = $<HTMLButtonElement>('save');
 const statusLine = $<HTMLDivElement>('status');
 const barFill = $<HTMLDivElement>('bar').firstElementChild as HTMLDivElement;
-const statsTable = $<HTMLTableElement>('stats');
+const statsGrid = $<HTMLDivElement>('stats');
+const errorCard = $<HTMLElement>('errorCard');
 const errorBox = $<HTMLPreElement>('error');
+/** Show the error card only when it has something in it. */
+const setError = (text: string) => {
+  errorBox.textContent = text;
+  errorCard.classList.toggle('show', text !== '');
+};
 const player = $<HTMLAudioElement>('player');
 const canvas = $<HTMLCanvasElement>('wave');
 const playPause = $<HTMLButtonElement>('playPause');
@@ -145,8 +151,8 @@ function resetResults() {
   player.removeAttribute('src');
   player.load();
   saveButton.disabled = true;
-  statsTable.innerHTML = '';
-  errorBox.textContent = '';
+  statsGrid.innerHTML = '';
+  setError('');
   peaks = null;
   canvas.classList.add('empty');
   for (const el of [playPause, muteButton, volSlider]) el.disabled = true;
@@ -429,8 +435,13 @@ worker.onmessage = (event: MessageEvent) => {
       ['render time', `${Number(stats.elapsed).toFixed(2)} s — ${(seconds / Number(stats.elapsed)).toFixed(1)}x realtime`],
       ['  of which', `voices ${(Number(stats.voicesMs) / 1000).toFixed(2)} s, mix ${(Number(stats.mixMs) / 1000).toFixed(2)} s, effects ${(Number(stats.effectsMs) / 1000).toFixed(2)} s`],
     ];
-    statsTable.innerHTML = rows
-      .map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`)
+    // A row whose value is long gets the full width rather than being squeezed
+    // into a column; everything measured still shows, which is the point.
+    statsGrid.innerHTML = rows
+      .map(([k, v]) => {
+        const wide = v.length > 44 ? ' wide' : '';
+        return `<div class="stat${wide}"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+      })
       .join('');
     setBar(1);
     setBusy(false);
@@ -442,12 +453,12 @@ worker.onmessage = (event: MessageEvent) => {
     goButton.disabled = false;
     setBusy(false);
     setStatus('failed', true);
-    errorBox.textContent = String(message.text);
+    setError(String(message.text));
   }
 };
 
 goButton.addEventListener('click', () => {
-  errorBox.textContent = '';
+  setError('');
   goButton.disabled = true;
   saveButton.disabled = true;
   // The whole song unless the box is ticked. A section is the exception, and
