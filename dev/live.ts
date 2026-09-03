@@ -20,7 +20,7 @@
  * numbers. See `lfoPhase` in `src/audio/mixer-worklet.ts`.
  */
 
-import { loaderFor, manifest, asset, type Manifest } from './assets.ts';
+import { HANDOFF_KEY, loaderFor, manifest, asset, type Manifest } from './assets.ts';
 import { seqPicker } from './seq-picker.ts';
 import { type VoiceSpec } from '../src/audio/mixer.ts';
 import { CHANNEL_COUNT, readLevelProject, type LevelProject } from '../src/core/project.ts';
@@ -845,6 +845,46 @@ async function openFile(file: File): Promise<void> {
     dropZone.classList.remove('busy');
   }
 }
+
+/**
+ * A song handed over by the MIDI page, if there is one.
+ *
+ * ⚠️ **Taken once and then removed.** It is a one-way handover, not a
+ * setting: leaving it in `sessionStorage` would resurrect last week's import
+ * every time this tab was reloaded, in front of whatever level was open.
+ */
+async function takeHandoff(): Promise<void> {
+  let stored: string | null = null;
+  try {
+    stored = sessionStorage.getItem(HANDOFF_KEY);
+    if (stored !== null) sessionStorage.removeItem(HANDOFF_KEY);
+  } catch {
+    return; // storage refused; nothing was handed over
+  }
+  if (stored === null) return;
+  dropZone.classList.add('busy');
+  setStatus('reading the imported song\u2026');
+  try {
+    const seq = JSON.parse(stored) as LevelProject['sequencers'][number];
+    project = { file: `${seq.name}.mid`, sequencers: [seq] };
+    [rinstIndex, smpIndex] = await Promise.all([
+      manifest('fixtures/rinst'),
+      manifest('fixtures/smp'),
+    ]);
+    picker.setRows([{ uid: seq.uid, name: seq.name, tracks: seq.tracks.length }]);
+    dropZone.classList.add('loaded');
+    dropTitle.textContent = `${seq.name} \u2014 imported from MIDI`;
+    dropHint.textContent = 'Click or drop to open a level instead.';
+    prepareNow();
+  } catch (error) {
+    setStatus('the imported song could not be read', true);
+    setError(String((error as Error).stack ?? error));
+  } finally {
+    dropZone.classList.remove('busy');
+  }
+}
+
+void takeHandoff();
 
 dropZone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {

@@ -53,8 +53,6 @@
   #load .bad { color: var(--bad); font-weight: 600; }
   #vol { width: 7rem; }
 
-  .live { display: grid; grid-template-columns: repeat(auto-fit, minmax(15.5rem, 1fr)); gap: 1rem 1.5rem; }
-  .group { min-width: 0; border: 1px solid var(--line-soft); border-radius: 8px; padding: .7rem .8rem; }
   .group > h3 {
     margin: 0 0 .55rem; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase;
     color: var(--dimmer);
@@ -64,7 +62,6 @@
   .knob label { font-size: .84rem; }
   .knob input[type="range"] { width: 100%; min-width: 0; }
   .knob output { font: .78rem/1 ui-monospace, Consolas, monospace; color: var(--dim); text-align: right; }
-  .hintline { color: var(--dimmer); font-size: .82rem; margin: .55rem 0 0; }
   #meters { display: flex; gap: 1.2rem; flex-wrap: wrap; font: .82rem/1.5 ui-monospace, Consolas, monospace; color: var(--dim); }
   #meters b { color: var(--ink); font-weight: 500; }
   #errorCard { display: none; }
@@ -77,6 +74,7 @@
   <a class="tab" href="./index.html">Keyboard</a>
   <a class="tab" href="./live.html" aria-current="page">Live</a>
   <a class="tab" href="./render.html">Renderer</a>
+  <a class="tab" href="./midi.html">MIDI</a>
   <span class="spacer"></span>
   <span class="where">everything runs on your machine</span>
 </nav>

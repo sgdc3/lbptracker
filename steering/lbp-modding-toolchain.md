@@ -180,12 +180,47 @@ measurement.
 | 2 | `Note.volume` / `.timbre` on read | signed Java byte | unsigned | their writer masks `& 0xff`, their reader does not |
 | 3 | Note duration | duration follows from the record chain, with an extra point pushed at `step+1` | duration is `x_last − x_first + 1`; records are control points, not a filled span | measured: 93.6% of 1.6M real notes land on a power-of-two duration under this reading |
 | 3b | Out-of-order points | sorts a note's points, with a "sometimes this isn't correct" comment | same — sort by `x` | confirmed real: ~81 notes in 1.6M have a last record whose `x` precedes the first |
-| 4 | Triplet timing | `group*96 + pos*32`, overruns the quarter on the 4th slot | not yet decided | their own arithmetic is internally inconsistent |
-| 5 | Mixer | ignored entirely; tracks grouped by row + instrument | must model `NumChannels` and `Volume[0..5]` | the fields exist and are audible |
+| 4 | Triplet timing | `group*96 + pos*32`, overruns the quarter on the 4th slot | `step + subStep/3`; at 480 PPQ a step is 120 ticks and a third of one is exactly 40 | settled from the engine — `v0x4558 = 0.333333`, see open question 3 |
+| 5 | Mixer | ignored entirely; tracks grouped by row + instrument | model `NumChannels` and `Volume[0..5]`; the MIDI export carries both in its header meta | the fields exist and are audible |
 
 The general shape of the difference: their tool converts *to MIDI*, so anything MIDI cannot express
 gets flattened or dropped. We are reproducing the instrument, so the things they flatten — per-step
 automation, the mixer, the sends, the sampler's key splits — are exactly the things we must keep.
+
+## Our own converter, and how far it is trusted
+
+`src/core/midi.ts` is the export and the import, with every row of the table above acted on and the
+sixth difference — **a note is a chain of control points, not a value** — handled by exporting MPE,
+a MIDI channel per sounding note, so a bend belongs to the note instead of to the whole part.
+`src/core/smf.ts` underneath it is the container only: chunks, variable-length quantities, running
+status. `dev/midi.html` is the page.
+
+⚠️ **What a round trip preserves is the music, not the bytes.** `Key` and `Scale` are folded into
+the note numbers on the way out, because a MIDI file has to play in something that has never heard
+of an LBP scale, so an import comes back chromatic in C — sounding the same, written differently.
+Clip boundaries move too: a step field is seven bits, so an imported part is re-cut into 128-step
+clips wherever they fall. **Do not write a byte-equality test against a round trip**; it will fail
+for reasons that are correct.
+
+The measurement, from `dev/verify-midi.ts` over the corpus on 2026-09-03 — run it after touching
+either file:
+
+- 149 sequencers, **953,791 notes**, none lost, none moved, no pitch, duration or modulation
+  changed; an intact note's curve stays inside the half unit its integer fields round by.
+- 88,893 notes (9.32%) carry a glide. **3,593 of them (0.38%) lose it to a channel they had to
+  share** — an MPE zone has fifteen member channels and this engine has thirty-two voices, so a
+  dense passage runs out. A note that has to share writes no bend and no pressure at all, because
+  both belong to the channel and a newcomer setting them drags whatever is already sounding there.
+  The count is reported by `sequencerToMidi`, never swallowed.
+- 22.2 MB of MIDI; 0 pitches clamped, 0 bends clamped, 0 notes dropped, 0 lengthened.
+- **2 notes in 953,791 (0.0002%) change without being declared** and are not explained. Every
+  category found so far is fixed and carries a note in the code saying what it was; this residue
+  is below the level worth more session time and is printed by the script rather than hidden.
+
+⚠️ **The bend range is picked from the music, not fixed at MPE's 48.** 582 of the corpus's
+1,448,224 control points glide further than 48 semitones and the widest is 62; nothing reaches 96,
+which is MIDI's own ceiling. A fixed 48 clamped 1,026 of them, and a clamped bend is a note that
+arrives at the wrong pitch.
 
 ## The level corpus — our regression suite
 

@@ -202,3 +202,13 @@ input.picker-search {
 .picker-row:hover, .picker-row.at { background: var(--panel); }
 .picker-row.on { color: var(--accent); }
 .picker-none { color: var(--dimmer); font-size: .85rem; padding: .5rem; }
+
+/* ---------------------------------------------------- panel grid and cards */
+/* Four pages had grown their own copy of these three rules -- two of them
+   under different names for the identical grid. What is still per page is the
+   `.knob` column widths and the `h3` variants, which really do differ. */
+.params, .live {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(15.5rem, 1fr)); gap: 1rem 1.5rem;
+}
+.group { min-width: 0; border: 1px solid var(--line-soft); border-radius: 8px; padding: .7rem .8rem; }
+.hintline { color: var(--dimmer); font-size: .82rem; margin: .55rem 0 0; }
