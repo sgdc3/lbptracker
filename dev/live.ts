@@ -23,7 +23,8 @@
 import { loaderFor, manifest, asset, type Manifest } from './assets.ts';
 import { type VoiceSpec } from '../src/audio/mixer.ts';
 import { readLevelProject, type LevelProject } from '../src/core/project.ts';
-import { RATE, renderSequencer } from '../src/core/render.ts';
+import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
+import { PAN_WIDTH, RATE, renderSequencer } from '../src/core/render.ts';
 import { webInflate } from '../src/platform/web.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -45,6 +46,10 @@ const dropTitle = $<HTMLElement>('dropTitle');
 const dropHint = $<HTMLElement>('dropHint');
 const fileInput = $<HTMLInputElement>('file');
 const volSlider = $<HTMLInputElement>('vol');
+const panWidthInput = $<HTMLInputElement>('panWidth');
+const voicesInput = $<HTMLInputElement>('voices');
+const noCapBox = $<HTMLInputElement>('optNoCap');
+const staleNote = $<HTMLParagraphElement>('staleNote');
 
 const setStatus = (text: string, bad = false) => {
   statusLine.textContent = text;
@@ -115,6 +120,25 @@ let nextIndex = 0;
 const LOOKAHEAD = 0.35;
 const TICK = 100;
 
+/**
+ * The two switches that are decided when a song is prepared, not while it plays.
+ *
+ * ⚠️ **Neither can be live, and pretending otherwise would be a lie in the
+ * UI.** The pan width is folded into each voice as it is built, and the voice
+ * pool's stealing is decided over the whole note list at once -- the allocator
+ * needs every note to know which ones lose their record. Moving either marks the
+ * plan stale rather than doing nothing quietly.
+ */
+const planOptions = () => ({
+  panWidth: Number(panWidthInput.value) / 100,
+  voiceLimit: noCapBox.checked ? VOICES_UNLIMITED : Number(voicesInput.value),
+});
+
+let preparedWith = '';
+const markStale = () => {
+  staleNote.hidden = plan.length === 0 || JSON.stringify(planOptions()) === preparedWith;
+};
+
 // --------------------------------------------------------------------- audio
 
 async function ensureAudio(): Promise<AudioWorkletNode> {
@@ -163,8 +187,22 @@ async function prepare(): Promise<void> {
   const sent = new Set<string>();
   const built: Planned[] = [];
 
+  // The song's own output stage, so the knobs start where the sequencer has them
+  // rather than at a made-up default. `echoTime` is in beats and the slider is
+  // tenths of a beat; `reverb` is the setting index straight through.
+  const setSlider = (id: string, value: number) => {
+    const el = $<HTMLInputElement>(id);
+    el.value = String(Math.min(Number(el.max), Math.max(Number(el.min), Math.round(value))));
+    el.dispatchEvent(new Event('input'));
+  };
+  setSlider('echoTime', seq.echoTime * 10);
+  setSlider('echoFb', seq.echoFeedback * 100);
+  setSlider('echoMix', seq.echoMix * 100);
+  setSlider('reverbSet', seq.reverb);
+
   const result = await renderSequencer(seq, load, {
     planOnly: true,
+    ...planOptions(),
     onVoice: (voice, where) => {
       const sampleId = `g${where.guid}z${where.zone}`;
       if (!sent.has(sampleId)) {
@@ -210,6 +248,7 @@ async function prepare(): Promise<void> {
 
   built.sort((a, b) => a.at - b.at);
   plan = built;
+  preparedWith = JSON.stringify(planOptions());
   songFrames = result.frames;
   songSeconds = result.seconds;
   framesPerStep = result.framesPerStep;
@@ -230,6 +269,7 @@ async function prepare(): Promise<void> {
   ]
     .map(([k, v]) => `<span>${k} <b>${v}</b></span>`)
     .join('');
+  markStale();
   setStatus(`ready — ${built.length.toLocaleString()} voices scheduled, press play`);
 }
 
@@ -384,6 +424,20 @@ for (const [id, format] of [
 for (const id of ['optEcho', 'optReverb', 'optClip']) {
   $(id).addEventListener('change', () => node && pushEffects());
 }
+
+// The plan-time pair. Their labels update live; their effect waits for Prepare.
+panWidthInput.value = String(Math.round(PAN_WIDTH * 100));
+voicesInput.value = String(VOICE_POOL_SIZE);
+const showPlanOptions = () => {
+  $('panWidthLabel').textContent = (Number(panWidthInput.value) / 100).toFixed(2);
+  $('voicesLabel').textContent = noCapBox.checked ? 'off' : voicesInput.value;
+  voicesInput.disabled = noCapBox.checked;
+  markStale();
+};
+panWidthInput.addEventListener('input', showPlanOptions);
+voicesInput.addEventListener('input', showPlanOptions);
+noCapBox.addEventListener('change', showPlanOptions);
+showPlanOptions();
 
 prepareButton.addEventListener('click', () => {
   void prepare().catch((error: unknown) => {

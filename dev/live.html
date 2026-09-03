@@ -95,6 +95,42 @@
       <span class="spacer"></span>
       <button id="prepare" class="primary" disabled>Prepare</button>
     </div>
+    <details id="switches">
+      <summary>Engine switches &mdash; these are decided when you prepare</summary>
+      <div class="live" style="margin-top:.9rem">
+        <div class="group">
+          <h3>pan width</h3>
+          <div class="knob">
+            <label for="panWidth">width</label>
+            <input type="range" id="panWidth" min="0" max="100" step="1" value="59">
+            <output id="panWidthLabel">0.59</output>
+          </div>
+          <p class="hintline">
+            How much of a written pan survives to the game&rsquo;s stereo output. The measured
+            default is <code>2 &minus; &radic;2</code>; 1.00 plays the file&rsquo;s own pans.
+          </p>
+        </div>
+        <div class="group">
+          <h3>voice pool</h3>
+          <div class="knob">
+            <label for="voices">size</label>
+            <input type="range" id="voices" min="1" max="128" step="1" value="32">
+            <output id="voicesLabel">32</output>
+          </div>
+          <div class="row" style="margin-top:.5rem">
+            <label class="check"><input id="optNoCap" type="checkbox"> unlimited</label>
+          </div>
+          <p class="hintline">
+            The engine&rsquo;s is 32, and its stealing is decided while the song is prepared.
+            Uncapping it plays every note, which is not the game.
+          </p>
+        </div>
+      </div>
+      <p class="hintline" id="staleNote" hidden>
+        &#9888; Changed since this song was prepared &mdash; press <b>Prepare</b> again to hear it.
+      </p>
+    </details>
+
     <div id="status">open a level to begin</div>
   </section>
 
@@ -155,8 +191,9 @@
           <label class="check"><input type="checkbox" id="optClip" checked> output clip</label>
         </div>
         <p class="hintline">
-          Every default is the song&rsquo;s own, read from the sequencer when you prepared it.
-          Turning one rebuilds that effect, which drops its tail.
+          These take effect <strong>while it plays</strong>. Every default is the song&rsquo;s own,
+          read off the sequencer when you pressed Prepare. Moving one rebuilds that effect, which
+          drops its tail.
         </p>
       </div>
     </div>
