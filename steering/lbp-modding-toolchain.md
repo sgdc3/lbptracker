@@ -202,6 +202,27 @@ Clip boundaries move too: a step field is seven bits, so an imported part is re-
 clips wherever they fall. **Do not write a byte-equality test against a round trip**; it will fail
 for reasons that are correct.
 
+### What is still between here and an exact round trip
+
+Measured in the per-part mode, which is the good one. Each of these is fixable;
+none is fixed, and the cost is why:
+
+| left | how much | what it would take |
+|---|---|---|
+| glides lost inside one part | 825 notes (0.086%) | a part whose own polyphony passes 15 needs more than one MIDI track; a DAW loads both onto instruments of the same instrument, and the import already merges by `LBP-TRK`. Exact, moderate work |
+| control points not identical | 7,556 notes (0.79%) | the resampling round trip: a rounded ramp can put its step a third of a step early, and the simplifier drops points within half a unit of the line. Exact only by carrying the true points in a meta — which duplicates the note data — or by not resampling, which makes a glide a jump in every DAW |
+| per-point modulation | 34,449 notes (3.6%) | one CC 74 per note today. Needs `ScheduledNote.points[].modulation`, then a CC per change. Exact, moderate work. **Inaudible under our own engine**, which reads only the opening value |
+| which clip a note sat in | 1 clip of 62,158, 42 with a different count | carry each clip's note count as well as its cell and length, and solve the assignment against it. Exact, small |
+| coincident points mid-note | 2 notes | explicit encoding for a zero-length segment. Exact, small, pointless |
+| `timbre` bits 4-5, volume > 127 | 0 in the corpus | a side-channel meta; MIDI has 7 bits for either. Only matters on a level unlike any of the 22 |
+| unexplained | 2 notes (0.0002%) | not diagnosed |
+
+⚠️ **The shape of an exact converter is not more MIDI, it is a bigger side channel.** Everything
+above except the first is already known to the exporter and unspeakable in MIDI events; carrying it
+means putting the sequencer's own data in text metas beside the music, which `LBP-SEQ` and
+`LBP-TRK` already do for the mixer and the board. That is a legitimate design and a different one
+from "a MIDI file that happens to be lossless" — decide which is wanted before building it.
+
 ### What a round trip loses, in full
 
 Measured over the corpus's 1,448,224 records in 953,791 notes, 62,158 placements. Anything not
@@ -210,7 +231,7 @@ listed here comes back exactly, and `test/midi.test.ts` pins the field list so t
 
 | lost | how much | why |
 |---|---|---|
-| `Key` / `Scale` | 764 placements set `Key`, none set `Scale` | folded into the note numbers on the way out, so the file plays in anything; an import is chromatic in C and **sounds identical** |
+| `Scale` only | 0 placements in the corpus set it | folded into the note numbers so the file plays anywhere, and **`quantise` is measured not to be idempotent**, so there is no pitch to un-snap to. `Key` *is* put back — a transposition is invertible where a projection is not |
 | which clip a note sat in | 1 clip of 62,158, and 42 more hold a different number of notes (0.07%) | the residue of a genuine ambiguity: clips of one part overlap, so a few notes fit two of them and either answer puts them at the same place on the timeline |
 | per-point modulation | 34,449 notes (3.6%) vary it | one CC 74 per note, at its opening value — which is also all `render.ts` reads, so **nothing audible** |
 | coincident control points | 302 notes (0.03%) | two records on one position collapse to the later, which is what the engine's `t = span > 0 ? … : 1` does |

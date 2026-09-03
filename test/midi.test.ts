@@ -324,20 +324,36 @@ test('a glide comes back as the two points it was written with', () => {
   assert.equal(points[1].pitch, 60);
 });
 
-test('Key and Scale are baked into the notes, not applied twice', () => {
-  // ⚠️ The trap: the exporter writes what you hear, so the importer must NOT
-  // re-apply a key. Restoring `key` here would transpose the part a second time.
-  const seq = makeSequencer([
+test('Key is put back; Scale cannot be, and the notes still sound right', () => {
+  // ⚠️ The exporter folds both into the note numbers so the file plays
+  // anywhere. Undoing that is the difference between a transposition and a
+  // projection: `blockRoot(key) - 12` is invertible, `quantise` is measured NOT
+  // to be idempotent, so a scaled placement has no pitch to un-snap to.
+
+  // A key alone: the placement comes back exactly as it was written.
+  const keyed = makeSequencer([
+    makeTrack([[{ step: 0, pitch: 61 }], [{ step: 4, pitch: 66 }]], { key: 14, scale: 0 }),
+  ]);
+  const back = midiToSequencer(sequencerToMidi(keyed).bytes).sequencer;
+  assert.equal(back.tracks[0].key, 14, 'the key is restored');
+  assert.deepEqual(
+    back.tracks[0].notes.map((n) => n.points[0].pitch),
+    [61, 66],
+    'and the record pitches with it',
+  );
+  assert.deepEqual(music(back), music(keyed));
+
+  // A scale: chromatic on the way back, sounding exactly what the file says.
+  const scaled = makeSequencer([
     makeTrack([[{ step: 0, pitch: 61 }], [{ step: 4, pitch: 66 }]], { key: 14, scale: 2 }),
   ]);
-  const track = seq.tracks[0];
-  const expected = [61, 66].map((p) => notePitch(p, track.scale, blockRoot(track.key)));
-  const { imported } = roundTrip(seq);
-  const got = imported.sequencer.tracks[0].notes.map((n) => n.points[0].pitch);
-  assert.deepEqual(got, expected, 'the imported record pitch IS the MIDI note');
-  assert.equal(imported.sequencer.tracks[0].key, 12, 'and the placement is chromatic C');
-  assert.equal(imported.sequencer.tracks[0].scale, 0);
-  assert.deepEqual(music(imported.sequencer), music(seq));
+  const t = scaled.tracks[0];
+  const heard = [61, 66].map((p) => notePitch(p, t.scale, blockRoot(t.key)));
+  const flat = midiToSequencer(sequencerToMidi(scaled).bytes).sequencer;
+  assert.equal(flat.tracks[0].scale, 0, 'no scale to un-snap to');
+  assert.equal(flat.tracks[0].key, 12, 'so it comes back chromatic C');
+  assert.deepEqual(flat.tracks[0].notes.map((n) => n.points[0].pitch), heard);
+  assert.deepEqual(music(flat), music(scaled));
 });
 
 test('the mixer travels in the header — divergence 5', () => {
@@ -380,11 +396,8 @@ test('every sequencer and placement field that survives, does', () => {
   ] as const) {
     assert.deepEqual(back.tracks[0][field], seq.tracks[0][field], `track.${field}`);
   }
-  // ⚠️ And the three that deliberately do NOT: `Key` and `Scale` are folded
-  // into the note numbers on the way out, and `gridX` is wherever the re-cut put
-  // the clip. See the header of src/core/midi.ts.
-  assert.equal(back.tracks[0].key, 12, 'imported placements are chromatic C');
-  assert.equal(back.tracks[0].scale, 0);
+  assert.equal(back.tracks[0].key, seq.tracks[0].key, 'track.key');
+  assert.equal(back.tracks[0].scale, seq.tracks[0].scale, 'track.scale');
 });
 
 test('a part longer than a clip is re-cut, and the music does not move', () => {

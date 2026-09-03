@@ -1029,9 +1029,16 @@ function readPart(
             return [];
           });
         }
-        // ⚠️ `key` and `scale` are deliberately NOT restored. The exporter
-        // already folded them into the note numbers, so applying them again
-        // would transpose and re-snap a pitch that is finished.
+        // ⚠️ **`Key` is restored, `Scale` is not, and the difference is that
+        // one is invertible.** The exporter folds both into the note numbers so
+        // the file plays anywhere; getting the placement back means undoing
+        // that. `blockRoot(key) - 12` is a transposition and subtracting it is
+        // exact. `quantise` is a projection onto a scale and is **measured not
+        // to be idempotent**, so there is no pitch to un-snap to -- a scaled
+        // placement therefore still comes back chromatic, with the notes it
+        // sounded. No placement in the 22-level corpus sets `Scale`.
+        const scale = pick('scale', 0);
+        if (scale === 0) part.key = pick('key', CHROMATIC_C.key);
       } catch {
         // Not ours after all.
       }
@@ -1325,6 +1332,9 @@ function cutIntoClips(
     return [];
   };
 
+  // What the exporter added to every note number, and this has to take away.
+  const transpose = blockRoot(part.key) - 12;
+
   const tracks: Track[] = [];
   let clipStart = 0;
   let open: typeof notes = [];
@@ -1341,7 +1351,9 @@ function cutIntoClips(
         const subStep = thirds - step * 3;
         const last = index === note.points.length - 1;
         bytes[at] = (step & 0x7f) | (subStep > 0 ? 0x80 : 0);
-        bytes[at + 1] = (clamp7(point.pitch) & 0x7f) | (last ? 0x80 : 0);
+        // ❗ Back through the placement's own key, so `notePitch` puts the note
+        // where the file says it sounds. `transpose` is 0 for a chromatic C.
+        bytes[at + 1] = (clamp7(point.pitch - transpose) & 0x7f) | (last ? 0x80 : 0);
         bytes[at + 2] = clamp7(point.volume);
         // The fourth byte is the packed field: modulation in the low nibble,
         // and bit 6 is the sub-step's high bit. Bits 4..5 select one of four
@@ -1361,8 +1373,8 @@ function cutIntoClips(
       pan: part.pan,
       echoSend: part.echoSend,
       reverbSend: part.reverbSend,
-      key: CHROMATIC_C.key,
-      scale: CHROMATIC_C.scale,
+      key: part.key,
+      scale: part.scale,
       notes: grouped.notes,
       trailingRecords: grouped.trailing.length,
     });
