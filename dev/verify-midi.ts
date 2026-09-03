@@ -28,6 +28,16 @@ import { nodeInflate } from '../src/platform/node.ts';
 
 const LEVELS = process.env.LBP_LEVELS ?? 'C:/Users/sgdc3/Desktop/LBP/toolkit/tools/sequencerdump/data';
 
+/**
+ * `LBP_MIDI_PERPART=1` checks the mode a DAW should be given.
+ *
+ * Sharing the fifteen member channels across every part is the safe default,
+ * because a single-stream player has nowhere else to put them; giving each part
+ * its own is what Reaper and its like make true on import. The two lose
+ * different amounts, so both are worth being able to measure.
+ */
+const perPart = process.env.LBP_MIDI_PERPART === '1';
+
 /** The note stream, in the terms a MIDI file can carry. */
 function music(sequencer: Sequencer) {
   return schedule(sequencer).map((event) => {
@@ -91,7 +101,7 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
   for (const seq of project.sequencers) {
     if (seq.tracks.length === 0) continue;
     sequencers += 1;
-    const exported = sequencerToMidi(seq);
+    const exported = sequencerToMidi(seq, { channelsPerPart: perPart });
     const imported = midiToSequencer(exported.bytes);
     totals.shared += exported.sharedChannel;
     totals.flattened += exported.flattened;
@@ -217,6 +227,7 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
 }
 
 const pc = (n: number) => `${((n / notes) * 100).toFixed(2)}%`;
+console.log(`channels ${perPart ? 'per part' : 'shared across parts'}`);
 console.log(
   `${sequencers} sequencers, ${notes.toLocaleString()} notes, ${failed} disagreeing\n` +
     `intact notes: worst deviation pitch ${worstPitch.toFixed(3)} semitones, ` +

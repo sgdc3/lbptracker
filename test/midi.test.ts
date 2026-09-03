@@ -352,6 +352,41 @@ test('the mixer travels in the header — divergence 5', () => {
   assert.equal(imported.sequencer.reverb, 9);
 });
 
+test('every sequencer and placement field that survives, does', () => {
+  // The whole inventory in one place, so that adding a field to `Sequencer` or
+  // `Track` and forgetting the header meta shows up here rather than in a DAW.
+  const seq = makeSequencer(
+    [makeTrack([[{ step: 0, pitch: 60 }]], {
+      guid: 4242, name: 'kalimba', gridY: 5,
+      level: 0.375, pan: 0.8, echoSend: 0.25, reverbSend: 0.6,
+    })],
+    {
+      uid: 98765, name: 'A Song', tempo: 173, swing: 0.35,
+      echoFeedback: 0.42, echoTime: 3, echoMix: 0.75, reverb: 11,
+      loop: false, startPoint: 7, numChannels: 4,
+      volumes: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+    },
+  );
+  const { sequencer: back } = midiToSequencer(sequencerToMidi(seq).bytes);
+  for (const field of [
+    'uid', 'name', 'tempo', 'swing', 'echoFeedback', 'echoTime', 'echoMix',
+    'reverb', 'loop', 'startPoint', 'numChannels',
+  ] as const) {
+    assert.deepEqual(back[field], seq[field], `sequencer.${field}`);
+  }
+  assert.deepEqual(back.volumes, seq.volumes);
+  for (const field of [
+    'guid', 'name', 'gridY', 'level', 'pan', 'echoSend', 'reverbSend',
+  ] as const) {
+    assert.deepEqual(back.tracks[0][field], seq.tracks[0][field], `track.${field}`);
+  }
+  // ⚠️ And the three that deliberately do NOT: `Key` and `Scale` are folded
+  // into the note numbers on the way out, and `gridX` is wherever the re-cut put
+  // the clip. See the header of src/core/midi.ts.
+  assert.equal(back.tracks[0].key, 12, 'imported placements are chromatic C');
+  assert.equal(back.tracks[0].scale, 0);
+});
+
 test('a part longer than a clip is re-cut, and the music does not move', () => {
   // A record's step field is seven bits, so 128 steps is a clip. Notes past
   // that have to open a new one -- on a cell boundary, `gridX * 16`.

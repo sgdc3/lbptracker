@@ -202,8 +202,29 @@ Clip boundaries move too: a step field is seven bits, so an imported part is re-
 clips wherever they fall. **Do not write a byte-equality test against a round trip**; it will fail
 for reasons that are correct.
 
+### What a round trip loses, in full
+
+Measured over the corpus's 1,448,224 records in 953,791 notes, 62,158 placements. Anything not
+listed here comes back exactly, and `test/midi.test.ts` pins the field list so that adding one to
+`Sequencer` or `Track` and forgetting the header meta fails there rather than in a DAW.
+
+| lost | how much | why |
+|---|---|---|
+| `Key` / `Scale` | 764 placements set `Key`, none set `Scale` | folded into the note numbers on the way out, so the file plays in anything; an import is chromatic in C and **sounds identical** |
+| `gridX`, so the clip layout | 79.5% of placements sit off an 8-cell boundary | a step field is seven bits, so a part is re-cut into 128-step clips wherever they fall; the timeline does not move |
+| clip identity | 62,158 placements → a few dozen parts | clips sharing an instrument, a row and every mixer setting merge; the music is the same and the board is not |
+| per-point modulation | 34,449 notes (3.6%) vary it | one CC 74 per note, at its opening value — which is also all `render.ts` reads, so **nothing audible** |
+| coincident control points | 302 notes (0.03%) | two records on one position collapse to the later, which is what the engine's `t = span > 0 ? … : 1` does |
+| a glide, to a shared channel | 825 (0.09%) per part, 1,535 (0.16%) shared | fifteen member channels against thirty-two voices; always counted, never silent |
+| pitch and volume resolution | within half a unit | bend is rounded to whole semitones and positions to thirds of a step, which is the record grid |
+
+⚠️ **Two fields cost nothing only because the corpus never uses them**, and that is worth knowing
+before trusting the table on a newer level: `timbre` bits 4-5 — the per-block table select — are
+**zero in all 1,448,224 records**, and no record carries a volume above 127. Both would be dropped
+if they appeared; neither is read by `render.ts` either.
+
 The measurement, from `dev/verify-midi.ts` over the corpus on 2026-09-03 — run it after touching
-either file:
+either file. `LBP_MIDI_PERPART=1` measures the mode a DAW should be given:
 
 - 149 sequencers, **953,791 notes**, none lost, none moved, no pitch, duration or modulation
   changed; an intact note's curve stays inside the half unit its integer fields round by.
