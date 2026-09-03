@@ -710,7 +710,47 @@ unit and on each of the channel's others. **So the matrix is built per-DSP-unit 
 that call is where the next attempt has to go** -- resolving the DSP unit's vtable, not searching for
 constants.
 
-Three routes were walked and are dead; do not repeat them:
+### The vtable was attacked directly and did NOT resolve
+
+Attempted 2026-09-03 at the listener's request. It did not land, but the target is now boxed in and
+six routes are eliminated, so the next attempt starts much further along.
+
+**What is known about the object at `[channel+0x90]`:**
+
+- it is **created by a factory virtual at `+0x8`** of another object, called at `v0xa0a856` as
+  `(..., &out, ecx=1, r8d=1, r9d=0)`, then stored at `v0xa0a892` with `[channel+0x88] = 1`;
+- its vtable has **at least 38 entries** -- `v0xa0a7cc` calls `[vtable+0x128]`;
+- **`+0x88` takes one float** (the channel's volume, `[channel+0x19c]`, at `v0xa0b38f`);
+- **`+0x98` takes exactly two floats**: the clamped pan and the literal `1.0` (`v0xa0b539`).
+
+**The method that should have worked, and why it did not.** Vtables can be enumerated from the
+`R_X86_64_RELATIVE` relocations: 33,235 of them, of which 10,445 form runs of consecutive slots
+holding code addresses, 204 of length >= 20. Filtering those on `+0x88`, `+0x98` and `+0x128` all
+being FMOD code leaves **five**, and every one is an Event-system or `fmod_soundi.cpp` class -- no
+panner. Dropping the contiguity requirement (a pure-virtual stub or an out-of-range entry splits a
+run) widens it to 175 `+0x98` candidates, of which only two take a second float.
+
+⚠️ **The near miss, which will cost the next session an hour if it is not written down.**
+`v0xa287b0` is shared by **eight** vtables -- the right multiplicity for the DSP type hierarchy --
+and has exactly the right shape:
+
+```
+vminss/vmaxss xmm1        ; clamp volume to [0, 1]
+vmaxss/vminss xmm2        ; clamp pan to [-1, 1]
+cmp esi, 0x100            ; clamp priority
+[rdi+0x1a4] = xmm0   [rdi+0x1a0] = xmm1   [rdi+0x1a8] = xmm2   [rdi+0x1ac] = eax
+```
+
+That is `setDefaults(frequency, volume, pan, priority)`. **It is not the function being called**: the
+call site passes two floats and this one takes three plus an int, and the argument that would be the
+pan (`xmm2`) is never set by the caller. The offsets `+0x1a0`/`+0x1a4` matching the channel's own
+layout is a shared base class, not an identification.
+
+**Where to go next**, in order of promise: resolve `rax` at `v0xa0a856` and read the factory, which
+names the class outright; or enumerate vtables allowing interior non-code entries *and* accepting a
+`+0x98` whose body is a plain two-float store, which is what a `setPan(pan, spread)` would be.
+
+Six routes are dead; do not repeat them:
 
 - **`v0xa47400` is `SpeakerLevelsPool::free`, not the allocator.** Its two callers (`v0xa0af30`,
   `v0xa0b454`) are both channel teardown, releasing `[channel+0x208]`. The pool is not a way in.
@@ -720,6 +760,11 @@ Three routes were walked and are dead; do not repeat them:
   genuine cosine table at 30-degree steps, but nothing has tied it to this path.
 - **Searching for the address of the output plugin's `Init`** found nothing because nothing takes
   it; it is called through a C++ adjustor thunk. Same trap will apply to any other FMOD callback.
+- **`System::createDSP` -> `v0xa52560` loads no vtable base** in its first 0x900 bytes, so the DSP
+  object's construction is deeper still; that path did not shortcut to the class.
+- **The sine table at `v0xe1c440`** (0, 0.5, 0.7071, 0.866, 0.9659, 1, ... -- sin at 15-degree steps)
+  is the obvious speaker-angle table and belongs to **the game, not FMOD**: all five references to it
+  come from `v0x22e9f8`, `v0x24c820`, `v0x24fb83`, `v0x519f96` and `v0x7ca340`, none in FMOD's range.
 
 ### The leading hypothesis, and why it is not written down as fact
 
