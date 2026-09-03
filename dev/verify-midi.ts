@@ -152,6 +152,32 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
     if (after.length !== before.length - exported.dropped) {
       problems.push(`${before.length} notes out, ${after.length} back`);
     }
+    /**
+     * How far two notes are apart, and whether they are the same note at all.
+     *
+     * ⚠️ **The pairing is the part of this script that has been wrong most
+     * often.** Levels place the same hit on two components, so a bucket
+     * routinely holds several notes at one step and one pitch -- and when one of
+     * them loses a glide to a shared channel, a greedy walk crosses it with a
+     * sibling and reports two casualties for none. It has produced phantom
+     * numbers three times: 142 sequencers, then 458 notes, then 8.
+     *
+     * So: exact matches are taken first, and only what is left is matched by
+     * cost. The key stays loose -- step and pitch -- because a flattened note
+     * that opened at volume 0 comes back at 1, MIDI having no velocity 0, and a
+     * key that included the volume simply lost it.
+     */
+    const apart = (x: (typeof before)[number], y: (typeof after)[number]) => {
+      let worst = Math.abs(x.duration - y.duration) * 1000 + Math.abs(x.modulation - y.modulation);
+      for (let s = 0; s < Math.min(x.curve.length, y.curve.length); s += 1) {
+        worst +=
+          Math.abs(x.curve[s][0] - y.curve[s][0]) +
+          Math.abs(x.curve[s][1] - y.curve[s][1]) +
+          Math.abs(x.curve[s][2] - y.curve[s][2]);
+      }
+      return worst + Math.abs(x.curve.length - y.curve.length) * 1000;
+    };
+
     const bucket = new Map<string, typeof after>();
     for (const note of after) {
       const key = `${note.step}/${note.pitch}`;
@@ -159,64 +185,47 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
       if (found) found.push(note);
       else bucket.set(key, [note]);
     }
-    for (const a of before) {
-      const key = `${a.step}/${a.pitch}`;
-      const candidates = bucket.get(key);
-      // Among notes that start on the same third at the same pitch, take the
-      // closest match: chords of one pitch are common and any pairing will do.
-      let best = -1;
-      let bestCost = Infinity;
-      for (let i = 0; candidates && i < candidates.length; i += 1) {
-        const b = candidates[i];
-        // ⚠️ The opening volume is weighted heavily on purpose. Levels place
-        // the same hit on two components, so a bucket often holds a flat copy
-        // and a gliding one; when the gliding one loses its glide to a shared
-        // channel the two become confusable, and pairing them the wrong way
-        // round reports TWO casualties for one. Their opening volumes differ
-        // even then, so that is what tells them apart.
-        let cost =
-          Math.abs(a.duration - b.duration) * 1000 +
-          Math.abs(a.modulation - b.modulation) +
-          Math.abs(a.curve[0][1] - b.curve[0][1]) * 100;
-        for (let s = 0; s < Math.min(a.curve.length, b.curve.length); s += 1) {
-          // ⚠️ All three fields, or the pairing invents casualties. A bucket
-          // often holds notes that differ ONLY in their modulation -- the same
-          // hit at the same pitch with a different filter -- and costing on
-          // pitch and volume alone paired them at random and then reported 458
-          // notes as changed when the diagnostic that costed all three found
-          // none at all.
-          cost +=
-            Math.abs(a.curve[s][0] - b.curve[s][0]) +
-            Math.abs(a.curve[s][1] - b.curve[s][1]) +
-            Math.abs(a.curve[s][2] - b.curve[s][2]);
+    const wanted = new Map<string, typeof before>();
+    for (const note of before) {
+      const key = `${note.step}/${note.pitch}`;
+      const found = wanted.get(key);
+      if (found) found.push(note);
+      else wanted.set(key, [note]);
+    }
+
+    const pairs: { a: (typeof before)[number]; b: (typeof after)[number] }[] = [];
+    for (const [key, group] of wanted) {
+      const candidates = bucket.get(key) ?? [];
+      const left: typeof before = [];
+      // Pass one: anything that came back untouched claims its own partner.
+      for (const a of group) {
+        const exact = candidates.findIndex((b) => apart(a, b) < 1e-9);
+        if (exact >= 0) pairs.push({ a, b: candidates.splice(exact, 1)[0] });
+        else left.push(a);
+      }
+      // Pass two: whatever is left, nearest first.
+      for (const a of left) {
+        if (candidates.length === 0) {
+          // ⚠️ A note the export DECLARED it could not carry is not a
+          // disagreement -- it is the one thing MPE genuinely cannot do, more
+          // copies of a pitch at once than there are channels to tell them
+          // apart. Counting it here as well left the gate failing on a single
+          // note in `Avian` that the tally had already reported.
+          missing += 1;
+          if (missing > exported.dropped && problems.length < 3) {
+            problems.push(`no note at step ${a.step} pitch ${a.pitch}`);
+          }
+          continue;
         }
-        if (cost < bestCost) { bestCost = cost; best = i; }
-      }
-      if (!candidates || best < 0) {
-        // ⚠️ A note the export DECLARED it could not carry is not a
-        // disagreement -- it is the one thing MPE genuinely cannot do, more
-        // copies of a pitch at once than there are channels to tell them apart.
-        // Counting it here as well left the gate failing on a single note in
-        // `Avian` that the tally had already reported.
-        missing += 1;
-        if (missing > exported.dropped && problems.length < 3) {
-          problems.push(`no note at step ${a.step} pitch ${a.pitch}`);
+        let best = 0;
+        for (let i = 1; i < candidates.length; i += 1) {
+          if (apart(a, candidates[i]) < apart(a, candidates[best])) best = i;
         }
-        continue;
+        pairs.push({ a, b: candidates.splice(best, 1)[0] });
       }
-      const b = candidates[best];
-      // ⚠️ A dropped note leaves one `before` with no partner, and the greedy
-      // matcher then pairs it with whatever leftover is nearest -- blaming the
-      // conversion for its own guess. `Avian` reported a 64-step note becoming
-      // one step, when in truth a third copy of that pitch had been declared
-      // uncarriable and the other two were fine. Leave the candidate for whoever
-      // it belongs to.
-      if (a.duration !== b.duration && missing < exported.dropped) {
-        missing += 1;
-        continue;
-      }
-      candidates.splice(best, 1);
-      if (candidates.length === 0) bucket.delete(key);
+    }
+
+    for (const { a, b } of pairs) {
       if (a.duration !== b.duration && problems.length < 3) {
         problems.push(`step ${a.step} pitch ${a.pitch}: duration ${a.duration} -> ${b.duration}`);
       }

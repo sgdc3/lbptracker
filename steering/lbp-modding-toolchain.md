@@ -220,8 +220,9 @@ be *inexact* rather than *wrong*, and where it comes from.
 ⚠️ **`channelsPerPart` is the mode those numbers describe.** Sharing the channels across the file
 is the safe default for a player that hears one stream, and it cannot be lossless: fifteen channels
 against fifty simultaneous notes. What it can be is fully declared, and it now is —
-**8 notes in 953,791 (0.0008%) change without something having said so**, against 1,742 glides
-(0.18%) it declares. Two more things it reports, which are warnings about what a *synth* will hear
+**3 notes in 953,791 (0.0003%) change without something having said so**, against 1,742 glides
+(0.18%) it declares (of which 1,745 actually change: it over-declares by a handful whose glide was
+too small for the quantiser to see, which is the safe direction). Two more things it reports, which are warnings about what a *synth* will hear
 rather than losses in the round trip, because the importer knows whose each is: 1,352 notes a
 neighbour's bend reaches, and 4,522 whose timbre a sharer's CC 74 moves.
 
@@ -250,10 +251,22 @@ Each of these was found by measuring, and each is worth knowing because none was
    whichever note owned the channel — so a note starting mid-ramp bent the modulation of one it has
    nothing to do with. Ticks where a note starts on that channel are now known in advance and the
    value is left to the note it belongs to: 89 undeclared notes down to 8.
-5. **The verifier was measuring the wrong things, twice.** It compared the first record's modulation
-   rather than the one the note sounds, and its note-pairing cost ignored the modulation entirely —
-   so it paired notes that differ only in their filter at random and reported 458 casualties where
-   a diagnostic costing all three fields found none.
+5. **The verifier was measuring the wrong things, repeatedly — the note pairing is the part of it
+   that has been wrong most often.** It compared the first record's modulation rather than the one
+   the note sounds; its pairing cost ignored the modulation entirely, so it paired notes that differ
+   only in their filter at random and reported 458 casualties where a diagnostic costing all three
+   found none; and its greedy walk crossed a flattened note with an intact sibling and reported two
+   casualties for one.
+
+   ⚠️ **Levels place the same hit on two components**, so a bucket routinely holds several notes
+   at one step and one pitch. `Partykill` has the same note twice at step 4308, one exclusive with
+   its glide and one shared and flat. The pairing therefore takes **exact matches first** and only
+   then matches what is left by cost. And its key stays loose — step and pitch — because tightening
+   it to include the opening volume lost every flattened note that opened at volume 0: MIDI has no
+   velocity 0, so those come back at 1.
+
+   The phantom counts this produced, in order: 142 sequencers, 458 notes, then 8. **None of them
+   were real.**
 
 Measured in the per-part mode, which is the good one. Each of these is fixable;
 none is fixed, and the cost is why:
