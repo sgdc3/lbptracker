@@ -300,24 +300,26 @@ test('release closes the gate on a tagged voice and leaves the others', () => {
   assert.ok(Math.abs(left[128] - after) < 1e-9, 'an unknown tag changes nothing');
 });
 
-// ⚠️ THE PROPERTY THE WHOLE PROJECT RESTS ON, AND IT IS CURRENTLY FALSE FOR REAL
-// SONGS. The offline render calls `Mixer.render` once for a whole song; an
-// AudioWorklet calls it every 128 frames. Measured on `Rotary` through
-// `dev/live-sim.ts`, the same voices rendered in 128-frame blocks come out
-// -4.6 dB from the one-call render and audibly quieter (rms 0.0245 against
-// 0.0308), converging as the block grows: -6.6 dB at 512, -14.9 dB at 2048,
-// -58.5 dB at 4800, and bit-identical at 19200.
+// ⚠️ THE PROPERTY THE WHOLE PROJECT RESTS ON. The offline render calls
+// `Mixer.render` once for a whole song; an AudioWorklet calls it every 128
+// frames. If those disagree, the WAV and the live player are different
+// instruments and every measurement taken through one does not apply to the
+// other.
 //
-// ⚠️ **This synthetic case does not reproduce it**, which is why it is not a
-// regression test for that bug yet -- one voice, sixty staggered voices, with
-// and without an envelope, with the filter, the LFOs and the drive all pass.
-// Whatever the trigger is, it is something the game's own instruments do that
-// this does not. Keep the test: it pins the property for everything it does
-// cover, and the day it starts failing it will have found the trigger.
+// ⚠️ **The loop below must end on the sample's LAST frame, and that is the
+// whole test.** `Voice.finished` used to end any voice whose position reached
+// the sample length, looping or not, and the engine's sampler parks a looping
+// voice on `loop.end` for one frame before wrapping. When `loop.end` is the
+// sample length -- the common case -- that one frame is a window in which the
+// voice is thrown away, and a caller asking for 128 frames at a time lands in
+// it constantly while a caller asking for a whole song at once never does.
+// `Rotary` lost 112 of its first 300 voices to it and came out 4.6 dB down.
+// An earlier version of this test used `end: tone.length - 1` and passed
+// against the bug.
 test('the mixer renders the same audio whatever the block size', () => {
   const tone = new Float32Array(4800);
   for (let i = 0; i < tone.length; i += 1) tone[i] = Math.sin((2 * Math.PI * 220 * i) / 48000);
-  const sample = { channels: [tone], sampleRate: 48000, loop: { start: 0, end: 4799 } };
+  const sample = { channels: [tone], sampleRate: 48000, loop: { start: 0, end: tone.length } };
   const spec = {
     sample,
     playbackRate: 1,

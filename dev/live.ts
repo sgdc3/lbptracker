@@ -29,7 +29,6 @@ import { webInflate } from '../src/platform/web.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const seqSelect = $<HTMLSelectElement>('seq');
-const prepareButton = $<HTMLButtonElement>('prepare');
 const playButton = $<HTMLButtonElement>('play');
 const rewindButton = $<HTMLButtonElement>('rewind');
 const statusLine = $<HTMLDivElement>('status');
@@ -222,9 +221,9 @@ async function prepare(): Promise<void> {
   const seq = project?.sequencers.find((s) => s.uid === uid);
   if (!seq || !rinstIndex || !smpIndex) return;
 
-  prepareButton.disabled = true;
+  seqSelect.disabled = true;
   setError('');
-  setStatus(`preparing "${seq.name}" — ${seq.tracks.length} tracks…`);
+  setStatus(`getting "${seq.name}" ready — ${seq.tracks.length} tracks…`);
   await ensureAudio();
 
   const load = await loaderFor(rinstIndex, smpIndex);
@@ -303,7 +302,7 @@ async function prepare(): Promise<void> {
 
   playButton.disabled = false;
   rewindButton.disabled = false;
-  prepareButton.disabled = false;
+  seqSelect.disabled = false;
   timeline.setAttribute('aria-valuemax', songSeconds.toFixed(1));
   metersBox.innerHTML = [
     ['voices', built.length.toLocaleString()],
@@ -508,13 +507,23 @@ voicesInput.addEventListener('input', replanSoon);
 noCapBox.addEventListener('change', replanSoon);
 showPlanOptions();
 
-prepareButton.addEventListener('click', () => {
+/**
+ * Choosing a song gets it ready. There is no button for it.
+ *
+ * ⚠️ Preparing means running the whole render's voice pass, which is where the
+ * voice pool decides its stealing -- it cannot be skipped or done lazily. It is
+ * fast (about a second for a five-minute song), so making the listener ask for
+ * it twice, once by picking and once by pressing, bought nothing.
+ */
+const prepareNow = () => {
+  stop();
   void prepare().catch((error: unknown) => {
-    prepareButton.disabled = false;
+    seqSelect.disabled = false;
     setStatus('failed', true);
     setError(String((error as Error).stack ?? error));
   });
-});
+};
+seqSelect.addEventListener('change', prepareNow);
 
 // ------------------------------------------------------------------ the file
 
@@ -541,11 +550,11 @@ async function openFile(file: File): Promise<void> {
       .map((s) => `<option value="${s.uid}">${s.name || '(untitled)'} — ${s.tracks} instruments</option>`)
       .join('');
     seqSelect.disabled = list.length === 0;
-    prepareButton.disabled = list.length === 0;
     dropZone.classList.add('loaded');
     dropTitle.textContent = `${file.name} — ${list.length} sequencers`;
     dropHint.textContent = 'Click or drop to open a different file.';
-    setStatus(`ready — ${list.length} sequencers, pick one and prepare it`);
+    if (list.length) prepareNow();
+    else setStatus('no sequencers in that level', true);
   } catch (error) {
     setStatus('failed', true);
     setError(String((error as Error).stack ?? error));

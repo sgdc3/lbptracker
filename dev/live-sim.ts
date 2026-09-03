@@ -35,6 +35,7 @@ const wantUid = Number(process.env.LBP_UID ?? 740380);
 const LOOKAHEAD = Number(process.env.LBP_LOOKAHEAD ?? 0.35);
 const TICK = Number(process.env.LBP_TICK ?? 0.1);
 const SECONDS = Number(process.env.LBP_SECONDS ?? 30);
+const STRIP = (process.env.LBP_STRIP ?? '').split(',').filter(Boolean);
 
 const manifest = async (dir: string) =>
   new Map(
@@ -117,9 +118,19 @@ await renderSequencer(seq, loadInstrument, {
     const phase = [0, 1, 2].map(
       (n) => draw() * 2 * Math.PI + (voice.lfoPhaseOffset?.[n] ?? 0),
     ) as unknown as readonly [number, number, number];
+    // `LBP_STRIP=envelope,filter` drops fields from every spec before it is
+    // played, which is how the block-size divergence gets bisected: strip until
+    // the blocked render matches the direct one, and the last thing removed is
+    // the trigger.
+    const stripped: Record<string, unknown> = {
+      ...voice,
+      random: () => 0,
+      lfoPhaseOffset: phase,
+    };
+    for (const field of STRIP) delete stripped[field];
     plan.push({
       at: where.startFrame,
-      spec: { ...voice, random: () => 0, lfoPhaseOffset: phase },
+      spec: stripped as unknown as VoiceSpec,
       life: voice.endFrame === undefined ? undefined : Math.max(0, voice.endFrame - where.startFrame),
       cut: voice.cutFrame === undefined ? undefined : Math.max(0, voice.cutFrame - where.startFrame),
     });
@@ -183,6 +194,98 @@ function renderBlocked(): [Float32Array, Float32Array] {
     mixer.render(left.subarray(start, start + size), right.subarray(start, start + size));
   }
   return [left, right];
+}
+
+/**
+ * `LBP_SCAN=1` renders each planned voice ON ITS OWN, once in a single call and
+ * once in 128-frame blocks, and prints the ones that disagree.
+ *
+ * A whole song diverging says only that something is wrong; one voice diverging
+ * hands over a spec small enough to put in a unit test.
+ */
+/** `LBP_DIFF=n` finds the first frame at which one voice's two renders part. */
+if (process.env.LBP_DIFF !== undefined) {
+  const p = plan[Number(process.env.LBP_DIFF)];
+  const span = (p.life ?? 48000) + 24000;
+  const one = (blockSize: number) => {
+    const mixer = new Mixer(RATE);
+    mixer.play({ ...p.spec, startFrame: 0 });
+    const left = new Float32Array(span);
+    const right = new Float32Array(span);
+    for (let at = 0; at < span; at += blockSize) {
+      const size = Math.min(blockSize, span - at);
+      mixer.render(left.subarray(at, at + size), right.subarray(at, at + size));
+    }
+    return left;
+  };
+  const whole = one(span);
+  const chunked = one(128);
+  let first = -1;
+  for (let i = 0; i < span; i += 1) {
+    if (Math.abs(whole[i] - chunked[i]) > 1e-7) {
+      first = i;
+      break;
+    }
+  }
+  const spec = p.spec as unknown as Record<string, unknown>;
+  console.log(`life ${p.life}  loop ${JSON.stringify(p.spec.sample.loop)}  rate ${p.spec.playbackRate}`);
+  console.log(`envelope ${JSON.stringify(spec.envelope)}  hold ${String(spec.holdFrames)}`);
+  console.log(`first difference at frame ${first} (block ${Math.floor(first / 128)}, offset ${first % 128})`);
+  for (let i = Math.max(0, first - 2); i < first + 6 && i < span; i += 1) {
+    console.log(`  ${i}: one-call ${whole[i].toFixed(6)}   blocked ${chunked[i].toFixed(6)}`);
+  }
+  let lastOne = 0;
+  let lastChunk = 0;
+  for (let i = 0; i < span; i += 1) {
+    if (whole[i] !== 0) lastOne = i;
+    if (chunked[i] !== 0) lastChunk = i;
+  }
+  console.log(`last non-zero: one-call ${lastOne}, blocked ${lastChunk}`);
+  process.exit(0);
+}
+
+if (process.env.LBP_SCAN === '1') {
+  const limit = Number(process.env.LBP_SCAN_VOICES ?? 400);
+  const block = 128;
+  let bad = 0;
+  for (let v = 0; v < Math.min(limit, plan.length); v += 1) {
+    const p = plan[v];
+    const span = (p.life ?? 48000) + 48000;
+    const one = (blockSize: number) => {
+      const mixer = new Mixer(RATE);
+      mixer.play({ ...p.spec, startFrame: 0 });
+      const left = new Float32Array(span);
+      const right = new Float32Array(span);
+      for (let at = 0; at < span; at += blockSize) {
+        const size = Math.min(blockSize, span - at);
+        mixer.render(left.subarray(at, at + size), right.subarray(at, at + size));
+      }
+      return left;
+    };
+    const whole = one(span);
+    const chunked = one(block);
+    let err = 0;
+    let sig = 0;
+    for (let i = 0; i < span; i += 1) {
+      err += (whole[i] - chunked[i]) ** 2;
+      sig += whole[i] ** 2;
+    }
+    if (sig > 1e-12 && err / sig > 1e-8) {
+      bad += 1;
+      if (bad <= 5) {
+        const spec = p.spec as unknown as Record<string, unknown>;
+        console.log(
+          `voice ${v}: ${(10 * Math.log10(err / sig)).toFixed(1)} dB  ` +
+            `life ${p.life}  loop ${JSON.stringify(p.spec.sample.loop)}  ` +
+            `rate ${p.spec.playbackRate.toFixed(4)}  ` +
+            `hold ${String(spec.holdFrames)}  env ${spec.envelope ? 'yes' : 'no'}  ` +
+            `len ${p.spec.sample.channels[0].length}`,
+        );
+      }
+    }
+  }
+  console.log(`${bad} of ${Math.min(limit, plan.length)} voices differ on their own`);
+  process.exit(0);
 }
 
 const [dl, dr] = renderDirect();

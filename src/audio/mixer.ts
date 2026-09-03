@@ -390,7 +390,23 @@ class Voice {
     // With an envelope the voice ends when the release reaches zero, not when
     // its life runs out -- life only closes the gate.
     if (this.spec.envelope ? this.env.finished : this.life <= 0) return true;
-    return this.position >= source.length;
+    // ⚠️ **Only a voice with no loop can run out of sample.** This used to be a
+    // bare `position >= source.length`, which is true of a LOOPING voice too for
+    // the one frame its position sits on `loop.end` -- and with the engine's
+    // sampler it does sit there, because that path wraps at `position >
+    // loop.end` rather than `>=`, deliberately, so the second interpolation tap
+    // still has a frame to point at. Loops that end on the last frame of their
+    // sample are the common case, so `loop.end === source.length` and the window
+    // is real.
+    //
+    // Nothing noticed while the only caller was the offline render, which asks
+    // for the whole song in one call and so evaluates this once, at the end.
+    // An AudioWorklet asks every 128 frames, which lands in that one-frame
+    // window often -- a 109-frame loop at rate 0.7071 passes through it every
+    // 154 frames -- and each time it did, the voice was thrown away mid-note.
+    // Measured on `Rotary`: 112 of its first 300 voices died early, the song
+    // came out 4.6 dB down, and it sounded like notes being cut at random.
+    return this.spec.sample.loop === undefined && this.position >= source.length;
   }
 
   /**

@@ -88,12 +88,10 @@
   </section>
 
   <section>
-    <p class="step"><b>2</b> Pick a song</p>
+    <p class="step"><b>2</b> Pick a song &mdash; it gets ready by itself</p>
     <div class="row">
       <label for="seq">sequencer</label>
       <select id="seq" disabled><option>no level open</option></select>
-      <span class="spacer"></span>
-      <button id="prepare" class="primary" disabled>Prepare</button>
     </div>
     <details id="switches">
       <summary>Engine switches</summary>
@@ -124,13 +122,13 @@
           </div>
           <p class="hintline">
             The engine&rsquo;s is 32. Its stealing is decided over the whole song at once, so
-            moving this rebuilds the plan &mdash; it does that by itself, keeping your place.
+            moving this rebuilds the song &mdash; it does that by itself, keeping your place.
             Uncapping it plays every note, which is not the game.
           </p>
         </div>
       </div>
       <p class="hintline" id="staleNote" hidden>
-        &#9888; Rebuilding the plan for the new pool size&hellip;
+        &#9888; Rebuilding for the new pool size&hellip;
       </p>
     </details>
 
