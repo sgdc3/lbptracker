@@ -23,7 +23,7 @@
 import { loaderFor, manifest, asset, type Manifest } from './assets.ts';
 import { seqPicker } from './seq-picker.ts';
 import { type VoiceSpec } from '../src/audio/mixer.ts';
-import { readLevelProject, type LevelProject } from '../src/core/project.ts';
+import { CHANNEL_COUNT, readLevelProject, type LevelProject } from '../src/core/project.ts';
 import { LiveVoicePool, VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
 import { swungFrame } from '../src/core/swing.ts';
 import { PAN_WIDTH, RATE, renderSequencer } from '../src/core/render.ts';
@@ -452,15 +452,30 @@ async function prepare(restart = true): Promise<void> {
   if (restart) {
     tempoInput.value = String(Math.round(original.tempo));
     swingInput.value = String(Math.round(original.swing * 100));
-    channelsBox.innerHTML = original.volumes
-      .map(
-        (v, i) =>
-          `<div class="knob"><label for="ch${i}">row ${i}</label>` +
-          `<input type="range" id="ch${i}" class="chan" data-ch="${i}" min="0" max="150" ` +
-          `value="${Math.round(v * 100)}">` +
-          `<output id="ch${i}Label">${v.toFixed(2)}</output></div>`,
-      )
-      .join('');
+    // ⚠️ **CHANNEL_COUNT sliders, not `volumes.length`.** The file stores six
+    // volumes but the engine indexes them with `gridY % 8`, and records past
+    // `Volume[5]` keep its initialised value -- so channels 6 and 7 exist, carry
+    // notes, and had no control at all when this was built from the array.
+    //
+    // The note counts are there because the mapping surprises people: a board
+    // row is a channel modulo 8, so a song spread over rows 0..18 puts notes on
+    // every channel and no single one of them is "the song". On Ascetic channel
+    // 0 holds 323 of 1150 tracks.
+    const perChannel = new Array<number>(CHANNEL_COUNT).fill(0);
+    for (const t of original.tracks) {
+      perChannel[((t.gridY % CHANNEL_COUNT) + CHANNEL_COUNT) % CHANNEL_COUNT] += 1;
+    }
+    channelsBox.innerHTML = Array.from({ length: CHANNEL_COUNT }, (_, i) => {
+      const v = i < original.volumes.length ? original.volumes[i] : 1;
+      const used = perChannel[i];
+      return (
+        `<div class="knob"><label for="ch${i}" title="${used} track${used === 1 ? '' : 's'} ` +
+        `on this channel">ch ${i} · ${used}</label>` +
+        `<input type="range" id="ch${i}" class="chan" data-ch="${i}" min="0" max="150" ` +
+        `value="${Math.round(v * 100)}"${used === 0 ? ' disabled' : ''}>` +
+        `<output id="ch${i}Label">${v.toFixed(2)}</output></div>`
+      );
+    }).join('');
     showSongOptions();
   }
   markStale();

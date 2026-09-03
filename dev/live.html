@@ -195,8 +195,10 @@
         <h3>channel volumes</h3>
         <div id="channels"></div>
         <p class="hintline">
-          The sequencer&rsquo;s own mixer, one per board row. Pull one to nothing to hear what a
-          part is doing to the whole.
+          The sequencer&rsquo;s own mixer. A board row is a channel <em>modulo 8</em>, so a song
+          spread down the board puts notes on every one of them &mdash; the count beside each is
+          how many tracks it carries, and a channel with none is greyed out. The file stores six
+          volumes; the last two keep the value the engine starts them at.
         </p>
       </div>
     </div>
