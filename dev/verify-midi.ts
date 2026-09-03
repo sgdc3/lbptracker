@@ -44,20 +44,39 @@ function music(sequencer: Sequencer) {
     const track = sequencer.tracks[event.track];
     const root = blockRoot(track.key);
     const midi = (raw: number) => Math.max(0, Math.min(127, notePitch(raw, track.scale, root)));
+    // ⚠️ **The modulation the note SOUNDS, not its first record's.** Points
+    // that share a position are taken at their later value the instant they
+    // arrive -- the engine's `t = span > 0 ? … : 1` -- so a pair at the note's
+    // start makes the first record's modulation something nothing ever hears.
+    // Comparing that field instead blamed `Salem` for notes the round trip
+    // reproduces exactly.
+    let opening = 0;
+    for (const p of event.points) {
+      if (p.step > 0) break;
+      opening = p.modulation;
+    }
     return {
       step: Math.round(event.step * 3),
       duration: Math.round(event.durationSteps * 3),
       pitch: midi(event.pitch),
       volume: event.volume,
-      modulation: Math.round(event.modulation * 15),
+      modulation: Math.round(opening * 15),
       // The curve, sampled where records can sit: thirds of a step.
-      curve: sampleCurve(event.points.map((p) => ({ at: p.step, pitch: midi(p.pitch), volume: p.volume }))),
+      curve: sampleCurve(
+        event.points.map((p) => ({
+          at: p.step,
+          pitch: midi(p.pitch),
+          volume: p.volume,
+          // On the nibble's own scale, so one unit means one step of the field.
+          mod: p.modulation * 15,
+        })),
+      ),
     };
   });
 }
 
-function sampleCurve(points: { at: number; pitch: number; volume: number }[]) {
-  const out: [number, number][] = [];
+function sampleCurve(points: { at: number; pitch: number; volume: number; mod: number }[]) {
+  const out: [number, number, number][] = [];
   const last = points[points.length - 1].at;
   for (let thirds = 0; thirds <= Math.round(last * 3); thirds += 1) {
     const at = thirds / 3;
@@ -70,6 +89,7 @@ function sampleCurve(points: { at: number; pitch: number; volume: number }[]) {
     out.push([
       to ? from.pitch + (to.pitch - from.pitch) * t : from.pitch,
       to ? from.volume + (to.volume - from.volume) * t : from.volume,
+      to ? from.mod + (to.mod - from.mod) * t : from.mod,
     ]);
   }
   return out;
@@ -80,6 +100,7 @@ let notes = 0;
 let failed = 0;
 let worstPitch = 0;
 let worstVolume = 0;
+let worstMod = 0;
 let bent = 0;
 const totals = {
   shared: 0, dropped: 0, clampedPitch: 0, clampedBend: 0, bytes: 0, lengthened: 0,
@@ -157,7 +178,16 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
           Math.abs(a.modulation - b.modulation) +
           Math.abs(a.curve[0][1] - b.curve[0][1]) * 100;
         for (let s = 0; s < Math.min(a.curve.length, b.curve.length); s += 1) {
-          cost += Math.abs(a.curve[s][0] - b.curve[s][0]) + Math.abs(a.curve[s][1] - b.curve[s][1]);
+          // ⚠️ All three fields, or the pairing invents casualties. A bucket
+          // often holds notes that differ ONLY in their modulation -- the same
+          // hit at the same pitch with a different filter -- and costing on
+          // pitch and volume alone paired them at random and then reported 458
+          // notes as changed when the diagnostic that costed all three found
+          // none at all.
+          cost +=
+            Math.abs(a.curve[s][0] - b.curve[s][0]) +
+            Math.abs(a.curve[s][1] - b.curve[s][1]) +
+            Math.abs(a.curve[s][2] - b.curve[s][2]);
         }
         if (cost < bestCost) { bestCost = cost; best = i; }
       }
@@ -205,6 +235,7 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
           deviation,
           Math.abs(a.curve[s][0] - b.curve[s][0]),
           Math.abs(a.curve[s][1] - b.curve[s][1]),
+          Math.abs(a.curve[s][2] - b.curve[s][2]),
         );
       }
       // The same half-a-unit the simplifier uses, and the same hair of slack:
@@ -216,6 +247,7 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
         for (let s = 0; s < Math.min(a.curve.length, b.curve.length); s += 1) {
           worstPitch = Math.max(worstPitch, Math.abs(a.curve[s][0] - b.curve[s][0]));
           worstVolume = Math.max(worstVolume, Math.abs(a.curve[s][1] - b.curve[s][1]));
+          worstMod = Math.max(worstMod, Math.abs(a.curve[s][2] - b.curve[s][2]));
         }
       }
     }
@@ -231,7 +263,7 @@ console.log(`channels ${perPart ? 'per part' : 'shared across parts'}`);
 console.log(
   `${sequencers} sequencers, ${notes.toLocaleString()} notes, ${failed} disagreeing\n` +
     `intact notes: worst deviation pitch ${worstPitch.toFixed(3)} semitones, ` +
-    `volume ${worstVolume.toFixed(3)}\n` +
+    `volume ${worstVolume.toFixed(3)}, modulation ${worstMod.toFixed(3)}/15\n` +
     `${totals.automated.toLocaleString()} notes carry a glide (${pc(totals.automated)}); ` +
     `${totals.flattened.toLocaleString()} of them lost it to a shared channel (${pc(totals.flattened)}), ` +
     `and ${totals.deviating.toLocaleString()} notes came back with a different curve\n` +
@@ -264,4 +296,8 @@ if (unexplained !== 0) {
       `(${((Math.abs(unexplained) / notes) * 100).toFixed(4)}%)`,
   );
 }
-process.exit(failed === 0 && worstPitch <= 0.5 + 1e-9 && worstVolume <= 0.5 + 1e-9 ? 0 : 1);
+process.exit(
+  failed === 0 && worstPitch <= 0.5 + 1e-9 && worstVolume <= 0.5 + 1e-9 && worstMod <= 0.5 + 1e-9
+    ? 0
+    : 1,
+);

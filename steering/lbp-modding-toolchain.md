@@ -204,8 +204,39 @@ for reasons that are correct.
 
 ### What is still between here and an exact round trip
 
-**As of 2026-09-03, in `channelsPerPart`: 99.745% of notes come back point for point identical,
-including their modulation.** What is listed below is the remaining quarter of a per cent.
+**As of 2026-09-03, in `channelsPerPart` there is nothing measurable left.** The corpus check reads
+**0 sequencers disagreeing, 0 notes with a changed curve** over 953,791 notes — no glide lost, none
+dragged, none dropped, none clamped, none lengthened, and the worst deviations on the whole corpus
+are **pitch 1/6 of a semitone, volume half a step, modulation 0**. What follows is what is known to
+be *inexact* rather than *wrong*, and where it comes from.
+
+| left | how much | why |
+|---|---|---|
+| pitch off by up to 1/6 semitone | one shape, in `Diode` | a ramp that ARRIVES at the instant a coincident pair supersedes it: the value it reaches is never heard, so the reconstruction aims at the last value that is. `test/midi.test.ts` pins the case |
+| records that differ while the sound does not | 592 notes (0.06%) | a coincident pair's first record, which the engine replaces in the same instant. Its modulation cannot be carried because nothing in the file can hear it |
+| `Scale` | 0 placements in the corpus | `quantise` is a projection and is measured not idempotent — there is no pitch to un-snap to |
+| `timbre` bits 4-5, volume > 127 | 0 in the corpus | 7 bits either way; a side channel is the only route |
+
+⚠️ **`channelsPerPart` is the mode those numbers describe.** Sharing the channels across the file is
+the safe default for a player that hears one stream, and it costs 1,535 glides (0.16%) and 1,245
+dragged notes by construction.
+
+### How the last of it was closed, in order
+
+Each of these was found by measuring, and each is worth knowing because none was where it looked:
+
+1. **The pitch was rounded to a whole semitone before the simplifier saw it**, turning the ramp the
+   file drew into a staircase — and the simplifier then kept the tread where the rounding crossed a
+   half rather than the control point the file named. Keeping the fraction until a record is
+   written took 2,432 notes to 592 and the worst pitch deviation to 0.
+2. **Coincident points were collapsed everywhere**, which erased the segment *leading into* one: a
+   dive in `Diode` that arrives and snaps back came out flat, because dropping the record the ramp
+   aimed at left it nowhere to go. The collapse belongs only at the note's own start, where both
+   samples would land on the note-on's tick.
+3. **The verifier was measuring the wrong things, twice.** It compared the first record's modulation
+   rather than the one the note sounds, and its note-pairing cost ignored the modulation entirely —
+   so it paired notes that differ only in their filter at random and reported 458 casualties where
+   a diagnostic costing all three fields found none.
 
 Measured in the per-part mode, which is the good one. Each of these is fixable;
 none is fixed, and the cost is why:

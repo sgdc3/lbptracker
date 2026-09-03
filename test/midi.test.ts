@@ -924,3 +924,55 @@ test('a modulation that holds still writes no extra points', () => {
   assert.equal(note.points.length, 2, 'the glide, and nothing the modulation added');
   for (const p of note.points) assert.equal(Math.round(p.modulation * 15), 6);
 });
+
+test('a glide into a coincident pair keeps the glide', () => {
+  // ⚠️ The last two notes in the corpus whose curve the round trip could not
+  // explain, both in `Diode`: a dive from 68 down to 37 over two steps that
+  // snaps back to 68 in the same instant it arrives. Coincident points collapse
+  // to the later value — the engine's `t = span > 0 ? … : 1` — but collapsing
+  // one mid-note dropped the record the ramp before it was aiming at, and the
+  // dive came out flat.
+  const seq = makeSequencer([
+    makeTrack([[
+      { step: 0, pitch: 68 },
+      { step: 2, pitch: 37 },
+      { step: 2, pitch: 68 },
+    ]]),
+  ]);
+  const { sequencer } = midiToSequencer(sequencerToMidi(seq).bytes);
+  const note = schedule(sequencer)[0];
+  const low = Math.min(...note.points.map((p) => p.pitch));
+  assert.ok(low < 50, `the dive is there: ${JSON.stringify(note.points.map((p) => [p.step, p.pitch]))}`);
+  assert.equal(note.points[note.points.length - 1].pitch, 68, 'and it still snaps back');
+
+  // ⚠️ **It reaches 42, not 37, and that is the closest anything can hear.**
+  // The 37 exists only at the instant the pair supersedes it, so no sampler --
+  // ours or the engine's -- ever reads it; the deepest value that sounds is the
+  // ramp a third of a step earlier. The reconstruction aims its ramp at that
+  // instead, which leaves the curve out by at most **a sixth of a semitone**.
+  // That is the 0.167 the corpus check reports as its worst pitch deviation:
+  // this case is where it comes from.
+  const before = music(seq)[0].samples;
+  const after = music(sequencer)[0].samples;
+  assert.equal(after.length, before.length);
+  for (let i = 0; i < before.length; i += 1) {
+    assert.ok(
+      Math.abs(after[i][0] - before[i][0]) <= 1 / 6 + 1e-9,
+      `third ${i}: ${after[i][0]} against ${before[i][0]}`,
+    );
+    assert.equal(after[i][1], before[i][1], `volume at third ${i}`);
+  }
+});
+
+test('a coincident pair at the note’s start keeps both pitches', () => {
+  // The other half: a pair at position 0 writes both its samples onto the
+  // note-on's own tick, where they are skipped, so that one collapses on the
+  // way out and is rebuilt from the opening bend on the way in.
+  const seq = makeSequencer([
+    makeTrack([[{ step: 0, pitch: 17 }, { step: 0, pitch: 16 }, { step: 4, pitch: 16 }]]),
+  ]);
+  const { sequencer } = midiToSequencer(sequencerToMidi(seq).bytes);
+  const points = sequencer.tracks[0].notes[0].points;
+  assert.equal(points[0].pitch, 17, 'the key that was struck');
+  assert.equal(points[1].pitch, 16, 'and where it went in the same instant');
+});

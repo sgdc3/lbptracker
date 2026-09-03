@@ -732,7 +732,19 @@ export function sequencerToMidi(
     }));
     const points: typeof raw = [];
     for (const point of raw) {
-      if (points.length > 0 && points[points.length - 1].step === point.step) {
+      const last = points[points.length - 1];
+      // ⚠️ **Only at the note's own start.** A coincident pair anywhere else
+      // is a value that JUMPS at that instant, and the zero-length segment
+      // below writes exactly that -- but a pair at position 0 would write both
+      // of its samples onto the note-on's own tick, where they are skipped, so
+      // that one collapses and the import rebuilds it from the opening bend.
+      //
+      // Collapsing everywhere erased the segment *leading into* the pair: a
+      // note in `Diode` that dives from 68 to 37 over two steps and snaps back
+      // came out flat at 68, because dropping the (6, 37) record left the ramp
+      // before it with nowhere to go. It was the last two notes in the corpus
+      // whose curve the round trip could not explain.
+      if (last !== undefined && last.step === point.step && point.step === 0) {
         points[points.length - 1] = point;
       } else {
         points.push(point);
@@ -742,7 +754,13 @@ export function sequencerToMidi(
 
     // MPE's own ordering: the note's opening expression, then the note-on. A
     // receiver that saw the note first would sound one frame of it unbent.
-    out.push(controlChange(startTick, channel, 74, modTo7(event.modulation)));
+    // ⚠️ `opening.modulation`, not the note's first record's. Coincident
+    // points collapse to the later one -- see above -- and the bend and the
+    // pressure both send the collapsed value, so sending the first record's
+    // modulation here made the file disagree with itself: pitch and volume from
+    // one record, modulation from another. What the engine sounds is the
+    // collapsed one, from the instant the note starts.
+    out.push(controlChange(startTick, channel, 74, modTo7(opening.modulation)));
     if (exclusive) {
       out.push(pitchBend(startTick, channel, bendValue(opening.semitones)));
       out.push(channelPressure(startTick, channel, clamp7(opening.volume)));
@@ -1321,15 +1339,19 @@ function simplify(
     const to = points[b];
     const width = to.thirds - from.thirds;
     let worst = -1;
-    let worstBy = TOLERANCE;
+    // Normalised, so 1 is "at its tolerance" for whichever field is worst.
+    let worstBy = 1;
     for (let i = a + 1; i < b; i += 1) {
       const t = width > 0 ? (points[i].thirds - from.thirds) / width : 0;
+      // Each field against its own tolerance, then the worst of the three.
+      // Pitch is held far tighter than the others because it is no longer
+      // rounded before it gets here: what arrives is the ramp the file drew,
+      // and the only slack it needs is the bend's own 14-bit step.
       const by = Math.max(
-        Math.abs(from.pitch + (to.pitch - from.pitch) * t - points[i].pitch),
-        Math.abs(from.volume + (to.volume - from.volume) * t - points[i].volume),
-        // ❗ On the nibble's own scale, so half a unit means the same thing for
-        // all three fields: the modulation is 0..1 in steps of 1/15.
-        Math.abs((from.mod + (to.mod - from.mod) * t - points[i].mod) * 15),
+        Math.abs(from.pitch + (to.pitch - from.pitch) * t - points[i].pitch) / PITCH_TOLERANCE,
+        Math.abs(from.volume + (to.volume - from.volume) * t - points[i].volume) / TOLERANCE,
+        // ❗ On the nibble's own scale: the modulation is 0..1 in steps of 1/15.
+        Math.abs((from.mod + (to.mod - from.mod) * t - points[i].mod) * 15) / TOLERANCE,
       );
       if (by > worstBy) {
         worstBy = by;
@@ -1351,6 +1373,16 @@ function simplify(
  * unit is also the largest error that cannot change a rendered note.
  */
 const TOLERANCE = 0.5 + 1e-9;
+
+/**
+ * How far a pitch may sit off the line and still be dropped, in semitones.
+ *
+ * ❗ Far tighter than half a step, because the pitch is not rounded before the
+ * simplifier sees it. A 14-bit bend over the widest range this writes carries a
+ * semitone to 96/16384 = 0.006, so 0.02 is three times the quantiser and a
+ * fiftieth of the smallest musical interval there is.
+ */
+const PITCH_TOLERANCE = 0.02;
 
 /**
  * A part to LBP clips.
@@ -1394,7 +1426,14 @@ function cutIntoClips(
         mod?: number;
       };
       const moves: Move[] = [
-        ...raw.bends.map((b) => ({ tick: b.tick, pitch: base + Math.round(b.semitones) })),
+        // ⚠️ **Fractional, and rounded only when a record is written.** The
+        // engine's glide is linear in semitones and the bend carries it to
+        // within 0.006 of one; rounding each sample to an integer first turns a
+        // ramp into a staircase, and the simplifier then keeps the tread where
+        // the rounding crossed a half rather than the control point the file
+        // actually named. A one-semitone rise over three thirds came back a
+        // third early -- 2,432 notes across the corpus.
+        ...raw.bends.map((b) => ({ tick: b.tick, pitch: base + b.semitones })),
         ...raw.presses.map((p) => ({ tick: p.tick, volume: p.volume })),
         ...raw.mods.map((m) => ({ tick: m.tick, mod: m.value })),
       ].sort((x, y) => x.tick - y.tick);
