@@ -841,6 +841,8 @@ interface RawPart {
   reverbSend: number;
   key: number;
   scale: number;
+  /** The board cells this part's clips sat in, when the file remembers them. */
+  cells: number[];
   notes: RawNote[];
 }
 
@@ -983,6 +985,7 @@ function readPart(
     gridY: index,
     ...NEUTRAL,
     ...CHROMATIC_C,
+    cells: [],
     notes: [],
   };
   for (const event of track.events) {
@@ -1000,6 +1003,9 @@ function readPart(
         part.echoSend = pick('echoSend', NEUTRAL.echoSend);
         part.reverbSend = pick('reverbSend', NEUTRAL.reverbSend);
         if (typeof meta.name === 'string') part.name = meta.name;
+        if (Array.isArray(meta.clips)) {
+          part.cells = (meta.clips as unknown[]).filter((c): c is number => typeof c === 'number');
+        }
         // ⚠️ `key` and `scale` are deliberately NOT restored. The exporter
         // already folded them into the note numbers, so applying them again
         // would transpose and re-snap a pitch that is finished.
@@ -1263,6 +1269,32 @@ function cutIntoClips(
     })
     .sort((a, b) => a.startThirds - b.startThirds);
 
+  /**
+   * Where the clips go.
+   *
+   * ⚠️ **The board cells the author used are in the file, and using them is
+   * the difference between giving the level back its layout and giving it a
+   * layout.** `LBP-TRK` carries the `gridX` of every clip the part had; each
+   * note goes into the LAST of them that can hold it, which is the cell it was
+   * most likely written in. Clips of one part overlap heavily -- `Ascetic` has
+   * them every two cells, each holding 128 steps -- so a note that two cells
+   * could hold is genuinely ambiguous, and either answer puts it at the same
+   * place on the timeline.
+   *
+   * With no cells to go on -- a file from a DAW -- this falls back to cutting
+   * greedily, opening a clip at the cell of the first note that will not fit in
+   * the one before.
+   */
+  const cells = [...new Set(part.cells)].sort((a, b) => a - b);
+  const cellFor = (startStep: number, endStep: number): number | undefined => {
+    let best: number | undefined;
+    for (const cell of cells) {
+      const at = cell * STEPS_PER_CELL;
+      if (at <= startStep && endStep - at <= MAX_STEP) best = at;
+    }
+    return best;
+  };
+
   const tracks: Track[] = [];
   let clipStart = 0;
   let open: typeof notes = [];
@@ -1306,6 +1338,30 @@ function cutIntoClips(
     });
     open = [];
   };
+
+  // The author's own cells first, when the file remembers them.
+  if (cells.length > 0) {
+    const byCell = new Map<number, typeof notes>();
+    const leftOver: typeof notes = [];
+    for (const note of notes) {
+      const at = cellFor(Math.floor(note.startThirds / 3), Math.floor(note.endThirds / 3));
+      if (at === undefined) {
+        leftOver.push(note);
+        continue;
+      }
+      const found = byCell.get(at);
+      if (found) found.push(note);
+      else byCell.set(at, [note]);
+    }
+    for (const [at, group] of [...byCell].sort((a, b) => a[0] - b[0])) {
+      clipStart = at;
+      open = group;
+      flush();
+    }
+    if (leftOver.length === 0) return { tracks, lengthened, dropped };
+    notes.length = 0;
+    notes.push(...leftOver);
+  }
 
   for (const note of notes) {
     const startStep = Math.floor(note.startThirds / 3);

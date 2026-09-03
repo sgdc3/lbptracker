@@ -731,3 +731,49 @@ test('a track is named after its instrument when the level does not name it', ()
   assert.equal(back.sequencer.tracks[0].name, 'baiyon_drums_1');
   assert.equal(back.sequencer.tracks[0].guid, 148321, 'and the GUID still says what to play');
 });
+
+test('the board cells come back, because the file remembers them', () => {
+  // ⚠️ Clips of one part overlap heavily — a cell is 16 steps apart and a clip
+  // holds 128 — so a note two cells could hold is genuinely ambiguous, and the
+  // last cell that can hold it is the answer taken. What matters is that the
+  // cells themselves are the author's and not a fresh greedy cut.
+  const at = (gridX: number, pitch: number) =>
+    makeTrack([[{ step: 0, pitch }, { step: 3, pitch }]], {
+      gridX, stepOffset: gridX * STEPS_PER_CELL, gridY: 2, guid: 77,
+    });
+  const seq = makeSequencer([at(0, 60), at(9, 62), at(23, 64), at(40, 65)]);
+
+  const { sequencer } = midiToSequencer(sequencerToMidi(seq).bytes);
+  assert.deepEqual(
+    sequencer.tracks.map((t) => t.gridX).sort((a, b) => a - b),
+    [0, 9, 23, 40],
+    'the same cells, not a re-cut on multiples of eight',
+  );
+  for (const track of sequencer.tracks) {
+    assert.equal(track.stepOffset, track.gridX * STEPS_PER_CELL);
+    assert.equal(track.gridY, 2, 'and the row it was on');
+  }
+  assert.deepEqual(music(sequencer), music(seq));
+});
+
+test('a file with no cells to go on is still cut into legal clips', () => {
+  // A DAW's file has no `LBP-TRK`, so there is nothing to restore; what it must
+  // not do is write a step field that does not fit in seven bits.
+  const bytes = writeMidi({
+    format: 1,
+    division: 480,
+    tracks: [{
+      events: Array.from({ length: 40 }, (_, i) => [
+        { tick: i * 120 * 10, data: Uint8Array.of(0x90, 60 + (i % 12), 100) },
+        { tick: i * 120 * 10 + 600, data: Uint8Array.of(0x80, 60 + (i % 12), 64) },
+      ]).flat(),
+    }],
+  });
+  const result = midiToSequencer(bytes);
+  assert.ok(result.clips > 1, `a 400-step part needs several clips, got ${result.clips}`);
+  for (const track of result.sequencer.tracks) {
+    assert.equal(track.stepOffset % STEPS_PER_CELL, 0, 'clips start on a cell');
+    for (const note of track.notes) assert.ok(note.endStep <= 127, 'and stay inside seven bits');
+  }
+  assert.equal(result.dropped, 0);
+});

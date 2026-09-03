@@ -211,12 +211,18 @@ listed here comes back exactly, and `test/midi.test.ts` pins the field list so t
 | lost | how much | why |
 |---|---|---|
 | `Key` / `Scale` | 764 placements set `Key`, none set `Scale` | folded into the note numbers on the way out, so the file plays in anything; an import is chromatic in C and **sounds identical** |
-| `gridX`, so the clip layout | 79.5% of placements sit off an 8-cell boundary | a step field is seven bits, so a part is re-cut into 128-step clips wherever they fall; the timeline does not move |
-| clip identity | 62,158 placements → a few dozen parts | clips sharing an instrument, a row and every mixer setting merge; the music is the same and the board is not |
+| which clip a note sat in | 52 of 62,158 clips come back empty (0.08%) | clips of one part overlap — a cell is 16 steps and a clip holds 128 — so a note two cells could hold is genuinely ambiguous. **The cells themselves come back: 62,106 clips, 100% of them on cells the author used.** |
 | per-point modulation | 34,449 notes (3.6%) vary it | one CC 74 per note, at its opening value — which is also all `render.ts` reads, so **nothing audible** |
 | coincident control points | 302 notes (0.03%) | two records on one position collapse to the later, which is what the engine's `t = span > 0 ? … : 1` does |
 | a glide, to a shared channel | 825 (0.09%) per part, 1,535 (0.16%) shared | fifteen member channels against thirty-two voices; always counted, never silent |
 | pitch and volume resolution | within half a unit | bend is rounded to whole semitones and positions to thirds of a step, which is the record grid |
+
+⚠️ **The board layout is carried by the `LBP-TRK` meta, not by a CC.** MIDI has no controller for
+"this note belongs to that clip" and a CC would be the wrong tool anyway — seven bits, and a synth
+would act on it. The `clips` field of the per-track text meta lists the `gridX` of every clip the
+part had, and `cutIntoClips` lays the notes back into the latest cell that can hold each. There is
+no standard message for this and there does not need to be: a text meta is ignored by everything
+that does not know it and exact for everything that does.
 
 ⚠️ **Two fields cost nothing only because the corpus never uses them**, and that is worth knowing
 before trusting the table on a newer level: `timbre` bits 4-5 — the per-block table select — are
