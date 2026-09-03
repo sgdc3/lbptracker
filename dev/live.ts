@@ -119,8 +119,11 @@ let nextIndex = 0;
  */
 let sounding = 0;
 let queued = 0;
-/** Worst block cost as a fraction of realtime; over 1 means the device starved. */
-let audioLoad = 0;
+/**
+ * Worst block cost as a fraction of realtime; over 1 means the device starved.
+ * `null` means the worklet could not read a clock, which must not read as zero.
+ */
+let audioLoad: number | null = null;
 
 function showLoad(): void {
   if (!playing && sounding === 0 && queued === 0) {
@@ -129,11 +132,11 @@ function showLoad(): void {
   }
   // Both numbers, always: a field that appears and disappears as it crosses
   // zero draws the eye to the wrong thing and shifts everything beside it.
-  // One decimal, because a worklet running twenty voices sits under 1% and a
-  // rounded zero reads as "not measured" rather than "nothing to worry about".
-  const cpu = audioLoad > 0 ? `${(audioLoad * 100).toFixed(1)}%` : '<0.1%';
+  // Three decimals: a worklet running twenty voices sits far under 1%, and the
+  // question this meter has to answer first is whether it is measuring at all.
+  const cpu = audioLoad === null ? 'n/a' : `${(audioLoad * 100).toFixed(3)}%`;
   loadLabel.textContent = `${sounding} sounding · ${queued} queued · cpu ${cpu}`;
-  loadLabel.style.color = audioLoad > 0.8 ? 'var(--bad)' : '';
+  loadLabel.style.color = (audioLoad ?? 0) > 0.8 ? 'var(--bad)' : '';
 }
 
 /**
@@ -182,14 +185,14 @@ async function ensureAudio(): Promise<AudioWorkletNode> {
   node.connect(master).connect(context.destination);
   node.port.onmessage = (event: MessageEvent) => {
     const data = event.data as {
-      type: string; id?: string; total?: number; sounding?: number; load?: number;
+      type: string; id?: string; total?: number; sounding?: number; load?: number | null;
     };
     if (data.type === 'missingSample') setError(`the worklet has no sample "${data.id}"`);
     // The only place that knows what is actually sounding is the audio thread.
     if (data.type === 'voices') {
       sounding = data.sounding ?? 0;
       queued = (data.total ?? 0) - sounding;
-      audioLoad = data.load ?? 0;
+      audioLoad = data.load ?? null;
       showLoad();
     }
   };

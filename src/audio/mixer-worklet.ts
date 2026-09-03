@@ -133,6 +133,16 @@ export class MixerProcessor extends AudioWorkletProcessor {
    * so this uses the wall clock the worklet scope exposes.
    */
   private worstLoad = 0;
+  /**
+   * Whether the wall clock is readable from this scope at all.
+   *
+   * ⚠️ `performance` is not guaranteed in an AudioWorkletGlobalScope, and a
+   * load that is missing must not look like a load that is zero -- the whole
+   * point of the meter is to tell "the audio thread is fine" apart from "nobody
+   * checked".
+   */
+  private readonly canTime =
+    typeof performance !== 'undefined' && typeof performance.now === 'function';
   /** Send buses, grown on demand. A render quantum is 128 frames today. */
   private echoL = new Float32Array(128);
   private echoR = new Float32Array(128);
@@ -223,7 +233,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
   }
 
   process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
-    const began = typeof performance === 'undefined' ? 0 : performance.now();
+    const began = this.canTime ? performance.now() : 0;
     const output = outputs[0];
     if (!output || output.length === 0) return true;
     const left = output[0];
@@ -273,7 +283,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
   }
 
   private report(frames: number, began: number): void {
-    if (began > 0) {
+    if (this.canTime) {
       const spent = performance.now() - began;
       const budget = (frames / sampleRate) * 1000;
       const load = budget > 0 ? spent / budget : 0;
@@ -283,7 +293,12 @@ export class MixerProcessor extends AudioWorkletProcessor {
     if (this.sinceReport < sampleRate / 10) return;
     this.sinceReport = 0;
     const { total, sounding } = this.mixer.counts();
-    this.port.postMessage({ type: 'voices', total, sounding, load: this.worstLoad });
+    this.port.postMessage({
+      type: 'voices',
+      total,
+      sounding,
+      load: this.canTime ? this.worstLoad : null,
+    });
     this.worstLoad = 0;
   }
 }
