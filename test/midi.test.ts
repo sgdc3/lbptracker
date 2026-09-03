@@ -473,6 +473,27 @@ test('records come back in the order the editor writes them', () => {
   );
 });
 
+test('a coincident pair states both modulations, in order', () => {
+  // ❗ **The first record's modulation is not decoration the collapse can drop.**
+  // `voice+0x28` is set from the note word that triggers the voice, and the
+  // stack loop at `fmodextinput.prx` `0x1ae7` reads `Params[0..2]` -- per-layer
+  // detune, spread and random start -- through it once, before any ramp runs.
+  // The zero-length segment then jumps to the second value. Both are audible,
+  // so both are written: CC 74 before the note-on, CC 74 after it.
+  const seq = makeSequencer([
+    makeTrack([[
+      { step: 0, pitch: 29, modulation: 0 },
+      { step: 0, pitch: 28, modulation: 1 },
+    ]]),
+  ]);
+  const back = midiToSequencer(sequencerToMidi(seq, { exact: false }).bytes).sequencer;
+  assert.deepEqual(
+    back.tracks[0].notes[0].points.map((p) => [p.pitch, p.timbre & 15]),
+    [[29, 0], [28, 15]],
+    'both records, each with its own modulation',
+  );
+});
+
 test('the record patch is written only for what MIDI could not say', () => {
   // A plain clip needs none of it, and says so.
   const plain = sequencerToMidi(makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]])]));

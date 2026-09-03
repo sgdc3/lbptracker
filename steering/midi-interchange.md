@@ -99,6 +99,25 @@ same identity so the import merges them. It cost **2 extra tracks across the who
 
 ### `fix` — the records MIDI could not say, base64, by `gridX`
 
+**What is actually in it**, measured 2026-09-03 with the patch turned off, 649 clips of 62,158:
+
+| | clips | could MIDI say it? |
+|---|---|---|
+| the same notes in a different **order** inside the clip | 325 | **no** — 317 of them are not in any order the music determines; it is the order the author placed them in. The three measured sort keys already recover the rest |
+| a different **set** of notes in the cell | 42 | **no** — clips of a part overlap, so a note genuinely fits two cells and either answer puts it in the same place |
+| a note whose own **records** differ | 282 | mostly **no**: a control point the author wrote that sits exactly on the line between its neighbours produces no MIDI event, so nothing distinguishes it from its own absence |
+
+✅ **One category came out of it and into MIDI.** A coincident pair's FIRST modulation used to be
+dropped as authoring debris; it is not, because `voice+0x28` is read once at voice start for
+`Params[0..2]` (per-layer detune, spread, random start) before any ramp runs. It now travels as two
+CC 74s — one before the note-on, one after — which is what the engine does and what a synth wants.
+
+⚠️ **What is left is not "MIDI could have said it and we chose a meta".** It is authoring order,
+a genuine placement ambiguity, and control points that are inaudible by construction. A converter
+that wants them has to carry them; one that does not want them should turn `exact` off and lose
+nothing a listener can hear.
+
+
 ⚠️ **This is the only side channel that describes the notes rather than the placement, and it is
 the only one that can go stale.** The others stay true however the music is edited. A patch names
 records; edit the notes in a DAW and the import hands back the original clip instead of the edit.

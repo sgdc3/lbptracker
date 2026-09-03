@@ -943,18 +943,35 @@ export function sequencerToMidi(
 
     // MPE's own ordering: the note's opening expression, then the note-on. A
     // receiver that saw the note first would sound one frame of it unbent.
-    // ⚠️ `opening.modulation`, not the note's first record's. Coincident
-    // points collapse to the later one -- see above -- and the bend and the
-    // pressure both send the collapsed value, so sending the first record's
-    // modulation here made the file disagree with itself: pitch and volume from
-    // one record, modulation from another. What the engine sounds is the
-    // collapsed one, from the instant the note starts.
-    out.push(controlChange(startTick, channel, 74, modTo7(opening.modulation)));
+    //
+    // ❗ **A coincident pair states BOTH modulations, in order, the way it
+    // already states both pitches.** The first record's value is not decoration
+    // that the collapse can drop: `voice+0x28` is set from the note word that
+    // triggers the voice, and the stack loop at `fmodextinput.prx` `0x1ae7`
+    // reads `Params[0..2]` -- the per-layer detune, spread and random start --
+    // through it ONCE, before any ramp runs. The zero-length segment then jumps
+    // to the second value for everything that is read per chunk. So the engine
+    // hears both, and so does the file: CC 74 before the note-on carries the
+    // value the voice starts at, CC 74 immediately after it carries the value it
+    // jumps to. That is ordinary MIDI, in the order a synth would want it.
+    //
+    // ⚠️ This used to send only the collapsed value, on the reasoning that
+    // "the file must not disagree with itself: pitch and volume from one record,
+    // modulation from another". The reasoning was right and the conclusion was
+    // backwards -- the cure for disagreeing is to say both, which is what the
+    // opening bend had been doing for the pitch all along.
+    out.push(controlChange(startTick, channel, 74, modTo7(raw[0].modulation)));
     if (exclusive) {
       out.push(pitchBend(startTick, channel, bendValue(opening.semitones)));
       out.push(channelPressure(startTick, channel, clamp7(opening.volume)));
     }
     out.push(noteOn(startTick, channel, base, Math.max(1, clamp7(opening.volume))));
+    // ❗ AFTER the note-on, so the import reads it as the note's own first
+    // control point rather than as its opening value. Both are rank 3, so the
+    // order they are pushed in is the order they are written in.
+    if (opening.modulation !== raw[0].modulation) {
+      out.push(controlChange(startTick, channel, 74, modTo7(opening.modulation)));
+    }
 
     // ❗ **A sharer still writes its CC 74**, unlike its bend and its pressure,
     // and that is a deliberate asymmetry. Losing a note's modulation outright
@@ -1882,9 +1899,21 @@ function cutIntoClips(
       // is also exactly the shape the exporter collapsed on the way out, so the
       // pair round-trips.
       const openingBend = Math.round(raw.openingBend ?? 0);
-      if (openingBend !== 0) {
+      // ❗ **And the modulation it opened at, when a CC 74 at its own tick moved
+      // it.** The exporter writes the opening value before the note-on and the
+      // jumped-to value straight after, so a move landing on the note's own
+      // start is the second half of a coincident pair -- the same shape the
+      // opening bend has, and it takes the same extra record.
+      const jumped = raw.mods.some(
+        (m) => thirdsOf(m.tick, ticksPerStep) === startThirds
+          && Math.abs(m.value - raw.modulation) > 1e-9,
+      );
+      if (openingBend !== 0 || jumped) {
         points.unshift({
-          thirds: startThirds, pitch: base, volume: points[0].volume, mod: points[0].mod,
+          thirds: startThirds,
+          pitch: openingBend !== 0 ? base : points[0].pitch,
+          volume: points[0].volume,
+          mod: jumped ? raw.modulation : points[0].mod,
         });
       }
       return { startThirds, endThirds, points, modulation: raw.modulation };
