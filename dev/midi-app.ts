@@ -213,6 +213,7 @@ const asSplit = (seq: { name: string; uid: number }, result: MidiExportResult): 
     bytes: result.bytes.length,
     sharedChannel: result.sharedChannel,
     dragged: result.dragged,
+    timbred: result.timbred,
     flattened: result.flattened,
     droppedGlides: result.droppedGlides,
     dropped: result.dropped,

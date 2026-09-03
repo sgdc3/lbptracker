@@ -173,6 +173,14 @@ export interface MidiExportResult {
    * knows whose the bend is and is not fooled.
    */
   readonly dragged: number;
+  /**
+   * Notes whose timbre a sharer's CC 74 moved.
+   *
+   * A sharer keeps its own modulation -- losing it reads every `Params` range
+   * from the wrong end -- at the cost of overwriting the modulation of whatever
+   * is already on the channel. These are the notes that paid for that.
+   */
+  readonly timbred: number;
   /** Notes whose pitch left MIDI's 0..127 and was clamped to it. */
   readonly clampedPitch: number;
   /** Control points whose bend exceeded the range and was clamped. */
@@ -308,6 +316,10 @@ interface Span {
   readonly note: number;
   readonly from: number;
   readonly until: number;
+  /** The note's modulation, to see whose timbre a newcomer's CC 74 moves. */
+  readonly mod: number;
+  /** Set once this note's timbre has been moved by somebody else's CC 74. */
+  disturbed: boolean;
   gliding: boolean;
   /** Give up this span's glide, because something had to be placed in front. */
   demote(): void;
@@ -328,6 +340,16 @@ class VoicePool {
   demoted = 0;
   /** Sharers that will hear somebody else's bend; see `take`. */
   dragged = 0;
+  /**
+   * Notes whose timbre a newcomer's CC 74 moves.
+   *
+   * ⚠️ **The other direction from `dragged`.** A sharer writes no bend and no
+   * pressure but it does write its modulation, because losing that reads every
+   * `Params` range from the wrong end. The price is that the note already on
+   * the channel has its own modulation overwritten -- unless the two agree,
+   * which they usually do, 80.74% of records being 0.
+   */
+  timbred = 0;
 
   constructor() {
     this.placed = MEMBERS.map(() => []);
@@ -354,11 +376,23 @@ class VoicePool {
    * `gliding` says whether this note will write bend and pressure of its own,
    * which is what makes exclusivity worth spending a channel on.
    */
+  /**
+   * Count a note whose timbre somebody else's CC 74 moved -- once, not once per
+   * neighbour. A busy channel would otherwise report 434,674 casualties among
+   * its 27,210 sharers, which is a count of disturbances and not of notes.
+   */
+  private disturb(span: Span): void {
+    if (span.disturbed) return;
+    span.disturbed = true;
+    this.timbred += 1;
+  }
+
   take(
     tick: number,
     note: number,
     until: number,
     gliding: boolean,
+    mod: number,
     placement: { exclusive: boolean },
   ): { channel: number; exclusive: boolean } {
     // Pruning is by `until <= tick` only -- correct because the tick only moves
@@ -411,7 +445,10 @@ class VoicePool {
         if (how === 'master') {
           this.liveMaster = this.liveMaster.filter((b) => b.until > tick);
           if (this.liveMaster.some((b) => b.note === note && b.from < until)) continue;
-          const span: Span = { note, from: tick, until, gliding: false, demote: () => {} };
+          const span: Span = {
+            note, from: tick, until, mod, disturbed: false, gliding: false, demote: () => {},
+          };
+          for (const other of this.liveMaster) if (other.mod !== mod) this.disturb(other);
           this.liveMaster.push(span);
           this.placedMaster.push(span);
           this.shared += 1;
@@ -454,7 +491,10 @@ class VoicePool {
           this.refused += 1;
           return { channel: -1, exclusive: false };
         }
-        const onMaster: Span = { note, from: tick, until, gliding: false, demote: () => {} };
+        const onMaster: Span = {
+          note, from: tick, until, mod, disturbed: false, gliding: false, demote: () => {},
+        };
+        for (const other of this.liveMaster) if (other.mod !== mod) this.disturb(other);
         this.liveMaster.push(onMaster);
         this.placedMaster.push(onMaster);
         this.shared += 1;
@@ -468,9 +508,14 @@ class VoicePool {
       // their whole life and lose nothing at all. This is the number worth
       // showing anyone.
       if (this.live[best].filter(clashes).some((b) => b.gliding)) this.dragged += 1;
+      // And whoever is already here and disagrees about the modulation has its
+      // own timbre moved by this note's CC 74 -- the other direction.
+      for (const other of this.live[best].filter(clashes)) {
+        if (other.mod !== mod) this.disturb(other);
+      }
     }
     const span: Span = {
-      note, from: tick, until, gliding: gliding && exclusive,
+      note, from: tick, until, mod, disturbed: false, gliding: gliding && exclusive,
       demote: () => {
         if (!span.gliding) return;
         span.gliding = false;
@@ -591,7 +636,18 @@ export function sequencerToMidi(
    * exclusive channel may write.
    */
   const needsChannel = (event: ScheduledNote) =>
-    event.hasPitchAutomation || event.hasVolumeAutomation || clamp7(event.volume) === 0;
+    event.hasPitchAutomation ||
+    event.hasVolumeAutomation ||
+    // ⚠️ **The modulation counts too, and leaving it out was a silent loss.**
+    // It rides on CC 74, which belongs to the channel exactly as bend and
+    // pressure do, so a note that ramps it needs a channel of its own for the
+    // same reason. Without this, a note whose pitch and volume are flat but
+    // whose modulation moves was allocated as flat -- and if it then had to
+    // share, it lost the ramp with nothing counting it. That is where shared
+    // mode's undeclared notes came from, once the corpus check started looking
+    // at the modulation at all.
+    event.points.some((point) => point.modulation !== event.points[0].modulation) ||
+    clamp7(event.volume) === 0;
 
   const all = schedule(sequencer);
 
@@ -677,7 +733,9 @@ export function sequencerToMidi(
       const startTick = at(event.step);
       const endTick = Math.max(startTick + 1, at(event.step + event.durationSteps));
       const place = { channel: -1, exclusive: true, base };
-      const taken = poolFor(body).take(startTick, base, endTick, needsChannel(event), place);
+      const taken = poolFor(body).take(
+        startTick, base, endTick, needsChannel(event), event.modulation, place,
+      );
       place.channel = taken.channel;
       place.exclusive = place.exclusive && taken.exclusive;
       placements.set(event, place);
@@ -767,6 +825,14 @@ export function sequencerToMidi(
     }
     out.push(noteOn(startTick, channel, base, Math.max(1, clamp7(opening.volume))));
 
+    // ❗ **A sharer still writes its CC 74**, unlike its bend and its pressure,
+    // and that is a deliberate asymmetry. Losing a note's modulation outright
+    // means every `Params` range reads from the wrong end -- a wrong cutoff, a
+    // wrong resonance, wrong envelope times, all at once -- where the cost of
+    // writing it is that a neighbour's timbre moves for as long as this note
+    // lasts. 80.74% of records carry modulation 0, so in most sharing the value
+    // written is the value already there and nothing moves at all.
+    //
     // ⚠️ **A note sharing a channel writes no bend and no pressure at all.**
     // Both are per channel, so a newcomer that reset them to its own values
     // would drag whatever is already sounding there with it -- and the note
@@ -901,6 +967,7 @@ export function sequencerToMidi(
     events: tracks.reduce((sum, t) => sum + t.events.length, 0),
     sharedChannel: tally((p) => p.shared),
     dragged: tally((p) => p.dragged),
+    timbred: tally((p) => p.timbred),
     flattened,
     clampedPitch,
     clampedBend,
@@ -1176,6 +1243,24 @@ function readPart(
     }
   }
 
+  /**
+   * Where a note-on happens, per channel.
+   *
+   * ⚠️ **A CC 74 at one of these ticks belongs to the note that is starting,
+   * not to the one already sounding.** The exporter writes every note's opening
+   * modulation, sharer or not, immediately before its note-on -- so without this
+   * a newcomer's CC 74 was pushed onto the OWNER's ramp as a control point, and
+   * bent the modulation of a note it has nothing to do with. That was shared
+   * mode's last 89 undeclared notes.
+   */
+  const startsAt = new Set<number>();
+  for (const event of track.events) {
+    const status = event.data[0];
+    if ((status & 0xf0) === 0x90 && event.data[2] > 0) {
+      startsAt.add(event.tick * 16 + (status & 0x0f));
+    }
+  }
+
   // Bend and pressure are per channel and apply to whatever is sounding there.
   const sounding = new Map<number, RawNote>();
   const modulation = new Float64Array(16);
@@ -1278,9 +1363,14 @@ function readPart(
     } else if (kind === 0xb0) {
       if (a === 74) {
         modulation[channel] = modFrom7(b);
-        // Sounding notes take it as a control point; a note that has not begun
-        // takes it as its opening value, above.
-        for (const note of owners(channel)) note.mods.push({ tick: event.tick, value: modFrom7(b) });
+        // Sounding notes take it as a control point -- unless a note is
+        // starting on this channel at this very tick, in which case it is that
+        // note's opening value and none of the owner's business.
+        if (!startsAt.has(event.tick * 16 + channel)) {
+          for (const note of owners(channel)) {
+            note.mods.push({ tick: event.tick, value: modFrom7(b) });
+          }
+        }
       }
       else if (a === 120 || a === 123) {
         for (const k of [...sounding.keys()]) end(k, event.tick);
@@ -1639,6 +1729,7 @@ export interface MidiSplit {
   readonly bytes: number;
   readonly sharedChannel: number;
   readonly dragged: number;
+  readonly timbred: number;
   readonly flattened: number;
   readonly droppedGlides: number;
   readonly dropped: number;
@@ -1716,6 +1807,7 @@ export function splitSequencerToMidi(
     bytes: sum((r) => r.bytes.length),
     sharedChannel: sum((r) => r.sharedChannel),
     dragged: sum((r) => r.dragged),
+    timbred: sum((r) => r.timbred),
     flattened: sum((r) => r.flattened),
     droppedGlides: sum((r) => r.droppedGlides),
     dropped: sum((r) => r.dropped),

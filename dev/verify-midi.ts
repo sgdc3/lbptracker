@@ -104,7 +104,7 @@ let worstMod = 0;
 let bent = 0;
 const totals = {
   shared: 0, dropped: 0, clampedPitch: 0, clampedBend: 0, bytes: 0, lengthened: 0,
-  flattened: 0, deviating: 0, automated: 0, dragged: 0,
+  flattened: 0, deviating: 0, automated: 0, dragged: 0, timbred: 0,
 };
 
 for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
@@ -127,6 +127,7 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
     totals.shared += exported.sharedChannel;
     totals.flattened += exported.flattened;
     totals.dragged += exported.dragged;
+    totals.timbred += exported.timbred;
     for (const e of schedule(seq)) {
       if (e.hasPitchAutomation || e.hasVolumeAutomation) totals.automated += 1;
     }
@@ -268,8 +269,9 @@ console.log(
     `${totals.flattened.toLocaleString()} of them lost it to a shared channel (${pc(totals.flattened)}), ` +
     `and ${totals.deviating.toLocaleString()} notes came back with a different curve\n` +
     `${(totals.bytes / 1e6).toFixed(1)} MB of MIDI; ${totals.shared.toLocaleString()} notes shared a ` +
-    `channel and ${totals.dragged.toLocaleString()} of those (${pc(totals.dragged)}) will be bent ` +
-    `by a neighbour in a synth; ${totals.dropped} could not be carried, ${totals.clampedPitch} ` +
+    `channel; ${totals.dragged.toLocaleString()} (${pc(totals.dragged)}) will be bent by a ` +
+    `neighbour and ${totals.timbred.toLocaleString()} (${pc(totals.timbred)}) had their timbre ` +
+    `moved by one; ${totals.dropped} could not be carried, ${totals.clampedPitch} ` +
     `pitches and ${totals.clampedBend} bends clamped, ${totals.lengthened} lengthened to the grid`,
 );
 /**
@@ -288,6 +290,11 @@ console.log(
  * 0.0002%, and not chased further; every category found so far is fixed and
  * has a note in `src/core/midi.ts` saying what it was.
  */
+// ⚠️ `dragged` and `timbred` are NOT subtracted here. They say what a synth
+// will hear from a shared channel, not what this round trip loses -- the
+// importer knows whose bend and whose modulation each is -- so counting them
+// against the curve differences made shared mode look 4,433 notes better than
+// declared, which is as misleading as looking worse.
 const unexplained = totals.deviating - totals.flattened;
 if (unexplained !== 0) {
   console.log(

@@ -217,9 +217,17 @@ be *inexact* rather than *wrong*, and where it comes from.
 | `Scale` | 0 placements in the corpus | `quantise` is a projection and is measured not idempotent — there is no pitch to un-snap to |
 | `timbre` bits 4-5, volume > 127 | 0 in the corpus | 7 bits either way; a side channel is the only route |
 
-⚠️ **`channelsPerPart` is the mode those numbers describe.** Sharing the channels across the file is
-the safe default for a player that hears one stream, and it costs 1,535 glides (0.16%) and 1,245
-dragged notes by construction.
+⚠️ **`channelsPerPart` is the mode those numbers describe.** Sharing the channels across the file
+is the safe default for a player that hears one stream, and it cannot be lossless: fifteen channels
+against fifty simultaneous notes. What it can be is fully declared, and it now is —
+**8 notes in 953,791 (0.0008%) change without something having said so**, against 1,742 glides
+(0.18%) it declares. Two more things it reports, which are warnings about what a *synth* will hear
+rather than losses in the round trip, because the importer knows whose each is: 1,352 notes a
+neighbour's bend reaches, and 4,522 whose timbre a sharer's CC 74 moves.
+
+⚠️ **Do not subtract `dragged` or `timbred` from the curve differences.** They measure a
+different thing, and netting them off made shared mode read 4,433 notes *better* than declared,
+which is as misleading as reading worse.
 
 ### How the last of it was closed, in order
 
@@ -233,7 +241,16 @@ Each of these was found by measuring, and each is worth knowing because none was
    dive in `Diode` that arrives and snaps back came out flat, because dropping the record the ramp
    aimed at left it nowhere to go. The collapse belongs only at the note's own start, where both
    samples would land on the note-on's tick.
-3. **The verifier was measuring the wrong things, twice.** It compared the first record's modulation
+3. **Shared mode's `needsChannel` did not count the modulation.** A note whose pitch and volume are
+   flat but whose modulation moves was allocated as flat, and if it then had to share it lost the
+   ramp with nothing counting it — 608 undeclared notes. CC 74 belongs to the channel exactly as
+   bend and pressure do, so it earns a channel for the same reason.
+4. **A newcomer's CC 74 was landing on the owner's ramp.** The exporter writes every note's opening
+   modulation immediately before its note-on, sharer or not, and the importer pushed any CC 74 to
+   whichever note owned the channel — so a note starting mid-ramp bent the modulation of one it has
+   nothing to do with. Ticks where a note starts on that channel are now known in advance and the
+   value is left to the note it belongs to: 89 undeclared notes down to 8.
+5. **The verifier was measuring the wrong things, twice.** It compared the first record's modulation
    rather than the one the note sounds, and its note-pairing cost ignored the modulation entirely —
    so it paired notes that differ only in their filter at random and reported 458 casualties where
    a diagnostic costing all three fields found none.
