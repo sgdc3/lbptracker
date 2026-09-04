@@ -1718,9 +1718,20 @@ counting was wrong or the limit was higher — and it was the first.
 from 11-26% of a core back to 23-60%. The LFO fix in question 27 paid for it and no more. A
 correctness fix that makes the meter worse is still a correctness fix.
 
-⚠️ **"Voices sounding" on the live page counts LAYERS, not records**, so 104 with a 32-record pool
-is right rather than alarming: 32 records at up to five layers each is 160 sampler voices, and the
-engine renders exactly the same number.
+⚠️ **"Voices sounding" on the live page counts SAMPLER VOICES, not records**, and three separate
+things separate the two — measured on `C4K3 S0NG` at 25.85 s, where **164 voices sound against 19
+notes in play**, with the pool not even full:
+
+- a stacked instrument plays up to five layers out of one record, so 32 records are up to 160
+  voices, and the engine renders exactly the same number;
+- a voice rings on through its **release** after the pool has taken its record back — the whole of
+  question 29;
+- a **one-shot plays to the end of its sample whatever its note says** (`Voice.finished`: "a
+  one-shot ends when the sample does, and only then"), so a cymbal outlives its gate by seconds.
+
+❌ The page used to turn that number **red** when it passed the pool size, captioned "something is
+not respecting it". Nothing was: the alarm fired constantly on music that was entirely correct, and
+dressing a right number as a fault teaches a listener to distrust it. Removed 2026-09-04.
 
 ### What it touched
 

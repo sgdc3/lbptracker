@@ -227,14 +227,26 @@ function showLoad(): void {
     : `${dropouts} dropout${dropouts === 1 ? '' : 's'}` +
       (lostMs >= 1 ? ` (${lostMs.toFixed(0)} ms lost)` : '');
   const busy = audioLoad === null ? '' : `· audio ${(audioLoad * 100).toFixed(1)}% `;
-  // ⚠️ More sounding than the pool holds means something is not respecting it.
-  // Release tails are the honest reason -- a stolen voice keeps ringing while
-  // its envelope lets go -- so this is a flag to look at, not an error. Never
-  // flagged when the pool is uncapped, where there is nothing to exceed.
-  const cap = poolSize();
-  const over = Number.isFinite(cap) && sounding > cap;
+  // ❌ **This used to turn red when `sounding` exceeded the pool size**, on the
+  // reasoning that more sounding than the pool holds means something is not
+  // respecting it. It does not, and the alarm fired constantly on music that
+  // was entirely correct. `sounding` counts **sampler voices**; the pool counts
+  // **notes**, and three things separate them, all of them the engine's own:
+  //
+  // - a stacked instrument plays up to five layers out of ONE record (question
+  //   17b), so 32 records are up to 160 voices;
+  // - a voice rings on through its release after the pool has taken its record
+  //   back, which is the whole of question 29;
+  // - a **one-shot plays to the end of its sample whatever its note says**
+  //   (`Voice.finished`: "a one-shot ends when the sample does, and only
+  //   then"), so a cymbal outlives its gate by seconds.
+  //
+  // ✔ Measured on `C4K3 S0NG` at 25.85 s: **164 voices sounding against 19
+  // notes in play.** The pool was not even full. A number that says "164" while
+  // the cap says 32 is not a fault, and dressing it as one taught a listener to
+  // distrust the right number.
   loadLabel.innerHTML =
-    `<span class="${over ? 'bad' : ''}">${sounding} sounding</span> · ${queued} queued ${busy}· ` +
+    `${sounding} sounding · ${queued} queued ${busy}· ` +
     `<button type="button" class="drops${dropouts > 0 ? ' bad' : ''}" ` +
     `title="Click to reset the count">${health}</button>`;
 }
