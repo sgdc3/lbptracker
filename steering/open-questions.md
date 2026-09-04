@@ -959,27 +959,53 @@ that tail to the occupancy:
 "nothing like the original", and this would land at 3,908. So the model is missing something that
 lets a releasing voice give up its record cheaply.
 
-### The anchor, and it is a specific one
+### `[+0x14]` — found, and it is NOT the answer
 
-The allocator at `0x1600` has a branch nobody has explained:
+The allocator has a branch that looked like the reconciliation:
 
 ```
 0x1610  test dil, dil                ; a bool the CALLER passes
-0x1613  je 0x161b
 0x1615  cmp dword [rax + 0x14], 0
-0x1619  jg 0x1652                    ; take THIS record, before even asking if it is free
+0x1619  jg 0x1652                    ; take THIS record, before asking if it is free
 0x161b  cmp byte [rax], 0xff         ; the ordinary free test
 ```
 
-So with that flag set, a record whose `[+0x14]` is a positive float is taken **in preference to a
-free one**. If `[+0x14]` marks a voice that is releasing, then a releasing note holds its record on
-paper and yields it to the first arrival — which would reconcile the measurement above with the
-free condition, and would mean the tail costs no audible stealing at all.
+❌ **It is dead code in this plugin.** The allocator has exactly two callers — found by scanning
+the file for `E8` displacements that land on `0x1600`, `v0x4ef` and `v0x96b` — and **both pass
+`xor edi, edi`**. `dil` is never set, so the fast path is never taken and `[+0x14]` never decides
+anything here.
 
-**What `[+0x14]` is has not been found.** It is a float; the block driver zeroes `+0x10` and `+0x14`
-together as a qword when it frees a record (`0x10a0`-`0x10a3`); the renderer writes only `+0x10`.
-Nothing in `fmodextinput.prx` writes `+0x14`, so **it is written from the eboot's side** — that is
-where to look, and `tools/ebdyn.py` plus the sequencer module in `steering/eboot-re.md` is how.
+And `[+0x14]` itself is a plain marker, written at note start by the same store that opens the gate:
+
+```
+0x0a47  mov byte [r13], r12b            ; claim the record: [+0x00] = the slot index
+0x0a4b  movabs rax, 0x271000000000
+0x0a55  mov qword [r13 + 0x10], rax     ; [+0x10] = 0 (held), [+0x14] = 10000
+```
+
+Nothing in `fmodextinput.prx` reads or decrements it again; the block driver zeroes `+0x10` and
+`+0x14` together when it frees a record (`0x10a0`-`0x10a3`). A constant 10000 and a dead branch.
+
+### So the tail really is held, and the discrepancy is somewhere else
+
+With that door closed, everything measured says the engine holds a record through the release:
+
+- the free predicate is the **envelope reaching zero** — `0x2089` calls the envelope, `0x20e0`
+  compares its result against 0 and jumps to `0x2117`, which sets the flag `0x307f` reads to free
+  the record at `0x3093`;
+- the allocator's score is `[+0x04] * [+0x0c]`, and the renderer only ever **reads** those, so a
+  fading voice does not become a cheaper victim as it fades;
+- the release times are not inflated: `ENVELOPE_SECONDS_PER_UNIT = 4` is measured off the engine's
+  own `dt` arithmetic, not chosen.
+
+**The next hypothesis is about the stealing's SOUND, not its count.** `Voice.renderChunk` stops a
+cut voice dead at a sample boundary — `last = begin + this.cut` and the loop simply ends. The engine
+hands the record to the new note instead, and the ladder's state is not reset. Thirty per cent of
+notes ending in a hard stop is a very different thing to hear from thirty per cent being replaced,
+and it would explain a listener hearing "nothing like the original" at a count that is correct.
+
+**The experiment**: render `C4K3 S0NG` with the release tail in the occupancy *and* a short fade on
+the cut, and listen. If that is it, the fix is the fade, not the accounting.
 
 ⚠️ **Do not implement the tail until this is answered.** Today's model is knowingly short by the
 release, and short is audibly right; long is audibly wrong.

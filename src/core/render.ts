@@ -479,8 +479,10 @@ export async function renderSequencer(
       // is really held for the note plus its release. Adding that tail takes
       // `C4K3 S0NG` from 1,526 notes cut short to 3,908, which is worse than
       // the accounting bug a listener rejected by ear. Something lets a
-      // releasing voice give up its record cheaply, and the candidate is the
-      // allocator's unexplained `[record+0x14]` fast path. See question 29.
+      // releasing voice give up its record cheaply. ⚠️ The candidate was the
+      // allocator's `[record+0x14]` fast path and it is NOT: that field is a
+      // constant 10000 written at note start, and both callers pass `dil = 0`
+      // so the branch is dead. See question 29 for where that leaves it.
       occupancySteps: Math.max(event.durationSteps, oneShotSteps),
     });
   }
