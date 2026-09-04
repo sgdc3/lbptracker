@@ -46,15 +46,28 @@ one of forty fails is a bug in this parser and should look like one, not like a
 level that quietly is not in the list.
 
 ⚠️ **PS3 save folders cannot be read, and the page says so by name.**
-`BCES00850LEVEL01…` holds `0` and `1` beside `ICON0.PNG` and `PARAM.SFO`, and
-the numbered files are encrypted with a key derived from the title. **Measured
-rather than assumed**: `BCES00850LEVEL01EE7CEE/0` is 472,960 bytes at **8.000
-bits per byte**, all 256 values present, without a single run of four zeros.
-That is ciphertext, not a container this parser has not learnt.
+`BCES00850LEVEL01…` holds `0` and `1` beside `ICON0.PNG`, `PARAM.PFD` and
+`PARAM.SFO`, and the numbered files are encrypted with a key derived from the
+title.
 
-❗ They are detected by `PARAM.SFO` and reported as themselves. Telling somebody
-who dropped their own backup that it holds "no sequencers" is true and useless;
-`BackupResult.ps3Saves` exists so the page can say what it actually found.
+⚠️ **The first evidence written here was a guess dressed as a measurement**,
+and it is worth keeping as one. It read "8.000 bits per byte, all 256 values
+present, no run of four zeros" — all true, and all equally true of COMPRESSED
+data, which is what an LBP resource is full of. It did not distinguish the two
+cases at all. What does:
+
+- `PARAM.PFD` carries the magic **`PFDB`**, the PS3 Protected File Database,
+  and lists the save's files with their hashes;
+- two saves **of the same game** share **0** of their 16-byte blocks, and agree
+  byte-for-byte at **1,816 offsets of 472,960** where chance alone gives
+  ~1,848. Two compressed files of one format would share a header at the least;
+- nothing inflates at any of the first 4,096 offsets, and both files are a whole
+  number of 16-byte blocks.
+
+❗ **`PARAM.SFO` is NOT encrypted**, so a save can still say what it is:
+`src/core/psf.ts` reads it and the pages show `SUB_TITLE`. "FJ's Music Hub by
+Festerd_Jester is a PS3 save game" beats "a PS3 save game", which beats "no
+sequencers in there".
 
 ⚠️ **The drop zone takes drops and nothing else.** A click anywhere on it
 opening the file picker looked convenient and was a bug: pressing "open a

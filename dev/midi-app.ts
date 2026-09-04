@@ -315,9 +315,10 @@ async function openLevel(opened: Opened): Promise<void> {
     // useless. Its level is encrypted with a key derived from the title:
     // measured, `BCES00850LEVEL01EE7CEE/0` is 472,960 bytes at 8.000 bits per
     // byte with all 256 values and no run of four zeros.
-    const saves = result.ps3Saves.length > 0
-      ? `${result.ps3Saves[0]} is a PS3 save game — its level is encrypted and cannot be read. `
-        + 'A PS4 backup, or a level file, does work.'
+    const save = result.ps3Saves[0];
+    const saves = save
+      ? `${save.name ?? save.folder} is a PS3 save game — its level is encrypted and `
+        + 'cannot be read. A PS4 backup, or a level file, does work.'
       : '';
     if (list.length) convert();
     else setStatus('status', saves || 'no sequencers in there', true);
