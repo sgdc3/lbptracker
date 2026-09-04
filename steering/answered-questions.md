@@ -1733,20 +1733,42 @@ notes in play**, with the pool not even full:
 not respecting it". Nothing was: the alarm fired constantly on music that was entirely correct, and
 dressing a right number as a fault teaches a listener to distrust it. Removed 2026-09-04.
 
-✔ **Both numbers are shown, 2026-09-04**, which is what makes either of them readable: the meter
-says `9 notes · 14 voices · 14 queued`. Removing the false alarm left "164 sounding" with nothing
-to read it against, and the number a listener wants beside the 32 in the voices box is the count of
-notes. `Mixer.counts()` returns it, by counting distinct `VoiceSpec.tag`s among the voices that
-have started (untagged voices count individually), and `dev/live.ts` / `dev/live-sim.ts` therefore
-**tag by note rather than by layer** — the same grouping the pool already uses, so one `cutAt`
-takes a stolen note's whole stack where a loop over its layers was needed before. Verified in the
-browser on `Ascetic`: over 10 s, at most 14 notes against 20 voices with the cap at 32. The audio
-is untouched — `dev/live-sim.ts` still reports the live pool at −56.9 dB and 1,318 of 13,091 notes
-stolen.
+✔ **The meter shows the notes, 2026-09-04.** Removing the false alarm left "164 sounding" with
+nothing to read it against; the number a listener wants beside the 32 in the voices box is the
+count of notes. `Mixer.counts()` returns it, by counting distinct `VoiceSpec.tag`s among the voices
+that have started (untagged voices count individually), and `dev/live.ts` / `dev/live-sim.ts`
+therefore **tag by note rather than by layer** — the same grouping the pool already uses, so one
+`cutAt` takes a stolen note's whole stack where a loop over its layers was needed before. The audio
+is untouched: `dev/live-sim.ts` still reports the live pool at −56.9 dB and 1,318 of 13,091 notes
+stolen. The sampler voices and the queue were shown beside it for one commit and then moved into
+the tooltip — a listener called them useless once the notes were there, and they are: the voices
+are a consequence of the notes and the queue is an artefact of the page's look-ahead.
 
-⚠️ **`notes` is not bounded by the pool either**, and the tooltip says so. The second and third
-reasons above outlive the record, not just the layer sharing: a note keeps its tag while it rings
-out, so it is still counted after the pool has taken its record back.
+### ⚠️ Notes sounding is not records held, measured
+
+The line turns **red at ⅞ of the pool size** (28 at the engine's 32; proportional because the box
+goes down to 1). That alarm is on the right quantity, unlike the one it replaces — but it reads
+high, and by how much is worth knowing before trusting it.
+
+Measured 2026-09-04 by instrumenting `renderLivePool` in `dev/live-sim.ts` to log, per 100 ms
+block, the mixer's tag count against the pool slots actually spanning that block. `C4K3 S0NG`,
+first 60 s, pool 32, 600 blocks:
+
+| | mean | max | blocks ≥ 28 |
+|---|---|---|---|
+| records held | 16.9 | 32 | 71 (11.8%) |
+| notes sounding | 19.7 | **50** | 134 (22.3%) |
+
+**The warning lights with slots to spare in 12.8% of blocks.** The cause is the release: with the
+tail off (question 29) the pool gives a record back at the gate, while the voice keeps its tag
+until it has finished ringing, so a passage of long releases shows more notes than records. Reading
+it as "the engine is near its limit here" is right; reading it as "a voice is being stolen right
+now" is not — the `stolen` counter in the table below is that.
+
+⚠️ The exact number is available if it is ever wanted: the main thread owns the `LiveVoicePool`, so
+counting slots whose `end` is past the audible step would report records held rather than notes
+ringing. It is not done because it would lead the audio by up to the 350 ms look-ahead, and because
+the number a listener hears is the ringing one.
 
 ### What it touched
 

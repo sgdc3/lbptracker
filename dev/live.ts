@@ -207,6 +207,13 @@ let sounding = 0;
  * "164" as the pool being broken; see the note in `showLoad`.
  */
 let notes = 0;
+/**
+ * Voices posted but not yet started, and `sounding` beside it.
+ *
+ * ⚠️ **Neither is displayed any more**; both are kept because the label's idle
+ * test is "nothing is playing and nothing is still ringing", and that needs
+ * both. See `showLoad` for why they left the line.
+ */
 let queued = 0;
 /**
  * Worst block cost as a fraction of realtime; over 1 means the device starved.
@@ -224,49 +231,43 @@ function showLoad(): void {
     loadLabel.textContent = plan.length ? 'ready' : 'idle';
     return;
   }
-  // Both numbers, always: a field that appears and disappears as it crosses
-  // zero draws the eye to the wrong thing and shifts everything beside it.
   // Dropouts rather than a load percentage: see `lastFrame` in the worklet for
   // why a percentage cannot be measured from there, and why this answers the
   // question a load meter was only being asked as a proxy for.
-  //
-  // ⚠️ Only the dropout count turns red. Colouring the whole line made the voice
-  // counts look like part of the alarm, and they are just numbers.
   const health = dropouts === 0
     ? 'no dropouts'
     : `${dropouts} dropout${dropouts === 1 ? '' : 's'}` +
       (lostMs >= 1 ? ` (${lostMs.toFixed(0)} ms lost)` : '');
   const busy = audioLoad === null ? '' : `· audio ${(audioLoad * 100).toFixed(1)}% `;
-  // ❌ **This used to turn red when `sounding` exceeded the pool size**, on the
-  // reasoning that more sounding than the pool holds means something is not
-  // respecting it. It does not, and the alarm fired constantly on music that
-  // was entirely correct. `sounding` counts **sampler voices**; the pool counts
-  // **notes**, and three things separate them, all of them the engine's own:
+  // ❗ **One number, and it is the one the cap counts.** The line used to carry
+  // the sampler voices and the queued count beside it; a listener called them
+  // useless once the notes were there, and they were right -- the voices are a
+  // consequence of the notes (stack layers, releases, one-shot tails) and the
+  // queue is an artefact of this page's look-ahead, not of the music. Both are
+  // still measured, one is in the tooltip, and neither is on the line.
   //
-  // - a stacked instrument plays up to five layers out of ONE record (question
-  //   17b), so 32 records are up to 160 voices;
-  // - a voice rings on through its release after the pool has taken its record
-  //   back, which is the whole of question 29;
-  // - a **one-shot plays to the end of its sample whatever its note says**
-  //   (`Voice.finished`: "a one-shot ends when the sample does, and only
-  //   then"), so a cymbal outlives its gate by seconds.
+  // ❌ The red flag that used to be here was on the VOICES and was wrong by
+  // construction: `sounding` counts sampler voices and the pool counts notes,
+  // so it fired constantly on music that was entirely correct (measured on
+  // `C4K3 S0NG` at 25.85 s: 164 voices against 19 notes, pool not even full).
+  // This one is on the notes, which is the number the cap is about.
   //
-  // ✔ Measured on `C4K3 S0NG` at 25.85 s: **164 voices sounding against 19
-  // notes in play.** The pool was not even full. A number that says "164" while
-  // the cap says 32 is not a fault, and dressing it as one taught a listener to
-  // distrust the right number.
-  //
-  // So BOTH are shown, which is what makes either readable. `notes` is the one
-  // to compare against the cap -- loosely: the second and third reasons above
-  // outlive the record too, so a note can still be ringing after the pool has
-  // taken its record back and it is counted here while it does.
+  // ⚠️ **It is still not the count of records held, and it reads high.** A note
+  // keeps its tag while it rings out, and with the release tail off the pool
+  // gives its record back at the gate -- so a passage of long releases lights
+  // the warning with slots to spare. Measured on `C4K3 S0NG`, pool 32: see
+  // question 17b. The alarm is "the engine is near its limit here", not "a
+  // voice is being stolen right now"; `stolen` in the table below is that.
+  // "Close to" is within an eighth of the cap -- 28 at the engine's 32 --
+  // rather than a fixed distance, because the box goes down to 1 and `cap - 4`
+  // would be red at every size a listener uses to hear the pool work.
+  const cap = poolSize();
+  const tight = Number.isFinite(cap) && notes >= Math.max(1, Math.ceil(cap * 0.875));
   loadLabel.innerHTML =
-    `<span title="Distinct notes sounding: the unit the voice cap counts, ` +
-    `though a note keeps ringing after its record is taken back">` +
-    `${notes} notes</span> · ` +
-    `<span title="Sampler voices actually rendering: stack layers, releases ` +
-    `and one-shots outliving their note">${sounding} voices</span> · ` +
-    `${queued} queued ${busy}· ` +
+    `<span class="${tight ? 'bad' : ''}" title="Notes sounding: the unit the ` +
+    `voice cap counts, though a note keeps its place here while it rings out. ` +
+    `${sounding} sampler voices are rendering them, ${queued} more are queued.">` +
+    `${notes} notes</span> ${busy}· ` +
     `<button type="button" class="drops${dropouts > 0 ? ' bad' : ''}" ` +
     `title="Click to reset the count">${health}</button>`;
 }
