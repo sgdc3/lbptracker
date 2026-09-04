@@ -1042,11 +1042,26 @@ like that. Both candidates on **our** side have since been checked, and both are
 - ✔ **`durationSteps` is right**, to the third of a step. The gate closes at
   `lastStep + 1 + endSubStep/3` and that is exactly what `endPosition - startPosition + 1` gives.
   See *30* in [answered-questions.md](answered-questions.md) for the two halves of the mechanism.
-- ✔ **We do schedule notes the engine would not** — it skips allocation when a volume is not
-  positive (`0x04d4`/`0x04dc`) and we always allocate — but it is 701 of 13,091 notes here, worth
-  11.7% → 9.7%, and **all 701 are fade-ins from zero rather than muted channels**. Dropping them
-  would delete the `Northern Lights` case this project already got wrong once, so it was measured
-  and NOT implemented.
+- ❌ **"We schedule notes the engine would not" was a misreading, closed 2026-09-04.** The skip at
+  `0x04d4` tests `channelVolume x clipLevel`, **not the note's velocity** — `0x04cb` multiplies by
+  `[clip + 0x420]`, which `v0x1607c6` fills from `PInstrument.Level`. Measured over the corpus:
+  **0 of 74,864 clips set `Level` to zero and 0 notes sit on a muted channel**, so the skip never
+  fires on real data. The 701 notes were zero-**velocity** — a quantity the test does not look at —
+  and the engine gives every one of them a record, exactly as we do.
+
+❗ **What that chase did turn up is a real divergence, and it is now the whole of this question.**
+`sub_0x3930` rewrites both score factors once per block: `[record+0x04]` from the channel volume
+times the clip's `Level`, and `[record+0x0c]` from **the current control point's** velocity
+(`0x3c29 bextr eax, [note], 0x810`). So the engine's score **follows the note's volume automation**,
+and a note fading out becomes the cheapest thing in the pool while it fades. `allocateVoices` scores
+a note once, at its opening velocity, and never again.
+
+That is a mechanism by which a note on its way out yields its record early — which is exactly the
+shape of the thing this question has been looking for. ⚠️ It is **not** the release tail (the
+envelope is not in the score), so it does not close the question on its own; but 53.9% of corpus
+notes carry more than one control point and 5.4% of `C4K3 S0NG`'s open at zero, so a time-varying
+score is not a small correction. **Measure it before building it**: give `allocateVoices` the
+minimum of a note's automation rather than its opening value, and see what the count does.
 
 **So every number on both sides of the line is now measured, and they still disagree with the ear.**
 That is where this stands. The remaining thread is the one the volume test exposed: its multiplier

@@ -507,9 +507,30 @@ export async function renderSequencer(
       const note = {
         start: e.step,
         end: e.step + (prep ? prep.occupancySteps : e.durationSteps),
-        // voice[+0x04] * voice[+0x0c]: channel volume times note volume. The
-        // instrument's own level and its envelope are not in the engine's score.
-        score: channelVolume(seq, track) * velocityGain(e.volume),
+        // ❗ **`voice[+0x04] * voice[+0x0c]`, and the first factor carries the
+        // clip's own `Level`.** Measured in `sub_0x3930`, which rewrites both
+        // once per block:
+        //
+        // ```
+        // 0x3afc  xmm0 = [state + 0x1a68 + 4*chan]   ; the channel's volume
+        // 0x3b09  xmm0 *= [clip + 0x420]             ; times PInstrument.Level
+        // 0x3b12  [record + 0x04] = xmm0
+        // 0x3c29  bextr eax, [note], 0x810           ; bits 16..23, the velocity
+        // 0x3c32  xmm0 = velocity * 1/127            ; v0x45a0
+        // 0x3c3a  [record + 0x0c] = xmm0
+        // ```
+        //
+        // ⚠️ **The `Level` was missing here**, and it is not decoration: 88 of
+        // `C4K3 S0NG`'s 244 clips set it away from 1, down to 0.020. Without it
+        // the allocator steals the wrong voices — a quiet instrument is meant to
+        // be the cheap one, and was as expensive as the loudest.
+        //
+        // ⚠️ The envelope is still not in it, and neither is the note's volume
+        // **automation**: the engine re-reads `[record + 0x0c]` from whichever
+        // control point is current, so a note fading out really does become the
+        // cheapest victim. `allocateVoices` scores a note once, at its opening
+        // velocity. That one is a real divergence and is open question 29.
+        score: channelVolume(seq, track) * track.level * velocityGain(e.volume),
       };
       entries.push({ eventIndex: i });
       return note;
@@ -754,7 +775,8 @@ export async function renderSequencer(
         startFrame: voice.startFrame ?? 0,
         poolStart: event.step,
         poolEnd: event.step + (prep.occupancySteps ?? event.durationSteps),
-        score: channelVolume(seq, track) * velocityGain(event.volume),
+        // The same two factors as the pool above, and for the same reason.
+        score: channelVolume(seq, track) * track.level * velocityGain(event.volume),
         note: eventIndex,
         layer,
         startStep: event.step,
