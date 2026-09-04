@@ -1102,6 +1102,11 @@ reading. That is deliberate and uncomfortable: the engine plainly holds the reco
 release, and shipping an artefact the game does not have is still worse than shipping a model that
 is short. The switch keeps the measured behaviour one environment variable away.
 
+✔ **Confirmed by ear on the corrected render, same day**: with the tail off the choir enters whole
+at 25.85 s and the passage sounds right. That is one listener against a static reading of the
+binary, and it is what the default rests on until a capture says otherwise — the same kind of
+evidence, from the same person, that settled question 10.
+
 ✔ **One thing did come out of it and is unconditional**: a voice whose **unlooped sample runs out**
 gives its record back — the other half of the engine's free condition (`0x3035`-`0x3065`, the
 position past the frame count with no loop) and it was missing here. A drum whose sample lasts 0.2 s
