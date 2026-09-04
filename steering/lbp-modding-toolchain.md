@@ -155,6 +155,14 @@ do not conflate them.
 **Then, in either case:**
 
 - `RLevel` → `worldThing.getPart(WORLD).things`; `RPlan` → `getThings()`.
+- ❗ **Nor the streaming chunks.** `RLevel` → `StreamingManager` →
+  `LevelData.chunkFileList` names `CHKb` resources, each holding islands, each island holding a
+  whole `PLNb`. Measured: 171 chunks, 2,553 islands, 10,837 Things, 9 sequencers. The layout is in
+  [answered-questions.md](answered-questions.md).
+- ⚠️ **A chunk is stored UNCOMPRESSED**, which is the only reason three byte-width bugs in this
+  project's reader were ever visible: in a compressed stream a varint under 128 and a `u8` occupy
+  the same single byte. Treat the first uncompressed resource of any new kind as a test of
+  everything, not as one more file.
 - ❗ **Do not skip the plans.** Measured over six real saves: 224 plans against 6 levels, and the
   plans hold **172 music sequencers** to the levels' 19. A creator's gallery level is a rack of
   speakers pointing at plans, and the songs are the plans. The `RPlan` layout is in

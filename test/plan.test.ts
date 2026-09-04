@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { deflateSync } from 'node:zlib';
 
-import { musicSequencers, readPlan } from '../src/core/level.ts';
+import { musicSequencers, readChunk, readPlan } from '../src/core/level.ts';
 import { partReaders } from '../src/core/parts.ts';
 import { readSaveArchive, saveArchiveRevision } from '../src/core/savearchive.ts';
 import { nodeInflate } from '../src/platform/node.ts';
@@ -150,4 +150,42 @@ test('every plan in the corpus parses, and holds the music the levels do not', a
   // 171 plans -- one plan carries two sequencers, which is why this counts the
   // sequencers and not the plans.
   assert.equal(sequencers, 172, 'music sequencers found inside plans');
+});
+
+test('every streaming chunk in the corpus parses, islands and all', async (t) => {
+  // ❗ **This is the deepest nesting in the format**: an adventure names chunks,
+  // a chunk holds islands, an island holds a whole `PLNb` resource, and that
+  // holds the Things. Every step of that is a place to be one field wrong.
+  const folders = await saveFolders(CORPUS);
+  if (folders.length === 0) {
+    t.skip(`no save folders under ${CORPUS}`);
+    return;
+  }
+  const readers = partReaders();
+  let chunks = 0;
+  let things = 0;
+  let sequencers = 0;
+  const problems: string[] = [];
+  for (const folder of folders) {
+    const files = await chunksOf(folder);
+    if (files.length === 0 || saveArchiveRevision(files[files.length - 1]) === undefined) continue;
+    for (const resource of await readSaveArchive(files)) {
+      const bytes = resource.bytes;
+      if (String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) !== 'CHKb') continue;
+      chunks += 1;
+      const parse = await readChunk(bytes, nodeInflate, readers);
+      things += parse.things.length;
+      sequencers += musicSequencers(parse.things).length;
+      problems.push(...(parse.problems ?? []).map((why) => `${resource.sha1.slice(0, 8)} ${why}`));
+    }
+  }
+  // ⚠️ **An island that will not open is reported, not swallowed**, because
+  // islands are independent resources and one failing says nothing about its
+  // neighbours. 171 chunks, 2,553 islands, none of them failing.
+  assert.deepEqual(problems, [], 'every island in every chunk opens');
+  assert.equal(chunks, 171, 'streaming chunks in the corpus');
+  assert.equal(things, 10837, 'Things inside their islands');
+  // ❗ There IS music down here, and the first reading said there was none:
+  // with the field layout misread, 96% of the islands were being thrown away.
+  assert.equal(sequencers, 9, 'music sequencers inside streaming islands');
 });

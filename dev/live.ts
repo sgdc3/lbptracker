@@ -1089,7 +1089,7 @@ async function takeHandoff(): Promise<void> {
   setStatus('reading the imported song\u2026');
   try {
     const seq = JSON.parse(stored) as LevelProject['sequencers'][number];
-    project = { file: `${seq.name}.mid`, plan: false, sequencers: [seq] };
+    project = { file: `${seq.name}.mid`, kind: 'level', sequencers: [seq] };
     [rinstIndex, smpIndex] = await Promise.all([
       manifest('fixtures/rinst'),
       manifest('fixtures/smp'),

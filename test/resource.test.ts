@@ -48,11 +48,35 @@ test('rejects a header whose chunk table does not reach the dependency table', a
   bytes.set([0x4c, 0x56, 0x4c, 0x62], 0);
   new DataView(bytes.buffer).setUint32(4, 0x3ee, false);
   new DataView(bytes.buffer).setUint32(8, 0x999, false);
+  // ⚠️ `isCompressed`, and it has to be set: an uncompressed resource has no
+  // chunk table for this check to be about. Streaming chunks are the first
+  // resources in the corpus that are stored that way.
+  bytes[0x11] = 1;
   new DataView(bytes.buffer).setUint16(0x14, 0, false);
   await assert.rejects(
     () => loadResource(bytes, nodeInflate),
     ResourceFormatError,
   );
+});
+
+test('an uncompressed resource is its payload, with no chunk table', async () => {
+  // ❗ **`isCompressed` was read and then ignored here.** Every level and plan
+  // in the corpus is compressed, so reading a chunk table unconditionally worked
+  // until the first `CHKb`: it took a chunk count out of the payload's own first
+  // bytes -- 96 of them -- and failed to inflate the level geometry behind it.
+  const payload = new TextEncoder().encode('the island geometry goes here');
+  const bytes = new Uint8Array(0x12 + payload.length + 4);
+  bytes.set(new TextEncoder().encode('CHKb'), 0);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(4, 0x021303f9, false);
+  view.setUint32(8, 0x12 + payload.length, false); // the dependency table
+  bytes[0x10] = 0; // compressionFlags: plain integers, as a chunk really has
+  bytes[0x11] = 0; // isCompressed
+  bytes.set(payload, 0x12);
+  const resource = await loadResource(bytes, nodeInflate);
+  assert.equal(resource.magic, 'CHKb');
+  assert.equal(resource.chunks.length, 0);
+  assert.equal(new TextDecoder().decode(resource.data), 'the island geometry goes here');
 });
 
 test('every level in the corpus parses, and chunk data ends on the dependency table', async (t) => {

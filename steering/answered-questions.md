@@ -1534,3 +1534,60 @@ name, which is the growth path working.
 world". That produced eleven loud failures for a backup that was fine, and the fix on 2026-09-04 was
 to take the magic *out* — which was right for an hour and wrong as a resting place. The magic was
 never the problem; the reader was.
+
+## 26. Streaming levels — RESOLVED 2026-09-04: the whole chain, down to the islands
+
+An LBP3 adventure is not one level. `RLevel` → `StreamingManager` → `LevelData.chunkFileList` names
+a pile of `CHKb` resources; each chunk holds **islands**; each island holds a whole `PLNb` resource;
+that holds the Things. Four levels of nesting, and the reader now walks all of it.
+
+`emptyOnly` used to refuse a non-empty `chunkFileList`, which was right for the ten-level corpus it
+was written against and wrong for two of the six PS3 saves — *Meched Inc.* (42 chunks) and *New
+Heights* (129). Both open now.
+
+### The layout, all of it measured against those two saves
+
+```
+ChunkFile      sha1 chunkHash                       subVersion > 0x130
+               StreamingCheckpoint[] QuestTracker[] QuestSwitch[] CollectableData[]
+               i32 n, then n resource descriptors WITH AN INLINE TYPE   (>= 0xde)
+               v3 min, v3 max, 4 bools, i32 n + n GUIDs, i32 n + n SHA-1s
+StreamingIsland i32 timeZone, i32 flags, v3 min, v3 max
+               bytearray planData        <- a complete PLNb resource, header and all
+               the same four lists, then the GUID and hash lists
+RStreamingChunk  StreamingIsland[] (references), then an intvector of chunk codes
+```
+
+**171 chunks, 2,553 islands, 10,837 Things, and 9 music sequencers**, with every island opening and
+the chunk's own stream ending exactly on its last byte. `test/plan.test.ts` pins all four numbers.
+
+### Three bugs it uncovered, and all three had been invisible for the same reason
+
+Everything the corpus had ever contained was **compressed**, and a compressed stream hides whole
+classes of error because a varint under 128 is one byte — exactly what a `u8` is.
+
+1. **`isCompressed` was read and ignored** in `resource.ts`. An uncompressed resource has no chunk
+   table: the payload starts after the flag and runs to the dependency table. `CHKb` is the first
+   one, and the reader took "96 chunks" out of the payload's own first bytes.
+2. **The Thing's parts revision is in the stream**, an `s32` before the part mask, and this project
+   guessed it from the version instead. The byte that had to be eaten to make the mask decode was
+   recorded in `thing.ts` as *"one byte cwlib does not account for"*: it is that field, one byte as
+   a zigzag varint and **four** when the stream is not compressed.
+3. **`FieldLayoutDetails` is bytes, not enums, from 0x3d9.** `machineType`, `fishType` and
+   `arrayBaseMachineType` are `u8`; reading them as `enum32` costs nine bytes per field on an
+   uncompressed stream and none at all on a compressed one. This is the one that mattered: with it
+   wrong, 101 of 2,553 islands died and **the rest quietly lost most of their Things** — the first
+   measurement said "0 sequencers in any island", and the true answer is 9. `PCostume.creatureFilter`
+   was the same mistake in the other direction (`u8` where the game writes an `i32`).
+
+⚠️ **The lesson: a compressed corpus cannot tell a `u8` from a small `i32`.** Nine part readers
+and one struct in this project were written against nothing but compressed files. The first
+uncompressed resource is worth more than a hundred more compressed ones, and if another turns up,
+run the whole corpus through it before trusting a byte width again.
+
+### Nine part readers came with it
+
+`TRANSITION`, `FADER`, `ANIMATION_TWEAK`, `WIND_TWEAK`, `STREAMING_DATA`, `STREAMING_HINT`, `REF`,
+`POWER_UP`, `ANIMATION`, `ATMOSPHERIC_TWEAK`, `SCRIPT_NAME`, `QUEST`, `WORMHOLE`,
+`MATERIAL_OVERRIDE`, `CONNECTOR_HOOK` — every part an island scene uses. What is left is in
+question 26 of [open-questions.md](open-questions.md): four resources, each failing by name.

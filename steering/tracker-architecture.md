@@ -24,6 +24,19 @@ levels take a folder, a zip of one, or a single file.
 costumes and photographs; trying every file works and reports forty failures for
 one level.
 
+❗ **`CHKb` is a piece of a streamed adventure**, and the chain to its Things
+is the deepest nesting in the format: a level names chunks, a chunk holds
+islands, an island holds a whole `PLNb` resource. 171 chunks, 2,553 islands,
+10,837 Things and 9 sequencers in the corpus. See *26. Streaming levels* in
+[answered-questions.md](answered-questions.md) — including the three byte-width
+bugs it uncovered, all invisible while every file in the corpus was compressed.
+
+⚠️ **An island that will not open is reported, not swallowed.** Islands are
+independent resources in one list, so one failing says nothing about its
+neighbours — `LevelParse.problems` carries them out and `readBackup` puts them
+in `failed`. This is the one place in the reader where a partial result is
+honest; everything else is one stream, where a bad read poisons what follows.
+
 ❗ **`PLNb` is a plan, and that is where most of the music is.** 224 plans over
 six real saves against 6 levels; **172 music sequencers inside plans, 19 inside
 the levels**. A plan is a saved Thing, so its Things live in a nested blob with

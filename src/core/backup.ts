@@ -80,11 +80,16 @@ export interface BackupResult {
  * music sequencer** against six levels holding 19. `readLevelProject` dispatches
  * on this same magic and unwraps the plan's nested Thing blob.
  *
+ * ⚠️ **`CHKb` is a piece of a streamed adventure**, and it is here for
+ * completeness rather than for music: 2,553 islands over the corpus's two
+ * adventures hold 7,407 Things and **not one sequencer**. Left out, it would be
+ * a file the reader silently calls "not a level".
+ *
  * ⚠️ `PLNb` was in here before any of that worked, when it meant "read a plan as
  * if it were a world" -- eleven failures reported for one backup that was fine.
  * The magic was never the problem; the reader was.
  */
-const LEVEL_MAGIC = ['LVLb', 'PLNb'];
+const LEVEL_MAGIC = ['LVLb', 'PLNb', 'CHKb'];
 
 /** A file's folder and its leaf name. Paths are shown, never otherwise parsed. */
 function split(name: string): { folder: string; leaf: string } {
@@ -177,6 +182,12 @@ export async function readBackup(
     }
     try {
       const project = await readLevelProject(file.name, file.bytes, inflate);
+      // ❗ Reported even when the file opened: a streaming chunk whose islands
+      // are independent resources keeps the ones that read, and the ones that
+      // did not are a gap in this parser, not an absence in the file.
+      for (const problem of project.problems ?? []) {
+        failed.push({ name: file.name, why: problem });
+      }
       if (project.sequencers.length === 0) quiet += 1;
       else projects.push(project);
     } catch (error) {

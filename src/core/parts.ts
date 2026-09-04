@@ -1410,16 +1410,33 @@ interface FieldLayout {
   readonly divergent: boolean;
 }
 
-/** `FieldLayoutDetails`: the name, type and modifiers of one script field. */
+/**
+ * `FieldLayoutDetails`: the name, type and modifiers of one script field.
+ *
+ * ⚠️ **At 0x3d9 the record stops being enums and becomes bytes**, and reading
+ * the new one with the old code is invisible on a compressed stream: an `enum32`
+ * is a varint there, and a machine type below 128 takes exactly the one byte a
+ * `u8` would. The first UNCOMPRESSED resource -- a streaming island's plan --
+ * read nine bytes too many per field and landed in the middle of the next
+ * field's name, which is how "read of 1634429294 bytes" (`aimn`, out of a
+ * script's own text) turned out to mean this. 101 of the corpus's 2,553 islands.
+ */
 function readFieldLayout(s: Serializer): FieldLayout {
   const { version } = s.revision;
   s.str(); // name
-  // ⚠️ The modifier flags narrow from 32 to 16 bits at 0x3d9, which is inside
-  // the corpus.
-  const flags = version >= 0x3d9 ? s.i16() : s.i32();
+  if (version >= 0x3d9) {
+    const flags = s.i16();
+    const machineType = s.u8();
+    s.u8(); // fishType
+    s.i8(); // dimensionCount
+    s.u8(); // arrayBaseMachineType
+    s.i32(); // instanceOffset
+    return { machineType, divergent: (flags & MODIFIER_DIVERGENT) !== 0 };
+  }
+  const flags = s.i32();
   const machineType = s.i32();
   if (version >= 0x145) s.i32(); // fishType
-  s.u8(); // dimensionCount
+  s.i8(); // dimensionCount
   s.i32(); // arrayBaseMachineType
   s.i32(); // instanceOffset
   return { machineType, divergent: (flags & MODIFIER_DIVERGENT) !== 0 };
@@ -1868,7 +1885,9 @@ export function readCostume(s: Serializer): void {
   s.intVector(); // meshPartsHidden
   const prims = s.i32();
   for (let i = 0; i < prims; i += 1) readPrimitive(s);
-  if (subVersion >= 0xdb) s.u8(); // creatureFilter
+  // ⚠️ An `i32`, not a byte. It was a byte here and no compressed file could
+  // tell: a varint under 128 is one byte either way. See `readFieldLayout`.
+  if (subVersion >= 0xdb) s.i32(); // creatureFilter
   const pieces = s.i32();
   for (let i = 0; i < pieces; i += 1) readCostumePiece(s);
   if (version >= 0x2c5) {
@@ -1938,6 +1957,240 @@ export function readNpc(s: Serializer, readers: ReadonlyMap<string, PartReader>)
   if (subVersion > 0x1a5) s.bool(); // copyFormAsWell
 }
 
+/** `PScriptName`: a length-prefixed blob this reader only has to step over. */
+function readScriptName(s: Serializer): void {
+  s.bytes(s.s32());
+}
+
+/** `PQuest`: an adventure's objective marker. */
+function readQuest(s: Serializer): void {
+  const type = s.i32();
+  // ⚠️ cwlib refuses anything but 5 and so does this: the other types carry a
+  // trailing block whose shape depends on the type, and none of the corpus's
+  // 2,553 islands has one to check it against.
+  if (type !== 5) throw new SerializerError(`quest type ${type} has no reader`);
+  s.wstr(); // questID
+  s.wstr(); // objectiveID
+  s.i32(); // questKey
+  s.i32(); // objectiveKey
+}
+
+/** `PWormhole`: the door between two islands. */
+function readWormhole(s: Serializer): void {
+  s.s32(); // type
+  s.i8(); // activeTypeForTwoWayHole, subVersion >= 0x111
+  s.s32(); // playerMode
+  s.bool(); // audioEnabled
+  s.bool(); // trigger
+  s.bool(); // finished
+  s.bool(); // activated
+  s.i32(); // exitCount
+  s.i32(); // exitDelay
+}
+
+/** `RegionOverride`: one material swapped on one region of a mesh. */
+function readRegionOverride(s: Serializer): void {
+  s.i32(); // region
+  s.resource(true); // materialPlan
+  s.resource(); // material
+  s.vector3(); // uvScale
+  if (s.revision.subVersion >= 0x158) {
+    s.i32(); // color
+    s.i8(); // brightness
+  }
+}
+
+/** `PMaterialOverride`, at version >= 0x360. */
+function readMaterialOverride(s: Serializer): void {
+  const { subVersion } = s.revision;
+  s.array(readRegionOverride);
+  s.resource(); // mesh
+  if (subVersion >= 0x15f) {
+    s.i32(); // color
+    if (subVersion >= 0x191) s.i8(); // brightness
+  }
+}
+
+/** `PConnectorHook`: a grapple point's motor settings. */
+function readConnectorHook(s: Serializer): void {
+  const { subVersion } = s.revision;
+  s.i32(); // mode
+  s.i32(); // inputAction
+  s.f32(); // poweredSpeed
+  s.f32(); // accel
+  s.f32(); // decel
+  s.f32(); // delay
+  s.bool(); // reverse
+  if (subVersion > 0xfd) {
+    s.bool(); // tryLatch
+    s.bool(); // clamped
+    s.i32(); // collidable
+    s.f32(); // angle
+    s.f32(); // friction
+    s.vector4(); // pivot
+  }
+  if (subVersion >= 0xff && subVersion < 0x15d) s.i32();
+  s.f32(); // spinDamping
+  s.bool(); // audioEnable
+  s.i32(); // hookType, subVersion > 0x14e
+}
+
+/** `PAnimation`: a plain animation playing on a Thing. */
+function readAnimation(s: Serializer): void {
+  s.resource(); // animation
+  s.f32(); // velocity
+  s.f32(); // position
+}
+
+/** `PAtmosphericTweak`: an island's weather. */
+function readAtmosphericTweak(s: Serializer): void {
+  const { subVersion } = s.revision;
+  s.s32(); // atmosType
+  s.f32(); // intensity
+  s.f32(); // directionStrength
+  s.s32(); // inputAction
+  if (subVersion < 0x1a8) s.bool(); // disableAudio
+  s.f32(); // maxParticles, subVersion > 0x135
+  s.f32(); // currentInput
+  if (subVersion > 0x19b) {
+    s.f32(); // intensityOff
+    s.f32(); // directionStrengthOff
+  }
+}
+
+/** `PPowerUp`: a power-up a player is holding, at subVersion >= 0x18d. */
+function readPowerUp(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  s.matrix(); // spawnedRootMatrix
+  s.matrix(); // spawnedChipMatrix
+  s.vector4(); // rootHandle
+  s.resource(true); // plan
+  readThingRef(s, readers); // powerUpThing
+  readThingRef(s, readers); // powerUpHandle
+  s.bool(); // flipped
+  s.bool(); // justFlipped
+  s.i32(); // fireStartTime
+  s.f32(); // initialRotation
+  s.vector3(); // deterministicPosition
+  s.f32(); // deterministicRotation
+  s.f32(); // offsetForEmitters
+  s.f32(); // prevAngle
+  s.f32(); // currAngle
+}
+
+/** `PWindTweak`: a wind volume's strength, shape and behaviour. */
+function readWindTweak(s: Serializer): void {
+  const { subVersion } = s.revision;
+  s.f32(); // windStrength
+  s.vector3(); // direction
+  s.f32(); // angle
+  s.f32(); // decay
+  s.f32(); // currentInput
+  s.f32(); // minRadius
+  s.f32(); // maxRadius
+  s.f32(); // angleRange
+  s.i32(); // behavior
+  s.f32(); // maxSpeed
+  s.bool(); // affectsCharacters
+  s.bool(); // blowAtTag
+  s.bool(); // blasterEffect
+  s.bool(); // occluders, subVersion > 0x171
+  s.i8(); // effectType
+  if (subVersion > 0x211) {
+    s.i8(); // horizontalSpeed
+    s.i8(); // verticalSpeed
+  }
+}
+
+/** `PStreamingData`: whether a streamed Thing is currently hidden. */
+function readStreamingData(s: Serializer): void {
+  s.i8(); // hidden
+  s.i16(); // originator, subVersion > 0xdd
+}
+
+/** `PStreamingHint`: the volume that asks for a chunk to be streamed in. */
+function readStreamingHint(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  s.i32(); // type
+  s.vector3(); // offset
+  s.vector3(); // size
+  readThingRef(s, readers); // relativeToThing
+  s.references((self) => readThingRef(self, readers)); // connected
+}
+
+/** `PRef`: a Thing standing in for a plan that has not been instanced. */
+function readRef(s: Serializer): void {
+  s.resource(true); // plan
+  s.i32(); // oldLifetime
+  s.i32(); // oldAliveFrames, version >= 0x1c9
+}
+
+/** `PAnimationTweak`: an animated mesh's playback settings. */
+function readAnimationTweak(s: Serializer): void {
+  const { subVersion } = s.revision;
+  s.f32(); // animSpeed
+  s.f32(); // animPos
+  s.f32(); // animBlendTime
+  s.i32(); // behavior
+  s.i32(); // blendAction
+  s.resource(); // anim
+  s.bool(); // animLoop
+  s.guid(); // cachedMeshFile
+  s.guid(); // containerFile
+  s.f32(); // animStart
+  s.f32(); // animEnd
+  s.bool(); // animPlaying
+  s.bool(); // animResetOnInactive
+  s.f32(); // rootRotationX, subVersion > 0x146
+  s.f32(); // rootRotationY
+  s.bool(); // usesRootRotation
+  s.i32(); // type
+  s.i32(); // animToOverride
+  if (subVersion >= 0x5c && subVersion < 0x152) s.u8();
+  s.guid(); // tweakMeshFile
+  s.i32(); // containerType
+  s.i32(); // subContainerIndex
+  s.wstr(); // actorName
+  if (subVersion > 0x151) {
+    s.f32(); // yawRate
+    s.f32(); // pitchRate
+    s.f32(); // rollRate
+    s.f32(); // yawPosition
+    s.f32(); // pitchPosition
+    s.f32(); // rollPosition
+    s.f32(); // rootRotationZ
+  }
+}
+
+/** `PFader`: the scenery fade an island applies when the player is behind it. */
+function readFader(s: Serializer): void {
+  const { subVersion } = s.revision;
+  s.bool(); // includeRigidConnectors
+  if (subVersion >= 0xe0) s.bool(); // includeLights
+  s.bool(); // requirePlayerObscuration
+  s.f32(); // fadeAmount
+  if (subVersion >= 0x17) s.bool(); // faderDisabled
+  if (subVersion >= 0x39) s.f32(); // fadeTimeSeconds
+  if (subVersion >= 0x3b) s.i8(); // inputBehavior
+}
+
+/**
+ * `PTransition`: the doorway between two islands of a streaming level.
+ *
+ * Every island in an LBP3 adventure carries one, so this is the part that stood
+ * between the reader and 2,553 islands of streamed level.
+ */
+function readTransition(s: Serializer): void {
+  const { subVersion } = s.revision;
+  s.s32(); // colorIndex
+  if (subVersion <= 0xf) s.i32();
+  if (subVersion >= 0x1a) s.wstr(); // label
+  if (subVersion > 0x18) s.bool(); // enabled
+  if (subVersion >= 0x14e && subVersion < 0x156) s.i32();
+  if (subVersion > 0x17c) {
+    s.bool(); // showColor
+    s.bool(); // playAudio
+  }
+}
+
 /**
  * `PPocketItem`: a power-up as it sits in a plan's inventory.
  *
@@ -2004,6 +2257,21 @@ export function partReaders(): Map<string, PartReader> {
   readers.set('COSTUME', (s) => readCostume(s));
   bind('NPC', readNpc);
   bind('POCKET_ITEM', readPocketItem);
+  bind('TRANSITION', readTransition);
+  bind('FADER', readFader);
+  bind('ANIMATION_TWEAK', readAnimationTweak);
+  bind('WIND_TWEAK', readWindTweak);
+  bind('STREAMING_DATA', readStreamingData);
+  bind('STREAMING_HINT', readStreamingHint);
+  bind('REF', readRef);
+  bind('POWER_UP', readPowerUp);
+  bind('ANIMATION', readAnimation);
+  bind('ATMOSPHERIC_TWEAK', readAtmosphericTweak);
+  bind('SCRIPT_NAME', readScriptName);
+  bind('QUEST', readQuest);
+  bind('WORMHOLE', readWormhole);
+  bind('MATERIAL_OVERRIDE', readMaterialOverride);
+  bind('CONNECTOR_HOOK', readConnectorHook);
   return readers;
 }
 

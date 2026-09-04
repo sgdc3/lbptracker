@@ -900,23 +900,24 @@ volume` and the like) that were never opened. **Print them before theorising.**
   98.8% (modulation ascending) and 94.9% (volume descending). Adding one would look like the other
   three and not be one.
 
-## 26. Streaming levels: `LevelData.chunkFileList` is not always empty
+## 26. Four resources in the corpus that still will not open
 
-Two of the corpus's levels will not open, and both say the same thing:
-`LevelData.chunkFileList has 42 entries and no reader`. `emptyOnly` in `src/core/level.ts` reads a
-count and refuses anything non-zero, on the grounds that the ten-level corpus never populated it —
-which was true of the corpus that existed when it was written. The five PS3 saves in the checkout
-turned up two that do: *Meched Inc.* (42 entries) and *New Heights* (129).
+Everything else in the six measured saves reads. These four do not, and each fails **by name**,
+which is the reader's growth path working rather than a silence to chase.
 
-These are **streaming levels**: an LBP3 adventure is cut into chunks, and `chunkFileList` names
-them. The check did its job — it refused rather than guessing — but two real levels' music is
-behind it.
+- **`YELLOWHEAD`** — one plan. `PYellowHead` is a player's poppet state: two dozen fields, a nested
+  `Poppet` struct with its own tree, and a `SerializationException` thrown by cwlib itself in two
+  subVersion ranges. Twenty minutes of layout for one file, and a plan carrying a *player* is not
+  where music lives. Anchor: `cwlib/structs/things/parts/PYellowHead.java`.
+- **Revision `0x272`** — one plan, an LBP1-era resource `requireLbp3` refuses on purpose. Widening
+  the range means adding the older branches field by field, not relaxing the check; see
+  `serializer.ts`.
+- **Branch `0x4431`** — one level, `f331efa7`, version 0x3e2. Neither `LEERDAMMER` (0x4c44) nor
+  `MIZUKI` (0x4d5a), so **cwlib does not know this branch either**. Its first Thing reports no
+  `WORLD` part, which means the header layout diverges before the part mask. Unknowable from the
+  corpus alone: one file is not enough to reverse a branch from.
+- **A quest of a type other than 5** — not seen yet, and `readQuest` refuses rather than guessing:
+  the other types carry a trailing block whose shape depends on the type.
 
-**The anchor**: `cwlib/structs/streaming/StreamingLevelChunk.java` (fetch it, do not clone), and
-`readLevelData` in `src/core/level.ts`, which already reads everything around it. The list is
-almost certainly `ResourceDescriptor` plus a transform; the risk is that the chunks are separate
-resources, in which case the Things are in files the level only names — and a backup would have to
-be searched for them by GUID, which is a different job from parsing one file.
-
-**What it is worth**: two levels of seven in the measured saves. Their plans open, so their music is
-not entirely lost — which is the only reason this is not higher up the list.
+**None of these is in the way of music.** They are listed so that a failure on screen can be
+recognised as one of them rather than investigated twice.

@@ -189,12 +189,13 @@ export function saveNote(result: Pick<BackupResult, 'saves'>): string {
  * when there is something to tell it apart from.
  */
 export function openedTitle(result: BackupResult, sequencers: number, fallback: string): string {
-  const levels = result.projects.filter((project) => !project.plan).length;
-  const plans = result.projects.length - levels;
+  const of = (kind: string) => result.projects.filter((project) => project.kind === kind).length;
+  const levels = of('level');
+  const others: [number, string][] = [[of('plan'), 'plan'], [of('chunk'), 'chunk']];
   const count = (n: number, what: string) => `${n} ${what}${n === 1 ? '' : 's'}`;
   const parts: string[] = [];
-  if (levels > 1 || (levels > 0 && plans > 0)) parts.push(count(levels, 'level'));
-  if (plans > 0) parts.push(count(plans, 'plan'));
+  if (levels > 1 || (levels > 0 && others.some(([n]) => n > 0))) parts.push(count(levels, 'level'));
+  for (const [n, what] of others) if (n > 0) parts.push(count(n, what));
   parts.push(count(sequencers, 'sequencer'));
   return `${openedLabel(result, fallback)} — ${parts.join(', ')}`;
 }

@@ -108,20 +108,20 @@ export const PARTS: readonly { readonly name: string; readonly index: number; re
   { name: 'STREAMING_HINT', index: 0x35, since: 0x3f },
 ];
 
-/** `PartHistory.STREAMING_HINT` and `PartHistory.CONTROLINATOR`. */
-const PARTS_REVISION_LATEST = 0x3f;
-const PARTS_REVISION_CONTROLINATOR = 0x2f;
-
 /**
- * How far the parts table had got at this revision.
+ * How far the parts table had got when this Thing was written.
  *
- * ⚠️ The corpus straddles the boundary: files at version `0x3b8`-`0x3e2` stop at
- * `CONTROLINATOR`, later ones go to `STREAMING_HINT`. A file read with the wrong
- * one loses or gains the tail of the part list.
+ * ❗ **It is in the stream, and this file used to guess it from the version.**
+ * The guess -- `CONTROLINATOR` up to 0x3e2, `STREAMING_HINT` after -- happened to
+ * agree with every file in the corpus, because it is derived from the same
+ * table; what it could not do is consume the four bytes the Thing writes for it,
+ * and the byte that had to be eaten to make the part mask decode was recorded
+ * here as "one byte cwlib does not account for". It is this field: an `s32`,
+ * which is a **one-byte zigzag varint** in a compressed stream and a full four
+ * bytes in one that is not. The first uncompressed resource -- a streaming
+ * island's plan -- read three bytes short and produced a plausible, wrong part
+ * list. `PartHistory.STREAMING_HINT` is 0x3f, `CONTROLINATOR` 0x2f.
  */
-export function partsRevisionFor(version: number): number {
-  return version <= 0x3e2 ? PARTS_REVISION_CONTROLINATOR : PARTS_REVISION_LATEST;
-}
 
 /** Reads one part's body. Returning nothing is fine; the bytes are what matter. */
 export type PartReader = (s: Serializer, thing: Thing) => unknown;
@@ -231,17 +231,6 @@ function fillThing(
   if (version >= 0x341) {
     if (version >= 0x254) thing.planGuid = s.guid();
     thing.flags = s.u8();
-    // ⚠️ **One byte cwlib does not account for**, and it is here on every file.
-    // The evidence is the part mask, which is self-checking: on `5aa77945`
-    // (subVersion 0) it only decodes to `BODY,WORLD,POS,SCRIPT,EFFECTOR,
-    // GAMEPLAY_DATA` -- exactly what `RLevel`'s constructor builds -- when one
-    // byte is consumed after `flags`, and on `50ea1369` (subVersion 0x213) the
-    // same mask needs **two**, which is that byte plus the `extraFlags` cwlib
-    // does describe. So the unknown byte is unconditional and `extraFlags` keeps
-    // its gate, rather than `extraFlags` being read unconditionally -- which was
-    // the earlier reading here and happened to work only because every other
-    // file has subVersion 0.
-    s.u8();
     if (subVersion >= 0x110) thing.extraFlags = s.u8();
   } else {
     if (version > 0x21a) s.bool(); // isStamping
@@ -249,10 +238,13 @@ function fillThing(
     if (version >= 0x2f2) s.bool(); // hidden
   }
 
+  // ⚠️ **The parts revision comes first, and it is the field this reader used
+  // to guess.** See the note on `PARTS` above: it is an `s32`, one byte as a
+  // zigzag varint in a compressed stream and four in one that is not.
+  const partsRevision = s.s32();
   // The part mask. `u64` here is a varint when the stream is compressed, and a
   // part index can be as high as 0x35, so this really does need 64 bits.
   const mask = version >= 0x297 ? s.u64() : -1;
-  const partsRevision = partsRevisionFor(version);
 
   for (const part of PARTS) {
     if (partsRevision < part.since) continue;

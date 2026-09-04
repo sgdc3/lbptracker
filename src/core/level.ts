@@ -59,11 +59,84 @@ function readSlotId(s: Serializer): void {
   s.u32();
 }
 
+/** `StreamingID`: a wide string and a type. */
+function readStreamingId(s: Serializer): void {
+  s.wstr();
+  s.i32();
+}
+
+/** `StreamingCheckpoint`, at subVersion >= 0x13b. */
+function readStreamingCheckpoint(s: Serializer): void {
+  s.i32(); // type
+  s.vector3(); // position
+  readStreamingId(s); // startPointName
+  readSlotId(s); // slotID
+}
+
+/** `QuestTracker`, at subVersion > 0x140. */
+function readQuestTracker(s: Serializer): void {
+  s.vector3(); // position
+  readStreamingId(s); // questID
+  readStreamingId(s); // objectiveID
+  s.i32(); // questKey
+  s.i32(); // objectiveKey
+}
+
+/** `QuestSwitch`, at subVersion > 0x17a. */
+function readQuestSwitch(s: Serializer): void {
+  readStreamingId(s); // questID
+  s.i32(); // questAction
+  s.i32(); // questKey
+  s.i32(); // objectiveID
+}
+
+/** `CollectableData`, at version >= 0x1c2. */
+function readCollectableData(s: Serializer): void {
+  s.resource(true); // plan
+  s.s32(); // source
+}
+
+/**
+ * `ChunkFile`: one streamed piece of a level, and where it sits.
+ *
+ * ❗ **This is the whole reason a streaming level would not open.** An LBP3
+ * adventure is cut into chunks and `LevelData.chunkFileList` names them;
+ * `emptyOnly` refused any non-empty list, which was right for the ten-level
+ * corpus it was written against and wrong for two of the five PS3 saves.
+ *
+ * ⚠️ **The chunk's Things are NOT in here.** `chunkHash` is the SHA-1 of a
+ * separate `RStreamingChunk` resource, so what this recovers is the level's
+ * skeleton -- its bounds, checkpoints and quests -- and the music inside a chunk
+ * is in a file this list only names. See question 26 in
+ * `steering/open-questions.md` for what following the hash would take.
+ */
+function readChunkFile(s: Serializer): void {
+  s.sha1(); // chunkHash, subVersion > 0x130
+  s.array(readStreamingCheckpoint);
+  s.array(readQuestTracker);
+  s.array(readQuestSwitch);
+  s.array(readCollectableData);
+  // `userResources`: descriptors that carry their type inline.
+  const resources = s.i32();
+  for (let i = 0; i < resources; i += 1) s.resource(true, true);
+  s.vector3(); // min
+  s.vector3(); // max
+  s.bool(); // hasObjectSaver
+  s.bool(); // deleteObjectSavers
+  s.bool(); // deleteOtherThings
+  s.bool(); // antiStreaming, subVersion > 0x133
+  // subVersion > 0x169: the GUIDs and hashes this chunk depends on.
+  const guids = s.i32();
+  for (let i = 0; i < guids; i += 1) s.guid();
+  const hashes = s.i32();
+  for (let i = 0; i < hashes; i += 1) s.sha1();
+}
+
 /** `LevelData`, at subVersion 0x213. */
 function readLevelData(s: Serializer): void {
   readSlotId(s);
   s.i32(); // type
-  emptyOnly(s, 'LevelData.chunkFileList');
+  s.references(readChunkFile);
   s.vector3(); // offset
   s.vector3(); // min
   s.vector3(); // max
@@ -115,6 +188,17 @@ function readWorld(s: Serializer, readers: ReadonlyMap<string, PartReader>): nev
 export interface LevelParse {
   readonly revision: RevisionInfo;
   readonly things: (Thing | undefined)[];
+  /**
+   * Parts of the file that would not read, when the rest still can.
+   *
+   * ❗ Only a streaming chunk produces these. Its islands are **independent
+   * resources** in one list, so one that will not open says nothing about its
+   * neighbours -- and reporting three failures out of ninety-six beats throwing
+   * ninety-three islands away, which is what a single error would do here.
+   * Everything else in this file still fails whole, because everything else is
+   * one stream where a bad read poisons what follows.
+   */
+  readonly problems?: readonly string[];
 }
 
 /** Inflate a resource and start a serialiser on it, with the revision checked. */
@@ -190,6 +274,69 @@ export async function readPlan(
     );
   }
   return { revision, things };
+}
+
+/**
+ * `StreamingIsland`: one piece of a streamed level, and the plan that builds it.
+ *
+ * The island's Things are in `PlanData`, which is **a whole `PLNb` resource**,
+ * header and all -- so it is read by `readPlan` rather than by anything here.
+ */
+function readIsland(s: Serializer, plans: Uint8Array[]): void {
+  s.i32(); // timeZone
+  s.i32(); // flags
+  s.vector3(); // min
+  s.vector3(); // max
+  plans.push(s.bytes(s.i32())); // planData
+  s.array(readStreamingCheckpoint);
+  s.array(readQuestTracker);
+  s.array(readQuestSwitch);
+  s.array(readCollectableData);
+  const guids = s.i32();
+  for (let i = 0; i < guids; i += 1) s.guid();
+  const hashes = s.i32();
+  for (let i = 0; i < hashes; i += 1) s.sha1();
+}
+
+/**
+ * Read a **streaming chunk** (`CHKb`) and return the Things in its islands.
+ *
+ * An LBP3 adventure is not one level: `LevelData.chunkFileList` names a pile of
+ * these, each holding islands, each island holding a plan. This is the last
+ * step of that chain and the only one where a whole resource is nested inside
+ * another.
+ *
+ * ⚠️ **Measured, no island in the corpus holds a music sequencer.** 2,553
+ * islands over two adventures, 7,407 Things, and the sequencers in those saves
+ * are all in ordinary plans beside them. This exists so that an adventure that
+ * *does* put a sequencer in an island is not invisible, and because a `CHKb`
+ * counted as "not a level" is a file nobody can look inside.
+ */
+export async function readChunk(
+  bytes: Uint8Array,
+  inflate: Inflate,
+  readers: ReadonlyMap<string, PartReader>,
+): Promise<LevelParse> {
+  const { revision, s } = await open(bytes, inflate);
+  const plans: Uint8Array[] = [];
+  s.references((self) => readIsland(self, plans));
+  s.intVector(); // islandChunkCodeList
+  if (s.remaining !== 0) {
+    throw new SerializerError(
+      `the chunk's island list left ${s.remaining} of ${s.data.length} bytes unread`,
+    );
+  }
+  const things: (Thing | undefined)[] = [];
+  const problems: string[] = [];
+  for (const plan of plans) {
+    try {
+      things.push(...(await readPlan(plan, inflate, readers)).things);
+    } catch (error) {
+      problems.push(`island ${problems.length + 1}: ${
+        error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { revision, things, problems };
 }
 
 /**

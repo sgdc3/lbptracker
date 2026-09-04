@@ -26,7 +26,7 @@
  * files.
  */
 
-import { musicSequencers, readLevel, readPlan, type Placement } from './level.ts';
+import { musicSequencers, readChunk, readLevel, readPlan, type Placement } from './level.ts';
 import { partReaders } from './parts.ts';
 import type { Inflate } from './resource.ts';
 import type { Thing } from './thing.ts';
@@ -143,14 +143,16 @@ export interface Sequencer {
 export interface LevelProject {
   readonly file: string;
   /**
-   * True when this came out of a **plan** rather than a level.
+   * Which of the three the file was.
    *
    * ❗ Worth carrying because it changes what to call things on screen: a
    * backup of 56 plans is not "56 levels", and most of a creator's music turns
    * out to live in plans -- 172 sequencers against the levels' 19, measured over
-   * the five saves in the corpus.
+   * the five saves in the corpus. A `chunk` is a piece of a streamed adventure.
    */
-  readonly plan: boolean;
+  readonly kind: 'level' | 'plan' | 'chunk';
+  /** Parts of the file that would not read; see `LevelParse.problems`. */
+  readonly problems?: readonly string[];
   readonly sequencers: readonly Sequencer[];
 }
 
@@ -187,7 +189,8 @@ export function trackFrom(placement: Placement): Track {
 export function importLevel(
   file: string,
   things: readonly (Thing | undefined)[],
-  plan = false,
+  kind: LevelProject['kind'] = 'level',
+  problems?: readonly string[],
 ): LevelProject {
   const sequencers: Sequencer[] = [];
   for (const found of musicSequencers(things)) {
@@ -216,7 +219,7 @@ export function importLevel(
       lengthSteps,
     });
   }
-  return { file, plan, sequencers };
+  return { file, kind, problems, sequencers };
 }
 
 /**
@@ -233,9 +236,11 @@ export async function readLevelProject(
   // ❗ A plan is not a level: it is a saved Thing, and its Things live inside a
   // nested blob. It is told apart by the resource magic, which is the first four
   // bytes of the file and needs nothing inflated to read.
-  const plan = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) === 'PLNb';
-  const { things } = await (plan ? readPlan : readLevel)(bytes, inflate, partReaders());
-  return importLevel(file, things, plan);
+  const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+  const kind = magic === 'PLNb' ? 'plan' : magic === 'CHKb' ? 'chunk' : 'level';
+  const read = kind === 'plan' ? readPlan : kind === 'chunk' ? readChunk : readLevel;
+  const { things, problems } = await read(bytes, inflate, partReaders());
+  return importLevel(file, things, kind, problems);
 }
 
 /**

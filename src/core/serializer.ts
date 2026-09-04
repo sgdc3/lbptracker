@@ -237,14 +237,19 @@ export class Serializer {
    * flag byte is `0` for none, `1` for a hash and `2` for a GUID — the two
    * swap below version `0x191`, which this reader does not accept.
    */
-  resource(isDescriptor = false): ResourceRef | undefined {
+  resource(isDescriptor = false, includeType = false): ResourceRef | undefined {
     if (this.revision.version > 0x22e && !isDescriptor) this.i32();
     const flag = this.u8();
+    // ⚠️ **The type is not there when the flag is zero.** The reference ends at
+    // the flag byte for a null resource, so reading the type unconditionally
+    // eats four bytes of whatever came next. `ChunkFile.userResources` is the
+    // one place `includeType` is set, and it is a list where nulls are common.
     if (flag === 0) return undefined;
     let guid = 0;
     let hash: Uint8Array | undefined;
     if ((flag & 2) !== 0) guid = this.guid();
     if ((flag & 1) !== 0) hash = this.sha1();
+    if (includeType) this.i32(); // the resource type, written inline
     return guid === 0 && !hash ? undefined : { guid, hash };
   }
 

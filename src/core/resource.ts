@@ -82,6 +82,21 @@ export async function loadResource(
   const compressionFlags = reader.u8();
   const isCompressed = reader.u8() !== 0;
 
+  // ⚠️ **`isCompressed` is a real branch and was ignored here for months.** An
+  // uncompressed resource has no chunk table at all: the payload starts right
+  // after this byte and runs to the dependency table. Every level and plan in
+  // the corpus is compressed, so reading the table unconditionally worked until
+  // the first `CHKb` streaming chunk arrived -- and then it read a chunk count
+  // out of the payload's first bytes ("96 chunks") and failed to inflate the
+  // level geometry it found behind it.
+  if (!isCompressed) {
+    return {
+      magic, revision, branchId, branchRevision, compressionFlags, isCompressed,
+      dependencyTableOffset, chunks: [],
+      data: bytes.subarray(0x12, dependencyTableOffset),
+    };
+  }
+
   // 0x12 is a flag that is always 0x0001; the chunk count follows it.
   reader.position = 0x14;
   const chunkCount = reader.u16();
