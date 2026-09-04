@@ -272,7 +272,10 @@ export const CHANNEL_COUNT = 8;
  * Only 30 of 338 use more than one channel, and 28 of those carry a non-unit
  * volume -- typically a descending ramp like `1.00, 0.70, 0.50, 0.20`.
  */
-export function channelVolume(sequencer: Sequencer, track: Track): number {
+export function channelVolume(
+  sequencer: { numChannels: number; volumes: readonly number[] },
+  track: { gridY: number },
+): number {
   // A sequencer claiming no channels still has one to play through, and the
   // plugin only has eight records however many the field claims.
   const count = Math.min(CHANNEL_COUNT, Math.max(1, sequencer.numChannels));

@@ -3,6 +3,37 @@
 Read before starting implementation. This describes the intended shape and the reasoning behind the
 non-obvious choices, so a future session can disagree with the reasoning rather than rediscover it.
 
+## The live player's settings are applied, not re-planned
+
+⚠️ **Read before adding a control to `dev/live.html`.** The page builds its plan once — the
+render's whole voice pass, `renderSequencer` with `planOnly` — and a setting that forces that again
+runs it on the thread that also feeds the audio. On `Ascetic`, 1,150 tracks. A listener heard the
+player stutter every time the tempo, the swing, `NumChannels` or a channel fader moved, and the
+450 ms debounce that was there made it happen less often rather than fixing it.
+
+**None of those four changes a voice.** They change where it starts, how long it lasts and how loud
+it is, so the plan holds **musical positions** (`startStep`, `endStep`) and a gain with the channel
+factor divided out, and `pump()` derives frames and gain as it posts each note. Changing one is
+three numbers and a re-point of the playhead.
+
+✅ **Proved rather than argued**: `dev/live-settings.ts` builds the plan at a song's own settings,
+applies new ones the way the page does, and compares against a render of a sequencer that had those
+settings all along. **Bit-identical.** Run it after touching either file.
+
+❗ **The one part that has to be rebuilt is the in-note automation.** `automation` and
+`morph.points` carry frames from the voice's own start, and those frames were bent by the tempo AND
+the swing — `swungFrame(step + offset) - swungFrame(step)`. Everything else about a voice is in
+seconds or is a ratio. So the plan carries each control point's step offset (`pointSteps`) and
+`onClock` puts the frames back. Skipping this looks like it works and is **15.9 dB wrong**: the
+notes land in the right places and glide at the old tempo inside themselves.
+
+⚠️ **Tempo is only free of the voice because no instrument the game ships sets `fitBpm`** — 0 of
+68, which `test/instrument.test.ts` measures. One that did would have its playback rate scaled by
+the tempo and would need the rebuild after all.
+
+The voice pool was already live for the same reason and by the same route: the plan carries no cuts,
+and `LiveVoicePool` applies the size per note.
+
 ## The central decision: own the mixer
 
 The obvious way to build a sampler in the browser is one `AudioBufferSourceNode` per voice with

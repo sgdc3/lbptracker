@@ -23,9 +23,12 @@
 import { HANDOFF_KEY, loaderFor, manifest, asset, type Manifest } from './assets.ts';
 import { seqPicker } from './seq-picker.ts';
 import { type VoiceSpec } from '../src/audio/mixer.ts';
-import { CHANNEL_COUNT, readLevelProject, type LevelProject } from '../src/core/project.ts';
+import {
+  CHANNEL_COUNT, channelVolume, readLevelProject, type LevelProject,
+} from '../src/core/project.ts';
 import { LiveVoicePool, VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
 import { swungFrame } from '../src/core/swing.ts';
+import { samplesPerStep } from '../src/core/voice.ts';
 import { PAN_WIDTH, RATE, renderSequencer } from '../src/core/render.ts';
 import { webInflate } from '../src/platform/web.ts';
 
@@ -86,11 +89,38 @@ const clock = (seconds: number) => {
  * get wrong twice.
  */
 interface Planned {
-  readonly at: number; // output frames from the start of the song
+  /**
+   * Where the voice starts and ends **in steps**, not in frames.
+   *
+   * ❗ **Tempo, swing and the channel mixer are applied when the note is
+   * posted, not when the plan is built.** None of the three changes a voice:
+   * they change where it starts, how long it lasts and how loud it is, and all
+   * three of those are one line of arithmetic over a musical position. Storing
+   * frames instead meant every turn of the tempo knob re-ran the whole voice
+   * pass -- `Ascetic` is 1,150 tracks -- on the thread that also feeds the
+   * audio, which is exactly the stutter a listener heard.
+   *
+   * ⚠️ Tempo is only free of the voice because **no instrument the game
+   * ships sets `fitBpm`** (0 of 68). One that did would have its playback rate
+   * scaled by the tempo and would need a rebuild after all.
+   */
+  readonly startStep: number;
+  readonly endStep?: number;
+  /** The board row, which picks the mixer channel through `NumChannels`. */
+  readonly row: number;
+  /** `voice.gain` with the channel's factor divided out, so it can be redone. */
+  readonly baseGain: number;
+  /**
+   * Each control point's offset from the note's start, in steps.
+   *
+   * ❗ `automation` and `morph.points` hold frames from the voice's own start,
+   * and those frames were bent by the tempo AND the swing. Everything else
+   * about a voice is in seconds or is a ratio, so this is the only part a live
+   * change has to rebuild. `dev/live-settings.ts` proves the rebuild exact.
+   */
+  readonly pointSteps: readonly number[];
   readonly sampleId: string;
   readonly voice: Omit<VoiceSpec, 'sample' | 'random' | 'startFrame' | 'endFrame' | 'cutFrame'>;
-  /** Frames from this voice's own start, or undefined when it had none. */
-  readonly life?: number;
   readonly lfoPhase: readonly [number, number, number];
   /**
    * What the voice pool needs, in its own units.
@@ -209,12 +239,14 @@ const planOptions = () => ({
 /**
  * The song's own settings, as the listener has left them.
  *
- * ⚠️ **These cannot be live in the worklet.** Tempo and swing decide where
- * every note falls and the channel volumes decide every voice's gain, all of
- * which is fixed when a voice is built -- so changing one rebuilds the plan.
- * The rebuild is swapped in under the transport, and the playhead is carried
- * over in STEPS rather than seconds, because a tempo change moves the seconds
- * a musical position corresponds to.
+ * ✅ **All four are applied live and none of them rebuilds anything.** The plan
+ * holds musical positions and a gain with the channel factor divided out, so a
+ * new tempo, swing, channel count or fader is three numbers and the next note
+ * posted uses them. What is already sounding keeps the timing it was given,
+ * which is what a DAW does too.
+ *
+ * ⚠️ They used to rebuild: every turn of the knob re-ran the whole voice
+ * pass on the thread that feeds the audio, and a listener heard it stutter.
  */
 let overrides: {
   tempo?: number;
@@ -246,7 +278,46 @@ let pool = new LiveVoicePool(poolSize());
 const handed = new Map<number, number>();
 let stepFrames = 0;
 let swing = 0;
+/** The song's own length in steps, and the render's tail, so a tempo change can
+ * put `songFrames` back without asking the renderer. */
+let songSteps = 0;
+let tailFrames = 0;
 const cutFrameAt = (step: number) => Math.round(swungFrame(step, stepFrames, swing));
+
+/**
+ * Where a planned voice starts, how long it lasts and how loud it is, **now**.
+ *
+ * ❗ The three settings a listener turns while the music runs are applied here
+ * and nowhere else, which is what makes them free: `startedAt` is untouched, no
+ * message goes to the worklet, and the plan is read, not rewritten.
+ */
+const frameOf = (p: Planned) => cutFrameAt(p.startStep);
+const lifeOf = (p: Planned) =>
+  (p.endStep === undefined ? undefined : Math.max(0, cutFrameAt(p.endStep) - frameOf(p)));
+const gainOf = (p: Planned) =>
+  p.baseGain * channelVolume({ numChannels: liveChannels, volumes: liveVolumes }, { gridY: p.row });
+/** The voice with its in-note automation put back on the current clock. */
+const onClock = (p: Planned): Planned['voice'] => {
+  const base = swungFrame(p.startStep, stepFrames, swing);
+  const frameAt = (offset: number) =>
+    Math.round(swungFrame(p.startStep + offset, stepFrames, swing) - base);
+  const v = p.voice;
+  return {
+    ...v,
+    automation: v.automation?.map((point, index) => ({
+      ...point, frame: frameAt(p.pointSteps[index] ?? 0),
+    })),
+    morph: v.morph === undefined ? undefined : {
+      ...v.morph,
+      points: v.morph.points.map((point, index) => ({
+        ...point, frame: frameAt(p.pointSteps[index] ?? 0),
+      })),
+    },
+  };
+};
+/** The mixer as the faders have it, read by `gainOf` on every note posted. */
+let liveChannels = 1;
+let liveVolumes: readonly number[] = [1, 1, 1, 1, 1, 1];
 
 /**
  * Rebuild the pool's state so it matches a playthrough that reached `upTo`.
@@ -260,7 +331,7 @@ const cutFrameAt = (step: number) => Math.round(swungFrame(step, stepFrames, swi
 function rebuildPool(upTo: number): void {
   pool = new LiveVoicePool(poolSize());
   for (const p of plan) {
-    if (p.at >= upTo) break;
+    if (frameOf(p) >= upTo) break;
     pool.add(p.index, { start: p.poolStart, end: p.poolEnd, score: p.score });
   }
 }
@@ -388,12 +459,19 @@ async function prepare(restart = true): Promise<void> {
       const {
         sample: _s, random: _r, startFrame: _f, endFrame, cutFrame: _c, ...rest
       } = voice;
-      const at = where.startFrame;
+
       built.push({
-        at,
+        startStep: where.startStep,
+        endStep: where.endStep,
+        row: where.row,
+        // ❗ Divided out so the faders can put a different one back. It is never
+        // zero: `CHANNEL_HEADROOM` is 0.75 and a volume of 0 would have made
+        // the voice silent in the render too.
+        baseGain: where.channelGain === 0 ? rest.gain : rest.gain / where.channelGain,
+        pointSteps: where.pointSteps,
         sampleId,
         voice: rest,
-        life: endFrame === undefined ? undefined : Math.max(0, endFrame - at),
+
         lfoPhase: phase,
         poolStart: where.poolStart,
         poolEnd: where.poolEnd,
@@ -408,14 +486,20 @@ async function prepare(restart = true): Promise<void> {
     },
   });
 
-  built.sort((a, b) => a.at - b.at);
+  // Sorted by musical position, which is the order they will be posted in at
+  // any tempo: swing is monotonic in the step.
+  built.sort((a, b) => a.startStep - b.startStep);
   plan = built;
   preparedWith = JSON.stringify(planOptions());
   songFrames = result.frames;
   songSeconds = result.seconds;
   framesPerStep = result.framesPerStep;
   stepFrames = result.framesPerStep;
+  songSteps = original.lengthSteps;
+  tailFrames = Math.max(0, result.frames - Math.round(original.lengthSteps * stepFrames));
   swing = seq.swing;
+  liveChannels = seq.numChannels;
+  liveVolumes = seq.volumes;
   pushEffects();
   pushPanWidth();
   drawDensity();
@@ -431,7 +515,7 @@ async function prepare(restart = true): Promise<void> {
     if (context) startedAt = context.currentTime;
     playing = wasPlaying;
     const now = songPosition();
-    nextIndex = plan.findIndex((p) => p.at >= now);
+    nextIndex = plan.findIndex((p) => frameOf(p) >= now);
     if (nextIndex < 0) nextIndex = plan.length;
     handed.clear();
     rebuildPool(now);
@@ -484,7 +568,7 @@ function drawDensity(): void {
   if (!plan.length || songFrames <= 0) return;
   const bins = new Float32Array(width);
   for (const p of plan) {
-    const x = Math.min(width - 1, Math.max(0, Math.floor((p.at / songFrames) * width)));
+    const x = Math.min(width - 1, Math.max(0, Math.floor((frameOf(p) / songFrames) * width)));
     bins[x] += 1;
   }
   const peak = Math.max(...bins) || 1;
@@ -509,7 +593,7 @@ function seek(frames: number): void {
   // Everything before the cursor is skipped rather than replayed. A voice that
   // straddles the point is not resurrected: the engine has no way to start a
   // note in the middle and neither has this.
-  nextIndex = plan.findIndex((p) => p.at >= cursorFrames);
+  nextIndex = plan.findIndex((p) => frameOf(p) >= cursorFrames);
   if (nextIndex < 0) nextIndex = plan.length;
   handed.clear();
   rebuildPool(cursorFrames);
@@ -562,30 +646,35 @@ function pump(): void {
   if (!playing || !node) return;
   const now = songPosition();
   const until = now + LOOKAHEAD * RATE;
-  while (nextIndex < plan.length && plan[nextIndex].at < until) {
+  while (nextIndex < plan.length && frameOf(plan[nextIndex]) < until) {
     const p = plan[nextIndex];
+    // ❗ Frames and gain derived HERE, from the tempo, swing and faders as they
+    // stand this instant. Everything else about the voice was decided once.
+    const at = frameOf(p);
+    const life = lifeOf(p);
     // The delay this voice waits before it starts, and its own end rebased onto
     // that delay so the mixer's `endFrame - startFrame` is still its length.
-    const delay = Math.max(0, Math.round(p.at - now));
+    const delay = Math.max(0, Math.round(at - now));
     const { end, stole } = pool.add(p.index, {
       start: p.poolStart,
       end: p.poolEnd,
       score: p.score,
     });
-    const cut = end < p.poolEnd ? cutFrameAt(end) - p.at : undefined;
+    const cut = end < p.poolEnd ? cutFrameAt(end) - at : undefined;
     node.port.postMessage({
       type: 'play',
       sampleId: p.sampleId,
       voice: {
-        ...p.voice,
+        ...onClock(p),
+        gain: gainOf(p),
         tag: p.index,
         startFrame: delay,
-        endFrame: p.life === undefined ? undefined : delay + p.life,
+        endFrame: life === undefined ? undefined : delay + life,
         cutFrame: cut === undefined ? undefined : delay + cut,
       },
       lfoPhase: p.lfoPhase,
     });
-    handed.set(p.index, p.at);
+    handed.set(p.index, at);
     if (stole) {
       stolenLive += 1;
       const cell = document.getElementById('stolenCell');
@@ -742,20 +831,57 @@ const showSongOptions = () => {
   }
 };
 
-let songTimer = 0;
+/**
+ * Tempo, swing, channel count and the faders, applied without a rebuild.
+ *
+ * ✅ **Nothing the audio thread is working on is regenerated.** The samples it
+ * holds, the voices already sounding and the plan itself are all untouched:
+ * three numbers change, the playhead is carried over in STEPS because a tempo
+ * change moves the seconds a musical position sits at, and the next note posted
+ * uses the new values. There is no debounce because there is nothing to
+ * debounce -- this is a handful of arithmetic, not a pass over the song.
+ *
+ * ⚠️ It used to set `overrides` and call `prepare(false)` behind a 450 ms
+ * timer, which re-ran the whole voice pass -- 1,150 tracks on `Ascetic` -- on
+ * the thread that also feeds the audio. That is the stutter a listener heard,
+ * and the delay was there to make it happen less often rather than to fix it.
+ */
 const songChanged = () => {
   showSongOptions();
   if (!plan.length) return;
+  const tempo = Number(tempoInput.value);
   overrides = {
-    tempo: Number(tempoInput.value),
+    tempo,
     swing: Number(swingInput.value) / 100,
     numChannels: Number(numChannelsInput.value),
     volumes: [...channelsBox.querySelectorAll<HTMLInputElement>('.chan')].map(
       (el) => Number(el.value) / 100,
     ),
   };
-  window.clearTimeout(songTimer);
-  songTimer = window.setTimeout(() => void prepare(false), 450);
+
+  // Where we are in the music, not in seconds: a tempo change moves one and not
+  // the other, and the music is what a listener is following.
+  const stepNow = stepFrames > 0 ? songPosition() / stepFrames : 0;
+  stepFrames = samplesPerStep(RATE, tempo);
+  framesPerStep = stepFrames;
+  swing = overrides.swing ?? 0;
+  liveChannels = overrides.numChannels ?? liveChannels;
+  liveVolumes = overrides.volumes ?? liveVolumes;
+
+  songFrames = Math.round(songSteps * stepFrames) + tailFrames;
+  songSeconds = songFrames / RATE;
+  timeline.setAttribute('aria-valuemax', songSeconds.toFixed(1));
+  cursorFrames = Math.min(songFrames, Math.round(stepNow * stepFrames));
+  if (context) startedAt = context.currentTime;
+  const now = songPosition();
+  nextIndex = plan.findIndex((p) => frameOf(p) >= now);
+  if (nextIndex < 0) nextIndex = plan.length;
+  handed.clear();
+  rebuildPool(now);
+  // The echo delay is in beats, so it follows the tempo.
+  pushEffects();
+  drawDensity();
+  paint();
 };
 
 /**

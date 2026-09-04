@@ -185,8 +185,11 @@
           <output id="swingLabel">0.00</output>
         </div>
         <p class="hintline">
-          Both are written into the song. Changing either moves every note, so the plan is rebuilt
-          &mdash; underneath, keeping your place in the <em>music</em> rather than in seconds.
+          Both are written into the song, and both move <em>every</em> note &mdash; but neither
+          rebuilds anything. The plan holds musical positions, so a new tempo or swing is three
+          numbers and the next note played uses them; your place is kept in the <em>music</em>
+          rather than in seconds, since a tempo change moves the second a bar sits at. What is
+          already sounding keeps the timing it was given, which is what a DAW does too.
         </p>
       </div>
       <div class="group">
@@ -201,7 +204,8 @@
           <code>NumChannels</code> and the song&rsquo;s own mixer. A board row feeds channel
           <em>row mod NumChannels</em>, so with one channel every row goes through the one fader,
           and raising it fans the same rows out &mdash; the count beside each fader is how many
-          tracks land on it. 308 of the 338 sequencers in the corpus declare one.
+          tracks land on it. 308 of the 338 sequencers in the corpus declare one. Live, like the
+          timing: a fader is one factor of a voice&rsquo;s gain and nothing else.
         </p>
       </div>
     </div>

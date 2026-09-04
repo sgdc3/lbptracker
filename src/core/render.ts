@@ -206,6 +206,37 @@ export interface RenderOptions {
       poolStart: number;
       poolEnd: number;
       score: number;
+      /**
+       * What a live scheduler needs to re-place this voice without re-planning.
+       *
+       * ❗ **Tempo, swing and the channel mixer are the three settings a
+       * listener turns while the music runs**, and none of them changes a voice
+       * -- they change WHERE it starts, HOW LONG it lasts and HOW LOUD it is.
+       * So they are given here as the musical coordinates and the one gain
+       * factor they own, and `dev/live.ts` re-derives the frames and the gain
+       * per note instead of rebuilding the plan.
+       *
+       * ⚠️ Tempo is only free of the voice because **no instrument the game
+       * ships sets `fitBpm`** -- 0 of 68, measured in `test/instrument.test.ts`.
+       * One that did would have its playback rate scaled by the tempo, and this
+       * would be wrong for it.
+       */
+      startStep: number;
+      endStep?: number;
+      /** The board row, which picks the mixer channel through `NumChannels`. */
+      row: number;
+      /** `channelVolume`'s factor, already inside `voice.gain`. */
+      channelGain: number;
+      /**
+       * Each control point's offset from the note's start, **in steps**.
+       *
+       * ❗ `automation` and `morph.points` carry FRAMES from the voice's own
+       * start, and those frames were bent by both the tempo and the swing --
+       * `swungFrame(step + offset) - swungFrame(step)`. A live scheduler that
+       * changes either has to rebuild them, and this is the only thing it needs
+       * to. In the same order as `automation`.
+       */
+      pointSteps: readonly number[];
     },
   ) => void;
   /**
@@ -703,6 +734,16 @@ export async function renderSequencer(
         poolStart: event.step,
         poolEnd: event.step + (prep.occupancySteps ?? event.durationSteps),
         score: channelVolume(seq, track) * velocityGain(event.volume),
+        startStep: event.step,
+        // ❗ The note's own end, not the pool's occupancy: a voice may hold a
+        // channel longer than it sounds, and it is the sounding that decides
+        // where the frames end.
+        endStep: voice.endFrame === undefined
+          ? undefined
+          : event.step + event.durationSteps,
+        row: track.gridY,
+        channelGain: channelVolume(seq, track),
+        pointSteps: event.points.map((point) => point.step),
       });
       if (!planOnly) mixer.play(voice);
     }
