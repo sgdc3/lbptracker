@@ -998,14 +998,57 @@ With that door closed, everything measured says the engine holds a record throug
 - the release times are not inflated: `ENVELOPE_SECONDS_PER_UNIT = 4` is measured off the engine's
   own `dt` arithmetic, not chosen.
 
-**The next hypothesis is about the stealing's SOUND, not its count.** `Voice.renderChunk` stops a
-cut voice dead at a sample boundary — `last = begin + this.cut` and the loop simply ends. The engine
-hands the record to the new note instead, and the ladder's state is not reset. Thirty per cent of
-notes ending in a hard stop is a very different thing to hear from thirty per cent being replaced,
-and it would explain a listener hearing "nothing like the original" at a count that is correct.
+### ❌ "The steal sounds different" — refuted by the code, 2026-09-04
 
-**The experiment**: render `C4K3 S0NG` with the release tail in the occupancy *and* a short fade on
-the cut, and listen. If that is it, the fix is the fade, not the accounting.
+The hypothesis was that the engine hands the record over smoothly where we stop the voice dead, so
+that the same count of steals would sound far gentler. **It does not.** The note-start path calls
+the record initialiser at `0x19e0`, and that opens with:
+
+```
+0x1a06  xor esi, esi
+0x1a08  mov edx, 0xd0        ; the whole 208-byte voice record
+0x1a0d  call 0xe0            ; zero it
+0x1a12  mov byte [rbx], r14b ; then the slot index
+0x1a1a  [rbx+0x28] = xmm0    ; the modulation
+0x1a1f  [rbx+0x10] = 0       ; gate: held
+```
+
+`0xe0` is a PLT stub taking `(record, 0, 0xd0)` with its result discarded; a source pointer of zero
+rules out the `memcpy` in the import set, so it is a fill. ⚠️ The NID was **not** resolved — this is
+measured from the call's shape, not from the symbol.
+
+**So the engine wipes the record: envelope accumulator, position, phases, all of it.** The stolen
+voice stops instantly and the new note starts from silence. `Voice.renderChunk`'s hard stop at
+`begin + this.cut` is exactly what the game does, and a fade would be an invention. **Do not add
+one.**
+
+### Where that leaves it
+
+Every part of the engine's side is now measured and none of it explains the ear:
+
+| | |
+|---|---|
+| the pool is 32 | ✔ `(0x1a28 - 0x28) / 0xd0` |
+| a stacked note takes one record | ✔ the layer loop is inside the per-voice renderer |
+| a record is held until the envelope reaches zero | ✔ `0x2089` → `0x20e0` → `0x3093` |
+| a releasing voice is not a cheaper victim | ✔ the score fields are only read |
+| the `[+0x14]` fast path could yield one | ❌ dead: both callers pass `dil = 0` |
+| release times are not inflated | ✔ `ENVELOPE_SECONDS_PER_UNIT` is measured |
+| a steal is abrupt in the game too | ✔ the record is zeroed on takeover |
+
+That predicts **29.9%** of `C4K3 S0NG`'s notes cut short, and a listener says the game is nothing
+like that. What is left is on **our** side of the line, not the engine's, and neither half has been
+checked:
+
+- **`durationSteps`** — how long the sequencer holds a note's gate open. It comes from the note
+  record chain and has never been measured against the engine's own reading of it.
+- **Whether every note we schedule is one the game sounds at all.** A note on a muted channel, or an
+  instrument the game skips, costs us a record and costs the game nothing.
+
+⚠️ **And our own two halves already disagree.** The mixer keeps a voice alive through its release
+(`env.finished` ends it); the pool frees the record at the note's written end. The pool is the
+optimistic one, and it is the half that matches the ear — which is a coincidence until one of the
+two lines above explains it.
 
 ⚠️ **Do not implement the tail until this is answered.** Today's model is knowingly short by the
 release, and short is audibly right; long is audibly wrong.
