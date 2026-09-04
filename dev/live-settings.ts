@@ -254,4 +254,50 @@ console.log(`  applied live   rms ${rms(ll).toFixed(6)}`);
 console.log(`  rendered with  rms ${rms(tl).toFixed(6)}`);
 console.log(`  difference: ${dB.toFixed(1)} dB relative, worst ${worst.toExponential(2)} at ` +
   `${(worstAt / RATE).toFixed(3)} s`);
-process.exit(dB < -100 ? 0 : 1);
+/* ------------------------------------------------ dragging the tempo slider */
+
+/**
+ * A listener holding the tempo slider, thirty changes a second, while it plays.
+ *
+ * ⚠️ **This is a regression check for a bug that shipped.** Applying the
+ * settings live re-points the playhead, and the first version let `nextIndex`
+ * land BEFORE the end of the look-ahead window that `pump` had already handed
+ * to the worklet -- so every voice in it was posted a second time, thirty times
+ * a second. It sounded like the notes repeating and the mix getting very loud,
+ * because they were and it was.
+ *
+ * The page's arithmetic, reproduced: post a window, change the settings, post
+ * again, and count how many times each note is handed over. Never twice.
+ */
+const LOOKAHEAD = 0.35;
+const posted = new Map<number, number>();
+let nextIndex = 0;
+let dragTempo = seq.tempo;
+let dragStep = samplesPerStep(RATE, dragTempo);
+let cursor = 0;
+
+const frameAtTempo = (step: number, sf: number) => Math.round(swungFrame(step, sf, seq.swing));
+const pumpOnce = () => {
+  const until = cursor + LOOKAHEAD * RATE;
+  while (nextIndex < plan.length && frameAtTempo(plan[nextIndex].startStep, dragStep) < until) {
+    const id = nextIndex;
+    posted.set(id, (posted.get(id) ?? 0) + 1);
+    nextIndex += 1;
+  }
+};
+
+for (let tick = 0; tick < 200; tick += 1) {
+  pumpOnce();
+  // A tick of playback, then the slider moves again.
+  cursor += 0.05 * RATE;
+  const stepNow = cursor / dragStep;
+  dragTempo = seq.tempo * (1 + 0.4 * Math.sin(tick / 3));
+  dragStep = samplesPerStep(RATE, dragTempo);
+  cursor = stepNow * dragStep;
+  const want = plan.findIndex((p) => frameAtTempo(p.startStep, dragStep) >= cursor);
+  nextIndex = Math.max(nextIndex, want < 0 ? plan.length : want);
+}
+const twice = [...posted.values()].filter((n) => n > 1).length;
+console.log(`  dragging the tempo: ${posted.size} notes handed over, ${twice} of them more than once`);
+
+process.exit(dB < -100 && twice === 0 ? 0 : 1);

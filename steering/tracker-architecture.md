@@ -32,7 +32,35 @@ notes land in the right places and glide at the old tempo inside themselves.
 the tempo and would need the rebuild after all.
 
 The voice pool was already live for the same reason and by the same route: the plan carries no cuts,
-and `LiveVoicePool` applies the size per note.
+and `LiveVoicePool` applies the size per note. ❗ Its **score** is not immune, though: the pool is in
+steps and so ignores tempo and swing, but `channelVolume * velocityGain` means a fader changes which
+voice gets stolen. The plan carries `baseScore` for the same reason it carries `baseGain`.
+
+### ⚠️ `nextIndex` must never move backwards — a bug that shipped
+
+Applying the settings live re-points the playhead, and the first version let `nextIndex` land
+**before the end of the look-ahead window `pump` had already handed to the worklet**. Every voice in
+that window was posted a second time, thirty times a second while a slider was held. A listener
+described it exactly: "the notes are played several times and the volume becomes very loud" —
+because they were and it was.
+
+Three things now stop it, and the first two are the fix:
+
+- `nextIndex = Math.max(nextIndex, want)`, so the playhead can move under the transport without the
+  scheduler rewinding;
+- `rebuildPoolTo(nextIndex)` replays the pool **by index rather than by frame**, so what has already
+  been handed over stays in it — rebuilding to the playhead instead would forget the window and
+  then hand it over again;
+- and `pump` skips a plan entry already in `handed`, which is the invariant stated outright.
+  `handed` is cleared only by `seek`, where re-posting is right because the worklet has been told to
+  stop everything.
+
+❗ `handed` stores the note's **step**, not its frame: the tempo can move after a voice was handed
+over, and a frame written under the old clock measures a steal's cut from the wrong place — too
+long a cut leaves a stolen voice sounding, which is more loudness nobody asked for.
+
+`dev/live-settings.ts` reproduces a slider drag and counts how many times each note is handed over.
+With the fix, 0 of 163 more than once; with the bug put back, **159 of 163**.
 
 ## The central decision: own the mixer
 

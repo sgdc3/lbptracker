@@ -111,6 +111,15 @@ interface Planned {
   /** `voice.gain` with the channel's factor divided out, so it can be redone. */
   readonly baseGain: number;
   /**
+   * The pool's score, likewise without the channel factor.
+   *
+   * ❗ The pool is in STEPS and so is immune to tempo and swing -- but its score
+   * is `channelVolume * velocityGain`, so a fader or `NumChannels` changes
+   * which voice gets stolen. That has to follow the mixer or the pool decides
+   * by a mix nobody is listening to.
+   */
+  readonly baseScore: number;
+  /**
    * Each control point's offset from the note's start, in steps.
    *
    * ❗ `automation` and `morph.points` hold frames from the voice's own start,
@@ -274,7 +283,14 @@ const withOverrides = <
 const poolSize = () => (noCapBox.checked ? VOICES_UNLIMITED : Number(voicesInput.value));
 
 let pool = new LiveVoicePool(poolSize());
-/** Song frame at which each handed-over voice started, so a theft can reach it. */
+/**
+ * The STEP at which each handed-over voice started, so a theft can reach it.
+ *
+ * ❗ A step and not a frame: the tempo can move after the voice was handed
+ * over, and a frame written under the old clock would measure a steal's cut
+ * from the wrong place -- too long a cut leaves a stolen voice sounding, which
+ * is loudness nobody asked for.
+ */
 const handed = new Map<number, number>();
 let stepFrames = 0;
 let swing = 0;
@@ -294,8 +310,9 @@ const cutFrameAt = (step: number) => Math.round(swungFrame(step, stepFrames, swi
 const frameOf = (p: Planned) => cutFrameAt(p.startStep);
 const lifeOf = (p: Planned) =>
   (p.endStep === undefined ? undefined : Math.max(0, cutFrameAt(p.endStep) - frameOf(p)));
-const gainOf = (p: Planned) =>
-  p.baseGain * channelVolume({ numChannels: liveChannels, volumes: liveVolumes }, { gridY: p.row });
+const mixerNow = () => ({ numChannels: liveChannels, volumes: liveVolumes });
+const gainOf = (p: Planned) => p.baseGain * channelVolume(mixerNow(), { gridY: p.row });
+const scoreOf = (p: Planned) => p.baseScore * channelVolume(mixerNow(), { gridY: p.row });
 /** The voice with its in-note automation put back on the current clock. */
 const onClock = (p: Planned): Planned['voice'] => {
   const base = swungFrame(p.startStep, stepFrames, swing);
@@ -329,10 +346,23 @@ let liveVolumes: readonly number[] = [1, 1, 1, 1, 1, 1];
  * passed -- no audio, no rebuild of the plan.
  */
 function rebuildPool(upTo: number): void {
+  rebuildPoolTo(plan.findIndex((p) => frameOf(p) >= upTo));
+}
+
+/**
+ * Replay the pool over the first `limit` notes of the plan, `-1` meaning all.
+ *
+ * ❗ **By INDEX, not by frame, when the clock has just moved.** A settings
+ * change re-points the playhead, and everything already handed to the worklet
+ * has to stay in the pool -- rebuilding to the playhead instead would forget
+ * the look-ahead window and then hand it over a second time.
+ */
+function rebuildPoolTo(limit: number): void {
   pool = new LiveVoicePool(poolSize());
-  for (const p of plan) {
-    if (frameOf(p) >= upTo) break;
-    pool.add(p.index, { start: p.poolStart, end: p.poolEnd, score: p.score });
+  const upTo = limit < 0 ? plan.length : limit;
+  for (let i = 0; i < upTo; i += 1) {
+    const p = plan[i];
+    pool.add(p.index, { start: p.poolStart, end: p.poolEnd, score: scoreOf(p) });
   }
 }
 
@@ -468,6 +498,7 @@ async function prepare(restart = true): Promise<void> {
         // zero: `CHANNEL_HEADROOM` is 0.75 and a volume of 0 would have made
         // the voice silent in the render too.
         baseGain: where.channelGain === 0 ? rest.gain : rest.gain / where.channelGain,
+        baseScore: where.channelGain === 0 ? where.score : where.score / where.channelGain,
         pointSteps: where.pointSteps,
         sampleId,
         voice: rest,
@@ -648,6 +679,16 @@ function pump(): void {
   const until = now + LOOKAHEAD * RATE;
   while (nextIndex < plan.length && frameOf(plan[nextIndex]) < until) {
     const p = plan[nextIndex];
+    // ❗ **Never twice.** The index arithmetic is supposed to guarantee this and
+    // once did not: a settings change re-pointed the playhead into the middle of
+    // the look-ahead window and every voice in it was handed over again, which
+    // sounded like the notes repeating and the mix getting very loud. `handed`
+    // is cleared by `seek`, where re-posting IS right because the worklet has
+    // been told to stop everything.
+    if (handed.has(p.index)) {
+      nextIndex += 1;
+      continue;
+    }
     // ❗ Frames and gain derived HERE, from the tempo, swing and faders as they
     // stand this instant. Everything else about the voice was decided once.
     const at = frameOf(p);
@@ -658,7 +699,7 @@ function pump(): void {
     const { end, stole } = pool.add(p.index, {
       start: p.poolStart,
       end: p.poolEnd,
-      score: p.score,
+      score: scoreOf(p),
     });
     const cut = end < p.poolEnd ? cutFrameAt(end) - at : undefined;
     node.port.postMessage({
@@ -674,19 +715,19 @@ function pump(): void {
       },
       lfoPhase: p.lfoPhase,
     });
-    handed.set(p.index, at);
+    handed.set(p.index, p.startStep);
     if (stole) {
       stolenLive += 1;
       const cell = document.getElementById('stolenCell');
       if (cell) cell.textContent = stolenLive.toLocaleString();
       // The victim loses its record at the thief's start. `cutAt` counts the
       // frames it still gets to sound, so measure from wherever it is now.
-      const startAbs = handed.get(stole.index);
-      if (startAbs !== undefined) {
+      const startStep = handed.get(stole.index);
+      if (startStep !== undefined) {
         node.port.postMessage({
           type: 'cutAt',
           tag: stole.index,
-          frames: Math.max(0, cutFrameAt(stole.at) - Math.max(now, startAbs)),
+          frames: Math.max(0, cutFrameAt(stole.at) - Math.max(now, cutFrameAt(startStep))),
         });
       }
     }
@@ -874,10 +915,19 @@ const songChanged = () => {
   cursorFrames = Math.min(songFrames, Math.round(stepNow * stepFrames));
   if (context) startedAt = context.currentTime;
   const now = songPosition();
-  nextIndex = plan.findIndex((p) => frameOf(p) >= now);
-  if (nextIndex < 0) nextIndex = plan.length;
-  handed.clear();
-  rebuildPool(now);
+  // ❗ **`nextIndex` must never go BACKWARDS.** `pump` posts a look-ahead window
+  // to the worklet, and those voices are already there and already sounding; a
+  // playhead that lands before the end of that window would hand every one of
+  // them over a second time. Dragging the tempo slider did exactly that, thirty
+  // times a second, and it sounded like the notes repeating and the mix getting
+  // very loud -- because they were, and it was.
+  //
+  // ⚠️ `handed` is kept for the same reason: it is what a steal's `cutAt`
+  // measures from, and clearing it left stolen voices uncut, which is the other
+  // half of that loudness.
+  const want = plan.findIndex((p) => frameOf(p) >= now);
+  nextIndex = Math.max(nextIndex, want < 0 ? plan.length : want);
+  rebuildPoolTo(nextIndex);
   // The echo delay is in beats, so it follows the tempo.
   pushEffects();
   drawDensity();
