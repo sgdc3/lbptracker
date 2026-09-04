@@ -28,7 +28,13 @@
 import { Echo, Reverb, clipToUnit, reverbPreset } from '../audio/effects.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from '../audio/mixer.ts';
 import { FILTER_PARAMS } from '../audio/moog.ts';
-import { ADSR_PARAMS, ADSR_PARAMS_B, evaluateAdsr, evaluateParam } from './envelope.ts';
+import {
+  ADSR_PARAMS,
+  ADSR_PARAMS_B,
+  envelopeLevelAt,
+  evaluateAdsr,
+  evaluateParam,
+} from './envelope.ts';
 import { resolveSlot } from './instrument.ts';
 import { LFO_PARAMS, OUTPUT_PARAMS, STACK_PARAMS } from './params.ts';
 import { VOICE_POOL_SIZE, allocateVoices } from './polyphony.ts';
@@ -466,6 +472,12 @@ export async function renderSequencer(
     const stretched =
       playbackRate > 0 ? slot.wav.channels[0].length / playbackRate : Infinity;
     const oneShotSteps = hold > 0 ? Math.min(stretched, hold) / framesPerStep : 0;
+    // How long the record is held after the gate closes: the amplitude
+    // envelope's release, scaled by the level it had actually reached.
+    const gateSeconds = (event.durationSteps * framesPerStep) / RATE;
+    const amp = evaluateAdsr(loaded.inst.params, ADSR_PARAMS, event.modulation);
+    const releaseTail =
+      (amp.release * envelopeLevelAt(amp, gateSeconds) * RATE) / framesPerStep;
     prepared.push({
       loaded,
       note,
@@ -473,17 +485,20 @@ export async function renderSequencer(
       playbackRate,
       holdFrames: hold,
       layers: Math.max(1, loaded.inst.numStack),
-      // ⚠️ **Knowingly short by the envelope's release.** The engine frees a
-      // record when the voice's LEVEL reaches zero (`sub_0x1c60` 0x20ea, and
-      // 0x3093 sets `[record] = 0xff`), not when the note ends -- so a record
-      // is really held for the note plus its release. Adding that tail takes
-      // `C4K3 S0NG` from 1,526 notes cut short to 3,908, which is worse than
-      // the accounting bug a listener rejected by ear. Something lets a
-      // releasing voice give up its record cheaply. ⚠️ The candidate was the
-      // allocator's `[record+0x14]` fast path and it is NOT: that field is a
-      // constant 10000 written at note start, and both callers pass `dil = 0`
-      // so the branch is dead. See question 29 for where that leaves it.
-      occupancySteps: Math.max(event.durationSteps, oneShotSteps),
+      // ❗ **The note, and then its release.** The engine frees a record when the
+      // voice's LEVEL reaches zero, not when the note ends: `sub_0x1c60` calls
+      // the envelope at `0x2089`, compares its return against zero at `0x20e0`,
+      // and `0x3093` writes `[record] = 0xff`. The release falls **linearly from
+      // wherever the level was** -- `0x1780`, `level -= dt / release²` -- so the
+      // tail is `release x level`, which is why `envelopeLevelAt` is solved here
+      // rather than the full `0 -> 1` time being used.
+      //
+      // ⚠️ **This makes the renderer cut MORE notes, not fewer**: 1,411 of
+      // `C4K3 S0NG`'s 13,091 become 2,922. That is the engine's arithmetic and
+      // it is what the pool is for; a version that steals less is a version
+      // playing notes the game does not have room for. See question 29 --
+      // including what a capture would have to show to overturn this.
+      occupancySteps: Math.max(event.durationSteps, oneShotSteps) + releaseTail,
     });
   }
 

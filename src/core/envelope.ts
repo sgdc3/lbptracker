@@ -120,6 +120,31 @@ export function evaluateAdsr(
 }
 
 /**
+ * The level an envelope has reached after `seconds` with the gate still open.
+ *
+ * ❗ **This is how long a voice holds one of the engine's 32 records.** The
+ * engine frees a record when the voice's level reaches zero (`sub_0x1c60`
+ * `0x20e0` on the envelope's own return, then `0x3093` writes `0xff`), and the
+ * release falls **linearly from wherever the level was**, so the tail after the
+ * gate closes is `release x level`, not `release`. A note released from a
+ * sustain of 0.2 holds its record for a fifth as long as one released from 1.
+ *
+ * The same three phases `advance` runs, solved instead of stepped: the attack
+ * from 0 to 1 over `attack`, the decay from 1 to `sustain` over
+ * `decay x (1 - sustain)`, and then the sustain.
+ */
+export function envelopeLevelAt(adsr: Adsr, seconds: number): number {
+  if (seconds <= 0) return 0;
+  if (adsr.attack > 0) {
+    if (seconds < adsr.attack) return seconds / adsr.attack;
+  }
+  const after = seconds - Math.max(0, adsr.attack);
+  const falling = adsr.decay * (1 - adsr.sustain);
+  if (adsr.decay <= 0 || after >= falling) return adsr.sustain;
+  return 1 - after / adsr.decay;
+}
+
+/**
  * The engine's envelope generator, state and all.
  *
  * The stored value is **mirrored around 1**, exactly as the engine stores it:
