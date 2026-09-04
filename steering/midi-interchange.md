@@ -226,6 +226,9 @@ same identity so the import merges them. It cost **2 extra tracks across the who
 | byte 3's resting bit on a clip that is not uniform | 31 | inert to the engine, per note, and MIDI has no per-note carrier for it |
 | a note whose records differ some other way | 5 | not diagnosed |
 
+❗ **The 109 are open question 24**, with what has already been ruled out and the concrete anchor
+for each bucket: [open-questions.md](open-questions.md).
+
 ✅ **The patch went 177 clips → 109 on 2026-09-04**, and 34 kB → 23 kB (0.10% of the file), by
 finding two more things that could be said after all:
 

@@ -25,6 +25,10 @@ useful part. ~~**What is left is the remaining field semantics**, mainly `Notes.
 transposition and this project ignored it. See *18. `Notes.y`, `Key` and `Splitnotes`* in
 [answered-questions.md](answered-questions.md).
 
+⚠️ **Question 24 is a different kind of thing from the rest of this file** and is deliberately
+last: nothing in it is audible and nothing in it is broken. It asks whether the MIDI converter's
+verbatim record patch can be made smaller, not whether the game has been read correctly.
+
 Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then working outward from it. That
 run closed questions 5 and 7 outright, the whole of 8's `Params`, and the triplet half of 3; it
 opened 5b; and it corrected several things steering had wrong — the state block's pointers, the
@@ -827,3 +831,71 @@ own is measured, so this would have to be a bug rather than a difference); the l
 solve at low cutoffs; or the capture chain again. ⚠️ It is suspiciously *flat* for a filter — a
 resampling or interpolation error would tilt with frequency rather than sit at −1 dB across five
 octaves, which argues for something gain-like that this project applies to part of the signal.
+
+## 24. The last 109 clips that need a verbatim record patch
+
+⚠️ **Nothing here is audible, and nothing here is broken.** The MIDI round trip is exact — 0 records
+different in 1,448,224 — *because* the exporter carries these clips' records verbatim in the
+`LBP-TRK` meta's `fix`. The question is only whether the patch can be made smaller, which matters
+because every clip in it is a clip whose bytes go stale the moment a DAW edits its notes. See
+[midi-interchange.md](midi-interchange.md) for what `fix` is and why it exists.
+
+**Where it stands, measured 2026-09-04 over the ten-level corpus** (`LBP_MIDI_LOOSE=1` turns the
+patch off so the residue is visible):
+
+| | clips | |
+|---|---|---|
+| a ramp re-cut onto the staircase its own rounding makes | **73** | the reconstruction is *tighter* to the curve than the author's encoding |
+| byte 3's resting bit is not uniform within the clip | **31** | inert to the engine; per note, and MIDI has no free per-note carrier |
+| not diagnosed | **5** | |
+
+**109 of 62,158 clips (0.18%), 23 kB, 0.10% of the file.** It was 177 the same day and 649 the day
+before; the things that closed the gap are written up in `midi-interchange.md`, and each of them was
+a case where MIDI *could* say the thing after all.
+
+### 24a. The re-cut ramps — 73 clips
+
+The exporter resamples a glide onto thirds of a step and the importer folds the samples back with
+Douglas–Peucker at a half-unit tolerance. Volume and modulation are integers, so a ramp is really a
+staircase, and the reconstruction keeps the staircase's own corner where the author named an
+endpoint: `28+0:63:44 29+0:53:75 30+0:53:75 32+0:55:44 47+0:55:22 63+0:55:0` comes back with an
+extra record at `46+2/3`.
+
+⚠️ **It is tighter to the curve, not looser**, so loosening the simplifier to make the record count
+match would make the curve *worse*. That is why this is not simply a bug to fix.
+
+**The anchor**: when two candidate breakpoints both sit inside the tolerance, Douglas–Peucker takes
+the one furthest from the chord. Preferring the one on a **whole step** at equal deviation would
+match the author's encoding more often for free, since authors write on steps. The experiment is one
+comparison in `simplify` and a corpus run; if it does not move the 73, the remaining ones are
+genuinely ambiguous and the patch is the right answer.
+
+### 24b. Byte 3's resting bit inside a mixed clip — 31 clips
+
+The bit is described in [sequencer-data-model.md](sequencer-data-model.md): the engine reads it only
+when byte 0's bit 7 is set, and the editor writes it anyway, decided by the level's revision. It is
+uniform within a note in 953,777 of 953,791 and within a clip in 62,075 of 62,106, so it travels as
+a per-clip default in the `clips` tuple. These 31 clips hold notes with both values.
+
+**The anchor**: measure whether the bit is constant across a **contiguous run** of a mixed clip's
+notes — a level saved across the editor change would have the old notes first and the new ones
+after, which is a run-length and would fit in the clips tuple in a few bytes. If it is scattered
+instead, only a per-note carrier could hold it and the patch stays.
+
+### 24c. The five that are not diagnosed
+
+The scratchpad's field-by-field diff (`why177.ts` in this session's scratch) buckets the patched
+clips by which field differs; these five fall into mixtures (`pitch + position + record count +
+volume` and the like) that were never opened. **Print them before theorising.**
+
+### What has already been ruled out — do not repeat these
+
+- **The flat-run markers are not the cause of the stray thirds.** Turning them off takes the patch
+  from 109 clips to **277**, so they are carrying far more than they cost.
+- **Six clip-assignment tie-break rules** (nearest, earliest, tightest, loosest, busiest, same-start)
+  were measured against each other and moved the total from 686 to 680 at best. The cell ambiguity
+  is not where the remaining clips are.
+- **A fourth record-order key does not exist.** Position ascending, then pitch descending, then the
+  end ascending are each 100% over the corpus; among the 254 clips tied on all three, nothing beats
+  98.8% (modulation ascending) and 94.9% (volume descending). Adding one would look like the other
+  three and not be one.
