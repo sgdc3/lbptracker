@@ -32,7 +32,7 @@ import {
   readBackup, readBackupZip, sequencersOf, type BackupResult,
 } from '../src/core/backup.ts';
 import { type LevelProject, type Sequencer } from '../src/core/project.ts';
-import { isZip, openedLabel, saveNote, wireOpen, type Opened } from './open-level.ts';
+import { isZip, openedTitle, saveNote, wireOpen, type Opened } from './open-level.ts';
 import { webInflateRaw } from '../src/platform/web.ts';
 import { webInflate } from '../src/platform/web.ts';
 
@@ -303,14 +303,10 @@ async function openLevel(opened: Opened): Promise<void> {
     }));
     picker.setRows(list);
     dropZone.classList.add('loaded');
-    // ❗ A PS3 backup calls itself `32406766.zip` and the level inside it calls
-    // itself "FJ's Music Hub by Festerd_Jester". The second is the useful one.
-    const label = openedLabel(result, opened.label);
-    $('dropTitle').textContent = result.projects.length > 1
-      ? `${label} — ${result.projects.length} levels, ${plural(list.length, 'sequencer')}`
-      : `${label} — ${plural(list.length, 'sequencer')}`;
+    const title = openedTitle(result, list.length, opened.label);
+    $('dropTitle').textContent = title;
     $('dropHint').textContent = 'Click, or drop a level, a backup folder or a zip.';
-    log(`${label}: ${plural(list.length, 'sequencer')}`);
+    log(title);
     for (const save of result.saves) {
       log(`${save.name ?? save.folder}: save game, ${save.why ?? `${save.resources} resources`}`,
         save.why !== undefined);

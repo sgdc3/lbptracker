@@ -181,6 +181,25 @@ export function saveNote(result: Pick<BackupResult, 'saves'>): string {
 }
 
 /**
+ * The line over the drop zone: what was opened, and what came out of it.
+ *
+ * ⚠️ **"56 levels" was wrong the day plans started opening.** A backup of a
+ * music gallery is one plan per song, and calling those levels is a lie the
+ * three pages would each have told differently. The level count only appears
+ * when there is something to tell it apart from.
+ */
+export function openedTitle(result: BackupResult, sequencers: number, fallback: string): string {
+  const levels = result.projects.filter((project) => !project.plan).length;
+  const plans = result.projects.length - levels;
+  const count = (n: number, what: string) => `${n} ${what}${n === 1 ? '' : 's'}`;
+  const parts: string[] = [];
+  if (levels > 1 || (levels > 0 && plans > 0)) parts.push(count(levels, 'level'));
+  if (plans > 0) parts.push(count(plans, 'plan'));
+  parts.push(count(sequencers, 'sequencer'));
+  return `${openedLabel(result, fallback)} — ${parts.join(', ')}`;
+}
+
+/**
  * What to call what was opened: the save's own name when there is one.
  *
  * A backup zip is called `32406766.zip` and the level inside it is called "FJ's

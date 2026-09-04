@@ -1469,3 +1469,68 @@ in that repository. It was: `TEA_KEY` in `save_archive.rs`, thirty lines from th
 ❗ **The lesson for this file: "I cannot read it" is a claim about the reader, not the file.** Before
 writing one down, name what would have to be true and go and check that, rather than gathering more
 descriptions of the bytes.
+
+### And it was already written down here
+
+⚠️ **`steering/lbp-modding-toolchain.md` had the recipe three days earlier.** *How to get from
+a file to a set of sequencers* has said "**XXTEA-decrypt each fragment**, strip the last 4 bytes of
+the final one, concatenate, append `FAR4`" since commit `197a00a` on **2026-09-01**; the "cannot be
+read" claim went in on **2026-09-04**. `CLAUDE.md` says to read that file *before writing a parser
+for any LBP resource or archive*, and it was not read. The measurement theatre of the two rounds
+above was spent re-deriving — wrongly — something this project had already written down.
+
+## 25. Plans (`PLNb`) — RESOLVED 2026-09-04: read, and they hold most of the music
+
+A plan is a saved Thing rather than a world — a costume, a vehicle, or a music sequencer copied into
+somebody's popit. `src/core/level.ts`'s `readPlan` opens one, and `readLevelProject` dispatches on
+the resource magic, which is the first four bytes of the file and needs nothing inflated.
+
+`RPlan` is four fields and only the third matters:
+
+```
+bool  isUsedForStreaming   subVersion >= 0xcc          (Revisions.STREAMING_PLAN)
+i32   revision             the plan's own, IGNORED -- the resource's revision wins
+i32   length               \  thingData
+byte  data[length]         /  a Thing[] as a reference array: i32 count, then each
+...   inventoryData        head >= 0x197 and not streaming -- never read here
+```
+
+⚠️ **The Things are in a nested stream with a fresh reference table.** Reference ids inside
+`thingData` mean nothing outside it, so the blob gets its own `Serializer` with the same revision
+and compression flags. Reading it in place would work by accident on a plan holding one Thing.
+
+### What the corpus says, and it is the reason this was worth doing
+
+Six real PS3 saves (the five in the checkout plus a downloaded backup), 663 resources:
+
+| | |
+|---|---|
+| plans | **224** |
+| plans that parse | **222** |
+| Things inside them | **83,188** |
+| music sequencers inside plans | **172** |
+| music sequencers inside the levels beside them | 19 |
+
+**Nine tenths of the music in a creator's backup is in plans, not levels.** A gallery level is a rack
+of speakers pointing at plans; the songs are the plans. `test/plan.test.ts` pins 213/211/172 over the
+checkout alone.
+
+Two proofs the wrapper offsets are right, neither of which needs a plan to hold anything in
+particular:
+
+- the Thing array **fills `thingData` exactly** — 0 bytes left on 220 of 220, now asserted, so a
+  part reader that takes the wrong number fails here instead of quietly losing what follows;
+- every Thing carries the 0xAA test marker and 83,188 of them checked out, which is a per-Thing
+  checksum over the whole walk.
+
+### The two that do not parse, and one part that had to be written
+
+`POCKET_ITEM` was missing and is now in `parts.ts` (two plans, subVersion 0x208/0x209). Left over:
+one plan carrying `YELLOWHEAD` — a player's poppet state, which drags in the whole `Poppet` struct
+for one file — and one at revision `0x272`, which `requireLbp3` refuses on purpose. Both fail by
+name, which is the growth path working.
+
+⚠️ **`PLNb` had been in `LEVEL_MAGIC` all along**, when it meant "read a plan as if it were a
+world". That produced eleven loud failures for a backup that was fine, and the fix on 2026-09-04 was
+to take the magic *out* — which was right for an hour and wrong as a resting place. The magic was
+never the problem; the reader was.

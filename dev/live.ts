@@ -27,7 +27,7 @@ import { readBackup, sequencersOf, type BackupResult } from '../src/core/backup.
 import {
   CHANNEL_COUNT, channelVolume, type LevelProject, type Sequencer,
 } from '../src/core/project.ts';
-import { fromFiles, isZip, openedLabel, saveNote, wireOpen } from './open-level.ts';
+import { fromFiles, isZip, openedTitle, saveNote, wireOpen } from './open-level.ts';
 import { readBackupZip } from '../src/core/backup.ts';
 import { webInflateRaw } from '../src/platform/web.ts';
 import { LiveVoicePool, VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
@@ -1046,12 +1046,7 @@ async function openBackup(opened: {
     project = result.projects[0] ?? null;
     picker.setRows(rows);
     dropZone.classList.add('loaded');
-    // ❗ A PS3 backup calls itself `32406766.zip` and the level inside it calls
-    // itself "FJ's Music Hub by Festerd_Jester". The second is the useful one.
-    const label = openedLabel(result, opened.label);
-    dropTitle.textContent = result.projects.length > 1
-      ? `${label} — ${result.projects.length} levels, ${rows.length} sequencers`
-      : `${label} — ${rows.length} sequencers`;
+    dropTitle.textContent = openedTitle(result, rows.length, opened.label);
     dropHint.textContent = 'Click, or drop a level, a backup folder or a zip.';
     // ⚠️ A save game that would not open is a bug here and says so; one that
     // opened needs no sentence, because its levels are in the list.
@@ -1094,13 +1089,13 @@ async function takeHandoff(): Promise<void> {
   setStatus('reading the imported song\u2026');
   try {
     const seq = JSON.parse(stored) as LevelProject['sequencers'][number];
-    project = { file: `${seq.name}.mid`, sequencers: [seq] };
+    project = { file: `${seq.name}.mid`, plan: false, sequencers: [seq] };
     [rinstIndex, smpIndex] = await Promise.all([
       manifest('fixtures/rinst'),
       manifest('fixtures/smp'),
     ]);
     const key = `${project.file}#${seq.uid}`;
-    songs = new Map([[key, { project, sequencer: seq }]]);
+    songs = new Map([[key, { project: project as LevelProject, sequencer: seq }]]);
     picker.setRows([{ key, name: seq.name, tracks: seq.tracks.length }]);
     dropZone.classList.add('loaded');
     dropTitle.textContent = `${seq.name} \u2014 imported from MIDI`;

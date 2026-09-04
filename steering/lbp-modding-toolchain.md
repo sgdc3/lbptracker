@@ -134,6 +134,11 @@ The traversal below is the part of `sequencerdump` worth reusing. Three input sh
 **A loose resource** (`LVLb`/`PLNb`, SHA1-named): read the container (`tools/lbpres.py`), then
 deserialise as `RLevel` or `RPlan`.
 
+❗ **All three shapes are implemented now**, in `src/core/backup.ts`, `src/core/savearchive.ts`
+and `readPlan` in `src/core/level.ts`. The recipe below was written on 2026-09-01 and sat unread
+until 2026-09-04, during which this project told its users a PS3 save "cannot be read" — see
+[answered-questions.md](answered-questions.md).
+
 **A PS3 level backup** — a folder named `…LEVEL…` holding numbered fragments `0`, `1`, `2`, …:
 
 1. Sort the fragments **by name as strings** (naive filesystem order breaks this on Linux).
@@ -150,6 +155,11 @@ do not conflate them.
 **Then, in either case:**
 
 - `RLevel` → `worldThing.getPart(WORLD).things`; `RPlan` → `getThings()`.
+- ❗ **Do not skip the plans.** Measured over six real saves: 224 plans against 6 levels, and the
+  plans hold **172 music sequencers** to the levels' 19. A creator's gallery level is a rack of
+  speakers pointing at plans, and the songs are the plans. The `RPlan` layout is in
+  [answered-questions.md](answered-questions.md) — four fields, and the Things are in a nested
+  stream with its own reference table.
 - A music sequencer is a Thing with **both** a `PMicrochip` and a `PSequencer` whose
   `MusicSequencer` is true. Check that flag: animation sequencers share the part.
 - Instruments are normally `PMicrochip.Components`, each a `CompactComponent` carrying the child

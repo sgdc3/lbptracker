@@ -39,10 +39,26 @@ export interface SeqPicker {
 }
 
 const title = (row: SeqRow) => row.name || '(untitled)';
+
+/**
+ * What to show for the file a sequencer came out of.
+ *
+ * ⚠️ **A resource is named after its SHA-1**, so its honest name is 40 hex
+ * digits with a save folder in front — 63 characters of noise beside "12
+ * instruments", on every row, and a backup of plans is 56 rows of it. Eight
+ * digits tell two rows apart, which is this column's only job; identity runs on
+ * `key`, which is untouched.
+ */
+const shortFile = (file: string): string => {
+  const leaf = file.slice(file.lastIndexOf('/') + 1);
+  return /^[0-9a-f]{40}$/.test(leaf) ? leaf.slice(0, 8) : leaf;
+};
+
 const detail = (row: SeqRow) =>
   // ❗ The level's name when a backup holds several: two songs called `Intro`
   // in one folder are told apart by the file they came out of and nothing else.
-  `${row.tracks} instrument${row.tracks === 1 ? '' : 's'}${row.file ? ` · ${row.file}` : ''}`;
+  `${row.tracks} instrument${row.tracks === 1 ? '' : 's'}` +
+  `${row.file ? ` · ${shortFile(row.file)}` : ''}`;
 
 const escape = (text: string) =>
   text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);

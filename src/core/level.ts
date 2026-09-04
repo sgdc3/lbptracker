@@ -117,6 +117,81 @@ export interface LevelParse {
   readonly things: (Thing | undefined)[];
 }
 
+/** Inflate a resource and start a serialiser on it, with the revision checked. */
+async function open(
+  bytes: Uint8Array,
+  inflate: Inflate,
+): Promise<{ revision: RevisionInfo; flags: number; s: Serializer }> {
+  const resource = await loadResource(bytes, inflate);
+  // `Revision.branch` is the head word's high half, which serializer.ts spells
+  // `subVersion` -- the branch proper is the separate pair on the resource.
+  const revision: RevisionInfo = {
+    version: resource.revision.version,
+    subVersion: resource.revision.branch,
+    branchId: resource.branchId,
+    branchRevision: resource.branchRevision,
+  };
+  requireLbp3(revision);
+  return {
+    revision,
+    flags: resource.compressionFlags,
+    s: new Serializer(resource.data, revision, resource.compressionFlags),
+  };
+}
+
+/** The subVersion that put `isUsedForStreaming` at the head of `RPlan`. */
+const STREAMING_PLAN = 0xcc;
+
+/**
+ * Read a **plan** (`PLNb`) and return the Things inside it.
+ *
+ * A plan is a saved Thing rather than a world: a costume, a vehicle, or — the
+ * reason this exists — a music sequencer somebody copied into their popit and
+ * backed up on its own. It is the smallest thing anyone can drop on the page,
+ * one instrument rack with no level around it.
+ *
+ * ⚠️ **A plan's Things live in a nested stream, not in this one.** `RPlan` is
+ * four fields and the third is a length-prefixed blob; the Things are inside
+ * that blob, serialised with the SAME revision and compression flags but a
+ * **fresh reference table** — ids inside `thingData` mean nothing outside it.
+ * Reading it in place would work by accident on a plan holding one Thing and
+ * desynchronise on the rest.
+ *
+ * The layout, from `cwlib/resources/RPlan.java`:
+ *
+ * ```
+ * bool  isUsedForStreaming   subVersion >= 0xcc
+ * i32   revision             the plan's own, ignored -- the resource's wins
+ * i32   length               \  thingData: Thing[], as a reference array
+ * byte  data[length]         /
+ * ...   inventoryData        head >= 0x197 and not streaming -- never read here
+ * ```
+ */
+export async function readPlan(
+  bytes: Uint8Array,
+  inflate: Inflate,
+  readers: ReadonlyMap<string, PartReader>,
+): Promise<LevelParse> {
+  const { revision, flags, s } = await open(bytes, inflate);
+  if (revision.subVersion >= STREAMING_PLAN) s.bool();
+  s.i32();
+  const inner = new Serializer(s.bytes(s.i32()), revision, flags);
+  const count = inner.i32();
+  const things: (Thing | undefined)[] = [];
+  for (let i = 0; i < count; i += 1) things.push(readThingRef(inner, readers));
+  // ❗ **The array fills the blob exactly, and that is checked.** `thingData`
+  // holds the Thing array and nothing else, so bytes left over mean a part
+  // reader took the wrong number and the parse is wrong even though it finished.
+  // Measured: 0 bytes left on all 220 corpus plans that parse at all.
+  if (inner.remaining !== 0) {
+    throw new SerializerError(
+      `the plan's Thing array left ${inner.remaining} of ${inner.data.length} bytes ` +
+        'unread — a part reader consumed the wrong number of bytes',
+    );
+  }
+  return { revision, things };
+}
+
 /**
  * Read a level resource and return every Thing in its world.
  *
@@ -129,18 +204,7 @@ export async function readLevel(
   inflate: Inflate,
   readers: ReadonlyMap<string, PartReader>,
 ): Promise<LevelParse> {
-  const resource = await loadResource(bytes, inflate);
-  // `Revision.branch` is the head word's high half, which serializer.ts spells
-  // `subVersion` -- the branch proper is the separate pair on the resource.
-  const revision: RevisionInfo = {
-    version: resource.revision.version,
-    subVersion: resource.revision.branch,
-    branchId: resource.branchId,
-    branchRevision: resource.branchRevision,
-  };
-  requireLbp3(revision);
-
-  const s = new Serializer(resource.data, revision, resource.compressionFlags);
+  const { revision, s } = await open(bytes, inflate);
 
   // `RLevel`: the cross-play hashes came in at 0x3e7, and the corpus straddles
   // that, so the count is only there on the later files.

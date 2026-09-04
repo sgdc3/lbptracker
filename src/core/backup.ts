@@ -72,17 +72,19 @@ export interface BackupResult {
 }
 
 /**
- * The magic a level resource carries; anything else is not one.
+ * The magics worth handing to the reader: a level, and a plan.
  *
- * ⚠️ **`PLNb` used to be in here and is not a level.** A plan is a saved
- * Thing -- a costume, a vehicle, a copied music sequencer -- and its Things live
- * inside a nested `thingData` blob that `readLevelProject` cannot unwrap, so
- * every plan in a backup was reported as a level that failed to open. The
- * measured backup holds eleven of them and one level. Reading plans is worth
- * doing (question 25 in `steering/open-questions.md`); pretending they are
- * levels is not.
+ * ❗ **A plan is a saved Thing, not a level, and it is where most of the music
+ * is.** A creator who copies a sequencer into their popit gets a `PLNb`, and a
+ * backup is full of them: 224 across the six saves measured, **171 holding a
+ * music sequencer** against six levels holding 19. `readLevelProject` dispatches
+ * on this same magic and unwraps the plan's nested Thing blob.
+ *
+ * ⚠️ `PLNb` was in here before any of that worked, when it meant "read a plan as
+ * if it were a world" -- eleven failures reported for one backup that was fine.
+ * The magic was never the problem; the reader was.
  */
-const LEVEL_MAGIC = ['LVLb'];
+const LEVEL_MAGIC = ['LVLb', 'PLNb'];
 
 /** A file's folder and its leaf name. Paths are shown, never otherwise parsed. */
 function split(name: string): { folder: string; leaf: string } {

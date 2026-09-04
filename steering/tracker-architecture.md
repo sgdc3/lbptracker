@@ -24,6 +24,24 @@ levels take a folder, a zip of one, or a single file.
 costumes and photographs; trying every file works and reports forty failures for
 one level.
 
+❗ **`PLNb` is a plan, and that is where most of the music is.** 224 plans over
+six real saves against 6 levels; **172 music sequencers inside plans, 19 inside
+the levels**. A plan is a saved Thing, so its Things live in a nested blob with
+its own reference table — `readPlan` unwraps it and `readLevelProject`
+dispatches on the same four bytes. See *25. Plans* in
+[answered-questions.md](answered-questions.md).
+
+⚠️ **"56 levels" was a lie the moment plans opened**, and each page told it
+differently. `openedTitle` in `dev/open-level.ts` composes the one line now:
+"FJ's Music Gallery (30) by FJMusic — 1 level, 55 plans, 56 sequencers". The
+level count only appears when there is something to tell it apart from.
+
+⚠️ **A resource is named after its SHA-1**, so the picker's "which file did
+this come from" column is 40 hex digits behind a save folder — 63 characters of
+noise on every row, 56 rows deep for a gallery. `seq-picker.ts` shows the first
+eight; `key` still carries the whole thing, because that is what identity runs
+on.
+
 ⚠️ **A uid is unique inside a level and NOT across a backup.** A folder of
 forty routinely holds two sequencers numbered 7, so the picker is keyed on
 `file#uid` and shows the level beside the song when there is more than one. A

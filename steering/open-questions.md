@@ -900,23 +900,23 @@ volume` and the like) that were never opened. **Print them before theorising.**
   98.8% (modulation ascending) and 94.9% (volume descending). Adding one would look like the other
   three and not be one.
 
-## 25. Plans (`PLNb`) hold Things, and we cannot open one
+## 26. Streaming levels: `LevelData.chunkFileList` is not always empty
 
-A plan is a saved Thing — a costume, a vehicle, **a copied music sequencer**. The real backup
-measured on 2026-09-04 holds eleven of them beside its one level, and `readLevelProject` fails on
-every one at the first read, because a plan is not a world: its Things live inside a nested
-`thingData` blob and `PPlan` wraps them with inventory metadata.
+Two of the corpus's levels will not open, and both say the same thing:
+`LevelData.chunkFileList has 42 entries and no reader`. `emptyOnly` in `src/core/level.ts` reads a
+count and refuses anything non-zero, on the grounds that the ten-level corpus never populated it —
+which was true of the corpus that existed when it was written. The five PS3 saves in the checkout
+turned up two that do: *Meched Inc.* (42 entries) and *New Heights* (129).
 
-`PLNb` was in `LEVEL_MAGIC` until then, so all eleven were reported as levels that failed to open —
-a page full of red for a backup that was fine. They are counted as `other` now, which is honest and
-loses nothing that ever worked.
+These are **streaming levels**: an LBP3 adventure is cut into chunks, and `chunkFileList` names
+them. The check did its job — it refused rather than guessing — but two real levels' music is
+behind it.
 
-**Why it is worth doing**: somebody who copies a sequencer to their popit and backs *that* up has a
-file this tool refuses, and it is the smallest possible thing to drop on the page — one instrument
-rack, no level around it.
+**The anchor**: `cwlib/structs/streaming/StreamingLevelChunk.java` (fetch it, do not clone), and
+`readLevelData` in `src/core/level.ts`, which already reads everything around it. The list is
+almost certainly `ResourceDescriptor` plus a transform; the risk is that the chunks are separate
+resources, in which case the Things are in files the level only names — and a backup would have to
+be searched for them by GUID, which is a different job from parsing one file.
 
-**The anchor**: `cwlib/resources/RPlan.java` (fetch it, do not clone it) for the wrapper's field
-order and where `thingData` starts; then hand that blob to the existing `readLevel` walk, which is
-already the part that does the work. The revision gates are the risk: the eleven plans in the
-measured save span the same revision as the level beside them, so they are a corpus of one revision
-and not a test of the gates.
+**What it is worth**: two levels of seven in the measured saves. Their plans open, so their music is
+not entirely lost — which is the only reason this is not higher up the list.

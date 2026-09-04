@@ -86,11 +86,11 @@ test('a level is told from everything else by its first four bytes', () => {
   // ❗ Never by its name: the game names a resource after its SHA-1, so there is
   // no extension to go on and a backup is full of icons and save metadata.
   assert.ok(looksLikeLevel(new TextEncoder().encode('LVLb....')));
-  // ⚠️ **A plan is NOT a level**, though it was read as one here for a while.
-  // Its Things sit inside a nested `thingData` blob the level reader cannot
-  // unwrap, so every plan in a backup was reported as a level that failed to
-  // open -- eleven of them in the one real save measured. See open question 25.
-  assert.ok(!looksLikeLevel(new TextEncoder().encode('PLNb....')));
+  // ❗ **A plan counts too, and it is where most of the music is.** It is not a
+  // level -- its Things sit inside a nested `thingData` blob -- but
+  // `readLevelProject` unwraps that now, and the corpus holds 172 sequencers
+  // inside plans against 19 inside levels. See `test/plan.test.ts`.
+  assert.ok(looksLikeLevel(new TextEncoder().encode('PLNb....')));
   assert.ok(!looksLikeLevel(new TextEncoder().encode('\x89PNG')));
   assert.ok(!looksLikeLevel(Uint8Array.of(1, 2)));
 });
@@ -215,6 +215,7 @@ test('a save game in a backup is opened, and its own files step aside', async ()
   );
   assert.equal(result.other, 1, 'one resource is not a level, and the icon left with the save');
   assert.equal(result.failed.length, 1, 'a four-byte LVLb is a level that will not open, and says so');
+  assert.match(result.failed[0].why, /too short|runs past/);
   assert.match(result.failed[0].name, /^BCES00850LEVEL01EE7CEE\/[0-9a-f]{40}$/);
 });
 

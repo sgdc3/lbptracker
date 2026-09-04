@@ -26,7 +26,7 @@
  * files.
  */
 
-import { musicSequencers, readLevel, type Placement } from './level.ts';
+import { musicSequencers, readLevel, readPlan, type Placement } from './level.ts';
 import { partReaders } from './parts.ts';
 import type { Inflate } from './resource.ts';
 import type { Thing } from './thing.ts';
@@ -142,6 +142,15 @@ export interface Sequencer {
 /** Every music sequencer in one level file. */
 export interface LevelProject {
   readonly file: string;
+  /**
+   * True when this came out of a **plan** rather than a level.
+   *
+   * ❗ Worth carrying because it changes what to call things on screen: a
+   * backup of 56 plans is not "56 levels", and most of a creator's music turns
+   * out to live in plans -- 172 sequencers against the levels' 19, measured over
+   * the five saves in the corpus.
+   */
+  readonly plan: boolean;
   readonly sequencers: readonly Sequencer[];
 }
 
@@ -175,7 +184,11 @@ export function trackFrom(placement: Placement): Track {
  * list's own order when the board is closed, and the Thing list's when it is
  * open. Neither is the timeline: `stepOffset` is, and it comes from the cell.
  */
-export function importLevel(file: string, things: readonly (Thing | undefined)[]): LevelProject {
+export function importLevel(
+  file: string,
+  things: readonly (Thing | undefined)[],
+  plan = false,
+): LevelProject {
   const sequencers: Sequencer[] = [];
   for (const found of musicSequencers(things)) {
     const tracks = found.placements.map(trackFrom);
@@ -203,7 +216,7 @@ export function importLevel(file: string, things: readonly (Thing | undefined)[]
       lengthSteps,
     });
   }
-  return { file, sequencers };
+  return { file, plan, sequencers };
 }
 
 /**
@@ -217,8 +230,12 @@ export async function readLevelProject(
   bytes: Uint8Array,
   inflate: Inflate,
 ): Promise<LevelProject> {
-  const { things } = await readLevel(bytes, inflate, partReaders());
-  return importLevel(file, things);
+  // ❗ A plan is not a level: it is a saved Thing, and its Things live inside a
+  // nested blob. It is told apart by the resource magic, which is the first four
+  // bytes of the file and needs nothing inflated to read.
+  const plan = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) === 'PLNb';
+  const { things } = await (plan ? readPlan : readLevel)(bytes, inflate, partReaders());
+  return importLevel(file, things, plan);
 }
 
 /**

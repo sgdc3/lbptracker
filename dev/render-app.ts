@@ -392,7 +392,6 @@ worker.onmessage = (event: MessageEvent) => {
     // This Is Halloween, if it is in here: the one every render is judged on.
     const halloween = list.find((item) => item.key.endsWith('#737099'));
     if (halloween) picker.select(halloween.key);
-    const levels = (message.levels as number | undefined) ?? 1;
     // ⚠️ A level that would not open is said out loud, never swallowed.
     for (const bad of (message.failed as { name: string; why: string }[] | undefined) ?? []) {
       setStatus(`${bad.name}: ${bad.why}`, true);
@@ -402,9 +401,10 @@ worker.onmessage = (event: MessageEvent) => {
     const saves = (message.saves as BackupResult['saves'] | undefined) ?? [];
     const note = saveNote({ saves });
     if (note) setStatus(note, true);
-    // ❗ A PS3 backup calls itself `32406766.zip` and the level inside it calls
-    // itself "FJ's Music Hub by Festerd_Jester". The second is the useful one.
-    loadedName = (message.label as string | undefined) ?? loadedName;
+    // ❗ The worker composes this: a PS3 backup calls itself `32406766.zip`
+    // while the save inside calls itself "FJ's Music Hub by Festerd_Jester", and
+    // what came out of it is plans as often as levels.
+    const title = (message.title as string | undefined) ?? loadedName;
     goButton.disabled = false;
     setBusy(false);
     setBar(1);
@@ -412,9 +412,7 @@ worker.onmessage = (event: MessageEvent) => {
     // page is the first thing anyone tries, and hiding the picker after the
     // first load made it impossible.
     dropZone.classList.add('loaded');
-    dropTitle.textContent = levels > 1
-      ? `${loadedName} — ${levels} levels, ${plural(list.length, 'sequencer')}`
-      : `${loadedName} — ${plural(list.length, 'sequencer')}`;
+    dropTitle.textContent = title;
     dropHint.textContent = 'Click, or drop a level, a backup folder or a zip.';
     setStatus(
       `ready — ${plural(list.length, 'sequencer')}, ` +
