@@ -1865,3 +1865,34 @@ The question came out of a listener's ear, through `occupancySteps`, through the
 test. It ends with nothing to change — but the volume test itself (`channelVolume x [clip+0x420] >
 0`, `0x04d4`) is now fully understood, and the 701 zero-volume notes it would skip are still the
 open lead in question 29.
+
+## 32. The release ramp — VERIFIED identical to ours, 2026-09-04
+
+`sub_0x16b0` is the engine's envelope. Its release branch, taken when the gate byte is clear:
+
+```
+0x1750  xmm2 = release * release        ; the parameter, SQUARED
+0x1758  vucomiss xmm2, 0
+0x175c  jbe 0x1792                      ; zero -> store 0, the voice is done
+0x175e  xmm1 = [rsi]                    ; the stored value, mirrored around 1
+0x176a  if (1 < stored) xmm1 = 2 - stored  ; un-mirror to the audible level
+0x177c  vdivss xmm0, xmm0, xmm2         ; dt / release^2
+0x1780  xmm0 = level - that             ; LINEAR in level
+0x178c  [rsi] = xmm0
+0x1790  jae ...                         ; still positive: carry on
+0x1792  [rsi] = 0                       ; below zero: clamp and finish
+```
+
+✔ **`level -= dt / release²`, linear, clamped at zero** — which is exactly `Envelope.advance`, with
+`evaluateAdsr` doing the squaring and `ENVELOPE_SECONDS_PER_UNIT = 4` absorbing the engine's `dt`
+unit. The mirrored-around-1 storage this project kept "because the handover from attack to decay
+depends on it" is the engine's own, visible at `0x176a`.
+
+So the moment a voice falls silent is the same in both, and with it the moment the engine frees the
+record. There is no shorter tail hiding in the envelope.
+
+⚠️ **One thing the first measurement of that tail got wrong**: the time to zero is
+`release x (the level the envelope had reached)`, not `release`. Recomputed with the level at gate
+close — the sustain, or the attack ramp's value for a note that ends inside its attack — the tail
+takes `C4K3 S0NG`'s stealing to **22.3%**, not the 29.5% first reported. Still far above the 10.8%
+today's occupancy gives, so it changes the size of the gap and not its existence.

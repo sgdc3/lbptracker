@@ -1068,8 +1068,26 @@ and **this question is entirely about occupancy**. The score work stands on its 
 `Level` was genuinely missing and is now in — but it is not the way in.
 
 What remains, then, is the same single fact with nothing else attached: the engine holds a record
-until the envelope reaches zero, that predicts 29.9%, and a listener says the game is nothing like
-it. Every other number on both sides is measured and agrees.
+until the envelope reaches zero, and a listener says the game is nothing like that. Every other
+number on both sides is measured and agrees — including the envelope itself, whose release is now
+verified identical to ours (*32* in [answered-questions.md](answered-questions.md)), so there is no
+shorter tail hiding in it. Computed properly, with the level the envelope had actually reached at
+the gate rather than the full `0 → 1` time, the tail gives **22.3%** against today's 10.8%.
+
+### ❗ It cannot be settled from the binary, and here is what would settle it
+
+Both models are self-consistent; what separates them is what the game **sounds like** on a dense
+passage, and that is a recording. This project has done exactly that before — question 10, the
+one-shot gate, was settled against a capture of the game and overturned what the code had implied.
+
+The experiment: capture `C4K3 S0NG` (or any passage that wants more than 32 records) from the game,
+and count the notes that stop early. **The two models differ by more than a factor of two**, 10.8%
+against 22.3%, so a single capture separates them without any subtlety.
+
+⚠️ **And be ready for the answer to be uncomfortable.** With the tail, the game plays at most 32
+notes at once; without it, this renderer routinely runs 35 to 50. If the tail is right then our
+render is *denser* than the game's, which is exactly why it sounds less truncated — the cuts are
+masked by notes the game never played. The version that sounds better may be the wrong one.
 
 **So every number on both sides of the line is now measured, and they still disagree with the ear.**
 That is where this stands. The remaining thread is the one the volume test exposed: its multiplier
