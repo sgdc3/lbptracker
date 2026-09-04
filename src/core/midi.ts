@@ -108,14 +108,21 @@ export interface MidiExportOptions {
    * The same kit on the same row at two different pans is two placements to the
    * game; merging puts both on one track and writes the mixer as CC automation
    * at each clip's start, which is what a DAW does with a mixer that changes
-   * during a song. Measured over the corpus: **4,909 tracks become 3,220, a
-   * third fewer**, and of the 850 row groups holding more than one placement
-   * only **2** have notes overlapping in time -- where a DAW hears whichever
-   * setting was written last.
+   * during a song. Measured over the corpus: **a third fewer tracks.**
    *
-   * ❗ A fader move still comes back: the import reads each controller at the
-   * tick of the placement's own first clip, which is unambiguous because **no
-   * two placements of a row group ever share a cell** -- 0 of 62,158.
+   * ❗ **Placements whose notes overlap in time are NOT merged**, because one
+   * track has one mixer state and there is no honest way to give two sounding
+   * placements different pans on it. They fall back to separate tracks, told
+   * apart by the `#2` the label already carries. Over the corpus that is 2 row
+   * groups of 850 -- and it is what makes merging free rather than a trade.
+   *
+   * ⚠️ Overlapping does NOT mean two Things in one place: no two placements
+   * of a row group ever share a cell (0 of 62,158). It means a clip started at
+   * an earlier cell is still sounding when a later one begins, which a cell of
+   * 16 steps and a clip of up to 128 makes easy.
+   *
+   * ❗ A fader move still comes back: the import reads each controller in force
+   * at the tick of the placement's own first clip.
    *
    * Two placements of DIFFERENT instruments on one row stay separate whatever
    * this says. There is one instrument per track and the label names it.
@@ -801,21 +808,78 @@ export function sequencerToMidi(
    * Without `mergeRows` a group is one part and everything below behaves as it
    * did. With it, a group is a board row and an instrument -- see the option.
    */
-  const mergeRows = options.mergeRows ?? false;
+  const mergeRows = options.mergeRows ?? true;
   const groups: number[][] = [];
   const groupOf: number[] = [];
   {
-    const seen = new Map<string, number>();
+    /** When each placement is sounding, as coalesced step intervals. */
+    const spansOf = parts.map((part) => {
+      const spans: [number, number][] = [];
+      for (const index of part.tracks) {
+        const clip = sequencer.tracks[index];
+        for (const note of clip.notes) {
+          spans.push([
+            clip.stepOffset + note.startPosition,
+            clip.stepOffset + note.endPosition + 1,
+          ]);
+        }
+      }
+      spans.sort((a, b) => a[0] - b[0]);
+      const merged: [number, number][] = [];
+      for (const span of spans) {
+        const last = merged[merged.length - 1];
+        if (last !== undefined && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+        else merged.push([...span]);
+      }
+      return merged;
+    });
+    /** Whether two placements are ever sounding at the same time. */
+    const clash = (a: [number, number][], b: [number, number][]) => {
+      let i = 0;
+      let j = 0;
+      while (i < a.length && j < b.length) {
+        if (a[i][0] < b[j][1] && b[j][0] < a[i][1]) return true;
+        if (a[i][1] <= b[j][1]) i += 1;
+        else j += 1;
+      }
+      return false;
+    };
+
+    const byRow = new Map<string, number[]>();
     parts.forEach((part, index) => {
       const key = mergeRows ? `${part.track.gridY}|${part.track.guid}` : `#${index}`;
-      let group = seen.get(key);
-      if (group === undefined) {
-        group = groups.length;
-        seen.set(key, group);
-        groups.push([]);
+      const found = byRow.get(key);
+      if (found) found.push(index);
+      else byRow.set(key, [index]);
+    });
+    for (const row of byRow.values()) {
+      // ❗ Greedy, in the order the parts already sit in, which is board order:
+      // a placement joins the first track whose placements it never overlaps.
+      const made: number[][] = [];
+      const spans: [number, number][][] = [];
+      for (const index of row) {
+        let at = made.findIndex((_, k) => !clash(spans[k], spansOf[index]));
+        if (at < 0) {
+          at = made.length;
+          made.push([]);
+          spans.push([]);
+        }
+        made[at].push(index);
+        spans[at] = [...spans[at], ...spansOf[index]].sort((a, b) => a[0] - b[0]);
       }
-      groups[group].push(index);
-      groupOf[index] = group;
+      for (const group of made) {
+        for (const index of group) groupOf[index] = groups.length;
+        groups.push(group);
+      }
+    }
+    // Board order again, since the row map lost it.
+    groups.sort((a, b) => {
+      const x = parts[a[0]].track;
+      const y = parts[b[0]].track;
+      return x.gridY - y.gridY || cellOf(parts[a[0]]) - cellOf(parts[b[0]]) || x.guid - y.guid;
+    });
+    groups.forEach((group, index) => {
+      for (const part of group) groupOf[part] = index;
     });
   }
 

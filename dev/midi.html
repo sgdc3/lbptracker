@@ -105,7 +105,7 @@
           <label class="check" title="Carry the records MIDI cannot express, so a round trip returns the same file"><input type="checkbox" id="exact" checked> carry what MIDI cannot say</label>
         </div>
         <div class="row" style="margin-top:.5rem">
-          <label class="check" title="One track per board row and instrument, with the mixer as CC automation"><input type="checkbox" id="mergeRows"> one track per row, not per placement</label>
+          <label class="check" title="One track per board row and instrument, with the mixer as CC automation"><input type="checkbox" id="mergeRows" checked> one track per row, not per placement</label>
         </div>
         <p class="hintline">
           A track is named <code>row 4 - saw_wave</code>, because the board row and the instrument
@@ -114,8 +114,10 @@
           with different level, pan or sends: those are separate placements to the game and get a
           <code>#2</code>. <strong>One track per row</strong> puts them together instead and writes
           the mixer as CC automation at each clip, which over the ten-level corpus is
-          <strong>4,911 tracks down to 3,222</strong>. Only 2 row groups of 850 have notes that
-          overlap in time, where a player would hear whichever setting came last.
+          <strong>4,911 tracks down to 3,224</strong>. Placements that are <em>sounding at the
+          same time</em> keep their own track anyway &mdash; one track has one mixer state, and
+          there is no honest way to give two sounding placements different pans on it. That happens
+          to 2 row groups of 850, and it is what makes this free rather than a trade.
         </p>
         <p class="hintline">
           &#9888; <strong>The last option is what makes a round trip exact.</strong> Everything a

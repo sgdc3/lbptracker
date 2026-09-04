@@ -927,14 +927,45 @@ test('two placements sharing a label are told apart, and come back', () => {
       gridX: 4, stepOffset: 4 * STEPS_PER_CELL, guid: 5, pan: 0.3, reverbSend: 0.2,
     }),
   ]);
-  const names = readMidi(sequencerToMidi(seq, { instrumentName: () => 'kit' }).bytes).tracks
+  const names = readMidi(
+    sequencerToMidi(seq, { instrumentName: () => 'kit', mergeRows: false }).bytes,
+  ).tracks
     .slice(1)
     .map((t) => t.events.map(metaString).find((m) => m?.type === 0x03)?.text);
   assert.deepEqual(names, ['row 0 - kit', 'row 0 - kit #2']);
 
   // And the suffix comes off exactly, because the meta says which index it is.
-  const back = midiToSequencer(sequencerToMidi(seq).bytes).sequencer;
+  const back = midiToSequencer(sequencerToMidi(seq, { mergeRows: false }).bytes).sequencer;
   assert.deepEqual([...back.tracks].sort((a, b) => a.gridX - b.gridX).map((t) => t.pan), [0.6, 0.3]);
+});
+
+test('placements sounding at the same time are not merged', () => {
+  // ❗ One track has one mixer state, and there is no honest way to give two
+  // sounding placements different pans on it -- so overlapping ones fall back
+  // to separate tracks and the `#2` tells them apart. Over the corpus that is 2
+  // row groups of 850, which is what makes merging free rather than a trade.
+  //
+  // ⚠️ Overlapping is not two Things in one place: no two placements of a row
+  // group ever share a cell. It is a clip started at an earlier cell still
+  // sounding when a later one begins, which a cell of 16 steps and a clip of up
+  // to 128 makes easy.
+  const long: Point[][] = [[{ step: 0, pitch: 60 }, { step: 100, pitch: 60 }]];
+  const seq = makeSequencer([
+    makeTrack(long, { gridX: 0, stepOffset: 0, guid: 5, pan: 0.6 }),
+    makeTrack([[{ step: 0, pitch: 62 }]], {
+      gridX: 4, stepOffset: 4 * STEPS_PER_CELL, guid: 5, pan: 0.3,
+    }),
+  ]);
+  const names = readMidi(sequencerToMidi(seq, { instrumentName: () => 'kit' }).bytes).tracks
+    .slice(1)
+    .map((t) => t.events.map(metaString).find((m) => m?.type === 0x03)?.text);
+  assert.deepEqual(names, ['row 0 - kit', 'row 0 - kit #2'], 'two tracks, not one');
+
+  const back = midiToSequencer(sequencerToMidi(seq).bytes).sequencer;
+  assert.deepEqual(
+    [...back.tracks].sort((a, b) => a.gridX - b.gridX).map((t) => t.pan),
+    [0.6, 0.3],
+  );
 });
 
 test('mergeRows puts a row on one track, with the mixer as automation', () => {

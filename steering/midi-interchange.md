@@ -126,21 +126,27 @@ can point at. **51.7% → 0%.**
 ⚠️ A lane's track is `row 3 - saw_wave (2)`, and the suffix comes straight back off — the meta
 says which lane it is, so what to strip is known exactly rather than guessed at with a pattern.
 
-### One track per row — `mergeRows`
+### One track per row — `mergeRows`, on by default
 
-Off by default, and worth turning on for a DAW. **4,911 tracks become 3,222, a third fewer**: every
-placement of one board row and one instrument goes on a single track, with one `LBP-TRK` meta each
-and the mixer written as **CC automation at the tick each placement's own first clip begins** —
-which is what a DAW does with a mixer that changes during a song.
+**4,911 tracks become 3,224, a third fewer**: every placement of one board row and one instrument
+goes on a single track, with one `LBP-TRK` meta each and the mixer written as **CC automation at
+the tick each placement's own first clip begins** — which is what a DAW does with a mixer that
+changes during a song.
 
 ❗ **It stays exact.** The import reads each controller *in force* at that tick and hands each note
 to whichever placement declared the cell it falls in. Both are unambiguous because **no two
 placements of a row group ever share a cell** — 0 of 62,158 across the corpus. Measured: 62,158
-clips out, **0 came back wrong**, 181 patched against 177 unmerged.
+clips out, **0 came back wrong, 177 patched** — the same as unmerged.
 
-⚠️ **Two of the 850 row groups have notes overlapping in time**, and there a player hears
-whichever mixer setting came last. That is the whole cost, and it is why this is an option rather
-than the default.
+❗ **Placements sounding at the same time are not merged.** One track has one mixer state and
+there is no honest way to give two sounding placements different pans on it, so they fall back to
+separate tracks and the `#2` tells them apart. Over the corpus that is **2 row groups of 850**, and
+it is what makes merging free rather than a trade — which is why it is the default.
+
+⚠️ **Overlapping is not two Things in one place.** It is a clip started at an earlier cell still
+sounding when a later one begins, which a cell of 16 steps and a clip of up to 128 makes easy. In
+`Fugees - Ready Or Not` one placement's cells are 60..74 and the other's are 16, 44, 75, 76, 84 —
+disjoint cells, note spans 960..1216 inside 256..1408.
 
 ⚠️ **Two traps, both caught by the corpus rather than by reading the code:**
 
