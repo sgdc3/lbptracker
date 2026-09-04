@@ -775,6 +775,32 @@ export function sequencerToMidi(
     a.track.gridY - b.track.gridY
     || cellOf(a) - cellOf(b)
     || a.track.guid - b.track.guid);
+  /**
+   * Which of the parts sharing a label this one is: `... #2`, `... #3`.
+   *
+   * ⚠️ **A label names two of a placement's eight fields, and half the corpus
+   * needs more.** `row 0 - baiyon_drums_1` twice in `Ascetic` is the same kit on
+   * the same row at pan 0.60 with no reverb and at pan 0.30 with 0.20 of it --
+   * different placements to the game, indistinguishable in a track list.
+   * Measured: **2,539 of 4,911 part tracks (51.7%) share a label**, separated by
+   * level (466 groups), pan (444), the reverb send (391), the echo send (195)
+   * and the key (10).
+   *
+   * The index says nothing about WHAT differs, deliberately: the mixer is on
+   * CC 7, 10, 91 and 90 now, so a DAW already shows each track's fader and pan.
+   * The label only has to be something you can point at.
+   */
+  const dupOf = new Map<number, number>();
+  {
+    const seen = new Map<string, number>();
+    parts.forEach((part, index) => {
+      const label = nameOf(part.track);
+      const n = (seen.get(label) ?? 0) + 1;
+      seen.set(label, n);
+      if (n > 1) dupOf.set(index, n);
+    });
+  }
+
   const partOfTrack = new Map<number, number>();
   parts.forEach((part, index) => {
     for (const track of part.tracks) partOfTrack.set(track, index);
@@ -1240,7 +1266,11 @@ export function sequencerToMidi(
       for (let lane = 0; lane < laneCount[index]; lane += 1) {
         // A lane is a continuation of the part, and says so in both places: the
         // name so a DAW's track list reads, and the meta so the import merges.
-        const label = laneCount[index] > 1 ? `${nameOf(t)} (${lane + 1})` : nameOf(t);
+        // `row 0 - kit #2 (1)`: the duplicate index, then the lane. Both come
+        // off again exactly, because the meta says what each of them is.
+        const dup = dupOf.get(index);
+        const named = dup === undefined ? nameOf(t) : `${nameOf(t)} #${dup}`;
+        const label = laneCount[index] > 1 ? `${named} (${lane + 1})` : named;
         // ❗ On the FIRST lane only. Lanes merge into whichever part the import
         // meets first, so a copy on each is bytes nobody reads.
         const fix = lane === 0 ? patch?.get(index) : undefined;
@@ -1316,6 +1346,7 @@ export function sequencerToMidi(
             // what a file from a DAW should become. See `Part.rest`.
             ...(part.rest === 1 ? {} : { rest: part.rest }),
             ...(laneCount[index] > 1 ? { lane } : {}),
+            ...(dupOf.has(index) ? { dup: dupOf.get(index) } : {}),
             ...(fix ? { fix } : {}),
           })),
         ];
@@ -1783,6 +1814,9 @@ function readPart(
         const lane = pick('lane', -1);
         const suffix = ` (${lane + 1})`;
         if (lane >= 0 && label.endsWith(suffix)) label = label.slice(0, -suffix.length);
+        // Then the duplicate index, which the exporter put on before the lane.
+        const dup = pick('dup', 0);
+        if (dup > 1 && label.endsWith(` #${dup}`)) label = label.slice(0, -` #${dup}`.length);
 
         // ❗ **`row 4 - saw_wave` is where the row and the instrument live**,
         // because MIDI has no message for either: nothing at all for a board

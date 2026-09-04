@@ -114,6 +114,15 @@ every placement of all 22 corpus levels; putting it in the track name would hide
 the one placement that had one, and leave a rename with nothing to mean. It rides in the meta,
 where nothing else claims it.
 
+❗ **A label names two of a placement's eight fields, and half the corpus needed more.** `Ascetic`
+has `row 0 - baiyon_drums_1` twice: the same kit on the same row at pan 0.60 with no reverb, and at
+pan 0.30 with 0.20 of it — two placements to the game, one name to a track list. Measured
+2026-09-04: **2,539 of 4,911 part tracks (51.7%) shared a label**, separated by level (466 groups),
+pan (444), the reverb send (391), the echo send (195) and the key (10). A `#2`, `#3` index settles
+it, and the index says nothing about *what* differs on purpose — the mixer is on CC 7, 10, 91 and
+90 now, so a DAW already shows each track's fader and pan. The label only has to be something you
+can point at. **51.7% → 0%.**
+
 ⚠️ A lane's track is `row 3 - saw_wave (2)`, and the suffix comes straight back off — the meta
 says which lane it is, so what to strip is known exactly rather than guessed at with a pattern.
 

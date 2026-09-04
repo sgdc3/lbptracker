@@ -909,6 +909,34 @@ test('clips of one part keep their own names', () => {
   );
 });
 
+test('two placements sharing a label are told apart, and come back', () => {
+  // ⚠️ **A label names two of a placement's eight fields.** `Ascetic` has the
+  // same kit on row 0 twice -- pan 0.60 with no reverb, and pan 0.30 with 0.20
+  // of it -- which the game treats as two placements and a track list showed as
+  // one name twice. Measured: 2,539 of 4,911 part tracks (51.7%) shared a label,
+  // separated by level, pan, either send, or the key.
+  //
+  // ❗ The index says nothing about WHAT differs, on purpose: the mixer is on
+  // CC 7, 10, 91 and 90 now, so a DAW already shows each track's fader and pan.
+  // The label only has to be something you can point at.
+  const seq = makeSequencer([
+    makeTrack([[{ step: 0, pitch: 60 }]], { gridX: 0, stepOffset: 0, guid: 5, pan: 0.6 }),
+    // ❗ `stepOffset` is `gridX * STEPS_PER_CELL` in a real level, and a fixture
+    // that sets one without the other places a note outside its own cell.
+    makeTrack([[{ step: 0, pitch: 62 }]], {
+      gridX: 4, stepOffset: 4 * STEPS_PER_CELL, guid: 5, pan: 0.3, reverbSend: 0.2,
+    }),
+  ]);
+  const names = readMidi(sequencerToMidi(seq, { instrumentName: () => 'kit' }).bytes).tracks
+    .slice(1)
+    .map((t) => t.events.map(metaString).find((m) => m?.type === 0x03)?.text);
+  assert.deepEqual(names, ['row 0 - kit', 'row 0 - kit #2']);
+
+  // And the suffix comes off exactly, because the meta says which index it is.
+  const back = midiToSequencer(sequencerToMidi(seq).bytes).sequencer;
+  assert.deepEqual([...back.tracks].sort((a, b) => a.gridX - b.gridX).map((t) => t.pan), [0.6, 0.3]);
+});
+
 test('the MIDI tracks come out in board order', () => {
   // ❗ `gridY` is the Thing's own y, negated -- `boardToGrid` computes
   // `floor(-y / 105)` -- so row 0 is the top of the board and ascending is top
