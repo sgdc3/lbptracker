@@ -1728,3 +1728,82 @@ engine renders exactly the same number.
 `where.layer` are reported so a live scheduler can do the same, and `dev/live.ts` and
 `dev/live-sim.ts` both do. A stolen note takes **all** its layers with it — they were sharing the
 record that was overwritten.
+
+## 30. `durationSteps` — VERIFIED against the engine's gate, 2026-09-04
+
+`schedule()` gives a note `durationSteps = endPosition - startPosition + 1`, with both positions
+including the sub-step as `step + subStep/3`. Question 29 listed the `+ 1` as unchecked. It is
+**right**, and the engine's gate is in two halves that only make sense together.
+
+**The chain walk**, `sub_0x3930` — the per-block note update:
+
+```
+0x3a0a  edx = word [rbx + 0x3c]     ; the record cursor
+0x3a0e  r11 = rdi + rdx*4 + 0x20    ; the note records, four bytes each
+0x3a13  eax <<= 4                   ; gridX * 16, the clip's step offset
+0x3a31  r12d -= eax                 ; the playhead, relative to the clip
+0x3a3e  edx = [r11] & 0x7f          ; this record's step, bits 0..6
+0x3a41  cmp r12d, edx
+0x3a44  jle 0x3a6e                  ; playhead <= step: not reached, leave the gate
+0x3a46  test ah, 0x80               ; bit 15, the end-of-chain flag
+0x3a49  je  0x3a66                  ; not the end: advance the cursor and go again
+0x3a4b  [rbx+0x10] = 1              ; the end: close the gate
+```
+
+✔ So the gate stays open while `playhead <= lastStep` and closes once the playhead is **inside the
+next step**. That is the `+ 1`.
+
+**Then it hands the last third of a step to the renderer.** Having closed the gate, the same pass
+re-opens it and leaves a sub-step behind:
+
+```
+0x3aa0  eax = 0x107                 ; bextr: start 7, length 1
+0x3aa5  bextr eax, ecx, eax         ; bit 7
+0x3aaa  ecx >>= 0x1e ; cl &= 1      ; bit 30
+0x3ab0  eax <<= cl                  ; subStep = bit7 << bit30
+0x3ab2  [rbx + 0x3f] = al           ; the END sub-step
+0x3ab5  [rbx + 0x10] = 0            ; and the gate is OPEN again
+```
+
+and `sub_0x1c60` closes it for good when the playhead's fraction passes it:
+
+```
+0x2988  al = byte [r12 + 0x3f]      ; nothing to do if it is zero
+0x2997  xmm4 = (float)al
+0x299b  xmm4 *= 0.33333334          ; subStep / 3 of a step
+0x29a3  xmm1 = [rbp - 0xb78]        ; the playhead's fraction -- floor'd off at 0x0c42
+0x29ab  vucomiss xmm1, xmm4
+0x29b1  [r14 + 0x10] = 1            ; past it: close
+```
+
+**The gate therefore closes at `lastStep + 1 + endSubStep/3`, which is exactly
+`startPosition + (endPosition - startPosition + 1)`.** `durationSteps` is correct to the third of a
+step.
+
+✔ **And `subStep = bit7 << bit30` is now confirmed from the PLAYBACK side.** It was recovered from
+the editor's write path; `0x3aa5`-`0x3ab0` is the engine reading it back, the same two bits and the
+same shift. `[+0x3e]` holds the start sub-step and `[+0x3f]` the end.
+
+### The other candidate, and why it was NOT implemented
+
+The engine skips allocating a record at all when a volume is not positive — `v0x4ef`'s caller:
+
+```
+0x04cb  vmulss xmm0, xmm0, [rbx + rax*4 + 0x420]   ; rax = bits 28..29 of the record, times 5
+0x04d4  vucomiss xmm0, 0
+0x04dc  jbe 0x410                                  ; not positive: no record, no note
+```
+
+Our model allocates for every note. On `C4K3 S0NG` that is **701 of 13,091** notes whose score is
+zero, and skipping them takes the stealing from 11.7% to 9.7% (and, with the release tail, 29.9% to
+29.0%) — so it does not reconcile anything either way.
+
+❌ **And it must not be implemented as it stands.** All 701 are notes whose **own volume opens at
+zero and rises** — none is on a muted channel. Those are the `Northern Lights` fade-ins that
+`render.ts` documents at length: real music that this project already rendered as silence once.
+Reading `0x04d4` as "the note's opening volume" would delete them again.
+
+⚠️ **What `[rbp-0x78]` holds is not known**, and the multiplier beside it is indexed by the note
+record's **bits 28..29** — the block-table select — into a four-entry, five-dword table at `+0x420`.
+That is not the row-to-channel mapping `channelVolume` uses, and it is a thread worth pulling before
+anything here is acted on.

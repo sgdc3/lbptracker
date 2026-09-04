@@ -1037,18 +1037,27 @@ Every part of the engine's side is now measured and none of it explains the ear:
 | a steal is abrupt in the game too | ✔ the record is zeroed on takeover |
 
 That predicts **29.9%** of `C4K3 S0NG`'s notes cut short, and a listener says the game is nothing
-like that. What is left is on **our** side of the line, not the engine's, and neither half has been
-checked:
+like that. Both candidates on **our** side have since been checked, and both are clean:
 
-- **`durationSteps`** — how long the sequencer holds a note's gate open. It comes from the note
-  record chain and has never been measured against the engine's own reading of it.
-- **Whether every note we schedule is one the game sounds at all.** A note on a muted channel, or an
-  instrument the game skips, costs us a record and costs the game nothing.
+- ✔ **`durationSteps` is right**, to the third of a step. The gate closes at
+  `lastStep + 1 + endSubStep/3` and that is exactly what `endPosition - startPosition + 1` gives.
+  See *30* in [answered-questions.md](answered-questions.md) for the two halves of the mechanism.
+- ✔ **We do schedule notes the engine would not** — it skips allocation when a volume is not
+  positive (`0x04d4`/`0x04dc`) and we always allocate — but it is 701 of 13,091 notes here, worth
+  11.7% → 9.7%, and **all 701 are fade-ins from zero rather than muted channels**. Dropping them
+  would delete the `Northern Lights` case this project already got wrong once, so it was measured
+  and NOT implemented.
 
-⚠️ **And our own two halves already disagree.** The mixer keeps a voice alive through its release
+**So every number on both sides of the line is now measured, and they still disagree with the ear.**
+That is where this stands. The remaining thread is the one the volume test exposed: its multiplier
+is indexed by the note record's **bits 28..29**, the block-table select, into a four-entry table at
+`+0x420` — which is not the row-to-channel mapping `channelVolume` uses. Somebody should find out
+what `[rbp-0x78]` and that table are before trusting either reading.
+
+⚠️ **And our own two halves disagree.** The mixer keeps a voice alive through its release
 (`env.finished` ends it); the pool frees the record at the note's written end. The pool is the
-optimistic one, and it is the half that matches the ear — which is a coincidence until one of the
-two lines above explains it.
+optimistic one, and it is the half that matches the ear — a coincidence until something above
+explains it.
 
 ⚠️ **Do not implement the tail until this is answered.** Today's model is knowingly short by the
 release, and short is audibly right; long is audibly wrong.
