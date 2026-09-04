@@ -1056,12 +1056,20 @@ times the clip's `Level`, and `[record+0x0c]` from **the current control point's
 and a note fading out becomes the cheapest thing in the pool while it fades. `allocateVoices` scores
 a note once, at its opening velocity, and never again.
 
-That is a mechanism by which a note on its way out yields its record early — which is exactly the
-shape of the thing this question has been looking for. ⚠️ It is **not** the release tail (the
-envelope is not in the score), so it does not close the question on its own; but 53.9% of corpus
-notes carry more than one control point and 5.4% of `C4K3 S0NG`'s open at zero, so a time-varying
-score is not a small correction. **Measure it before building it**: give `allocateVoices` the
-minimum of a note's automation rather than its opening value, and see what the count does.
+That is a mechanism by which a note on its way out yields its record early. **It was measured before
+being built, and it does not help this question at all.** Scoring every note by the quietest point
+it ever reaches — the most generous a following score could ever be to a thief — gives **1,494**
+steals against today's 1,411. Slightly *more*, not fewer.
+
+❗ **Because the score does not decide HOW MANY notes are stolen, only WHICH ones.** The count is
+set by the occupancy model alone: when more than 32 records are wanted at once, something is stolen
+whatever the scores say. So no refinement of the score can move 29.9% toward what the ear accepts,
+and **this question is entirely about occupancy**. The score work stands on its own — the clip's
+`Level` was genuinely missing and is now in — but it is not the way in.
+
+What remains, then, is the same single fact with nothing else attached: the engine holds a record
+until the envelope reaches zero, that predicts 29.9%, and a listener says the game is nothing like
+it. Every other number on both sides is measured and agrees.
 
 **So every number on both sides of the line is now measured, and they still disagree with the ear.**
 That is where this stands. The remaining thread is the one the volume test exposed: its multiplier
