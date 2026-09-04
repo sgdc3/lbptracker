@@ -32,7 +32,7 @@ import {
   readBackup, readBackupZip, sequencersOf, type BackupResult,
 } from '../src/core/backup.ts';
 import { type LevelProject, type Sequencer } from '../src/core/project.ts';
-import { isZip, wireOpen, type Opened } from './open-level.ts';
+import { isZip, openedLabel, saveNote, wireOpen, type Opened } from './open-level.ts';
 import { webInflateRaw } from '../src/platform/web.ts';
 import { webInflate } from '../src/platform/web.ts';
 
@@ -303,25 +303,22 @@ async function openLevel(opened: Opened): Promise<void> {
     }));
     picker.setRows(list);
     dropZone.classList.add('loaded');
+    // ❗ A PS3 backup calls itself `32406766.zip` and the level inside it calls
+    // itself "FJ's Music Hub by Festerd_Jester". The second is the useful one.
+    const label = openedLabel(result, opened.label);
     $('dropTitle').textContent = result.projects.length > 1
-      ? `${opened.label} — ${result.projects.length} levels, ${plural(list.length, 'sequencer')}`
-      : `${opened.label} — ${plural(list.length, 'sequencer')}`;
+      ? `${label} — ${result.projects.length} levels, ${plural(list.length, 'sequencer')}`
+      : `${label} — ${plural(list.length, 'sequencer')}`;
     $('dropHint').textContent = 'Click, or drop a level, a backup folder or a zip.';
-    log(`${opened.label}: ${plural(list.length, 'sequencer')}`);
+    log(`${label}: ${plural(list.length, 'sequencer')}`);
+    for (const save of result.saves) {
+      log(`${save.name ?? save.folder}: save game, ${save.why ?? `${save.resources} resources`}`,
+        save.why !== undefined);
+    }
     // ⚠️ A level that would not open is logged, never swallowed.
     for (const bad of result.failed) log(`${bad.name}: ${bad.why}`, true);
-    // ⚠️ **A PS3 save is not an empty backup, it is an unreadable one**, and
-    // saying "nothing in there" to somebody who dropped their own is true and
-    // useless. Its level is encrypted with a key derived from the title:
-    // measured, `BCES00850LEVEL01EE7CEE/0` is 472,960 bytes at 8.000 bits per
-    // byte with all 256 values and no run of four zeros.
-    const save = result.ps3Saves[0];
-    const saves = save
-      ? `${save.name ?? save.folder} is a PS3 save game — its level is encrypted and `
-        + 'cannot be read. A PS4 backup, or a level file, does work.'
-      : '';
     if (list.length) convert();
-    else setStatus('status', saves || 'no sequencers in there', true);
+    else setStatus('status', saveNote(result) || 'no sequencers in there', true);
   } catch (error) {
     setStatus('status', String((error as Error).message ?? error), true);
     log(String(error), true);

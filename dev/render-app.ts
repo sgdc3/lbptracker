@@ -9,7 +9,8 @@
  */
 
 import { seqPicker } from './seq-picker.ts';
-import { isZip, wireOpen, type Opened } from './open-level.ts';
+import { isZip, saveNote, wireOpen, type Opened } from './open-level.ts';
+import type { BackupResult } from '../src/core/backup.ts';
 import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
 import { PAN_WIDTH } from '../src/core/render.ts';
 
@@ -396,17 +397,14 @@ worker.onmessage = (event: MessageEvent) => {
     for (const bad of (message.failed as { name: string; why: string }[] | undefined) ?? []) {
       setStatus(`${bad.name}: ${bad.why}`, true);
     }
-    // ⚠️ **A PS3 save is not an empty backup, it is an unreadable one.** Its
-    // level is encrypted with a key derived from the title -- measured, the `0`
-    // file is 8.000 bits per byte with all 256 values and no run of four zeros.
-    const saves = (message.ps3Saves as { folder: string; name?: string }[] | undefined) ?? [];
-    if (list.length === 0 && saves.length > 0) {
-      setStatus(
-        `${saves[0].name ?? saves[0].folder} is a PS3 save game — its level is encrypted `
-          + 'and cannot be read. A PS4 backup, or a level file, does work.',
-        true,
-      );
-    }
+    // ⚠️ A save game that would not open is a bug in this parser and says so;
+    // one that opened needs no sentence, because its levels are in the list.
+    const saves = (message.saves as BackupResult['saves'] | undefined) ?? [];
+    const note = saveNote({ saves });
+    if (note) setStatus(note, true);
+    // ❗ A PS3 backup calls itself `32406766.zip` and the level inside it calls
+    // itself "FJ's Music Hub by Festerd_Jester". The second is the useful one.
+    loadedName = (message.label as string | undefined) ?? loadedName;
     goButton.disabled = false;
     setBusy(false);
     setBar(1);

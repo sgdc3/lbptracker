@@ -1429,3 +1429,43 @@ right about the *mechanism* and wrong about the *measurement*: a transfer functi
 game's own output at four operating points is a reading, and it does not need the mechanism to be
 implemented. **A measured input-output relationship is evidence in its own right.** The renderer
 hard-panned for a day longer than the evidence justified.
+
+## The PS3 backup that "cannot be read" — RESOLVED 2026-09-04: it reads fine
+
+`32406766.zip` is a PS3 save-game folder. `src/core/backup.ts` reported it as unreadable and the
+three pages said so on screen. It is not: the numbered files are the game's own `FAR4` save archive
+under XXTEA with a key that is a literal in every tool that touches these files, and unpacking it
+gives 28 resources — 28 of 28 SHA-1s matching — one level, and **11 music sequencers**, one of them
+the "Ascetic - Festerd_Jester" this project's own MIDI fixture came from. The format, the key and
+the sources are in [lbp-modding-toolchain.md](lbp-modding-toolchain.md).
+
+### The wrong turn, and it is the most instructive one here
+
+Two rounds of evidence were produced for the wrong answer.
+
+**Round one was a guess wearing a measurement's clothes.** "The `0` file is 472,960 bytes at 8.000
+bits per byte, all 256 values present, without a single run of four zeros." Every word true. Every
+word **equally true of compressed data**, which is what an LBP resource is made of. It never
+discriminated between the two hypotheses on the table, so it was worth nothing, and it read as
+decisive because it had numbers in it.
+
+**Round two was a real measurement of the wrong question.** Challenged, the evidence became: `PFDB`
+in `PARAM.PFD`; two saves of the same game sharing **0** of 29,560 16-byte blocks and agreeing at
+1,816 of 472,960 offsets against ~1,848 by chance; nothing inflating at 4,096 offsets. All of that
+is sound and all of it establishes only **"this is ciphertext"**. The question that decided the
+outcome was *whose ciphertext, under what key* — and it was never asked, because round two was
+built to defend round one's conclusion rather than to test it.
+
+**The answer was in the bytes already printed.** The file ends `2d ba 61 d2 46 41 52 34` — `FAR4`,
+in the clear, because the writer leaves the last four bytes unencrypted. It appeared in a hex dump
+produced *as part of proving the file unreadable*, and went unread. ⚠️ **A dump you produce to
+support a conclusion is a dump you are not reading.**
+
+What actually broke the deadlock was a question from outside: *how can a site serve the same level
+both as a PS3 backup and as loose resources?* It cannot, unless it holds the plaintext — which
+means the backup is something it **builds**, which means the encryption is public, which means it is
+in that repository. It was: `TEA_KEY` in `save_archive.rs`, thirty lines from the top.
+
+❗ **The lesson for this file: "I cannot read it" is a claim about the reader, not the file.** Before
+writing one down, name what would have to be true and go and check that, rather than gathering more
+descriptions of the bytes.

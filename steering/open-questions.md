@@ -899,3 +899,24 @@ volume` and the like) that were never opened. **Print them before theorising.**
   end ascending are each 100% over the corpus; among the 254 clips tied on all three, nothing beats
   98.8% (modulation ascending) and 94.9% (volume descending). Adding one would look like the other
   three and not be one.
+
+## 25. Plans (`PLNb`) hold Things, and we cannot open one
+
+A plan is a saved Thing — a costume, a vehicle, **a copied music sequencer**. The real backup
+measured on 2026-09-04 holds eleven of them beside its one level, and `readLevelProject` fails on
+every one at the first read, because a plan is not a world: its Things live inside a nested
+`thingData` blob and `PPlan` wraps them with inventory metadata.
+
+`PLNb` was in `LEVEL_MAGIC` until then, so all eleven were reported as levels that failed to open —
+a page full of red for a backup that was fine. They are counted as `other` now, which is honest and
+loses nothing that ever worked.
+
+**Why it is worth doing**: somebody who copies a sequencer to their popit and backs *that* up has a
+file this tool refuses, and it is the smallest possible thing to drop on the page — one instrument
+rack, no level around it.
+
+**The anchor**: `cwlib/resources/RPlan.java` (fetch it, do not clone it) for the wrapper's field
+order and where `thingData` starts; then hand that blob to the existing `readLevel` walk, which is
+already the part that does the work. The revision gates are the risk: the eleven plans in the
+measured save span the same revision as the level beside them, so they are a corpus of one revision
+and not a test of the gates.

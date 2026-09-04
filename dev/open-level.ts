@@ -15,7 +15,7 @@
  * nothing about files at all. See `steering/game-assets.md`.
  */
 
-import type { BackupFile } from '../src/core/backup.ts';
+import type { BackupFile, BackupResult } from '../src/core/backup.ts';
 
 /**
  * Files bigger than this are skipped without being read.
@@ -163,4 +163,31 @@ export function wireOpen(opts: {
     const transfer = (event as DragEvent).dataTransfer;
     if (transfer) void give(fromDrop(transfer));
   });
+}
+
+/**
+ * What to say about the save games in a pile: nothing, when they opened.
+ *
+ * ❗ **A PS3 save is not an unreadable backup**, though this said it was on
+ * all three pages. Its level is an XXTEA'd `FAR4` archive with a key that is a
+ * constant, `savearchive.ts` opens it, and the levels simply appear in the list.
+ * Only a save that would NOT open is worth a sentence -- and then the sentence
+ * has to say what went wrong, because at that point it is a bug here.
+ */
+export function saveNote(result: Pick<BackupResult, 'saves'>): string {
+  const bad = result.saves.find((save) => save.why);
+  if (!bad) return '';
+  return `${bad.name ?? bad.folder} is a save game that would not open: ${bad.why}`;
+}
+
+/**
+ * What to call what was opened: the save's own name when there is one.
+ *
+ * A backup zip is called `32406766.zip` and the level inside it is called "FJ's
+ * Music Hub by Festerd_Jester". `PARAM.SFO` is not encrypted, so the second one
+ * is free.
+ */
+export function openedLabel(result: Pick<BackupResult, 'saves'>, fallback: string): string {
+  const named = result.saves.filter((save) => save.name !== undefined);
+  return result.saves.length === 1 && named.length === 1 ? named[0].name! : fallback;
 }

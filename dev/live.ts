@@ -27,7 +27,7 @@ import { readBackup, sequencersOf, type BackupResult } from '../src/core/backup.
 import {
   CHANNEL_COUNT, channelVolume, type LevelProject, type Sequencer,
 } from '../src/core/project.ts';
-import { fromFiles, isZip, wireOpen } from './open-level.ts';
+import { fromFiles, isZip, openedLabel, saveNote, wireOpen } from './open-level.ts';
 import { readBackupZip } from '../src/core/backup.ts';
 import { webInflateRaw } from '../src/platform/web.ts';
 import { LiveVoicePool, VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
@@ -1046,22 +1046,18 @@ async function openBackup(opened: {
     project = result.projects[0] ?? null;
     picker.setRows(rows);
     dropZone.classList.add('loaded');
+    // ❗ A PS3 backup calls itself `32406766.zip` and the level inside it calls
+    // itself "FJ's Music Hub by Festerd_Jester". The second is the useful one.
+    const label = openedLabel(result, opened.label);
     dropTitle.textContent = result.projects.length > 1
-      ? `${opened.label} — ${result.projects.length} levels, ${rows.length} sequencers`
-      : `${opened.label} — ${rows.length} sequencers`;
+      ? `${label} — ${result.projects.length} levels, ${rows.length} sequencers`
+      : `${label} — ${rows.length} sequencers`;
     dropHint.textContent = 'Click, or drop a level, a backup folder or a zip.';
-    // ⚠️ **A PS3 save is not an empty backup, it is an unreadable one**, and
-    // saying "nothing in there" to somebody who dropped their own is true and
-    // useless. Its level is encrypted with a key derived from the title:
-    // measured, `BCES00850LEVEL01EE7CEE/0` is 472,960 bytes at 8.000 bits per
-    // byte with all 256 values and no run of four zeros.
-    const save = result.ps3Saves[0];
-    const saves = save
-      ? `${save.name ?? save.folder} is a PS3 save game — its level is encrypted and `
-        + 'cannot be read. A PS4 backup, or a level file, does work.'
-      : '';
+    // ⚠️ A save game that would not open is a bug here and says so; one that
+    // opened needs no sentence, because its levels are in the list.
+    const note = saveNote(result);
     if (rows.length) prepareNow();
-    else if (saves) setStatus(saves, true);
+    else if (note) setStatus(note, true);
     else if (result.failed.length) {
       setStatus(`nothing playable: ${result.failed[0].why}`, true);
     } else setStatus('no sequencers in there', true);

@@ -45,29 +45,29 @@ the authority: it is at the END of the file and a ZIP is read backwards.
 one of forty fails is a bug in this parser and should look like one, not like a
 level that quietly is not in the list.
 
-⚠️ **PS3 save folders cannot be read, and the page says so by name.**
-`BCES00850LEVEL01…` holds `0` and `1` beside `ICON0.PNG`, `PARAM.PFD` and
-`PARAM.SFO`, and the numbered files are encrypted with a key derived from the
-title.
+❗ **A PS3 save folder opens like anything else.** `BCES00850LEVEL01…` holds
+`0` beside `ICON0.PNG`, `PARAM.PFD` and `PARAM.SFO`; the numbered files are the
+game's own `FAR4` save archive under XXTEA with a constant key, and
+`src/core/savearchive.ts` unpacks them into resources before `readBackup` scans
+the pile. Measured end to end: the real backup gives 28 resources, one level and
+**11 sequencers**, in 102 ms. The format is in
+[lbp-modding-toolchain.md](lbp-modding-toolchain.md).
 
-⚠️ **The first evidence written here was a guess dressed as a measurement**,
-and it is worth keeping as one. It read "8.000 bits per byte, all 256 values
-present, no run of four zeros" — all true, and all equally true of COMPRESSED
-data, which is what an LBP resource is full of. It did not distinguish the two
-cases at all. What does:
+⚠️ **This page said the opposite for two days, and how it got there matters
+more than the fix.** The claim was "a PS3 save cannot be read", on evidence that
+read "8.000 bits per byte, all 256 values present, no run of four zeros" — all
+true, and all equally true of COMPRESSED data, which is what an LBP resource is
+full of. It did not distinguish the two cases at all. The second round of
+evidence was better and still wrong, because it only ever asked *is this
+ciphertext?*: the answer was yes, and the question that mattered was **whose**.
+The file ends with the four bytes `FAR4` **in the clear**, and they were sitting
+in the hex dump printed to prove it unreadable. See
+[answered-questions.md](answered-questions.md).
 
-- `PARAM.PFD` carries the magic **`PFDB`**, the PS3 Protected File Database,
-  and lists the save's files with their hashes;
-- two saves **of the same game** share **0** of their 16-byte blocks, and agree
-  byte-for-byte at **1,816 offsets of 472,960** where chance alone gives
-  ~1,848. Two compressed files of one format would share a header at the least;
-- nothing inflates at any of the first 4,096 offsets, and both files are a whole
-  number of 16-byte blocks.
-
-❗ **`PARAM.SFO` is NOT encrypted**, so a save can still say what it is:
-`src/core/psf.ts` reads it and the pages show `SUB_TITLE`. "FJ's Music Hub by
-Festerd_Jester is a PS3 save game" beats "a PS3 save game", which beats "no
-sequencers in there".
+❗ **`PARAM.SFO` is not encrypted either**, so a save also says what it is:
+`src/core/psf.ts` reads `SUB_TITLE` and the pages title the drop zone "FJ's Music
+Hub by Festerd_Jester" rather than `32406766.zip`. A save that will not open is
+the only one that gets a sentence, and the sentence says why.
 
 ⚠️ **The drop zone takes drops and nothing else.** A click anywhere on it
 opening the file picker looked convenient and was a bug: pressing "open a

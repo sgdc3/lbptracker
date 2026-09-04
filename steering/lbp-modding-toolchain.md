@@ -437,6 +437,55 @@ reason, since displacing a glide has to be able to reach a note that was placed 
 which is MIDI's own ceiling. A fixed 48 clamped 1,026 of them, and a clamped bend is a note that
 arrives at the wrong pitch.
 
+## The save archive — how a PS3 backup opens, and it does open
+
+A PS3 level backup is a save-game folder: `PARAM.SFO`, `PARAM.PFD`, `ICON0.PNG` and numbered files
+`0`, `1`, … The numbered files are **the game's own `FAR4` save archive, XXTEA-encrypted**, not
+PS3 savedata encryption, and the key is a constant that every tool for these files carries:
+
+```
+TEA_KEY = 0x01B70CBD 0x149607D6 0x07F94DD5 0x10DB8CA0   (big-endian 32-bit words)
+```
+
+The layout, from the END of the archive backwards — the last four bytes are `FAR<rev>` **and are
+never encrypted**, which is how a save is recognised without decrypting anything:
+
+```
+len-4    char[4]  "FAR4"        rev 2..5; 5 is the Vita and is little-endian in places
+len-8    u32      entryCount
+len-0x1c sha1     hashinate      HMAC-SHA1 over the archive, rev > 2 (Vita: len-0x20)
+         Fat[]    entryCount x 0x1c: sha1[20], u32 offset, u32 size   — always big-endian
+         byte[]   the save key, 0x84 bytes: revision, localUserID, root type, root hash
+         byte[]   the resources, back to back from offset 0
+```
+
+`fatOffset = len - 8 - entryCount*0x1c - 0x14` (rev > 2), minus 4 more on rev 5. The save key is
+skippable: nothing outside the game needs it, and the FAT alone gets every resource out.
+
+The archive is cut into **0x240000-byte chunks**, one file each, and each chunk is XXTEA'd on its
+own — so chunk boundaries matter and a wrong one decrypts file `0` correctly and turns the rest to
+noise. ⚠️ **Only single-chunk saves are measured here**; `src/core/savearchive.ts` verifies every
+resource against the SHA-1 in the table, which is what turns that unmeasured boundary into a loud
+failure rather than a corrupt level.
+
+✔ **Measured**, 2026-09-04, on `BCES00850LEVEL01EE7CEE/0` (472,960 bytes) out of a real backup zip:
+28 resources, **28 of 28 SHA-1s matching their bytes**, one 275 KB `LVLb` holding **11 music
+sequencers** — "The Asylum", "Ascetic - Festerd_Jester", "Levity - Festerd_Jester" and eight more.
+A wrong key does not produce 28 matching SHA-1s. The other 27 are 16 textures and 11 plans.
+
+Two independent implementations agree on the key and the table, and neither was taken on faith:
+
+- ennuo's `cwlib/util/Crypto.java` — `TEA_KEY`, "used for encrypting/decrypting RLocalProfile and
+  profile backups" — and `cwlib/types/archives/SaveArchive.java` for the revision gates above;
+- Zaprit's [lbp_archive_dl](https://github.com/Zaprit/lbp_archive_dl),
+  `src/serializers/lbp/save_archive.rs`, which **writes** one.
+
+❗ **That second one answers a question worth writing down**: how a site can serve the same level
+both as a PS3 backup zip and as loose resources. It does not decrypt anything. It holds the
+plaintext resources in the archive.org server dump (`dry.db`, keyed by SHA-1), and *builds* the save
+on the way out — the FAT, the save key, the hashinate HMAC and the XXTEA are all in that repo. The
+encryption is something the download **acquires**, not something it has to shed.
+
 ## The level corpus — our regression suite
 
 There is a local checkout at `C:\Users\sgdc3\Desktop\LBP\toolkit\`, and its

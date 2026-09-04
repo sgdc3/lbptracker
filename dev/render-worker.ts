@@ -26,6 +26,7 @@
  */
 
 import { loaderFor, manifest, type Manifest } from './assets.ts';
+import { openedLabel } from './open-level.ts';
 import {
   RATE,
   renderSequencer,
@@ -119,7 +120,9 @@ self.onmessage = async (event: MessageEvent) => {
         list,
         levels: result.projects.length,
         failed: result.failed,
-        ps3Saves: result.ps3Saves,
+        saves: result.saves,
+        // ❗ The name a PS3 backup gives itself, which is not the zip's name.
+        label: openedLabel(result, label),
         instruments: rinstIndex.size,
         samples: smpIndex.size,
       });

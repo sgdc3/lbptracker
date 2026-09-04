@@ -7,6 +7,11 @@
  * extensionless files and guess, so this takes the whole pile and reports what
  * is in it.
  *
+ * A PS3 backup is one step further in: the folder holds a save game, and the
+ * level is inside an XXTEA'd `FAR4` archive split across the files named `0`,
+ * `1`, … `savearchive.ts` opens that, so the pile it hands back here is the
+ * resources rather than the ciphertext.
+ *
  * ⚠️ **Everything here works on bytes the caller already has.** The user's own
  * game files are read client-side and never uploaded -- see
  * `steering/game-assets.md` -- so this module fetches nothing and knows nothing
@@ -16,6 +21,7 @@
 import type { Inflate } from './resource.ts';
 import { readLevelProject, type LevelProject } from './project.ts';
 import { psfName } from './psf.ts';
+import { readSaveArchive, saveArchiveRevision } from './savearchive.ts';
 import { readZip, type InflateRaw } from './zip.ts';
 
 /** One file out of a folder or an archive. */
@@ -41,46 +47,96 @@ export interface BackupResult {
    */
   readonly failed: readonly { readonly name: string; readonly why: string }[];
   /**
-   * PS3 save games in the pile: the folder, and what the player called it.
+   * Save games in the pile: the folder, what the player called it, and how it
+   * went.
    *
-   * ⚠️ **These hold a level and it cannot be read.** A PS3 save is encrypted
-   * with a key derived from the title. That was first written here as a guess
-   * dressed in a measurement -- "8.000 bits per byte, all 256 values" -- which
-   * is equally true of COMPRESSED data and so proved nothing. What settles it:
+   * ❗ **A PS3 save holds a level and the level CAN be read.** This said the
+   * opposite for a while, on evidence -- "8.000 bits per byte, all 256 values"
+   * -- that is equally true of compressed data and so proved nothing. The
+   * numbered files are not PS3 savedata encryption at all: they are the game's
+   * own `FAR4` save archive under XXTEA with a key that is a literal in the
+   * game, and the archive's magic sits **unencrypted in the last four bytes**.
+   * `savearchive.ts` unpacks it; `resources` is what came out, and `why` is set
+   * instead when it would not.
    *
-   * - `PARAM.PFD` carries the magic `PFDB`, the PS3 Protected File Database;
-   * - two saves **of the same game** share **0** of their 16-byte blocks, and
-   *   agree byte-for-byte at 1,816 offsets of 472,960 where chance alone gives
-   *   ~1,848. Two compressed files of one format would share their header at
-   *   the very least;
-   * - nothing inflates at any of the first 4,096 offsets, and both files are a
-   *   whole number of 16-byte blocks.
-   *
-   * ❗ **`PARAM.SFO` is NOT encrypted**, so the save can still say what it is.
-   * "FJ's Music Hub by Festerd_Jester" beats "a PS3 save game", which beats
-   * "no sequencers in there".
+   * ⚠️ **`PARAM.SFO` is not encrypted either**, so a save says what it is even
+   * when it will not open: "FJ's Music Hub by Festerd_Jester" beats "a save
+   * game", which beats "no sequencers in there".
    */
-  readonly ps3Saves: readonly { readonly folder: string; readonly name?: string }[];
+  readonly saves: readonly {
+    readonly folder: string;
+    readonly name?: string;
+    readonly resources?: number;
+    readonly why?: string;
+  }[];
 }
 
-/** The magics a level resource can carry; anything else is not one. */
-const LEVEL_MAGIC = ['LVLb', 'PLNb'];
+/**
+ * The magic a level resource carries; anything else is not one.
+ *
+ * ⚠️ **`PLNb` used to be in here and is not a level.** A plan is a saved
+ * Thing -- a costume, a vehicle, a copied music sequencer -- and its Things live
+ * inside a nested `thingData` blob that `readLevelProject` cannot unwrap, so
+ * every plan in a backup was reported as a level that failed to open. The
+ * measured backup holds eleven of them and one level. Reading plans is worth
+ * doing (question 25 in `steering/open-questions.md`); pretending they are
+ * levels is not.
+ */
+const LEVEL_MAGIC = ['LVLb'];
+
+/** A file's folder and its leaf name. Paths are shown, never otherwise parsed. */
+function split(name: string): { folder: string; leaf: string } {
+  const at = name.lastIndexOf('/');
+  return at < 0 ? { folder: '', leaf: name } : { folder: name.slice(0, at), leaf: name.slice(at + 1) };
+}
 
 /**
- * The folders in a pile that are PS3 save games.
+ * Unpack every save archive in the pile, replacing it with what was inside.
  *
- * ❗ By `PARAM.SFO`, which every PS3 save carries and nothing else here does.
- * The numbered files beside it (`0`, `1`) are the encrypted payload.
+ * ❗ **A save is found by the `FAR` magic in a file's last four bytes**, not by
+ * `PARAM.SFO` and not by the folder's name -- the magic is the one part the
+ * writer leaves in the clear. Its siblings named `0`, `1`, … are the rest of the
+ * archive, in numeric order, and `PARAM.SFO` beside them only supplies a name.
  */
-function ps3SavesIn(files: readonly BackupFile[]): { folder: string; name?: string }[] {
-  const found: { folder: string; name?: string }[] = [];
+async function unpackSaves(files: readonly BackupFile[]): Promise<{
+  files: BackupFile[];
+  saves: { folder: string; name?: string; resources?: number; why?: string }[];
+}> {
+  const folders = new Map<string, BackupFile[]>();
   for (const file of files) {
-    const at = file.name.lastIndexOf('/');
-    const leaf = at < 0 ? file.name : file.name.slice(at + 1);
-    if (leaf.toUpperCase() !== 'PARAM.SFO') continue;
-    found.push({ folder: at < 0 ? '' : file.name.slice(0, at), name: psfName(file.bytes) });
+    const { folder } = split(file.name);
+    const group = folders.get(folder);
+    if (group) group.push(file);
+    else folders.set(folder, [file]);
   }
-  return found;
+  const out: BackupFile[] = [];
+  const saves: { folder: string; name?: string; resources?: number; why?: string }[] = [];
+  for (const [folder, group] of folders) {
+    const tail = group.find((f) => saveArchiveRevision(f.bytes) !== undefined);
+    if (!tail) {
+      out.push(...group);
+      continue;
+    }
+    const numbered = group
+      .filter((f) => /^\d+$/.test(split(f.name).leaf))
+      .sort((a, b) => Number(split(a.name).leaf) - Number(split(b.name).leaf));
+    const chunks = numbered.includes(tail) ? numbered : [tail];
+    const sfo = group.find((f) => split(f.name).leaf.toUpperCase() === 'PARAM.SFO');
+    const name = sfo ? psfName(sfo.bytes) : undefined;
+    try {
+      const inside = await readSaveArchive(chunks.map((c) => c.bytes));
+      for (const resource of inside) {
+        out.push({ name: folder ? `${folder}/${resource.sha1}` : resource.sha1, bytes: resource.bytes });
+      }
+      saves.push({ folder, name, resources: inside.length });
+    } catch (error) {
+      // ⚠️ The save's own files stay in the pile when it will not open, so a
+      // folder that is a save in name only is still scanned like anything else.
+      out.push(...group);
+      saves.push({ folder, name, why: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { files: out, saves };
 }
 
 /**
@@ -111,7 +167,8 @@ export async function readBackup(
   const failed: { name: string; why: string }[] = [];
   let quiet = 0;
   let other = 0;
-  for (const file of files) {
+  const unpacked = await unpackSaves(files);
+  for (const file of unpacked.files) {
     if (!looksLikeLevel(file.bytes)) {
       other += 1;
       continue;
@@ -124,7 +181,7 @@ export async function readBackup(
       failed.push({ name: file.name, why: error instanceof Error ? error.message : String(error) });
     }
   }
-  return { projects, quiet, other, failed, ps3Saves: ps3SavesIn(files) };
+  return { projects, quiet, other, failed, saves: unpacked.saves };
 }
 
 /**

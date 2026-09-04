@@ -1,12 +1,15 @@
 /**
- * `PARAM.SFO` -- the plain-text index beside an encrypted PS3 save.
+ * `PARAM.SFO` -- the plain-text index beside a PS3 save.
  *
- * ❗ **The save's level cannot be read and its name can.** A PS3 save game is
- * encrypted with a key derived from the title, so the numbered files beside
- * this one are ciphertext -- but `PARAM.SFO` is not part of that, and it holds
- * the title the player gave the backup. Telling somebody "this is a PS3 save
- * game" is better than "no sequencers"; telling them "this is FJ's Music Hub by
- * Festerd_Jester" is better still, and it costs thirty lines.
+ * ❗ **This is where a backup's own name lives.** The numbered files beside it
+ * hold the level and are XXTEA'd (`savearchive.ts` opens them); `PARAM.SFO` is
+ * not encrypted at all, and it holds the title the player gave the backup. A zip
+ * called `32406766.zip` says "FJ's Music Hub by Festerd_Jester" for thirty lines
+ * of reading, and that is the name to put on screen.
+ *
+ * ⚠️ This module was written while the level was believed unreadable, as a
+ * consolation prize -- "at least say what it is". The belief was wrong; the file
+ * is still the only place the player's own title survives, so it stays.
  *
  * The format is a header, a key table, a value table, and one 16-byte entry per
  * pair. Values are UTF-8 strings (format `0x0204`) or 32-bit integers
