@@ -900,7 +900,7 @@ volume` and the like) that were never opened. **Print them before theorising.**
   98.8% (modulation ascending) and 94.9% (volume descending). Adding one would look like the other
   three and not be one.
 
-## 26. Four resources in the corpus that still will not open
+## 28. Four resources in the corpus that still will not open
 
 Everything else in the six measured saves reads. These four do not, and each fails **by name**,
 which is the reader's growth path working rather than a silence to chase.
@@ -921,3 +921,65 @@ which is the reader's growth path working rather than a silence to chase.
 
 **None of these is in the way of music.** They are listed so that a failure on screen can be
 recognised as one of them rather than investigated twice.
+
+## 29. Does a releasing voice still hold its record?
+
+**The engine frees a voice record when the SOUND ends, not when the note does.** Measured in
+`fmodextinput.prx`'s per-voice renderer, at the bottom of `sub_0x1c60`:
+
+```
+0x3035  xmm0 = (float)[r14+0x40]        ; the voice position, a double
+0x304d  eax  = [r8 + slot*0x98 + 0x78]  ; the slot's frame count
+0x3056  vucomiss xmm0, xmm1             ; past the end of the sample?
+0x305c  cmp [r8 + slot*0x98 + 0x80], 0  ; ...and not looped?
+0x306b  [r14+4] = 0                     ; then silence it
+0x3093  [r14] = 0xff                    ; and FREE the record
+0x3097  [r14+0x10] = 1
+        -- or, the other way in:
+0x20ea  vucomiss xmm3(=0), [r12+4]      ; has the voice's level reached zero?
+0x2117  [rbp-0xb74] = 1                 ; -> free it at 0x3093
+```
+
+`[r12+4]` is the same field the allocator scores with, so the second condition is "this voice has
+faded to nothing". **A record is therefore held for the note plus its release tail**, and
+`occupancySteps` in `src/core/render.ts` is the note's written duration and nothing else.
+
+### Why it is not simply implemented
+
+Measured on `C4K3 S0NG` (13,091 notes, step = 115.4 ms). Release times in steps: median **0.18**,
+p90 **2.65**, p99 **6.48**, max **10.77**; **19.1%** of notes release for longer than a step. Adding
+that tail to the occupancy:
+
+| occupancy | notes cut short |
+|---|---|
+| the written duration (today) | 1,526 (11.7%) |
+| plus the release tail | **3,908 (29.9%)** |
+
+⚠️ **That is worse than the bug that was just fixed.** A listener rejected 3,634 (28%) by ear as
+"nothing like the original", and this would land at 3,908. So the model is missing something that
+lets a releasing voice give up its record cheaply.
+
+### The anchor, and it is a specific one
+
+The allocator at `0x1600` has a branch nobody has explained:
+
+```
+0x1610  test dil, dil                ; a bool the CALLER passes
+0x1613  je 0x161b
+0x1615  cmp dword [rax + 0x14], 0
+0x1619  jg 0x1652                    ; take THIS record, before even asking if it is free
+0x161b  cmp byte [rax], 0xff         ; the ordinary free test
+```
+
+So with that flag set, a record whose `[+0x14]` is a positive float is taken **in preference to a
+free one**. If `[+0x14]` marks a voice that is releasing, then a releasing note holds its record on
+paper and yields it to the first arrival — which would reconcile the measurement above with the
+free condition, and would mean the tail costs no audible stealing at all.
+
+**What `[+0x14]` is has not been found.** It is a float; the block driver zeroes `+0x10` and `+0x14`
+together as a qword when it frees a record (`0x10a0`-`0x10a3`); the renderer writes only `+0x10`.
+Nothing in `fmodextinput.prx` writes `+0x14`, so **it is written from the eboot's side** — that is
+where to look, and `tools/ebdyn.py` plus the sequencer module in `steering/eboot-re.md` is how.
+
+⚠️ **Do not implement the tail until this is answered.** Today's model is knowingly short by the
+release, and short is audibly right; long is audibly wrong.

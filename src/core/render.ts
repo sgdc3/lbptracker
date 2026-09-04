@@ -473,6 +473,14 @@ export async function renderSequencer(
       playbackRate,
       holdFrames: hold,
       layers: Math.max(1, loaded.inst.numStack),
+      // ⚠️ **Knowingly short by the envelope's release.** The engine frees a
+      // record when the voice's LEVEL reaches zero (`sub_0x1c60` 0x20ea, and
+      // 0x3093 sets `[record] = 0xff`), not when the note ends -- so a record
+      // is really held for the note plus its release. Adding that tail takes
+      // `C4K3 S0NG` from 1,526 notes cut short to 3,908, which is worse than
+      // the accounting bug a listener rejected by ear. Something lets a
+      // releasing voice give up its record cheaply, and the candidate is the
+      // allocator's unexplained `[record+0x14]` fast path. See question 29.
       occupancySteps: Math.max(event.durationSteps, oneShotSteps),
     });
   }
