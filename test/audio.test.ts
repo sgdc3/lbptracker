@@ -435,6 +435,34 @@ test('key splits: bass_guitar reads the same way', () => {
   assert.equal(at(19), 3);
 });
 
+// The live page shows two numbers for the same music, and they differ by a lot:
+// the sampler voices actually rendering, and the notes those came out of. A
+// stacked instrument plays up to five layers out of ONE of the engine's 32
+// records, so a meter that showed only voices read as the cap being ignored.
+// `tag` is what groups them, and `dev/live.ts` tags by note for exactly this.
+test('counts separates sampler voices from the notes they came out of', () => {
+  const tone = new Float32Array(48000).fill(0.5);
+  const sample = { channels: [tone], sampleRate: 48000, loop: { start: 0, end: 47999 } };
+  const mixer = new Mixer(48000);
+  const common = { sample, playbackRate: 1, gain: 1, pan: 0.5 } as const;
+  mixer.play({ ...common, tag: 4 });   // three layers of
+  mixer.play({ ...common, tag: 4 });   // one note, out of
+  mixer.play({ ...common, tag: 4 });   // one record
+  mixer.play({ ...common, tag: 5 });   // a second note
+  mixer.play({ ...common });           // an untagged voice counts as its own
+  // Not started yet: in `total`, but nothing is sounding out of it.
+  mixer.play({ ...common, tag: 6, startFrame: 4800 });
+
+  const before = mixer.counts();
+  assert.deepEqual(before, { total: 6, sounding: 5, notes: 3 });
+
+  // Once the delayed voice starts it is a fourth note and a sixth voice.
+  const left = new Float32Array(9600);
+  const right = new Float32Array(9600);
+  mixer.render(left, right);
+  assert.deepEqual(mixer.counts(), { total: 6, sounding: 6, notes: 4 });
+});
+
 // --------------------------------------------------------------------- mixing
 
 function ramp(n: number): SampleBuffer {

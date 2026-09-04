@@ -1073,10 +1073,24 @@ export class Mixer {
    * meter that answered the wrong one would be misleading rather than merely
    * imprecise. Cheap enough to call at a UI rate; not for the audio path.
    */
-  counts(): { total: number; sounding: number } {
+  counts(): { total: number; sounding: number; notes: number } {
     let sounding = 0;
-    for (const voice of this.voices) if (voice.delay <= 0) sounding += 1;
-    return { total: this.voices.length, sounding };
+    // ❗ **Voices and notes are different numbers and the difference is large.**
+    // A stacked instrument plays up to five sampler voices out of one of the
+    // engine's records, so a meter that reports only voices reads several times
+    // the polyphony a listener would count. `tag` is what groups them -- the
+    // caller's handle on a note, which `dev/live.ts` sets to the note and the
+    // keyboard sets to the key. An untagged voice counts as one of its own.
+    const tags = new Set<number>();
+    let untagged = 0;
+    for (const voice of this.voices) {
+      if (voice.delay > 0) continue;
+      sounding += 1;
+      const tag = voice.spec.tag;
+      if (tag === undefined) untagged += 1;
+      else tags.add(tag);
+    }
+    return { total: this.voices.length, sounding, notes: tags.size + untagged };
   }
 
   /**

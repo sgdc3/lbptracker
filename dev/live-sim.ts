@@ -358,14 +358,13 @@ function renderLivePool(): [Float32Array, Float32Array] {
   const right = new Float32Array(frames);
   const block = Math.round(TICK * RATE);
   const pool = new LiveVoicePool(POOL);
-  /** Voices handed over, so a steal can reach back and cut one. */
+  /** Notes handed over, so a steal can reach back and cut one. */
   const live = new Map<number, number>();
   // ❗ **One record per NOTE, and a steal takes all of its layers** -- exactly
   // what `dev/live.ts` does. Asking the pool per layer is what this function did
   // until 2026-09-04, and it made the simulator disagree with the player it
   // exists to simulate. See question 17b.
   const noteEnd = new Map<number, number>();
-  const layersOf = new Map<number, number[]>();
   let next = 0;
   for (let start = 0; start < frames; start += block) {
     const now = start;
@@ -384,14 +383,13 @@ function renderLivePool(): [Float32Array, Float32Array] {
       } else {
         end = noteEnd.get(p.note) ?? p.poolEnd;
       }
-      const mine = layersOf.get(p.note);
-      if (mine) mine.push(p.index);
-      else layersOf.set(p.note, [p.index]);
       const delay = Math.max(0, Math.round(p.at - now));
       const cutFrames = end < p.poolEnd ? cutFrameAt(end) - p.at : undefined;
       mixer.play({
         ...p.spec,
-        tag: p.index,
+        // Tagged by NOTE, not by layer: one record, one tag, so a steal is one
+        // `cutAt` and the mixer can count notes beside voices.
+        tag: p.note,
         startFrame: delay,
         endFrame: p.life === undefined ? undefined : delay + p.life,
         // ⚠️ From the live pool, never from `p.cut` -- that field holds the
@@ -399,16 +397,15 @@ function renderLivePool(): [Float32Array, Float32Array] {
         // the answer with itself.
         cutFrame: cutFrames === undefined ? undefined : delay + cutFrames,
       });
-      live.set(p.index, p.at);
+      if (!live.has(p.note)) live.set(p.note, p.at);
       if (stole) {
-        // The victim stops at the thief's start, and every layer of it goes.
-        // `cut` counts the frames each still gets to sound, so measure from
-        // wherever it actually is.
-        for (const index of layersOf.get(stole.index) ?? []) {
-          const startAbs = live.get(index);
-          if (startAbs === undefined) continue;
+        // The victim stops at the thief's start, and every layer of it goes --
+        // one `cutAt` now that the tag is the note. `cut` counts the frames it
+        // still gets to sound, so measure from wherever it actually is.
+        const startAbs = live.get(stole.index);
+        if (startAbs !== undefined) {
           const atAbs = cutFrameAt(stole.at);
-          mixer.cutAt(index, Math.max(0, atAbs - Math.max(now, startAbs)));
+          mixer.cutAt(stole.index, Math.max(0, atAbs - Math.max(now, startAbs)));
         }
       }
       next += 1;

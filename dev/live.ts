@@ -197,6 +197,16 @@ let nextIndex = 0;
  * amount of counting on this side would know about.
  */
 let sounding = 0;
+/**
+ * How many of the engine's records those voices came out of.
+ *
+ * ❗ **This is the number the 32-voice cap applies to, and `sounding` is not.**
+ * The worklet counts distinct `VoiceSpec.tag`s, and `pump` tags by note, so a
+ * stacked instrument's five layers are one note here and five voices there.
+ * Showing only one of the two is what made a listener read a perfectly correct
+ * "164" as the pool being broken; see the note in `showLoad`.
+ */
+let notes = 0;
 let queued = 0;
 /**
  * Worst block cost as a fraction of realtime; over 1 means the device starved.
@@ -245,8 +255,18 @@ function showLoad(): void {
   // notes in play.** The pool was not even full. A number that says "164" while
   // the cap says 32 is not a fault, and dressing it as one taught a listener to
   // distrust the right number.
+  //
+  // So BOTH are shown, which is what makes either readable. `notes` is the one
+  // to compare against the cap -- loosely: the second and third reasons above
+  // outlive the record too, so a note can still be ringing after the pool has
+  // taken its record back and it is counted here while it does.
   loadLabel.innerHTML =
-    `${sounding} sounding · ${queued} queued ${busy}· ` +
+    `<span title="Distinct notes sounding: the unit the voice cap counts, ` +
+    `though a note keeps ringing after its record is taken back">` +
+    `${notes} notes</span> · ` +
+    `<span title="Sampler voices actually rendering: stack layers, releases ` +
+    `and one-shots outliving their note">${sounding} voices</span> · ` +
+    `${queued} queued ${busy}· ` +
     `<button type="button" class="drops${dropouts > 0 ? ' bad' : ''}" ` +
     `title="Click to reset the count">${health}</button>`;
 }
@@ -319,8 +339,8 @@ const poolSize = () => (noCapBox.checked ? VOICES_UNLIMITED : Number(voicesInput
 let pool = new LiveVoicePool(poolSize());
 /** Note -> the end its record was given, so its other layers can take the same. */
 let noteEnd = new Map<number, number>();
-/** Note -> the plan indices of its layers, so a steal takes all of them. */
-let layersOf = new Map<number, number[]>();
+/** Note -> the step it was handed over at, for measuring a steal's cut from. */
+let noteStart = new Map<number, number>();
 /**
  * The STEP at which each handed-over voice started, so a theft can reach it.
  *
@@ -427,13 +447,14 @@ async function ensureAudio(): Promise<AudioWorkletNode> {
   node.connect(master).connect(context.destination);
   node.port.onmessage = (event: MessageEvent) => {
     const data = event.data as {
-      type: string; id?: string; total?: number; sounding?: number;
+      type: string; id?: string; total?: number; sounding?: number; notes?: number;
       load?: number | null; dropouts?: number; lostFrames?: number;
     };
     if (data.type === 'missingSample') setError(`the worklet has no sample "${data.id}"`);
     // The only place that knows what is actually sounding is the audio thread.
     if (data.type === 'voices') {
       sounding = data.sounding ?? 0;
+      notes = data.notes ?? 0;
       queued = (data.total ?? 0) - sounding;
       audioLoad = data.load ?? null;
       dropouts += data.dropouts ?? 0;
@@ -594,7 +615,7 @@ async function prepare(restart = true): Promise<void> {
     nextIndex = plan.findIndex((p) => frameOf(p) >= now);
     if (nextIndex < 0) nextIndex = plan.length;
     handed.clear();
-    layersOf.clear();
+    noteStart.clear();
     rebuildPool(now);
   }
 
@@ -673,7 +694,7 @@ function seek(frames: number): void {
   nextIndex = plan.findIndex((p) => frameOf(p) >= cursorFrames);
   if (nextIndex < 0) nextIndex = plan.length;
   handed.clear();
-  layersOf.clear();
+  noteStart.clear();
   rebuildPool(cursorFrames);
   stolenLive = 0;
   const cell = document.getElementById('stolenCell');
@@ -706,6 +727,7 @@ function stop(clear = true): void {
   if (clear) {
     node?.port.postMessage({ type: 'stopAll' });
     sounding = 0;
+    notes = 0;
     queued = 0;
     dropouts = 0;
     lostMs = 0;
@@ -757,9 +779,7 @@ function pump(): void {
     } else {
       end = noteEnd.get(p.note) ?? p.poolEnd;
     }
-    const layers = layersOf.get(p.note);
-    if (layers) layers.push(p.index);
-    else layersOf.set(p.note, [p.index]);
+    if (!noteStart.has(p.note)) noteStart.set(p.note, p.startStep);
     const cut = end < p.poolEnd ? cutFrameAt(end) - at : undefined;
     node.port.postMessage({
       type: 'play',
@@ -767,7 +787,11 @@ function pump(): void {
       voice: {
         ...onClock(p),
         gain: gainOf(p),
-        tag: p.index,
+        // ❗ **Tagged by NOTE, not by layer.** A stacked instrument's layers all
+        // came out of one of the engine's records, so they are taken away
+        // together, expressed together, and counted together -- which is also
+        // what lets the worklet report notes beside voices.
+        tag: p.note,
         startFrame: delay,
         endFrame: life === undefined ? undefined : delay + life,
         cutFrame: cut === undefined ? undefined : delay + cut,
@@ -779,15 +803,14 @@ function pump(): void {
       stolenLive += 1;
       const cell = document.getElementById('stolenCell');
       if (cell) cell.textContent = stolenLive.toLocaleString();
-      // The victim loses its record at the thief's start, and **every layer of
-      // it goes**: they were all playing out of that one record. `cutAt` counts
-      // the frames each still gets to sound, so measure from where it is now.
-      for (const index of layersOf.get(stole.index) ?? []) {
-        const startStep = handed.get(index);
-        if (startStep === undefined) continue;
+      // The victim loses its record at the thief's start, and every layer of it
+      // goes with it -- one message now that the tag is the note. `cutAt` counts
+      // the frames it still gets to sound, so measure from where it is now.
+      const startStep = noteStart.get(stole.index);
+      if (startStep !== undefined) {
         node.port.postMessage({
           type: 'cutAt',
-          tag: index,
+          tag: stole.index,
           frames: Math.max(0, cutFrameAt(stole.at) - Math.max(now, cutFrameAt(startStep))),
         });
       }

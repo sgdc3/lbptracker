@@ -374,7 +374,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
     this.sinceReport += frames;
     if (this.sinceReport < sampleRate / 10) return;
     this.sinceReport = 0;
-    const { total, sounding } = this.mixer.counts();
+    const { total, sounding, notes } = this.mixer.counts();
     let load: number | null = null;
     if (this.canTime) {
       const now = Date.now();
@@ -394,6 +394,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
       type: 'voices',
       total,
       sounding,
+      notes,
       load,
       dropouts: this.dropouts,
       lostFrames: this.lostFrames,

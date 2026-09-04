@@ -1733,6 +1733,21 @@ notes in play**, with the pool not even full:
 not respecting it". Nothing was: the alarm fired constantly on music that was entirely correct, and
 dressing a right number as a fault teaches a listener to distrust it. Removed 2026-09-04.
 
+✔ **Both numbers are shown, 2026-09-04**, which is what makes either of them readable: the meter
+says `9 notes · 14 voices · 14 queued`. Removing the false alarm left "164 sounding" with nothing
+to read it against, and the number a listener wants beside the 32 in the voices box is the count of
+notes. `Mixer.counts()` returns it, by counting distinct `VoiceSpec.tag`s among the voices that
+have started (untagged voices count individually), and `dev/live.ts` / `dev/live-sim.ts` therefore
+**tag by note rather than by layer** — the same grouping the pool already uses, so one `cutAt`
+takes a stolen note's whole stack where a loop over its layers was needed before. Verified in the
+browser on `Ascetic`: over 10 s, at most 14 notes against 20 voices with the cap at 32. The audio
+is untouched — `dev/live-sim.ts` still reports the live pool at −56.9 dB and 1,318 of 13,091 notes
+stolen.
+
+⚠️ **`notes` is not bounded by the pool either**, and the tooltip says so. The second and third
+reasons above outlive the record, not just the layer sharing: a note keeps its tag while it rings
+out, so it is still counted after the pool has taken its record back.
+
 ### What it touched
 
 `render.ts` allocates per note and applies the decision to every layer; `where.note` and
