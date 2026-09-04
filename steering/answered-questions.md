@@ -1591,3 +1591,86 @@ run the whole corpus through it before trusting a byte width again.
 `POWER_UP`, `ANIMATION`, `ATMOSPHERIC_TWEAK`, `SCRIPT_NAME`, `QUEST`, `WORMHOLE`,
 `MATERIAL_OVERRIDE`, `CONNECTOR_HOOK` — every part an island scene uses. What is left is in
 question 26 of [open-questions.md](open-questions.md): four resources, each failing by name.
+
+## 27. The LFO cadence — RESOLVED 2026-09-04: **once per chunk**, not once per sample
+
+This project advanced the three LFOs and evaluated their sine **every frame**. The engine does not.
+In `fmodextinput.prx`'s per-voice renderer the oscillator lives in the **per-layer** loop at
+`0x24a0`-`0x28e3`, which is a separate loop sitting entirely *before* the per-sample loop at
+`0x2b70`-`0x2df9` (the one holding the sampler call at `0x2c88`):
+
+```
+0x27e6  xmm0 = [rbp-0xab0]              ; this chunk's phase increment
+0x27ee  xmm0 += [rbp-0x9d0]             ; plus this layer's running phase
+0x282e  call 0x130                      ; sin(), once per layer per chunk
+0x283e  xmm0 = sin * (depth * 0.05)     ; v0x4580 = 0.05, the LFO 1 scale
+0x284e  xmm0 = detune + that            ; pitchFactor
+0x2876  [r14] = the layer's rate        ; a double the sample loop then reads
+...  after the loop:
+0x28f1  [r12+0x98] += [rbp-0xab0]       ; the three stored phases advance
+0x2915  [r12+0x9c] += [rbp-0xab8]       ; ONCE, outside every per-sample loop
+0x293b  [r12+0xa0] += [rbp-0xac4]
+```
+
+Six `call 0x130` inside that loop — two per LFO — and three phase accumulators at voice `+0x98`,
+`+0x9c`, `+0xa0` advanced once after it. The layer's resulting rate is written as a **double** that
+the sample loop reads as a constant. So the modulation the game applies is a **staircase held for a
+chunk**, not a smooth per-sample curve.
+
+This is the same `sub_0x1c60` whose per-chunk cadence question 6d already established for the
+modulation ramp, so `MORPH_FRAMES` was already the right clock; the LFOs simply were not on it.
+
+### What it was worth
+
+`C4K3 S0NG` (`Meched Inc.`, 244 tracks, 13,091 notes, the pool saturated — 3,634 notes stolen) is
+the stress test. Measured over 30 s of its busiest stretch, driven the way the worklet drives it:
+
+| | before | after |
+|---|---|---|
+| live path, 128-frame quanta | 4,183 ms | **3,235 ms** |
+| offline, whole song | 35.8 s | **20.2 s** |
+| browser audio-thread load | 16-36% | **11-26%** |
+
+Half of that is the LFO; the other half is the delay bug below. It is **1.19 `Math.sin` calls per
+voice-frame** that stop being made — the oscillator was 10.1% of a live render, measured by
+stubbing `Math.sin` out and re-timing.
+
+⚠️ **The output changes**, deliberately, for every voice with a live LFO. RMS over ten seconds of
+`C4K3 S0NG` moves 0.10188 → 0.10179 and the peak 0.906 → 0.908. That is the point: it is closer to
+the engine, not merely cheaper.
+
+### The delay bug it uncovered, which was worth more than the LFO
+
+Chunking a voice made every LFO voice walk `Voice.render`'s loop — and a chunked voice **counted its
+start delay one chunk at a time**. `renderChunk` skips the delay by arithmetic, but only after being
+entered, so a voice starting three minutes into an offline render did **78,000 empty iterations**
+before its first sample. The full-song render went from 35.8 s to 63.2 s the moment LFO voices
+started chunking, which is how it was found; skipping the delay before the chunk loop took it to
+20.2 s — **40% below where it started**, because morphing voices had been paying it all along.
+
+⚠️ **And the chunk grid has to stay the block's, not the voice's.** `at = delay` then
+`at += MORPH_FRAMES` puts the boundaries at `delay + 128k`, so an offline render and a 128-frame
+live one step the modulation at different frames and stop agreeing. `MORPH_FRAMES - (at %
+MORPH_FRAMES)` for the first chunk keeps them on one grid. `test/audio.test.ts`'s "the mixer renders
+the same audio whatever the block size" caught this within a minute of it being written.
+
+### What the engine actually costs, for the next time this comes up
+
+50.3M voice-frames for 30 s of `C4K3 S0NG` — about 35 voices sounding — at **80 ns each**. Per
+voice-frame, counted: **100%** run the amplitude envelope, **92%** re-solve the filter and **87%**
+run the four-pole ladder, **119%** ran an LFO (1.19 of them), **18%** evaluate `2 ** (semitones/12)`
+for a real glide, 100% walk the automation, all of them read a mipped sample. Nothing is idling.
+
+### Four things measured that turned out NOT to be worth doing
+
+- **Per-quantum overhead does not exist.** Driving the mixer at 128 frames and at 4,096 costs the
+  same to the millisecond. The scratch allocation, the span objects and the per-chunk setup are all
+  in the noise; the cost is the frame loop and nothing else.
+- **Hoisting `this.*` into locals across the frame loop made it 3% SLOWER.** V8 was already doing it,
+  and the extra locals cost more than the loads.
+- **Micro-fixing `readMipped`** (one `Math.floor` instead of a floor and a trunc) changed nothing
+  measurable, despite the profiler attributing 13% of the run to that function. ⚠️ A sampling
+  profiler's per-function attribution inside a hot inlined loop is a hint, not a measurement:
+  stubbing a thing out and re-timing is what actually answered every question here.
+- **Extending the fixed-filter path to `keyTrack === 0`** would reach 7% of voice-frames against the
+  3% it already covers. Left alone.

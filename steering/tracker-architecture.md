@@ -107,6 +107,25 @@ input that bubbles back up to the zone, where it is indistinguishable from a
 click on the background. Two buttons, one job each, and the drag still takes a
 file or a folder.
 
+## What the audio thread costs, and what it does not
+
+`C4K3 S0NG` -- 244 tracks, 13,091 notes, the 32-voice pool saturated -- is the stress test. On the
+audio thread it runs at **11-26%** of one core with no dropouts, and the whole song renders offline
+at 10.7x realtime. Both numbers are after 2026-09-04; see *27. The LFO cadence* in
+[answered-questions.md](answered-questions.md) for what they were and why.
+
+❗ **The cost is the per-frame DSP and nothing else.** Driving the mixer at 128 frames and at 4,096
+costs the same to the millisecond, so there is no per-block overhead to chase: no scratch
+allocation, span object or per-chunk setup shows up against the frame loop. 35 voices, each running
+an envelope, a four-pole ladder with a re-solved cutoff, an LFO and a mipped sample read, is simply
+what this song is.
+
+⚠️ **Uncapping the voice pool nearly doubles it** -- 51 voices sounding instead of 32, and 53.7%
+of a core against 26%. It is not the default and the page says `voice pool uncapped` when it is on,
+but the browser used to restore the checkbox across a reload while everything else reset, which is
+how a session ended up running that way without anyone choosing it. Every control on the live page
+carries `autocomplete="off"` now.
+
 ## The live player's settings are applied, not re-planned
 
 ⚠️ **Read before adding a control to `dev/live.html`.** The page builds its plan once — the

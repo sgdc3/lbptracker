@@ -447,6 +447,10 @@ class Voice {
     // `endFrame` for every caller that had never heard of one-shots.
     this.hold = spec.holdFrames ?? (spec.sample.loop === undefined ? Infinity : 0);
     this.spec = spec;
+    const automation = spec.automation;
+    this.automationBends =
+      automation !== undefined && automation.some((point) => point.pitch !== automation[0].pitch);
+    this.hasLfo = spec.lfos !== undefined && spec.lfos.some((lfo) => lfo.depth !== 0);
     this.delay = delay;
     this.life = life;
     this.cut = cut;
@@ -604,6 +608,23 @@ class Voice {
    * removed -- the rendered output is byte-identical, which is asserted by
    * hashing a render before and after.
    */
+  /**
+   * Whether this voice's own automation moves its pitch.
+   *
+   * ⚠️ **Per voice, not per chunk.** It was `automation.some(...)` inside
+   * `renderChunk`, which a morphing voice runs every 128 frames — a closure and
+   * a scan of the note's control points, 375 times a second per voice, for an
+   * answer that cannot change once the note exists.
+   */
+  private readonly automationBends: boolean;
+
+  /**
+   * Whether any of the three LFOs can sound, which decides whether this voice
+   * is rendered in chunks. A morphing voice can raise a depth off zero later,
+   * and it is already chunked for the modulation's own sake.
+   */
+  private readonly hasLfo: boolean;
+
   private readonly filterScratch = { freq: 0, res: 0 };
   private readonly ladderScratch = { p: 0, f: 0, q: 0 };
   private readonly panScratch = { left: 0, right: 0 };
@@ -669,16 +690,38 @@ class Voice {
     engineSampler: boolean,
     into?: RenderedSpan[],
   ): { begin: number; end: number } {
-    if (this.spec.morph === undefined) {
+    // ❗ **A voice with a live LFO chunks too**, because the LFO advances once
+    // per chunk in the engine and holding one value for a whole offline render
+    // would be no modulation at all. Everything else still goes through in one
+    // call and runs exactly the code it ran before any of this existed.
+    if (this.spec.morph === undefined && !this.hasLfo) {
       const span = this.renderChunk(outLeft, outRight, frames, interpolate, engineSampler);
       into?.push({ begin: span.begin, end: span.end, echo: this.curEcho, reverb: this.curReverb });
       return span;
     }
+    // ⚠️ **The start delay is skipped before the chunking, not inside it.**
+    // `renderChunk` skips it by arithmetic, but a chunked voice would still walk
+    // one iteration per 128 frames of silence to find that out -- and an offline
+    // render hands the whole song in one call, so a voice starting three minutes
+    // in did **78,000 empty iterations** before its first sample. That is the
+    // same quadratic the send buses were once fixed for; it cost 76% of a
+    // full-length render the day LFO voices started chunking.
     let at = 0;
+    if (this.delay > 0) {
+      const skip = Math.min(this.delay, frames);
+      this.delay -= skip;
+      if (skip >= frames) return { begin: frames, end: frames };
+      at = skip;
+    }
     let begin = -1;
     let end = 0;
     while (at < frames) {
-      const take = Math.min(MORPH_FRAMES, frames - at);
+      // ⚠️ **The chunk grid is the block's, not the voice's.** Taking a full
+      // `MORPH_FRAMES` from wherever the delay ended would put the boundaries
+      // at `delay + 128k`, and then an offline render and a 128-frame live one
+      // would step the modulation at different frames. Aligning to the grid is
+      // what keeps them identical -- see `test/audio.test.ts`.
+      const take = Math.min(MORPH_FRAMES - (at % MORPH_FRAMES), frames - at);
       this.refreshMorph();
       const span = this.renderChunk(
         outLeft.subarray(at),
@@ -751,10 +794,7 @@ class Voice {
     // somebody is expressing is being expressed continuously -- there is no
     // case worth optimising where the bend moves and the cutoff must not follow.
     const rateMoves =
-      lfo0 ||
-      this.expressive ||
-      this.spec.morph !== undefined ||
-      (automation !== undefined && automation.some((point) => point.pitch !== automation[0].pitch));
+      lfo0 || this.expressive || this.spec.morph !== undefined || this.automationBends;
     const settings = this.filterSettings;
     const filterFixed =
       filter !== undefined && settings !== undefined && settings.envAmount === 0 && !rateMoves;
@@ -771,6 +811,32 @@ class Voice {
       if (!fixedBypass) ladderCoefficientsInto(fixed.freq, fixed.res, this.ladderScratch);
     }
 
+    // ❗ **The three LFOs advance once for the whole chunk, not once per frame,
+    // and that is measured.** In `fmodextinput.prx`'s per-voice renderer the
+    // sine lives in the **per-layer** loop at `0x24a0`-`0x28e3`, which sits
+    // entirely before the per-sample loop at `0x2b70`-`0x2df9`:
+    //
+    // ```
+    // 0x27e6  xmm0 = [rbp-0xab0]              ; the chunk's phase increment
+    // 0x27ee  xmm0 += [rbp-0x9d0]             ; plus this layer's running phase
+    // 0x282e  call 0x130                      ; sin(), once per layer
+    // 0x283e  xmm0 = sin * (depth * 0.05)
+    // 0x284e  xmm0 = detune + that            ; pitchFactor, and then the rate
+    // 0x2876  [r14] = the layer's rate, a double, read by the sample loop
+    // ...
+    // 0x28f1  [r12+0x98] += [rbp-0xab0]       ; and the three stored phases
+    // 0x2915  [r12+0x9c] += [rbp-0xab8]       ; advance once, after the loop
+    // 0x293b  [r12+0xa0] += [rbp-0xac4]
+    // ```
+    //
+    // ⚠️ **This was per frame here until it was read**, which cost 1.19 `Math.sin`
+    // calls per voice-frame — 10% of a live render of `C4K3 S0NG` — and produced
+    // a smooth modulation where the game's is a staircase held for a chunk.
+    // Faster and closer, from the same finding.
+    //
+    // ⚠️ The chunk **length** is still `MORPH_FRAMES`, which is our choice and
+    // not a measurement; see the note there. What is measured is the cadence.
+
     // Skip the start delay by arithmetic. Counting it down a frame at a time
     // made every voice walk the whole block before its first sample, so a note
     // near the end of a long render cost as much as one at the beginning.
@@ -780,6 +846,27 @@ class Voice {
       this.delay -= skip;
       if (skip >= frames) return { begin: frames, end: frames };
       begin = skip;
+    }
+
+    // ❗ **After the delay, so a voice that does not sound in this chunk does
+    // not modulate either** -- and so the advance is the same sequence whatever
+    // block size the mixer is driven at, which `test/audio.test.ts` pins.
+    let lfoRate = 1;
+    let lfoGain = 1;
+    if (lfo0) {
+      this.lfo[0].advance(frames * this.secondsPerFrame, lfos![0].rate * LFO_RATE_SCALE[0]);
+      lfoRate = pitchFactor(this.lfo[0].value, lfos![0].depth);
+    }
+    if (lfo1) {
+      this.lfo[1].advance(frames * this.secondsPerFrame, lfos![1].rate * LFO_RATE_SCALE[1]);
+      lfoGain = gainFactor(this.lfo[1].value, lfos![1].depth);
+    }
+    if (lfo2) {
+      this.lfo[2].advance(frames * this.secondsPerFrame, lfos![2].rate * LFO_RATE_SCALE[2]);
+      panGainsInto(
+        panFold(this.lfo[2].value, lfos![2].depth, this.spec.pan * 2),
+        this.panScratch,
+      );
     }
     // The allocator's cut, by arithmetic rather than a per-frame test: it is
     // known before the loop and never moves.
@@ -874,26 +961,13 @@ class Voice {
         fade *= this.pressure;
       }
       this.elapsed += 1;
-      if (lfos) {
-        // An LFO at zero depth is never read, so advancing its phase is pure
-        // cost. 62 to 65 of the game's 68 instruments leave all three at zero.
-        if (lfo0) {
-          this.lfo[0].advance(this.secondsPerFrame, lfos[0].rate * LFO_RATE_SCALE[0]);
-          rate *= pitchFactor(this.lfo[0].value, lfos[0].depth);
-        }
-        if (lfo1) {
-          this.lfo[1].advance(this.secondsPerFrame, lfos[1].rate * LFO_RATE_SCALE[1]);
-          fade *= gainFactor(this.lfo[1].value, lfos[1].depth);
-        }
-        if (lfo2) {
-          this.lfo[2].advance(this.secondsPerFrame, lfos[2].rate * LFO_RATE_SCALE[2]);
-          const gains = panGainsInto(
-            panFold(this.lfo[2].value, lfos[2].depth, this.spec.pan * 2),
-            this.panScratch,
-          );
-          panLeft = gains.left * this.curGain;
-          panRight = gains.right * this.curGain;
-        }
+      // ❗ **The LFOs were evaluated once for this whole chunk**, above the loop,
+      // because that is what the engine does. See `lfoRate` and the note there.
+      if (lfo0) rate *= lfoRate;
+      if (lfo1) fade *= lfoGain;
+      if (lfo2) {
+        panLeft = this.panScratch.left * this.curGain;
+        panRight = this.panScratch.right * this.curGain;
       }
 
       // Filter, then amplitude: the ladder is inside the voice, ahead of the
@@ -1127,18 +1201,26 @@ export class Mixer {
       voice.render(scratchL, scratchR, frames, this.interpolate, this.engineSampler, spans);
       for (const span of spans) {
         const { echo, reverb } = span;
+        // ⚠️ **Both sends are hoisted out of the frame loop**, and that is worth
+        // the four lines: they are constant for the span, and testing them per
+        // frame put this loop at 5% of a whole render. The arithmetic is
+        // unchanged and so is the output, to the bit.
+        const echoL = echo > 0 ? sends.echo?.[0] : undefined;
+        const echoR = echo > 0 ? sends.echo?.[1] : undefined;
+        const reverbL = reverb > 0 ? sends.reverb?.[0] : undefined;
+        const reverbR = reverb > 0 ? sends.reverb?.[1] : undefined;
         for (let i = span.begin; i < span.end; i += 1) {
           const l = scratchL[i];
           const r = scratchR[i];
           left[i] += l;
           right[i] += r;
-          if (echo > 0 && sends?.echo) {
-            sends.echo[0][i] += l * echo;
-            sends.echo[1][i] += r * echo;
+          if (echoL !== undefined) {
+            echoL[i] += l * echo;
+            echoR![i] += r * echo;
           }
-          if (reverb > 0 && sends?.reverb) {
-            sends.reverb[0][i] += l * reverb;
-            sends.reverb[1][i] += r * reverb;
+          if (reverbL !== undefined) {
+            reverbL[i] += l * reverb;
+            reverbR![i] += r * reverb;
           }
         }
         scratchL.fill(0, span.begin, span.end);
