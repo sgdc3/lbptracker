@@ -323,7 +323,21 @@ function chainsOf(records: Uint8Array): { chains: string[]; trailing: string } {
   let from = 0;
   for (let at = 0; at < records.length; at += NOTE_RECORD_SIZE) {
     if ((records[at + 1] & 0x80) === 0) continue;
-    chains.push(String(records.subarray(from, at + NOTE_RECORD_SIZE)));
+    // ❗ **The records of a chain, sorted, with the end flag masked off.** Which
+    // record carries the flag is not information: it delimits the chain, and
+    // `makeNote` sorts the chain into position order anyway, so two chains
+    // holding the same records decode to the same note whatever order the file
+    // stored them in. `Wayward` writes one step 28 first and step 23 second,
+    // with the flag on the second; re-encoding puts the flag on step 28. 45
+    // clips of the corpus needed a verbatim patch for that alone.
+    const own: string[] = [];
+    for (let one = from; one <= at; one += NOTE_RECORD_SIZE) {
+      own.push([
+        records[one], records[one + 1] & 0x7f, records[one + 2], records[one + 3],
+      ].join(','));
+    }
+    own.sort();
+    chains.push(own.join('|'));
     from = at + NOTE_RECORD_SIZE;
   }
   chains.sort();
@@ -944,6 +958,18 @@ export function sequencerToMidi(
   };
   const tally = (pick: (p: VoicePool) => number) =>
     [...pools.values()].reduce((sum, p) => sum + pick(p), 0);
+  /**
+   * Events that must sort AFTER the note-on at their own tick.
+   *
+   * ❗ **`rank` cannot tell them apart, because it only sees the bytes.** A
+   * coincident pair's jumped-to pressure has to land after the note-on so the
+   * import reads it as a control point rather than as the opening volume -- and
+   * pressure ranks 2 against a note-on's 3, so pushing it later was not enough:
+   * it sorted in front anyway. CC 74 escaped this only because it happens to
+   * share rank 3 with the note-on.
+   */
+  const late = new Set<MidiEvent>();
+  const ranked = (event: MidiEvent) => (late.has(event) ? 4 : rank(event));
   let clampedPitch = 0;
   let clampedBend = 0;
   let droppedGlides = 0;
@@ -1176,12 +1202,26 @@ export function sequencerToMidi(
     out.push(controlChange(startTick, channel, 74, modTo7(raw[0].modulation)));
     if (exclusive) {
       out.push(pitchBend(startTick, channel, bendValue(opening.semitones)));
-      out.push(channelPressure(startTick, channel, clamp7(opening.volume)));
+      out.push(channelPressure(startTick, channel, clamp7(raw[0].volume)));
     }
-    out.push(noteOn(startTick, channel, base, Math.max(1, clamp7(opening.volume))));
-    // ❗ AFTER the note-on, so the import reads it as the note's own first
+    out.push(noteOn(startTick, channel, base, Math.max(1, clamp7(raw[0].volume))));
+    // ❗ AFTER the note-on, so the import reads these as the note's own first
     // control point rather than as its opening value. Both are rank 3, so the
     // order they are pushed in is the order they are written in.
+    //
+    // ❗ **A coincident pair states both VOLUMES too**, the way it already
+    // states both pitches and both modulations. `Jarred` writes a note as
+    // 48 at volume 27 and 75 at volume 96 on one step; the first is replaced in
+    // the same instant, so nothing hears it -- but it is in the file, and 23
+    // clips needed a verbatim patch for want of one channel-pressure message.
+    // Unlike the modulation this is an encoding difference and not a fidelity
+    // one: the opening modulation is read ONCE for `Params[0..2]` before any
+    // ramp runs, and the opening volume is not read for anything.
+    if (exclusive && clamp7(opening.volume) !== clamp7(raw[0].volume)) {
+      const jump = channelPressure(startTick, channel, clamp7(opening.volume));
+      late.add(jump);
+      out.push(jump);
+    }
     if (opening.modulation !== raw[0].modulation) {
       out.push(controlChange(startTick, channel, 74, modTo7(opening.modulation)));
     }
@@ -1489,7 +1529,7 @@ export function sequencerToMidi(
           })));
         }
         tracks.push({
-          events: [...header, ...sortEvents([...mixer, ...bodies[laneBase[gi] + lane]], rank)],
+          events: [...header, ...sortEvents([...mixer, ...bodies[laneBase[gi] + lane]], ranked)],
         });
       }
     });
@@ -2497,11 +2537,18 @@ function cutIntoClips(
         (m) => thirdsOf(m.tick, ticksPerStep) === startThirds
           && Math.abs(m.value - raw.modulation) > 1e-9,
       );
-      if (openingBend !== 0 || jumped) {
+      // ❗ And the volume, which jumps the same way: the exporter sends the
+      // opening one before the note-on and the jumped-to one straight after.
+      const opened = raw.opening ?? raw.velocity;
+      const swelled = raw.presses.some(
+        (p) => thirdsOf(p.tick, ticksPerStep) === startThirds
+          && clamp7(p.volume) !== clamp7(opened),
+      );
+      if (openingBend !== 0 || jumped || swelled) {
         points.unshift({
           thirds: startThirds,
           pitch: openingBend !== 0 ? base : points[0].pitch,
-          volume: points[0].volume,
+          volume: swelled ? opened : points[0].volume,
           mod: jumped ? raw.modulation : points[0].mod,
         });
       }

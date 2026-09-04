@@ -220,8 +220,26 @@ same identity so the import merges them. It cost **2 extra tracks across the who
 |---|---|---|
 | ~~the same notes in a different **order** inside the clip~~ | ~~325~~ **not carried** | 317 of them are in no order the music determines — `Ascetic` has a cell holding steps 64, 0, 96, 32 in that order. `sameNotes` treats two clips holding the same chains as the same clip |
 | ~~a control point where nothing moves~~ | ~~509 notes~~ **0** | **yes, and it is now said in MIDI** — see below |
-| a note whose own **records** differ | 90 | a ramp re-cut onto the staircase its own rounding makes (93 notes), and the resting bit on the 31 clips that are not uniform |
-| a different **set** of notes in the cell | 87 | **no** — clips of a part overlap, so a note genuinely fits two cells and either answer puts it in the same place |
+| ~~a coincident pair's first volume~~ | ~~23 clips~~ **0** | **yes** — one more channel-pressure message, below |
+| ~~a chain stored out of position order~~ | ~~45 clips~~ **0** | **not carried, and need not be** — below |
+| a ramp re-cut onto the staircase its own rounding makes | 73 | the reconstruction tracks the staircase where the author named two endpoints; it is tighter to the curve, not looser |
+| byte 3's resting bit on a clip that is not uniform | 31 | inert to the engine, per note, and MIDI has no per-note carrier for it |
+| a note whose records differ some other way | 5 | not diagnosed |
+
+✅ **The patch went 177 clips → 109 on 2026-09-04**, and 34 kB → 23 kB (0.10% of the file), by
+finding two more things that could be said after all:
+
+- **A coincident pair states both volumes**, the way it already stated both pitches and both
+  modulations. `Jarred` writes a note as pitch 48 at volume 27 and pitch 75 at volume 96 on one
+  step; the first is replaced in the same instant, so nothing hears it — but it is in the file.
+  ⚠️ **The jumped-to pressure has to sort AFTER the note-on and `rank` cannot see the
+  difference**: pressure ranks 2 against a note-on's 3, so pushing it later was not enough and it
+  sorted in front anyway, leaving the note at 96. CC 74 escaped this only because it shares rank 3.
+  The exporter marks the event instead.
+- **Which record of a chain carries the end flag is not information.** It delimits the chain, and
+  `makeNote` sorts a chain into position order anyway, so two chains holding the same records decode
+  to the same note whatever order the file stored them in — `Wayward` writes step 28 before step 23
+  with the flag on the second. `sameNotes` masks the flag and compares the chain as a set.
 
 ### A repeated value is a control point
 

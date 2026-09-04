@@ -7,6 +7,7 @@ import { blockRoot, notePitch, quantise, unquantise, MAX_SCALE } from '../src/co
 import {
   DEFAULT_PPQ,
   META_TAGS,
+  sameNotes,
   STEPS_PER_QUARTER,
   midiToSequencer,
   sequencerToMidi,
@@ -623,6 +624,43 @@ test('a part with no meta at all takes its name from the track', () => {
   const back = midiToSequencer(stripped);
   assert.equal(back.ours, false);
   assert.equal(back.sequencer.tracks[0].name, 'Whatever');
+});
+
+test('a coincident pair states both volumes too', () => {
+  // ❗ `Jarred` writes a note as pitch 48 at volume 27 and pitch 75 at volume 96
+  // on one step. Both pitches already travelled and both modulations did; the
+  // first volume did not, and 23 clips needed a verbatim patch for want of one
+  // channel-pressure message.
+  //
+  // ⚠️ **The jumped-to pressure has to sort AFTER the note-on and `rank`
+  // cannot see the difference** -- pressure ranks 2 against a note-on's 3, so
+  // pushing it later was not enough; it sorted in front anyway and the note
+  // came back at 96. CC 74 escaped this only because it shares rank 3. The
+  // exporter marks the event instead.
+  const seq = makeSequencer([
+    makeTrack([[
+      { step: 23, pitch: 48, volume: 27 },
+      { step: 23, pitch: 75, volume: 96 },
+    ]]),
+  ]);
+  const back = midiToSequencer(sequencerToMidi(seq, { exact: false }).bytes).sequencer;
+  assert.deepEqual(
+    back.tracks[0].notes[0].points.map((p) => [p.pitch, p.volume]),
+    [[48, 27], [75, 96]],
+  );
+});
+
+test('a chain stored out of order is the same chain', () => {
+  // ⚠️ **Which record carries the end flag is not information.** It delimits
+  // the chain, and `makeNote` sorts a chain into position order anyway, so two
+  // chains holding the same records decode to the same note whatever order the
+  // file stored them in. 45 corpus clips needed a verbatim patch for that alone.
+  const forward = Uint8Array.of(23, 40, 0x60, 0x40, 28, 44 | 0x80, 0x60, 0x40);
+  const reversed = Uint8Array.of(28, 44, 0x60, 0x40, 23, 40 | 0x80, 0x60, 0x40);
+  assert.ok(sameNotes(forward, reversed), 'the same chain, stored the other way round');
+  // And a genuinely different record is still different.
+  const other = Uint8Array.of(23, 40, 0x60, 0x40, 29, 44 | 0x80, 0x60, 0x40);
+  assert.ok(!sameNotes(forward, other));
 });
 
 test('the record patch is written only for what MIDI could not say', () => {
