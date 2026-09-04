@@ -126,6 +126,28 @@ but the browser used to restore the checkbox across a reload while everything el
 how a session ended up running that way without anyone choosing it. Every control on the live page
 carries `autocomplete="off"` now.
 
+## The live player steals what the renderer steals — checked, 2026-09-04
+
+`dev/live-sim.ts` is the check: it builds the plan exactly as the page does and renders it three
+ways — all voices at once, the same voices in 128-frame blocks, and the voices handed over in
+look-ahead bursts with the pool applied live — then compares.
+
+✔ **The live pool decides exactly as `allocateVoices` does.** On `C4K3 S0NG` the live-pool render
+sits at **-56.9 dB** against the direct one, the same as the plain scheduled path; the pool
+contributes nothing of its own. Its offline reference reports `1318 of 13091 notes stolen`, the
+number `dev/render-level.ts` reports, so the occupancy reaches the live path unchanged — it travels
+as `where.poolEnd`, and `planOptions()` sets no `releaseTail`, so the page takes the same default the
+renderer does.
+
+⚠️ **It did not, until this was run.** `renderLivePool` still asked the pool once per stack
+**layer** where `dev/live.ts` had been fixed to ask once per note, and that alone put it at
+**-8.9 dB** — a simulator disagreeing with the thing it exists to simulate. If a live-path bug is
+ever hunted with this tool, check that the tool has kept up first.
+
+⚠️ **A -57 dB residual remains in the scheduling path itself**, and it is not the pool's: it is
+there with the pool switched off, and on `Ascetic`, which steals nothing (-59.1 dB). That is 0.14%
+of RMS and inaudible, but the file's own header says the two should be identical. See question 34.
+
 ## The live player's settings are applied, not re-planned
 
 ⚠️ **Read before adding a control to `dev/live.html`.** The page builds its plan once — the
