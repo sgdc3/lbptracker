@@ -1807,3 +1807,61 @@ Reading `0x04d4` as "the note's opening volume" would delete them again.
 record's **bits 28..29** — the block-table select — into a four-entry, five-dword table at `+0x420`.
 That is not the row-to-channel mapping `channelVolume` uses, and it is a thread worth pulling before
 anything here is acted on.
+
+## 31. The note word's bits 28..29 — RESOLVED 2026-09-04: **the game throws them away**
+
+The plugin indexes a 20-byte row at `clip + 0x420 + 20 * sel`, with `sel` taken from the note word's
+bits 28..29 (`0x04bd`-`0x04cb`), and the corpus sets those bits on **52% of 1,739,058 records**, in
+sticky runs, across 94% of clips. That looked like four instruments per clip and a hole in this
+project's one-instrument `Track`.
+
+**It is not.** `v0x1607c0` is the eboot's clip filler — `PInstrument` in `rdi`, the DSP's clip in
+`rsi` — and its note-copy loop rewrites every word on the way in:
+
+```
+v0x160865  edi = [notes + i*4]              ; the word as the FILE holds it
+v0x160868  [clip + i*4 + 0x20] = edi
+...
+v0x160884  and edi, 0xcfff80ff              ; bits 8..14 and bits 28..29 CLEARED
+v0x16088a  or  edi, eax                     ; bits 8..14 rewritten
+v0x16088c  [clip + i*4 + 0x20] = edi        ; and stored again
+```
+
+`0xcfff80ff` clears exactly bits **8..14** and **28..29**. So the selector is **always zero at
+runtime**, the plugin always reads row 0, and the field is editor state the engine discards — the
+same shape as bit 30's resting value. ⚠️ Note the parallel: **two of the note word's fields are
+written by the editor and ignored by the engine**, and both were nearly read as meaningful.
+
+### And row 0 is `PInstrument`, field for field
+
+The rest of the same function, which is worth having written down:
+
+| clip | from | what |
+|---|---|---|
+| `+0x00` | `Notes.count` | how many records |
+| `+0x04` | `PInstrument + 0x20` | `Colour` |
+| `+0x08` | `+0x24` | `Loops` |
+| `+0x0c` | `+0x2c` | `Scale` |
+| `+0x10` | `+0x28`, as `key < 12 ? key + 12 : key` | `Key` — this **is** `blockRoot` |
+| `+0x1c` | `+0x60` | the bound the plugin compares a record's step against |
+| `+0x20`… | `Notes[]` | the records, masked as above |
+| `+0x420` | `+0x30` | `Level` |
+| `+0x424` | `+0x34` | `Pan` |
+| `+0x428` | `2 x (+0x38) - 1` | `EchoSend` — **exactly `render.ts`'s `echoOffset`** |
+| `+0x42c` | `+0x3c` | `ReverbSend` |
+| `+0x430` | (written by `v0x1c4420`) | the instrument index |
+
+✔ So **one instrument, one level, one pan, one echo send and one reverb send per clip** — which is
+what `Track` has always carried. The model was right; what was missing was the proof.
+
+✔ Three things this confirms for free: `blockRoot`'s `key < 12 ? key + 12 : key` clamp, the
+`2 x echoSend - 1` offset, and — from the bits 8..14 rewrite, `(K1 + K2 - stored) & 0x7f` — that the
+stored field is a **y coordinate** the engine inverts into a note, which is question 18's "one
+numbering" seen from the engine's side.
+
+### Why it was worth chasing anyway
+
+The question came out of a listener's ear, through `occupancySteps`, through the allocator's volume
+test. It ends with nothing to change — but the volume test itself (`channelVolume x [clip+0x420] >
+0`, `0x04d4`) is now fully understood, and the 701 zero-volume notes it would skip are still the
+open lead in question 29.

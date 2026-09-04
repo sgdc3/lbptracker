@@ -1390,7 +1390,7 @@ inferred masks.
 | 15 | end of the note's chain |
 | 16..23 | velocity → `voice.volume = v × 1/127` (`v0x454c`) |
 | 24..27 | the modulation that picks a point in every `Params` range → `× 1/15` |
-| 28..29 | selects one of four per-block tables at `+0x428 + 20k` |
+| 28..29 | ❌ **discarded by the game.** It indexes `clip + 0x420 + 20k`, but the eboot's clip filler masks the word with `0xcfff80ff` on the way in (`v0x160884`) and clears them — see *31* in [answered-questions.md](answered-questions.md) |
 | 30 | the sub-step shift, above |
 
 **Note position is `step + subStep/3`** (`v0x4558 = 0.333333`), which is where triplets come from
