@@ -9,6 +9,7 @@
  */
 
 import { seqPicker } from './seq-picker.ts';
+import { isZip, wireOpen, type Opened } from './open-level.ts';
 import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
 import { PAN_WIDTH } from '../src/core/render.ts';
 
@@ -383,11 +384,18 @@ worker.onmessage = (event: MessageEvent) => {
   }
 
   if (message.type === 'loaded') {
-    const list = message.list as { uid: number; name: string; tracks: number }[];
+    const list = message.list as {
+      key: string; name: string; tracks: number; file?: string;
+    }[];
     picker.setRows(list);
-    // This Is Halloween, if it is in this level: the one every render is judged on.
-    const halloween = list.find((item) => item.uid === 737099);
-    if (halloween) picker.select(halloween.uid);
+    // This Is Halloween, if it is in here: the one every render is judged on.
+    const halloween = list.find((item) => item.key.endsWith('#737099'));
+    if (halloween) picker.select(halloween.key);
+    const levels = (message.levels as number | undefined) ?? 1;
+    // ⚠️ A level that would not open is said out loud, never swallowed.
+    for (const bad of (message.failed as { name: string; why: string }[] | undefined) ?? []) {
+      setStatus(`${bad.name}: ${bad.why}`, true);
+    }
     goButton.disabled = false;
     setBusy(false);
     setBar(1);
@@ -395,8 +403,10 @@ worker.onmessage = (event: MessageEvent) => {
     // page is the first thing anyone tries, and hiding the picker after the
     // first load made it impossible.
     dropZone.classList.add('loaded');
-    dropTitle.textContent = `${loadedName} — ${plural(list.length, 'sequencer')}`;
-    dropHint.textContent = 'Click or drop to open a different file.';
+    dropTitle.textContent = levels > 1
+      ? `${loadedName} — ${levels} levels, ${plural(list.length, 'sequencer')}`
+      : `${loadedName} — ${plural(list.length, 'sequencer')}`;
+    dropHint.textContent = 'Click, or drop a level, a backup folder or a zip.';
     setStatus(
       `ready — ${plural(list.length, 'sequencer')}, ` +
         `${plural(Number(message.instruments), 'instrument')}, ` +
@@ -414,7 +424,10 @@ worker.onmessage = (event: MessageEvent) => {
     drawWave(left, right);
     if (wavUrl) URL.revokeObjectURL(wavUrl);
     wavUrl = URL.createObjectURL(new Blob([wav as BlobPart], { type: 'audio/wav' }));
-    wavName = `level-seq${message.uid}-browser.wav`;
+    // ❗ The uid, out of the key: two levels in one backup can both hold a
+    // sequencer numbered 7, and a file called `level-seq7-browser.wav` twice is
+    // a download that overwrites itself.
+    wavName = `level-seq${String(message.key).split('#').pop()}-browser.wav`;
     player.src = wavUrl;
     saveButton.disabled = false;
     goButton.disabled = false;
@@ -495,7 +508,7 @@ goButton.addEventListener('click', () => {
   setBar(0);
   worker.postMessage({
     type: 'render',
-    uid: picker.value(),
+    key: picker.value(),
     panWidth,
     // An empty end means "to the end of the song", which the renderer spells as
     // a length of zero.
@@ -517,15 +530,28 @@ saveButton.addEventListener('click', () => {
 });
 
 /** Hand the worker a `File`; it does the reading, so this thread stays free. */
-function loadFrom(file: File) {
-  loadedName = file.name;
+/**
+ * Hand a level, a backup folder or a zip to the worker.
+ *
+ * ❗ The bytes are read here and the pile goes over as plain arrays: a worker
+ * cannot walk a dropped directory, and structured clone will not carry a
+ * `FileSystemEntry`.
+ */
+function loadFrom(opened: Opened) {
+  loadedName = opened.label;
   resetResults();
   picker.setRows([]);
   goButton.disabled = true;
   setBusy(true);
   setBar(0);
-  setStatus(`reading ${file.name}…`);
-  worker.postMessage({ type: 'load', file });
+  setStatus(`reading ${opened.label}…`);
+  const only = opened.files.length === 1 ? opened.files[0] : undefined;
+  worker.postMessage({
+    type: 'load',
+    files: opened.files,
+    zip: Boolean(only && isZip(only)),
+    label: opened.label,
+  });
 }
 
 useRange.addEventListener('change', () => {
@@ -541,27 +567,20 @@ useRange.addEventListener('change', () => {
   }
 });
 
-dropZone.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', () => {
-  const file = fileInput.files?.[0];
-  // Cleared so that picking the *same* file again still fires `change`, which
-  // is how you re-read a level you have just re-exported from the game.
-  fileInput.value = '';
-  if (file) loadFrom(file);
+wireOpen({
+  zone: dropZone,
+  fileInput,
+  folderInput: (document.getElementById('folder') as HTMLInputElement | null) ?? undefined,
+  onOpen: (opened) => {
+    // Cleared so that picking the *same* file again still fires `change`, which
+    // is how you re-read a level you have just re-exported from the game.
+    fileInput.value = '';
+    loadFrom(opened);
+  },
 });
-for (const event of ['dragenter', 'dragover'] as const) {
-  dropZone.addEventListener(event, (e) => {
-    e.preventDefault();
-    dropZone.classList.add('over');
-  });
-}
-for (const event of ['dragleave', 'drop'] as const) {
-  dropZone.addEventListener(event, () => dropZone.classList.remove('over'));
-}
-dropZone.addEventListener('drop', (e) => {
-  e.preventDefault();
-  const file = e.dataTransfer?.files?.[0];
-  if (file) loadFrom(file);
+document.getElementById('pickFolder')?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  (document.getElementById('folder') as HTMLInputElement | null)?.click();
 });
 
 // ⚠️ Nothing is loaded until the user opens a file. The page does **not** try

@@ -3,6 +3,53 @@
 Read before starting implementation. This describes the intended shape and the reasoning behind the
 non-obvious choices, so a future session can disagree with the reasoning rather than rediscover it.
 
+## Opening a backup, not a level
+
+A creator's backup is not a file, it is a **pile**: the game writes each
+resource under its own SHA-1, so "open your level" otherwise means "find the
+right extensionless file among forty and guess". All three pages that open
+levels take a folder, a zip of one, or a single file.
+
+- `src/core/backup.ts` — the reading, over `{ name, bytes }[]`. It knows nothing
+  about files, directories or archives, because the user's own game data is read
+  client-side and never uploaded.
+- `src/core/zip.ts` — the writer grew a **reader**: stored and deflated entries,
+  through an `InflateRaw` the platform supplies (`deflate-raw` in the browser,
+  `inflateRawSync` in Node).
+- `dev/open-level.ts` — the one drop zone, shared. The three pages had grown
+  three copies of the drag wiring already.
+
+❗ **A level is told from everything else by its first four bytes** — `LVLb` or
+`PLNb` — and never by its name. A backup is full of `ICON0.PNG`, `PARAM.SFO`,
+costumes and photographs; trying every file works and reports forty failures for
+one level.
+
+⚠️ **A uid is unique inside a level and NOT across a backup.** A folder of
+forty routinely holds two sequencers numbered 7, so the picker is keyed on
+`file#uid` and shows the level beside the song when there is more than one. A
+picker keyed on the uid shows one row where there are two and plays the wrong
+song; that is why `SeqRow.key` is a string.
+
+⚠️ **`readEntries` returns a PAGE, not the directory.** It hands back at most
+a hundred entries and has to be called again until it returns none. A reader
+that calls it once opens the first hundred files of a backup and ignores the
+rest — which looks like a backup that is missing levels, not like a bug.
+
+⚠️ **The local header's name and extra fields are its own length**, not the
+central directory's: an archiver may put a timestamp field in one and not the
+other, and using the wrong length lands mid-data. And the central directory is
+the authority: it is at the END of the file and a ZIP is read backwards.
+`test/backup.test.ts` builds an archive with mismatched extra fields on purpose.
+
+❗ **A level that will not open is reported, never swallowed.** A backup where
+one of forty fails is a bug in this parser and should look like one, not like a
+level that quietly is not in the list.
+
+⚠️ **PS3 save folders cannot be read and never will be.** `BCES00850LEVEL01…`
+holds `0` and `1` next to `ICON0.PNG` and `PARAM.SFO`, and those two are
+encrypted with a per-title key. They come out as `other` and say nothing, which
+is the honest outcome. The PS4 side is what this project reads.
+
 ## The live player's settings are applied, not re-planned
 
 ⚠️ **Read before adding a control to `dev/live.html`.** The page builds its plan once — the

@@ -28,7 +28,12 @@ import {
   type MidiSplit,
 } from '../src/core/midi.ts';
 import { writeZip } from '../src/core/zip.ts';
-import { readLevelProject, type LevelProject, type Sequencer } from '../src/core/project.ts';
+import {
+  readBackup, readBackupZip, sequencersOf, type BackupResult,
+} from '../src/core/backup.ts';
+import { type LevelProject, type Sequencer } from '../src/core/project.ts';
+import { isZip, wireOpen, type Opened } from './open-level.ts';
+import { webInflateRaw } from '../src/platform/web.ts';
 import { webInflate } from '../src/platform/web.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -121,8 +126,7 @@ let exportedName = 'song.mid';
  * becomes visible.
  */
 function convert(): void {
-  const uid = picker.value();
-  const seq = project?.sequencers.find((s) => s.uid === uid);
+  const seq = songs.get(picker.value());
   saveButton.disabled = true;
   $('report').classList.remove('on');
   if (!seq) return;
@@ -269,23 +273,45 @@ bendInput.addEventListener('input', showBend);
 bendInput.value = String(DEFAULT_BEND_RANGE);
 showBend();
 
-async function openLevel(file: File): Promise<void> {
+/**
+ * Every sequencer the open backup holds, by the picker's key.
+ *
+ * ⚠️ A uid is unique inside a level and not across a backup; see
+ * `src/core/backup.ts`.
+ */
+let songs = new Map<string, Sequencer>();
+
+async function openLevel(opened: Opened): Promise<void> {
   dropZone.classList.add('busy');
   rinstIndex = rinstIndex ?? (await manifest('fixtures/rinst').catch(() => undefined));
-  setStatus('status', `reading ${file.name}…`);
+  setStatus('status', `reading ${opened.label}…`);
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    project = await readLevelProject(file.name, bytes, webInflate);
-    const list = project.sequencers
-      .map((s) => ({ uid: s.uid, name: s.name, tracks: s.tracks.length }))
-      .sort((a, b) => b.tracks - a.tracks);
+    const only = opened.files.length === 1 ? opened.files[0] : undefined;
+    const result: BackupResult = only && isZip(only)
+      ? await readBackupZip(only.bytes, webInflate, webInflateRaw)
+      : await readBackup(opened.files, webInflate);
+    songs = new Map();
+    for (const p of result.projects) {
+      for (const sequencer of p.sequencers) songs.set(`${p.file}#${sequencer.uid}`, sequencer);
+    }
+    project = result.projects[0] ?? null;
+    const list = sequencersOf(result).map((r) => ({
+      key: r.key,
+      name: r.name,
+      tracks: r.tracks,
+      file: result.projects.length > 1 ? r.file : undefined,
+    }));
     picker.setRows(list);
     dropZone.classList.add('loaded');
-    $('dropTitle').textContent = `${file.name} — ${plural(list.length, 'sequencer')}`;
-    $('dropHint').textContent = 'Click or drop to open a different file.';
-    log(`${file.name}: ${plural(list.length, 'sequencer')}`);
+    $('dropTitle').textContent = result.projects.length > 1
+      ? `${opened.label} — ${result.projects.length} levels, ${plural(list.length, 'sequencer')}`
+      : `${opened.label} — ${plural(list.length, 'sequencer')}`;
+    $('dropHint').textContent = 'Click, or drop a level, a backup folder or a zip.';
+    log(`${opened.label}: ${plural(list.length, 'sequencer')}`);
+    // ⚠️ A level that would not open is logged, never swallowed.
+    for (const bad of result.failed) log(`${bad.name}: ${bad.why}`, true);
     if (list.length) convert();
-    else setStatus('status', 'no sequencers in that level', true);
+    else setStatus('status', 'no sequencers in there', true);
   } catch (error) {
     setStatus('status', String((error as Error).message ?? error), true);
     log(String(error), true);
@@ -464,5 +490,14 @@ function wireDrop(zone: HTMLElement, input: HTMLInputElement, open: (file: File)
   });
 }
 
-wireDrop(dropZone, fileInput, (file) => void openLevel(file));
+wireOpen({
+  zone: dropZone,
+  fileInput,
+  folderInput: (document.getElementById('folder') as HTMLInputElement | null) ?? undefined,
+  onOpen: openLevel,
+});
+document.getElementById('pickFolder')?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  (document.getElementById('folder') as HTMLInputElement | null)?.click();
+});
 wireDrop(midiDrop, midiInput, (file) => void openMidi(file));

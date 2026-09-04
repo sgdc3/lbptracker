@@ -13,22 +13,36 @@
  */
 
 export interface SeqRow {
-  readonly uid: number;
+  /**
+   * What identifies this row, and it is NOT the uid.
+   *
+   * ⚠️ **A uid is unique inside a level and not across a backup.** Opening a
+   * folder of forty levels routinely gives two sequencers numbered 7, and a
+   * picker keyed on the uid shows one row where there are two and hands the
+   * caller the wrong song. `src/core/backup.ts` builds these as
+   * `file#uid`; a page with one level can pass the uid as a string.
+   */
+  readonly key: string;
   readonly name: string;
   readonly tracks: number;
+  /** The level it came from, shown when a backup holds more than one. */
+  readonly file?: string;
 }
 
 export interface SeqPicker {
-  /** Replace the list and select the first row. Returns its uid, or 0. */
-  setRows(rows: readonly SeqRow[]): number;
-  /** The uid currently selected. */
-  value(): number;
+  /** Replace the list and select the first row. Returns its key, or ''. */
+  setRows(rows: readonly SeqRow[]): string;
+  /** The key currently selected. */
+  value(): string;
   /** Select a row without telling the caller's `onPick`. */
-  select(uid: number): void;
+  select(key: string): void;
 }
 
 const title = (row: SeqRow) => row.name || '(untitled)';
-const detail = (row: SeqRow) => `${row.tracks} instrument${row.tracks === 1 ? '' : 's'}`;
+const detail = (row: SeqRow) =>
+  // ❗ The level's name when a backup holds several: two songs called `Intro`
+  // in one folder are told apart by the file they came out of and nothing else.
+  `${row.tracks} instrument${row.tracks === 1 ? '' : 's'}${row.file ? ` · ${row.file}` : ''}`;
 
 const escape = (text: string) =>
   text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -41,7 +55,7 @@ const escape = (text: string) =>
  */
 export function seqPicker(
   host: HTMLElement,
-  onPick: (uid: number) => void,
+  onPick: (key: string) => void,
 ): SeqPicker {
   host.classList.add('picker');
   host.innerHTML =
@@ -62,13 +76,13 @@ export function seqPicker(
   const none = host.querySelector<HTMLElement>('.picker-none')!;
 
   let rows: readonly SeqRow[] = [];
-  let chosen = 0;
+  let chosen = '';
   /** Which row the arrow keys are on; -1 when nothing is highlighted. */
   let cursor = -1;
   let shown: SeqRow[] = [];
 
   const showField = () => {
-    const row = rows.find((r) => r.uid === chosen);
+    const row = rows.find((r) => r.key === chosen);
     name.textContent = row ? title(row) : 'no level open';
     detailEl.textContent = row ? detail(row) : '';
   };
@@ -79,8 +93,8 @@ export function seqPicker(
     list.innerHTML = shown
       .map(
         (r, i) =>
-          `<button type="button" role="option" class="picker-row${r.uid === chosen ? ' on' : ''}` +
-          `${i === cursor ? ' at' : ''}" data-uid="${r.uid}" aria-selected="${r.uid === chosen}">` +
+          `<button type="button" role="option" class="picker-row${r.key === chosen ? ' on' : ''}` +
+          `${i === cursor ? ' at' : ''}" data-key="${r.key}" aria-selected="${r.key === chosen}">` +
           `<span>${escape(title(r))}</span><span class="picker-detail">${detail(r)}</span></button>`,
       )
       .join('');
@@ -92,7 +106,7 @@ export function seqPicker(
     pop.hidden = false;
     field.setAttribute('aria-expanded', 'true');
     search.value = '';
-    cursor = shown.findIndex((r) => r.uid === chosen);
+    cursor = shown.findIndex((r) => r.key === chosen);
     draw();
     search.focus();
     list.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
@@ -104,21 +118,21 @@ export function seqPicker(
   };
 
   /** Choose a row. `quiet` selects without telling the page. */
-  const pick = (uid: number, quiet = false) => {
-    if (uid === chosen) {
+  const pick = (key: string, quiet = false) => {
+    if (key === chosen) {
       close();
       return;
     }
-    chosen = uid;
+    chosen = key;
     showField();
     close();
-    if (!quiet) onPick(uid);
+    if (!quiet) onPick(key);
   };
 
   field.addEventListener('click', () => (pop.hidden ? open() : close()));
   list.addEventListener('click', (event) => {
     const row = (event.target as HTMLElement).closest<HTMLElement>('.picker-row');
-    if (row) pick(Number(row.dataset.uid));
+    if (row) pick(row.dataset.key ?? '');
   });
   search.addEventListener('input', () => {
     cursor = shown.length ? 0 : -1;
@@ -135,7 +149,7 @@ export function seqPicker(
       draw();
       list.children[cursor]?.scrollIntoView({ block: 'nearest' });
     } else if (event.key === 'Enter') {
-      if (cursor >= 0 && shown[cursor]) pick(shown[cursor].uid);
+      if (cursor >= 0 && shown[cursor]) pick(shown[cursor].key);
     } else {
       return;
     }
@@ -151,7 +165,7 @@ export function seqPicker(
   return {
     setRows(next) {
       rows = next;
-      chosen = next.length ? next[0].uid : 0;
+      chosen = next.length ? next[0].key : '';
       field.disabled = next.length === 0;
       search.value = '';
       draw();
@@ -159,8 +173,8 @@ export function seqPicker(
       return chosen;
     },
     value: () => chosen,
-    select(uid) {
-      pick(uid, true);
+    select(key) {
+      pick(key, true);
     },
   };
 }

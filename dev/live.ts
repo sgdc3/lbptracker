@@ -23,9 +23,13 @@
 import { HANDOFF_KEY, loaderFor, manifest, asset, type Manifest } from './assets.ts';
 import { seqPicker } from './seq-picker.ts';
 import { type VoiceSpec } from '../src/audio/mixer.ts';
+import { readBackup, sequencersOf, type BackupResult } from '../src/core/backup.ts';
 import {
-  CHANNEL_COUNT, channelVolume, readLevelProject, type LevelProject,
+  CHANNEL_COUNT, channelVolume, type LevelProject, type Sequencer,
 } from '../src/core/project.ts';
+import { fromFiles, isZip, wireOpen } from './open-level.ts';
+import { readBackupZip } from '../src/core/backup.ts';
+import { webInflateRaw } from '../src/platform/web.ts';
 import { LiveVoicePool, VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
 import { swungFrame } from '../src/core/swing.ts';
 import { samplesPerStep } from '../src/core/voice.ts';
@@ -148,6 +152,14 @@ interface Planned {
 }
 
 let project: LevelProject | null = null;
+/**
+ * Every sequencer the open backup holds, by the picker's key.
+ *
+ * ⚠️ **A uid is unique inside a level, not across a backup.** A folder of
+ * forty levels routinely holds two sequencers numbered 7, so the page indexes
+ * on `file#uid` and keeps the level beside the song -- the renderer needs both.
+ */
+let songs = new Map<string, { project: LevelProject; sequencer: Sequencer }>();
 let rinstIndex: Manifest | null = null;
 let smpIndex: Manifest | null = null;
 let plan: Planned[] = [];
@@ -427,9 +439,10 @@ function pushEffects(): void {
  * voice pool: one starts from the top, the other keeps playing.
  */
 async function prepare(restart = true): Promise<void> {
-  const uid = picker.value();
-  const original = project?.sequencers.find((s) => s.uid === uid);
-  if (!original || !rinstIndex || !smpIndex) return;
+  const chosen = songs.get(picker.value());
+  const original = chosen?.sequencer;
+  if (!original || !chosen || !rinstIndex || !smpIndex) return;
+  project = chosen.project;
   if (restart) overrides = {};
   const seq = withOverrides(original);
   // Where we are in the music, not in seconds: a tempo change moves one and
@@ -939,8 +952,7 @@ const songChanged = () => {
  * them, keeping the levels of the channels that survive.
  */
 numChannelsInput.addEventListener('input', () => {
-  const uid = picker.value();
-  const seq = project?.sequencers.find((s) => s.uid === uid);
+  const seq = songs.get(picker.value())?.sequencer;
   if (seq) {
     const kept = [...channelsBox.querySelectorAll<HTMLInputElement>('.chan')].map(
       (el) => Number(el.value) / 100,
@@ -989,7 +1001,18 @@ const picker = seqPicker(seqHost, prepareNow);
 
 // ------------------------------------------------------------------ the file
 
-async function openFile(file: File): Promise<void> {
+/**
+ * Open whatever was dropped: one level, a backup folder, or a zip of one.
+ *
+ * ❗ A backup is a pile of resources named after their SHA-1, so the page reads
+ * the pile and reports what was in it -- a listener should never have to find
+ * the level among forty extensionless files by hand.
+ */
+async function openBackup(opened: {
+  label: string;
+  files: readonly { name: string; bytes: Uint8Array }[];
+  many: boolean;
+}): Promise<void> {
   stop();
   plan = [];
   playButton.disabled = true;
@@ -997,23 +1020,45 @@ async function openFile(file: File): Promise<void> {
   metersBox.innerHTML = '';
   setError('');
   dropZone.classList.add('busy');
-  setStatus(`reading ${file.name}…`);
+  setStatus(`reading ${opened.label}…`);
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    project = await readLevelProject(file.name, bytes, webInflate);
+    const only = opened.files.length === 1 ? opened.files[0] : undefined;
+    const result: BackupResult = only && isZip(only)
+      ? await readBackupZip(only.bytes, webInflate, webInflateRaw)
+      : await readBackup(opened.files, webInflate);
     [rinstIndex, smpIndex] = await Promise.all([
       manifest('fixtures/rinst'),
       manifest('fixtures/smp'),
     ]);
-    const list = project.sequencers
-      .map((s) => ({ uid: s.uid, name: s.name, tracks: s.tracks.length }))
-      .sort((a, b) => b.tracks - a.tracks);
-    picker.setRows(list);
+    songs = new Map();
+    for (const p of result.projects) {
+      for (const sequencer of p.sequencers) {
+        songs.set(`${p.file}#${sequencer.uid}`, { project: p, sequencer });
+      }
+    }
+    const rows = sequencersOf(result).map((r) => ({
+      key: r.key,
+      name: r.name,
+      tracks: r.tracks,
+      // Only worth showing when there is more than one level to tell apart.
+      file: result.projects.length > 1 ? r.file : undefined,
+    }));
+    project = result.projects[0] ?? null;
+    picker.setRows(rows);
     dropZone.classList.add('loaded');
-    dropTitle.textContent = `${file.name} — ${list.length} sequencers`;
-    dropHint.textContent = 'Click or drop to open a different file.';
-    if (list.length) prepareNow();
-    else setStatus('no sequencers in that level', true);
+    dropTitle.textContent = result.projects.length > 1
+      ? `${opened.label} — ${result.projects.length} levels, ${rows.length} sequencers`
+      : `${opened.label} — ${rows.length} sequencers`;
+    dropHint.textContent = 'Click, or drop a level, a backup folder or a zip.';
+    if (rows.length) prepareNow();
+    else if (result.failed.length) {
+      setStatus(`nothing playable: ${result.failed[0].why}`, true);
+    } else setStatus('no sequencers in there', true);
+    // ⚠️ A level that would not open is reported, never swallowed: a backup
+    // where one of forty fails is a bug here and should look like one.
+    if (result.failed.length > 0) {
+      setError(result.failed.map((f) => `${f.name}: ${f.why}`).join('\n'));
+    }
   } catch (error) {
     setStatus('failed', true);
     setError(String((error as Error).stack ?? error));
@@ -1047,7 +1092,9 @@ async function takeHandoff(): Promise<void> {
       manifest('fixtures/rinst'),
       manifest('fixtures/smp'),
     ]);
-    picker.setRows([{ uid: seq.uid, name: seq.name, tracks: seq.tracks.length }]);
+    const key = `${project.file}#${seq.uid}`;
+    songs = new Map([[key, { project, sequencer: seq }]]);
+    picker.setRows([{ key, name: seq.name, tracks: seq.tracks.length }]);
     dropZone.classList.add('loaded');
     dropTitle.textContent = `${seq.name} \u2014 imported from MIDI`;
     dropHint.textContent = 'Click or drop to open a level instead.';
@@ -1062,24 +1109,14 @@ async function takeHandoff(): Promise<void> {
 
 void takeHandoff();
 
-dropZone.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', () => {
-  const file = fileInput.files?.[0];
-  if (file) void openFile(file);
+wireOpen({
+  zone: dropZone,
+  fileInput,
+  folderInput: document.getElementById('folder') as HTMLInputElement | null ?? undefined,
+  onOpen: openBackup,
 });
-for (const type of ['dragenter', 'dragover']) {
-  dropZone.addEventListener(type, (event) => {
-    event.preventDefault();
-    dropZone.classList.add('over');
-  });
-}
-for (const type of ['dragleave', 'drop']) {
-  dropZone.addEventListener(type, (event) => {
-    event.preventDefault();
-    dropZone.classList.remove('over');
-  });
-}
-dropZone.addEventListener('drop', (event) => {
-  const file = (event as DragEvent).dataTransfer?.files?.[0];
-  if (file) void openFile(file);
+document.getElementById('pickFolder')?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  (document.getElementById('folder') as HTMLInputElement | null)?.click();
 });
+void fromFiles;

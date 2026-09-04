@@ -124,3 +124,92 @@ export function writeZip(entries: readonly ZipEntry[], when = new Date()): Uint8
   view.setUint16(at + 20, 0, true); // no comment
   return out;
 }
+
+/* --------------------------------------------------------------- reading */
+
+/**
+ * One entry read out of a ZIP.
+ *
+ * `bytes` is the file's own content, already inflated.
+ */
+export interface ZipFile {
+  readonly name: string;
+  readonly bytes: Uint8Array;
+}
+
+/** Raw DEFLATE, which is what a ZIP stores -- no zlib header, no checksum. */
+export type InflateRaw = (
+  deflated: Uint8Array,
+  rawSize: number,
+) => Uint8Array | Promise<Uint8Array>;
+
+const EOCD = 0x06054b50;
+const CENTRAL = 0x02014b50;
+
+/**
+ * Read a ZIP, stored and deflated entries both.
+ *
+ * ⚠️ **The central directory is the authority, and it is at the END.** A ZIP is
+ * read backwards: find the end-of-central-directory record, walk the entries it
+ * points at, and only then look at each local header -- which exists mainly to
+ * be skipped, because a writer that did not know a size in advance leaves its
+ * copy of the sizes zero and puts them in a trailing descriptor. Reading local
+ * headers front to back is the classic way to get a ZIP subtly wrong.
+ *
+ * ❗ **Directories and empty files are dropped**, along with anything the
+ * archive marks as a directory by trailing slash. A caller wanting to know what
+ * was in the archive should count what comes back, not what it expected.
+ *
+ * Only methods 0 (stored) and 8 (deflate) are read. Everything else -- and
+ * anything encrypted -- is skipped rather than returned as rubbish; a level
+ * resource in a bzip2 entry has never been seen and would fail loudly at
+ * `loadResource` if it were.
+ */
+export async function readZip(
+  bytes: Uint8Array,
+  inflateRaw: InflateRaw,
+): Promise<ZipFile[]> {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  // The EOCD is at the end, behind a comment of up to 65,535 bytes.
+  let eocd = -1;
+  for (let at = bytes.length - 22; at >= 0 && at >= bytes.length - 22 - 0xffff; at -= 1) {
+    if (view.getUint32(at, true) === EOCD) {
+      eocd = at;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error('not a zip: no end-of-central-directory record');
+
+  const count = view.getUint16(eocd + 10, true);
+  let at = view.getUint32(eocd + 16, true);
+  const out: ZipFile[] = [];
+  for (let i = 0; i < count && at + 46 <= bytes.length; i += 1) {
+    if (view.getUint32(at, true) !== CENTRAL) break;
+    const method = view.getUint16(at + 10, true);
+    const compressed = view.getUint32(at + 20, true);
+    const rawSize = view.getUint32(at + 24, true);
+    const nameLength = view.getUint16(at + 28, true);
+    const extraLength = view.getUint16(at + 30, true);
+    const commentLength = view.getUint16(at + 32, true);
+    const localAt = view.getUint32(at + 42, true);
+    const name = new TextDecoder().decode(bytes.subarray(at + 46, at + 46 + nameLength));
+    at += 46 + nameLength + extraLength + commentLength;
+
+    if (name.endsWith('/') || rawSize === 0) continue;
+    if (method !== 0 && method !== 8) continue;
+    // ❗ The local header's name and extra fields are its own length, not the
+    // central directory's: an archiver may put a Zip64 or timestamp field in one
+    // and not the other, and using the wrong length lands mid-data.
+    if (localAt + 30 > bytes.length) continue;
+    const localNameLength = view.getUint16(localAt + 26, true);
+    const localExtraLength = view.getUint16(localAt + 28, true);
+    const from = localAt + 30 + localNameLength + localExtraLength;
+    const data = bytes.subarray(from, from + compressed);
+    if (data.length < compressed) continue;
+    out.push({
+      name,
+      bytes: method === 0 ? data : await inflateRaw(data, rawSize),
+    });
+  }
+  return out;
+}

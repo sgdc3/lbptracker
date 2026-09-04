@@ -34,6 +34,31 @@ export const webInflate: Inflate = async (deflated, rawSize) => {
   return written === out.length ? out : out.subarray(0, written);
 };
 
+/**
+ * Raw DEFLATE, which is what a ZIP entry stores.
+ *
+ * ❗ `deflate-raw`, not `deflate`: a ZIP has no zlib header and no Adler
+ * checksum, and feeding one to the wrapped decoder fails on the first byte.
+ */
+export const webInflateRaw = async (deflated: Uint8Array, rawSize: number) => {
+  const stream = new Blob([deflated as BlobPart])
+    .stream()
+    .pipeThrough(new DecompressionStream('deflate-raw'));
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+    chunks.push(chunk);
+    total += chunk.length;
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.length;
+  }
+  return rawSize > 0 && out.length > rawSize ? out.subarray(0, rawSize) : out;
+};
+
 /** Read a resource from a File the user picked. Nothing leaves the browser. */
 export async function loadResourceFile(file: File): Promise<Resource> {
   const bytes = new Uint8Array(await file.arrayBuffer());

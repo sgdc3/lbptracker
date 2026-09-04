@@ -32,11 +32,22 @@ import {
   toPcm16,
   type LoadedInstrument,
 } from '../src/core/render.ts';
-import { readLevelProject, type LevelProject } from '../src/core/project.ts';
+import {
+  readBackup, readBackupZip, sequencersOf, type BackupFile,
+} from '../src/core/backup.ts';
+import { type LevelProject, type Sequencer } from '../src/core/project.ts';
+import { webInflateRaw } from '../src/platform/web.ts';
 import { writeWav } from '../src/core/wav.ts';
 import { webInflate } from '../src/platform/web.ts';
 
 let project: LevelProject | null = null;
+/**
+ * Every sequencer the open backup holds, by the page's key.
+ *
+ * ⚠️ A uid is unique inside a level and not across a backup: a folder of
+ * forty levels routinely holds two numbered 7, so the key is `file#uid`.
+ */
+let songs = new Map<string, Sequencer>();
 let rinstIndex: Manifest | null = null;
 let smpIndex: Manifest | null = null;
 
@@ -48,7 +59,11 @@ const say = (text: string) => post({ type: 'status', text });
 self.onmessage = async (event: MessageEvent) => {
   const message = event.data as {
     type: string;
-    uid?: number;
+    /** The picker's key, `file#uid` -- not a uid; see `src/core/backup.ts`. */
+    key?: string;
+    files?: BackupFile[];
+    zip?: boolean;
+    label?: string;
     seconds?: number;
     from?: number;
     /**
@@ -72,28 +87,48 @@ self.onmessage = async (event: MessageEvent) => {
   };
   try {
     if (message.type === 'load') {
-      if (!message.file) throw new Error('load needs a file');
-      const file = message.file;
-      say(`reading ${file.name}…`);
-      post({ type: 'progress', phase: 'level', done: 0, total: file.size });
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      post({ type: 'progress', phase: 'level', done: file.size, total: file.size });
-      say('reading the level…');
-      project = await readLevelProject(file.name, bytes, webInflate);
+      const files = message.files ?? [];
+      if (files.length === 0) throw new Error('load needs files');
+      const label = message.label ?? files[0].name;
+      const total = files.reduce((n, f) => n + f.bytes.length, 0);
+      say(`reading ${label}…`);
+      post({ type: 'progress', phase: 'level', done: 0, total });
+      // ❗ A backup is a pile of resources named after their SHA-1, so the
+      // worker reads the pile rather than one file. `readBackup` skips whatever
+      // is not a level by its magic and reports what would not open.
+      const result = message.zip
+        ? await readBackupZip(files[0].bytes, webInflate, webInflateRaw)
+        : await readBackup(files, webInflate);
+      post({ type: 'progress', phase: 'level', done: total, total });
+      songs = new Map();
+      for (const p of result.projects) {
+        for (const seq of p.sequencers) songs.set(`${p.file}#${seq.uid}`, seq);
+      }
+      project = result.projects[0] ?? null;
       // Busiest first: a sequencer with one instrument in it is rarely the one
       // somebody opened the file to hear.
-      const list = project.sequencers
-        .map((seq) => ({ uid: seq.uid, name: seq.name, tracks: seq.tracks.length }))
-        .sort((a, b) => b.tracks - a.tracks);
+      const list = sequencersOf(result).map((r) => ({
+        key: r.key,
+        name: r.name,
+        tracks: r.tracks,
+        file: result.projects.length > 1 ? r.file : undefined,
+      }));
       [rinstIndex, smpIndex] = await Promise.all([manifest('fixtures/rinst'), manifest('fixtures/smp')]);
-      post({ type: 'loaded', list, instruments: rinstIndex.size, samples: smpIndex.size });
+      post({
+        type: 'loaded',
+        list,
+        levels: result.projects.length,
+        failed: result.failed,
+        instruments: rinstIndex.size,
+        samples: smpIndex.size,
+      });
       return;
     }
 
     if (message.type === 'render') {
-      const uid = message.uid!;
-      const seq = project?.sequencers.find((s) => s.uid === uid);
-      if (!seq) throw new Error(`no sequencer with uid ${uid}`);
+      const key = message.key!;
+      const seq = songs.get(key);
+      if (!seq) throw new Error(`no sequencer ${key}`);
 
       const started = performance.now();
       say(`rendering "${seq.name}" — ${seq.tracks.length} tracks, ${seq.lengthSteps} steps…`);
@@ -121,7 +156,7 @@ self.onmessage = async (event: MessageEvent) => {
       post(
         {
           type: 'done',
-          uid,
+          key,
           name: seq.name,
           tempo: seq.tempo,
           tracks: seq.tracks.length,

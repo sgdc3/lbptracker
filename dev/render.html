@@ -20,6 +20,7 @@
   #drop span { color: var(--dim); font-size: .9rem; }
   #drop.busy { opacity: .5; pointer-events: none; }
   #drop.loaded { padding: .95rem 1rem; border-style: solid; }
+  #drop input[type="file"] { display: none; }
   #drop.loaded strong { display: inline; margin: 0; }
   #file { display: none; }
 
@@ -102,9 +103,16 @@
   <section>
     <p class="step"><b>1</b> Open a level</p>
     <div id="drop">
-      <strong id="dropTitle">Open a level</strong>
-      <span id="dropHint">Click here, or drop a level file onto this box.</span>
+      <strong id="dropTitle">Open a level, or a whole backup</strong>
+      <span id="dropHint">Click here, or drop a level file, a backup folder or a zip onto this box.</span>
       <input id="file" type="file">
+      <!-- Dropping a folder works on its own; this is for the browsers and
+           situations where the drop is not offered. `webkitdirectory` is the
+           only widely supported way to pick one. -->
+      <input id="folder" type="file" webkitdirectory>
+      <div style="margin-top:.5rem">
+        <button type="button" id="pickFolder" class="ghost">choose a folder&hellip;</button>
+      </div>
     </div>
   </section>
 
