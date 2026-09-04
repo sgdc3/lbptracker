@@ -868,8 +868,8 @@ not subtle.
 - **A one-shot runs past its note.** A slot whose sample has no loop is not gated (question 10), so
   it holds its record for `sampleFrames / playbackRate` output frames — and the rate is not known
   until the instrument is loaded and its key zone resolved, which is why the pool was never told.
-- **`Numstack` layers are `Numstack` voices.** A five-layer instrument spends five of the
-  thirty-two on every note it plays.
+- ❌ **"`Numstack` layers are `Numstack` voices" — WRONG, corrected 2026-09-04.** It is one
+  record per NOTE however many layers it has. See the correction at the end of this section.
 
 `Ascetic`'s `mime_artist` is both at once: five layers, loopless, 68 semitones below its sample's
 base note. The pool was told "two steps"; the truth was **five voices for 9.5 seconds**. 352 notes
@@ -1674,3 +1674,57 @@ for a real glide, 100% walk the automation, all of them read a mipped sample. No
   stubbing a thing out and re-timing is what actually answered every question here.
 - **Extending the fixed-filter path to `keyTrack === 0`** would reach 7% of voice-frames against the
   3% it already covers. Left alone.
+
+## 17b. A stacked note takes ONE record, not `Numstack` — corrected 2026-09-04
+
+Question 17 fixed the pool's accounting and got half of it wrong. *"A one-shot runs past its note"*
+was measured. *"`Numstack` layers are `Numstack` voices"* was **asserted with no address**, and it
+is not what the engine does.
+
+`sub_0xa90` walks the voice array and renders each record:
+
+```
+0x0c51  ebx = 0x28                    ; the first record
+0x0c6a  rdi = r12 + rbx               ; this record
+0x0c84  call 0x1c60                   ; render it
+0x0c89  rbx += 0xd0                   ; stride: 208 bytes per record
+0x0c90  cmp rbx, 0x1a28               ; (0x1a28 - 0x28) / 0xd0 = 32 exactly
+```
+
+✔ **So the pool really is 32** — that half stands, and now it has an address.
+
+But `sub_0x1c60`, called once per record, contains the **per-layer loop** at `0x24a0`-`0x28e3`:
+`Numstack` iterations, stride 0x20, writing one rate double per layer at `[r14]` (stride 0x10) for
+the sample loop to read. The three LFO phases live at `[r12+0x98..0xa0]` — **once per record**, with
+a per-layer spread added on top inside the loop. A record that held one layer would need neither the
+loop nor the spread.
+
+**One record plays every layer of its note.**
+
+### What the error cost
+
+`C4K3 S0NG` (13,091 notes, 22,399 voices — 1.71 layers a note):
+
+| | notes cut short by stealing |
+|---|---|
+| one pool entry per layer | **3,634** (28%) |
+| one per note, as the engine | **1,526** (12%) |
+
+A listener heard it before any of this was measured: *"molte voci vengono troncate, nell'originale
+non sento così tante note troncate"*. Both of their guesses were the right shape — either the
+counting was wrong or the limit was higher — and it was the first.
+
+⚠️ **It costs CPU to be right.** Those 2,108 notes now play, and the live load on `C4K3 S0NG` goes
+from 11-26% of a core back to 23-60%. The LFO fix in question 27 paid for it and no more. A
+correctness fix that makes the meter worse is still a correctness fix.
+
+⚠️ **"Voices sounding" on the live page counts LAYERS, not records**, so 104 with a 32-record pool
+is right rather than alarming: 32 records at up to five layers each is 160 sampler voices, and the
+engine renders exactly the same number.
+
+### What it touched
+
+`render.ts` allocates per note and applies the decision to every layer; `where.note` and
+`where.layer` are reported so a live scheduler can do the same, and `dev/live.ts` and
+`dev/live-sim.ts` both do. A stolen note takes **all** its layers with it — they were sharing the
+record that was overwritten.

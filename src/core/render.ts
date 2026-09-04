@@ -207,6 +207,17 @@ export interface RenderOptions {
       poolEnd: number;
       score: number;
       /**
+       * The note this voice belongs to, and which of its stack layers it is.
+       *
+       * ❗ **A stacked note is several voices in ONE of the engine's 32
+       * records**, so a live scheduler running the pool itself must call it once
+       * per note -- `layer === 0` -- and give every other layer the same answer.
+       * `sub_0x1c60` is called once per record and loops over the layers inside
+       * it; see question 17 in `steering/answered-questions.md`.
+       */
+      note: number;
+      layer: number;
+      /**
        * What a live scheduler needs to re-place this voice without re-planning.
        *
        * ❗ **Tempo, swing and the channel mixer are the three settings a
@@ -470,14 +481,17 @@ export async function renderSequencer(
   // that cap a dense passage plays every note and is louder than the game's --
   // which is exactly where a listener hears it.
   //
-  // ⚠️ **One entry per stack layer, not per note.** `Numstack` layers are
-  // `Numstack` sampler voices, so a five-layer instrument spends five of the
-  // thirty-two on every note it plays. Counting a note as one voice let
-  // `mime_artist` put 1,760 of them in a 32-voice pool without the allocator
-  // noticing.
-  const entries: { eventIndex: number; layer: number }[] = [];
+  // ❗ **One entry per NOTE, and a stack does not multiply it.** This read
+  // "one entry per stack layer" for two days, on the reasoning that `Numstack`
+  // layers are `Numstack` sampler voices. The engine's own renderer says
+  // otherwise: `sub_0x1c60` is called once per voice record from `sub_0xa90`'s
+  // walk of the 32, and the **layer loop is inside it** -- `0x24a0`-`0x28e3`,
+  // iterating `Numstack` times, with the three LFO phases stored once per record
+  // at `[r12+0x98..0xa0]` and a per-layer spread added on top. One record plays
+  // every layer of its note. See question 17 in `steering/answered-questions.md`.
+  const entries: { eventIndex: number }[] = [];
   const pooled = allocateVoices(
-    events.flatMap((e, i) => {
+    events.map((e, i) => {
       const track = seq.tracks[e.track];
       const prep = prepared[i];
       const note = {
@@ -487,27 +501,23 @@ export async function renderSequencer(
         // instrument's own level and its envelope are not in the engine's score.
         score: channelVolume(seq, track) * velocityGain(e.volume),
       };
-      return Array.from({ length: prep ? prep.layers : 1 }, (_, layer) => {
-        entries.push({ eventIndex: i, layer });
-        return note;
-      });
+      entries.push({ eventIndex: i });
+      return note;
     }),
     voiceLimit,
   );
-  /** `eventIndex,layer` -> the step at which the allocator takes the voice back. */
-  const cutAt = new Map<string, number>();
+  /** Event index -> the step at which the allocator takes the voice back. */
+  const cutAt = new Map<number, number>();
   let stolen = 0;
   const stolenBy = new Map<number, number>();
   for (const p of pooled) {
-    const { eventIndex, layer } = entries[p.index];
+    const { eventIndex } = entries[p.index];
     const event = events[eventIndex];
     const natural = event.step + (prepared[eventIndex]?.occupancySteps ?? event.durationSteps);
     if (p.end < natural) {
-      cutAt.set(`${eventIndex},${layer}`, p.end);
-      if (layer === 0) {
-        stolen += 1;
-        stolenBy.set(event.guid, (stolenBy.get(event.guid) ?? 0) + 1);
-      }
+      cutAt.set(eventIndex, p.end);
+      stolen += 1;
+      stolenBy.set(event.guid, (stolenBy.get(event.guid) ?? 0) + 1);
     }
   }
 
@@ -687,7 +697,8 @@ export async function renderSequencer(
     };
     const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
     for (let layer = 0; layer < layers; layer += 1) {
-      const cut = cutAt.get(`${eventIndex},${layer}`);
+      // Every layer of the note goes when the note's own record is taken.
+      const cut = cutAt.get(eventIndex);
       const voice: VoiceSpec = {
         ...spec,
         // The allocator handing this record to a later note. Undefined when the
@@ -734,6 +745,8 @@ export async function renderSequencer(
         poolStart: event.step,
         poolEnd: event.step + (prep.occupancySteps ?? event.durationSteps),
         score: channelVolume(seq, track) * velocityGain(event.volume),
+        note: eventIndex,
+        layer,
         startStep: event.step,
         // ❗ The note's own end, not the pool's occupancy: a voice may hold a
         // channel longer than it sounds, and it is the sounding that decides

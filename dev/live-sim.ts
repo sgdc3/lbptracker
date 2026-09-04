@@ -107,6 +107,9 @@ interface Planned {
   /** What the voice pool needs, in its own units. */
   poolStart: number;
   poolEnd: number;
+  /** The note, and which stack layer of it: the pool counts notes. */
+  note: number;
+  layer: number;
   score: number;
   /** Frames per step, so a pool decision in steps becomes a cut in frames. */
   index: number;
@@ -140,6 +143,8 @@ const planResult = await renderSequencer(seq, loadInstrument, {
     };
     for (const field of STRIP) delete stripped[field];
     plan.push({
+      note: where.note,
+      layer: where.layer,
       poolStart: where.poolStart,
       poolEnd: where.poolEnd,
       score: where.score,
@@ -162,23 +167,31 @@ const cutFrameAt = (step: number) => Math.round(swungFrame(step, stepFrames, swi
 // applied to the uncapped plan. `renderDirect` then renders exactly what the
 // renderer would write at this pool size.
 if (process.env.LBP_LIVEPOOL === '1') {
+  // ❗ **One record per NOTE, not per stack layer** -- the engine plays every
+  // layer of a note out of the one record. Asking per layer steals two and a
+  // half times as often on a stacked song; see question 17.
+  const firsts = plan.filter((p) => p.layer === 0);
   const decided = allocateVoices(
-    plan.map((p) => ({ start: p.poolStart, end: p.poolEnd, score: p.score })),
+    firsts.map((p) => ({ start: p.poolStart, end: p.poolEnd, score: p.score })),
     POOL,
   );
-  let stolen = 0;
+  const cutOf = new Map<number, number>();
   for (const row of decided) {
-    const p = plan[row.index];
-    if (row.end < p.poolEnd) {
-      const abs = cutFrameAt(row.end);
-      p.cut = abs - p.at;
-      // The one-call reference plays `spec` verbatim, so its cut has to be
-      // there too -- in absolute frames, which is what that render counts in.
-      (p.spec as unknown as { cutFrame?: number }).cutFrame = abs;
-      stolen += 1;
-    }
+    const p = firsts[row.index];
+    if (row.end < p.poolEnd) cutOf.set(p.note, row.end);
   }
-  console.log(`pool ${POOL}: ${stolen} of ${plan.length} voices stolen offline`);
+  let stolen = 0;
+  for (const p of plan) {
+    const end = cutOf.get(p.note);
+    if (end === undefined) continue;
+    const abs = cutFrameAt(end);
+    p.cut = abs - p.at;
+    // The one-call reference plays `spec` verbatim, so its cut has to be
+    // there too -- in absolute frames, which is what that render counts in.
+    (p.spec as unknown as { cutFrame?: number }).cutFrame = abs;
+    if (p.layer === 0) stolen += 1;
+  }
+  console.log(`pool ${POOL}: ${stolen} of ${cutOf.size + (firsts.length - cutOf.size)} notes stolen offline`);
 }
 const frames = Math.min(Math.round(SECONDS * RATE), Math.max(...plan.map((p) => p.at)) + RATE);
 console.log(`${plan.length} voices; comparing the first ${(frames / RATE).toFixed(1)} s`);

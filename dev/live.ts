@@ -124,6 +124,16 @@ interface Planned {
    */
   readonly baseScore: number;
   /**
+   * The note this voice belongs to, and which stack layer of it.
+   *
+   * ❗ **The pool counts notes, not layers.** A stacked instrument plays all
+   * its layers out of ONE of the engine's 32 records, so the allocator is asked
+   * once per note and every other layer takes the same answer. Asking per layer
+   * made `C4K3 S0NG` steal 3,634 notes of 13,091 where the truth is 1,526.
+   */
+  readonly note: number;
+  readonly layer: number;
+  /**
    * Each control point's offset from the note's start, in steps.
    *
    * ❗ `automation` and `morph.points` hold frames from the voice's own start,
@@ -295,6 +305,10 @@ const withOverrides = <
 const poolSize = () => (noCapBox.checked ? VOICES_UNLIMITED : Number(voicesInput.value));
 
 let pool = new LiveVoicePool(poolSize());
+/** Note -> the end its record was given, so its other layers can take the same. */
+let noteEnd = new Map<number, number>();
+/** Note -> the plan indices of its layers, so a steal takes all of them. */
+let layersOf = new Map<number, number[]>();
 /**
  * The STEP at which each handed-over voice started, so a theft can reach it.
  *
@@ -371,10 +385,14 @@ function rebuildPool(upTo: number): void {
  */
 function rebuildPoolTo(limit: number): void {
   pool = new LiveVoicePool(poolSize());
+  noteEnd = new Map();
   const upTo = limit < 0 ? plan.length : limit;
   for (let i = 0; i < upTo; i += 1) {
     const p = plan[i];
-    pool.add(p.index, { start: p.poolStart, end: p.poolEnd, score: scoreOf(p) });
+    // Only the note's first layer takes a record, exactly as in `pump`.
+    if (p.layer !== 0) continue;
+    const { end } = pool.add(p.note, { start: p.poolStart, end: p.poolEnd, score: scoreOf(p) });
+    noteEnd.set(p.note, end);
   }
 }
 
@@ -518,6 +536,8 @@ async function prepare(restart = true): Promise<void> {
 
         lfoPhase: phase,
         poolStart: where.poolStart,
+        note: where.note,
+        layer: where.layer,
         poolEnd: where.poolEnd,
         score: where.score,
         index: built.length,
@@ -562,6 +582,7 @@ async function prepare(restart = true): Promise<void> {
     nextIndex = plan.findIndex((p) => frameOf(p) >= now);
     if (nextIndex < 0) nextIndex = plan.length;
     handed.clear();
+    layersOf.clear();
     rebuildPool(now);
   }
 
@@ -640,6 +661,7 @@ function seek(frames: number): void {
   nextIndex = plan.findIndex((p) => frameOf(p) >= cursorFrames);
   if (nextIndex < 0) nextIndex = plan.length;
   handed.clear();
+  layersOf.clear();
   rebuildPool(cursorFrames);
   stolenLive = 0;
   const cell = document.getElementById('stolenCell');
@@ -709,11 +731,23 @@ function pump(): void {
     // The delay this voice waits before it starts, and its own end rebased onto
     // that delay so the mixer's `endFrame - startFrame` is still its length.
     const delay = Math.max(0, Math.round(at - now));
-    const { end, stole } = pool.add(p.index, {
-      start: p.poolStart,
-      end: p.poolEnd,
-      score: scoreOf(p),
-    });
+    // ❗ One call per NOTE. The other layers of a stacked note share its record
+    // and therefore its answer; see `Planned.note`.
+    let end: number;
+    let stole: { index: number; at: number } | undefined;
+    if (p.layer === 0) {
+      ({ end, stole } = pool.add(p.note, {
+        start: p.poolStart,
+        end: p.poolEnd,
+        score: scoreOf(p),
+      }));
+      noteEnd.set(p.note, end);
+    } else {
+      end = noteEnd.get(p.note) ?? p.poolEnd;
+    }
+    const layers = layersOf.get(p.note);
+    if (layers) layers.push(p.index);
+    else layersOf.set(p.note, [p.index]);
     const cut = end < p.poolEnd ? cutFrameAt(end) - at : undefined;
     node.port.postMessage({
       type: 'play',
@@ -733,13 +767,15 @@ function pump(): void {
       stolenLive += 1;
       const cell = document.getElementById('stolenCell');
       if (cell) cell.textContent = stolenLive.toLocaleString();
-      // The victim loses its record at the thief's start. `cutAt` counts the
-      // frames it still gets to sound, so measure from wherever it is now.
-      const startStep = handed.get(stole.index);
-      if (startStep !== undefined) {
+      // The victim loses its record at the thief's start, and **every layer of
+      // it goes**: they were all playing out of that one record. `cutAt` counts
+      // the frames each still gets to sound, so measure from where it is now.
+      for (const index of layersOf.get(stole.index) ?? []) {
+        const startStep = handed.get(index);
+        if (startStep === undefined) continue;
         node.port.postMessage({
           type: 'cutAt',
-          tag: stole.index,
+          tag: index,
           frames: Math.max(0, cutFrameAt(stole.at) - Math.max(now, cutFrameAt(startStep))),
         });
       }
