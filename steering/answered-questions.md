@@ -1896,3 +1896,59 @@ record. There is no shorter tail hiding in the envelope.
 close — the sustain, or the attack ramp's value for a note that ends inside its attack — the tail
 takes `C4K3 S0NG`'s stealing to **22.3%**, not the 29.5% first reported. Still far above the 10.8%
 today's occupancy gives, so it changes the size of the gap and not its existence.
+
+## 33. Is the pool really 32, and really per sequencer? — YES to both, 2026-09-04
+
+Asked after a listener heard too much stealing: *"are we sure the PS4 limit is not higher, or that
+it is not applied to something narrower than the whole sequencer?"* Both halves are now nailed down.
+
+### 32 is an immediate in the PS4 binary
+
+```
+0x0c51  mov ebx, 0x28          ; sub_0xa90, the block callback: the first record
+0x0c6a  lea rdi, [r12 + rbx]
+0x0c84  call 0x1c60            ; render it
+0x0c89  add rbx, 0xd0          ; 208 bytes per record
+0x0c90  cmp rbx, 0x1a28        ; (0x1a28 - 0x28) / 0xd0 = 32 EXACTLY
+0x0c97  jne 0xc60
+```
+
+`fmodextinput.prx` out of `CUSA00063` **is** the PS4 build — there is no other one to be higher.
+The bound is a literal, not a parameter, not a config value and not something the eboot can raise:
+the eboot links the PRX directly (`FMODExtInput.prx` appears only in the import tables, never as a
+runtime-registered DSP plugin), so it cannot even reach the constant.
+
+### The state layout leaves no room for more
+
+`sub_0xa90` copies the caller's state into a global scratch and back out again — `0x0ac4`
+`memcpy(global, arg, 0x1b50)` and `0x1003` the reverse — so the records are **per state block**, and
+the block is **0x1b50 = 6,992 bytes**. The voice array runs `0x28`…`0x1a28`, which is `32 x 208 =
+6,656`, and the remaining `0x128` bytes are the fields after it. The arithmetic closes exactly.
+
+### One state block is one whole sequencer
+
+The same block holds everything the sequencer needs, so the pool cannot be per clip, per channel or
+per instrument:
+
+| field | what |
+|---|---|
+| `[state + 0xc8]` | how many clips — `sub_0x280` loops over all of them |
+| `[state + 0x1ad0]` / `+0x1ad8` | the clip array, double-buffered, `0x470` bytes each |
+| `[state + 0x1a68 + 12k]` | the eight mixer channels' volumes |
+| `[state + 0x28 + 0xd0k]` | the 32 voice records |
+
+`C4K3 S0NG`'s **244 clips share one pool of 32.**
+
+### And the allocator has no sub-pools
+
+`0x1600`-`0x1640` walks all 32 testing only whether a record is free (`byte[rec] == 0xff`) and its
+score. **No channel comparison, no instrument comparison, no reservation.** Anything can steal
+anything.
+
+### What is not closed, and why it cannot help
+
+Whether the eboot keeps more than one state block — two sequencers sounding at once would have 32
+each. It does not matter here: the game walks every Thing carrying `MusicSequencer` (`PSequencer +
+0x56`, tested at `v0x1c5773`) when one begins playing, which is the "stop all other music
+sequencers" behaviour, and **even if two could sound, neither would get more than 32**. A single
+sequencer has 32 and that is the number the pool must model.
