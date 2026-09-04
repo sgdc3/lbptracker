@@ -39,10 +39,40 @@ export interface BackupResult {
    * quietly is not in the list.
    */
   readonly failed: readonly { readonly name: string; readonly why: string }[];
+  /**
+   * PS3 save-game folders in the pile, by their directory name.
+   *
+   * ⚠️ **These hold a level and it cannot be read.** A PS3 save is encrypted
+   * with a key derived from the title, and measuring one says so plainly: the
+   * `0` file of `BCES00850LEVEL01EE7CEE` is 472,960 bytes at **8.000 bits per
+   * byte**, all 256 values present, without a single run of four zeros. That is
+   * ciphertext, not a container this parser has not learnt.
+   *
+   * They are called out because the alternative is telling somebody who dropped
+   * their own backup that it holds "no sequencers", which is true and useless.
+   */
+  readonly ps3Saves: readonly string[];
 }
 
 /** The magics a level resource can carry; anything else is not one. */
 const LEVEL_MAGIC = ['LVLb', 'PLNb'];
+
+/**
+ * The folders in a pile that are PS3 save games.
+ *
+ * ❗ By `PARAM.SFO`, which every PS3 save carries and nothing else here does.
+ * The numbered files beside it (`0`, `1`) are the encrypted payload.
+ */
+function ps3SavesIn(files: readonly BackupFile[]): string[] {
+  const found = new Set<string>();
+  for (const file of files) {
+    const at = file.name.lastIndexOf('/');
+    const leaf = at < 0 ? file.name : file.name.slice(at + 1);
+    if (leaf.toUpperCase() !== 'PARAM.SFO') continue;
+    found.add(at < 0 ? '' : file.name.slice(0, at));
+  }
+  return [...found];
+}
 
 /**
  * Whether a file is worth handing to `readLevelProject` at all.
@@ -85,7 +115,7 @@ export async function readBackup(
       failed.push({ name: file.name, why: error instanceof Error ? error.message : String(error) });
     }
   }
-  return { projects, quiet, other, failed };
+  return { projects, quiet, other, failed, ps3Saves: ps3SavesIn(files) };
 }
 
 /**

@@ -117,26 +117,30 @@ export function isZip(file: File | { name: string }): boolean {
 }
 
 /**
- * Wire a drop zone, a file input and a folder input to one handler.
+ * Wire a drop zone and its two buttons to one handler.
  *
- * The zone takes a click as "open the file picker"; the folder input is for the
- * browsers and situations where dropping a directory is not offered.
+ * ⚠️ **The zone itself takes drops and nothing else.** Making a click
+ * anywhere on it open the file picker looked convenient and was a bug: pressing
+ * "choose a folder" opened BOTH pickers, because `input.click()` dispatches a
+ * click on the input that bubbles straight back up to the zone, and the zone
+ * cannot tell it from a click on its own background. Two buttons, one job each,
+ * and the drag stays for a file or a folder.
  */
 export function wireOpen(opts: {
   zone: HTMLElement;
   fileInput: HTMLInputElement;
   folderInput?: HTMLInputElement;
+  fileButton?: HTMLElement | null;
+  folderButton?: HTMLElement | null;
   onOpen: (opened: Opened) => void | Promise<void>;
 }): void {
-  const { zone, fileInput, folderInput, onOpen } = opts;
+  const { zone, fileInput, folderInput, fileButton, folderButton, onOpen } = opts;
   const give = async (from: Promise<Opened | undefined>) => {
     const opened = await from;
     if (opened && opened.files.length > 0) await onOpen(opened);
   };
-  zone.addEventListener('click', (event) => {
-    if ((event.target as HTMLElement).closest('button')) return;
-    fileInput.click();
-  });
+  fileButton?.addEventListener('click', () => fileInput.click());
+  folderButton?.addEventListener('click', () => folderInput?.click());
   fileInput.addEventListener('change', () => {
     void give(fromFiles([...(fileInput.files ?? [])]));
   });

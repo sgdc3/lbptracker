@@ -310,8 +310,17 @@ async function openLevel(opened: Opened): Promise<void> {
     log(`${opened.label}: ${plural(list.length, 'sequencer')}`);
     // ⚠️ A level that would not open is logged, never swallowed.
     for (const bad of result.failed) log(`${bad.name}: ${bad.why}`, true);
+    // ⚠️ **A PS3 save is not an empty backup, it is an unreadable one**, and
+    // saying "nothing in there" to somebody who dropped their own is true and
+    // useless. Its level is encrypted with a key derived from the title:
+    // measured, `BCES00850LEVEL01EE7CEE/0` is 472,960 bytes at 8.000 bits per
+    // byte with all 256 values and no run of four zeros.
+    const saves = result.ps3Saves.length > 0
+      ? `${result.ps3Saves[0]} is a PS3 save game — its level is encrypted and cannot be read. `
+        + 'A PS4 backup, or a level file, does work.'
+      : '';
     if (list.length) convert();
-    else setStatus('status', 'no sequencers in there', true);
+    else setStatus('status', saves || 'no sequencers in there', true);
   } catch (error) {
     setStatus('status', String((error as Error).message ?? error), true);
     log(String(error), true);
@@ -494,10 +503,8 @@ wireOpen({
   zone: dropZone,
   fileInput,
   folderInput: (document.getElementById('folder') as HTMLInputElement | null) ?? undefined,
+  fileButton: document.getElementById('pickFile'),
+  folderButton: document.getElementById('pickFolder'),
   onOpen: openLevel,
-});
-document.getElementById('pickFolder')?.addEventListener('click', (event) => {
-  event.stopPropagation();
-  (document.getElementById('folder') as HTMLInputElement | null)?.click();
 });
 wireDrop(midiDrop, midiInput, (file) => void openMidi(file));

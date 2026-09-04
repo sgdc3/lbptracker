@@ -119,6 +119,7 @@ self.onmessage = async (event: MessageEvent) => {
         list,
         levels: result.projects.length,
         failed: result.failed,
+        ps3Saves: result.ps3Saves,
         instruments: rinstIndex.size,
         samples: smpIndex.size,
       });

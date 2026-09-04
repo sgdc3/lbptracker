@@ -396,6 +396,17 @@ worker.onmessage = (event: MessageEvent) => {
     for (const bad of (message.failed as { name: string; why: string }[] | undefined) ?? []) {
       setStatus(`${bad.name}: ${bad.why}`, true);
     }
+    // ⚠️ **A PS3 save is not an empty backup, it is an unreadable one.** Its
+    // level is encrypted with a key derived from the title -- measured, the `0`
+    // file is 8.000 bits per byte with all 256 values and no run of four zeros.
+    const saves = (message.ps3Saves as string[] | undefined) ?? [];
+    if (list.length === 0 && saves.length > 0) {
+      setStatus(
+        `${saves[0]} is a PS3 save game — its level is encrypted and cannot be read. `
+          + 'A PS4 backup, or a level file, does work.',
+        true,
+      );
+    }
     goButton.disabled = false;
     setBusy(false);
     setBar(1);
@@ -571,16 +582,14 @@ wireOpen({
   zone: dropZone,
   fileInput,
   folderInput: (document.getElementById('folder') as HTMLInputElement | null) ?? undefined,
+  fileButton: document.getElementById('pickFile'),
+  folderButton: document.getElementById('pickFolder'),
   onOpen: (opened) => {
     // Cleared so that picking the *same* file again still fires `change`, which
     // is how you re-read a level you have just re-exported from the game.
     fileInput.value = '';
     loadFrom(opened);
   },
-});
-document.getElementById('pickFolder')?.addEventListener('click', (event) => {
-  event.stopPropagation();
-  (document.getElementById('folder') as HTMLInputElement | null)?.click();
 });
 
 // ⚠️ Nothing is loaded until the user opens a file. The page does **not** try

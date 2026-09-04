@@ -45,10 +45,23 @@ the authority: it is at the END of the file and a ZIP is read backwards.
 one of forty fails is a bug in this parser and should look like one, not like a
 level that quietly is not in the list.
 
-⚠️ **PS3 save folders cannot be read and never will be.** `BCES00850LEVEL01…`
-holds `0` and `1` next to `ICON0.PNG` and `PARAM.SFO`, and those two are
-encrypted with a per-title key. They come out as `other` and say nothing, which
-is the honest outcome. The PS4 side is what this project reads.
+⚠️ **PS3 save folders cannot be read, and the page says so by name.**
+`BCES00850LEVEL01…` holds `0` and `1` beside `ICON0.PNG` and `PARAM.SFO`, and
+the numbered files are encrypted with a key derived from the title. **Measured
+rather than assumed**: `BCES00850LEVEL01EE7CEE/0` is 472,960 bytes at **8.000
+bits per byte**, all 256 values present, without a single run of four zeros.
+That is ciphertext, not a container this parser has not learnt.
+
+❗ They are detected by `PARAM.SFO` and reported as themselves. Telling somebody
+who dropped their own backup that it holds "no sequencers" is true and useless;
+`BackupResult.ps3Saves` exists so the page can say what it actually found.
+
+⚠️ **The drop zone takes drops and nothing else.** A click anywhere on it
+opening the file picker looked convenient and was a bug: pressing "open a
+folder" opened BOTH pickers, because `input.click()` dispatches a click on the
+input that bubbles back up to the zone, where it is indistinguishable from a
+click on the background. Two buttons, one job each, and the drag still takes a
+file or a folder.
 
 ## The live player's settings are applied, not re-planned
 
