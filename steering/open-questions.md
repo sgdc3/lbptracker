@@ -1074,15 +1074,49 @@ verified identical to ours (*32* in [answered-questions.md](answered-questions.m
 shorter tail hiding in it. Computed properly, with the level the envelope had actually reached at
 the gate rather than the full `0 → 1` time, the tail gives **22.3%** against today's 10.8%.
 
-### ❗ It cannot be settled from the binary, and here is what would settle it
+### ❗ A listener found the reproducer, 2026-09-04
+
+The release tail was implemented and the song rendered for judgement. The verdict came back with a
+timestamp: *"at 0:25 a choir note is interrupted; in the original it is not."*
+
+At **25.85 s** `C4K3 S0NG`'s choir (`choir.rinst`, guid 186894) starts a five-note chord and **four
+of the five are stolen at the instant they start**, so they never sound at all. With the tail off,
+**nothing is cut in that window**. The A/B is exact and the reproducer is two seconds long.
+
+Why the choir and not something else: it is genuinely the cheapest thing in the song. Its clips
+carry `Level` 0.09-0.60 against 1.0 for the drums and strings, and its velocities run 28-91 against
+127 — a score of 0.033 where the drums score 0.750. **Our score is the engine's formula exactly**
+(`channelVolume x clipLevel x velocity/127`, `sub_0x3930` `0x3afc`-`0x3c3a`), so the engine would rob
+the choir first too. The disagreement is not about which voice is stolen; it is about whether the
+pool was full.
+
+⚠️ **And the song sits right on the edge**, which is why this is so sensitive: most instruments have
+releases of 0-70 ms and add under 10% to their occupancy. One (`129081`, 1,694 notes) has 305 ms
+against a 231 ms median gate and nearly doubles its own hold. That small a change in total occupancy
+moves **1,512 notes** between cut and not cut.
+
+### Where it has been left
+
+`RenderOptions.releaseTail` (`LBP_RELEASE_TAIL=1` on the CLI), **defaulting OFF** — the unmeasured
+reading. That is deliberate and uncomfortable: the engine plainly holds the record through the
+release, and shipping an artefact the game does not have is still worse than shipping a model that
+is short. The switch keeps the measured behaviour one environment variable away.
+
+✔ **One thing did come out of it and is unconditional**: a voice whose **unlooped sample runs out**
+gives its record back — the other half of the engine's free condition (`0x3035`-`0x3065`, the
+position past the frame count with no loop) and it was missing here. A drum whose sample lasts 0.2 s
+no longer holds a record for its 1 s release. That alone took the default from 1,411 cuts to
+**1,318**.
+
+### It cannot be settled from the binary, and here is what would settle it
 
 Both models are self-consistent; what separates them is what the game **sounds like** on a dense
 passage, and that is a recording. This project has done exactly that before — question 10, the
 one-shot gate, was settled against a capture of the game and overturned what the code had implied.
 
-The experiment: capture `C4K3 S0NG` (or any passage that wants more than 32 records) from the game,
-and count the notes that stop early. **The two models differ by more than a factor of two**, 10.8%
-against 22.3%, so a single capture separates them without any subtlety.
+The experiment is now **two seconds long**: capture `C4K3 S0NG` from the game around **25.85 s** and
+listen for whether the choir chord enters with five voices or one. That is the whole question, and
+it needs no counting.
 
 ⚠️ **And be ready for the answer to be uncomfortable.** With the tail, the game plays at most 32
 notes at once; without it, this renderer routinely runs 35 to 50. If the tail is right then our

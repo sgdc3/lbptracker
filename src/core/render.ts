@@ -155,6 +155,23 @@ export interface RenderOptions {
    */
   readonly oneShot?: 'full' | 'natural' | 'gate';
   /**
+   * Whether a voice keeps its pool record through the envelope's **release**.
+   *
+   * ❗ **The engine says yes and a listener says no, and the listener is the
+   * one who has heard the game.** `sub_0x1c60` frees a record when the envelope
+   * reaches zero (`0x2089` → `0x20e0` → `0x3093`), which is this option ON.
+   * With it on, `C4K3 S0NG` cuts 2,923 of its 13,091 notes instead of 1,411 —
+   * and at **25.85 s the choir's five-note chord loses four of them at onset**,
+   * which is not in the game. Off, nothing is cut there at all.
+   *
+   * ⚠️ **Default OFF, which is the unmeasured reading.** That is deliberate and
+   * uncomfortable: shipping an artefact the game does not have is worse than
+   * shipping a model that is short. Question 29 in `steering/open-questions.md`
+   * holds the contradiction, and 25.85 s of `C4K3 S0NG` is its reproducer — a
+   * capture of the game at that bar settles it in one listen.
+   */
+  readonly releaseTail?: boolean;
+  /**
    * Run the reverb. Default true.
    *
    * For comparing against a recording of the game with its reverb turned off:
@@ -313,6 +330,7 @@ export async function renderSequencer(
     clip = true,
     pitchShift = new Map<number, number>(),
     oneShot = 'gate',
+    releaseTail: withReleaseTail = false,
     reverb: withReverb = true,
     echo: withEcho = true,
     panWidth = PAN_WIDTH,
@@ -464,10 +482,6 @@ export async function renderSequencer(
         : pitchRatio(definition, note, seq.tempo)) *
       (slot.wav.sampleRate / RATE) *
       (pitchShift.get(event.guid) ?? 1);
-    // ⚠️ A looped voice is counted at its written length, which understates it
-    // by the envelope's release. That tail is bounded and small; a one-shot's
-    // overrun is neither, and it is the one measured here. A one-shot stops at
-    // whichever comes first: the end of its sample, or the end of its hold.
     const hold = holdFramesFor(slot.wav);
     const stretched =
       playbackRate > 0 ? slot.wav.channels[0].length / playbackRate : Infinity;
@@ -478,6 +492,15 @@ export async function renderSequencer(
     const amp = evaluateAdsr(loaded.inst.params, ADSR_PARAMS, event.modulation);
     const releaseTail =
       (amp.release * envelopeLevelAt(amp, gateSeconds) * RATE) / framesPerStep;
+    // ❗ **And a voice that runs out of sample gives its record back**, which is
+    // the OTHER half of the engine's free condition and was missing here for an
+    // afternoon. `sub_0x1c60` frees a record when the envelope reaches zero
+    // (`0x20e0`) **or** when the position passes an unlooped sample's frame
+    // count with no loop point (`0x3035`-`0x3065`). A drum whose sample lasts
+    // 0.2 s does not hold a record for its 1 s release, and this renderer had
+    // it doing exactly that -- which squeezed the quietest instrument in the
+    // song out of the pool. `stretched` is that length, in output frames.
+    const runsOut = slot.wav.loop === undefined ? stretched / framesPerStep : Infinity;
     prepared.push({
       loaded,
       note,
@@ -498,7 +521,10 @@ export async function renderSequencer(
       // it is what the pool is for; a version that steals less is a version
       // playing notes the game does not have room for. See question 29 --
       // including what a capture would have to show to overturn this.
-      occupancySteps: Math.max(event.durationSteps, oneShotSteps) + releaseTail,
+      occupancySteps: Math.min(
+        Math.max(event.durationSteps, oneShotSteps) + (withReleaseTail ? releaseTail : 0),
+        runsOut,
+      ),
     });
   }
 

@@ -136,6 +136,15 @@ const unpitchedGuids = (process.env.LBP_UNPITCHED ?? '')
 const oneShot = (process.env.LBP_ONESHOT ?? 'gate') as 'full' | 'natural' | 'gate';
 
 /**
+ * `LBP_RELEASE_TAIL=1` keeps a voice's pool record through its release.
+ *
+ * ❗ The engine does that; a listener says the game does not sound like it.
+ * See `RenderOptions.releaseTail` and question 29 -- 25.85 s of `C4K3 S0NG` is
+ * the reproducer.
+ */
+const releaseTail = process.env.LBP_RELEASE_TAIL === '1';
+
+/**
  * `LBP_NO_REVERB=1` / `LBP_NO_ECHO=1` -- for comparing against a recording of
  * the game with its effects turned off. Each removes that effect's **return**;
  * the sends still feed the output clip, because that is where the engine's
@@ -245,6 +254,7 @@ const result = await renderSequencer(seq, loadInstrument, {
   clip,
   pitchShift,
   oneShot,
+  releaseTail,
   reverb: withReverb,
   echo: withEcho,
   panWidth,
