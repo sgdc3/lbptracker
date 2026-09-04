@@ -937,6 +937,36 @@ test('two placements sharing a label are told apart, and come back', () => {
   assert.deepEqual([...back.tracks].sort((a, b) => a.gridX - b.gridX).map((t) => t.pan), [0.6, 0.3]);
 });
 
+test('mergeRows puts a row on one track, with the mixer as automation', () => {
+  // ❗ Two placements of one kit on one row, at different pans: one MIDI track,
+  // one meta each, and CC 10 written at the tick each placement's own first
+  // clip begins. Over the corpus this is 4,911 tracks down to 3,222.
+  const seq = makeSequencer([
+    makeTrack([[{ step: 0, pitch: 60 }]], { gridX: 0, stepOffset: 0, guid: 5, pan: 0.6 }),
+    makeTrack([[{ step: 0, pitch: 62 }]], {
+      gridX: 4, stepOffset: 4 * STEPS_PER_CELL, guid: 5, pan: 0.3,
+    }),
+  ]);
+  const out = sequencerToMidi(seq, { mergeRows: true, exact: false });
+  const file = readMidi(out.bytes);
+  assert.equal(file.tracks.length - 1, 1, 'one track, not two');
+  const pans = file.tracks[1].events
+    .filter((e) => (e.data[0] & 0xf0) === 0xb0 && e.data[1] === 10)
+    .map((e) => [e.tick, e.data[2]]);
+  assert.deepEqual(pans, [[0, 76], [4 * STEPS_PER_CELL * 120, 38]], 'pan is automated');
+
+  // ⚠️ Read from the meta's own clips, not from `part.cells` -- which is
+  // filled in later, so taking the tick from there made every placement look
+  // like it began at cell 0 and the second read the first one's pan: 0.598
+  // instead of 0.3.
+  const back = midiToSequencer(out.bytes).sequencer;
+  assert.deepEqual(
+    [...back.tracks].sort((a, b) => a.gridX - b.gridX).map((t) => [t.gridX, t.pan, t.notes.length]),
+    [[0, 0.6, 1], [4, 0.3, 1]],
+    'both placements come back, each with its own notes and pan',
+  );
+});
+
 test('the MIDI tracks come out in board order', () => {
   // ❗ `gridY` is the Thing's own y, negated -- `boardToGrid` computes
   // `floor(-y / 105)` -- so row 0 is the top of the board and ascending is top

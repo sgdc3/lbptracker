@@ -126,6 +126,31 @@ can point at. **51.7% → 0%.**
 ⚠️ A lane's track is `row 3 - saw_wave (2)`, and the suffix comes straight back off — the meta
 says which lane it is, so what to strip is known exactly rather than guessed at with a pattern.
 
+### One track per row — `mergeRows`
+
+Off by default, and worth turning on for a DAW. **4,911 tracks become 3,222, a third fewer**: every
+placement of one board row and one instrument goes on a single track, with one `LBP-TRK` meta each
+and the mixer written as **CC automation at the tick each placement's own first clip begins** —
+which is what a DAW does with a mixer that changes during a song.
+
+❗ **It stays exact.** The import reads each controller *in force* at that tick and hands each note
+to whichever placement declared the cell it falls in. Both are unambiguous because **no two
+placements of a row group ever share a cell** — 0 of 62,158 across the corpus. Measured: 62,158
+clips out, **0 came back wrong**, 181 patched against 177 unmerged.
+
+⚠️ **Two of the 850 row groups have notes overlapping in time**, and there a player hears
+whichever mixer setting came last. That is the whole cost, and it is why this is an option rather
+than the default.
+
+⚠️ **Two traps, both caught by the corpus rather than by reading the code:**
+
+- **The mixer was read before `clips` was parsed**, so `part.cells` was still empty and every
+  placement looked like it began at cell 0 — the second one on a merged track read the first one's
+  pan and came back at 0.598 instead of 0.3. It reads `meta.clips` directly now.
+- **"The value at that tick" is the wrong question; "the value in force" is the right one.** The
+  exporter skips a controller whose value has not changed, so a placement whose pan matches its
+  neighbour's writes nothing of its own.
+
 ❗ **The tracks come out in board order**, row ascending then cell then GUID. `gridY` is the Thing's
 own y negated — `boardToGrid` computes `floor(-y / 105)` — so row 0 is the top of the board and
 ascending reads top to bottom, the way the sequencer draws it. The rows run 0..24 and are never

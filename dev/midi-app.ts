@@ -43,6 +43,7 @@ const bendInput = $<HTMLInputElement>('bendRange');
 const splitSelect = $<HTMLSelectElement>('split');
 const autoBend = $<HTMLInputElement>('autoBend');
 const exactBox = $<HTMLInputElement>('exact');
+const mergeBox = $<HTMLInputElement>('mergeRows');
 const logBox = $<HTMLDivElement>('log');
 
 let project: LevelProject | undefined;
@@ -92,6 +93,7 @@ function options() {
     mpe: modeSelect.value === 'mpe',
     bakeSwing: bakeSwing.checked,
     exact: exactBox.checked,
+    mergeRows: mergeBox.checked,
     // The level stores no name on a placement, so without this every track in
     // the file is called `guid 148321` and a DAW is unreadable.
     instrumentName: (guid: number) => rinstIndex?.get(guid)?.file.replace('.rinst', ''),
@@ -257,7 +259,7 @@ const showBend = () => {
     : `±${bendInput.value}`;
   bendInput.disabled = autoBend.checked;
 };
-for (const el of [modeSelect, bakeSwing, bendInput, autoBend, splitSelect, exactBox]) {
+for (const el of [modeSelect, bakeSwing, bendInput, autoBend, splitSelect, exactBox, mergeBox]) {
   el.addEventListener('change', () => {
     showBend();
     convert();

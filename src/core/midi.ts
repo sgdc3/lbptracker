@@ -102,6 +102,26 @@ export interface MidiExportOptions {
   readonly bakeSwing?: boolean;
   readonly ppq?: number;
   /**
+   * One MIDI track per board row and instrument, not per placement.
+   *
+   * ⚠️ **A placement's identity is eight fields and a track list shows two.**
+   * The same kit on the same row at two different pans is two placements to the
+   * game; merging puts both on one track and writes the mixer as CC automation
+   * at each clip's start, which is what a DAW does with a mixer that changes
+   * during a song. Measured over the corpus: **4,909 tracks become 3,220, a
+   * third fewer**, and of the 850 row groups holding more than one placement
+   * only **2** have notes overlapping in time -- where a DAW hears whichever
+   * setting was written last.
+   *
+   * ❗ A fader move still comes back: the import reads each controller at the
+   * tick of the placement's own first clip, which is unambiguous because **no
+   * two placements of a row group ever share a cell** -- 0 of 62,158.
+   *
+   * Two placements of DIFFERENT instruments on one row stay separate whatever
+   * this says. There is one instrument per track and the label names it.
+   */
+  readonly mergeRows?: boolean;
+  /**
    * A GUID to a readable instrument name, for the track names.
    *
    * ⚠️ **`PInstrument` has no name field worth printing.** `Track.name` comes
@@ -776,7 +796,31 @@ export function sequencerToMidi(
     || cellOf(a) - cellOf(b)
     || a.track.guid - b.track.guid);
   /**
-   * Which of the parts sharing a label this one is: `... #2`, `... #3`.
+   * The parts that share one MIDI track, and which track each part is on.
+   *
+   * Without `mergeRows` a group is one part and everything below behaves as it
+   * did. With it, a group is a board row and an instrument -- see the option.
+   */
+  const mergeRows = options.mergeRows ?? false;
+  const groups: number[][] = [];
+  const groupOf: number[] = [];
+  {
+    const seen = new Map<string, number>();
+    parts.forEach((part, index) => {
+      const key = mergeRows ? `${part.track.gridY}|${part.track.guid}` : `#${index}`;
+      let group = seen.get(key);
+      if (group === undefined) {
+        group = groups.length;
+        seen.set(key, group);
+        groups.push([]);
+      }
+      groups[group].push(index);
+      groupOf[index] = group;
+    });
+  }
+
+  /**
+   * Which of the TRACKS sharing a label this one is: `... #2`, `... #3`.
    *
    * ⚠️ **A label names two of a placement's eight fields, and half the corpus
    * needs more.** `row 0 - baiyon_drums_1` twice in `Ascetic` is the same kit on
@@ -793,8 +837,8 @@ export function sequencerToMidi(
   const dupOf = new Map<number, number>();
   {
     const seen = new Map<string, number>();
-    parts.forEach((part, index) => {
-      const label = nameOf(part.track);
+    groups.forEach((group, index) => {
+      const label = nameOf(parts[group[0]].track);
       const n = (seen.get(label) ?? 0) + 1;
       seen.set(label, n);
       if (n > 1) dupOf.set(index, n);
@@ -905,14 +949,16 @@ export function sequencerToMidi(
    * optimal for intervals.
    */
   const laneOf = new Map<ScheduledNote, number>();
-  const laneCount = parts.map(() => 1);
+  // Per GROUP, because a group is what becomes a MIDI track and a track is what
+  // gets its own fifteen channels.
+  const laneCount = groups.map(() => 1);
   {
-    const byPart: ScheduledNote[][] = parts.map(() => []);
+    const byGroup: ScheduledNote[][] = groups.map(() => []);
     for (const event of all) {
       const part = partOfTrack.get(event.track);
-      if (part !== undefined) byPart[part].push(event);
+      if (part !== undefined) byGroup[groupOf[part]].push(event);
     }
-    byPart.forEach((own, index) => {
+    byGroup.forEach((own, index) => {
       const sounding: number[][] = [];
       for (const event of own) {
         const from = at(event.step);
@@ -930,7 +976,7 @@ export function sequencerToMidi(
       laneCount[index] = Math.max(1, sounding.length);
     });
   }
-  /** Where each part's lanes begin in `bodies`. */
+  /** Where each group's lanes begin in `bodies`. */
   const laneBase: number[] = [];
   let bodyCount = 0;
   for (const count of laneCount) {
@@ -940,7 +986,7 @@ export function sequencerToMidi(
   const bodies: MidiEvent[][] = Array.from({ length: bodyCount }, () => []);
   const bodyOf = (event: ScheduledNote): number | undefined => {
     const part = partOfTrack.get(event.track);
-    return part === undefined ? undefined : laneBase[part] + (laneOf.get(event) ?? 0);
+    return part === undefined ? undefined : laneBase[groupOf[part]] + (laneOf.get(event) ?? 0);
   };
 
   const gliding = all.filter(needsChannel);
@@ -1261,54 +1307,89 @@ export function sequencerToMidi(
    */
   const assemble = (patch?: Map<number, Record<string, string>>): MidiTrack[] => {
     const tracks: MidiTrack[] = [{ events: sortEvents(head, rank) }];
-    parts.forEach((part, index) => {
-      const t = part.track;
-      for (let lane = 0; lane < laneCount[index]; lane += 1) {
-        // A lane is a continuation of the part, and says so in both places: the
+    groups.forEach((members, gi) => {
+      const lead = parts[members[0]].track;
+      for (let lane = 0; lane < laneCount[gi]; lane += 1) {
+        // A lane is a continuation of the track, and says so in both places: the
         // name so a DAW's track list reads, and the meta so the import merges.
         // `row 0 - kit #2 (1)`: the duplicate index, then the lane. Both come
         // off again exactly, because the meta says what each of them is.
-        const dup = dupOf.get(index);
-        const named = dup === undefined ? nameOf(t) : `${nameOf(t)} #${dup}`;
-        const label = laneCount[index] > 1 ? `${named} (${lane + 1})` : named;
-        // ❗ On the FIRST lane only. Lanes merge into whichever part the import
-        // meets first, so a copy on each is bytes nobody reads.
-        const fix = lane === 0 ? patch?.get(index) : undefined;
-        const header: MidiEvent[] = [
-          metaText(0, 0x03, label),
-          // ❗ **The mixer on the controllers MIDI has for it.** Level, pan and
-          // both sends are CC 7, 10, 91 and 90 -- so a DAW plays the level's
-          // own mix instead of every part flat and centred, and a fader move
-          // survives the trip back.
-          //
-          // ⚠️ **CC 90 is UNDEFINED in the specification, and that is why it
-          // was chosen.** A delay send has no controller of its own anywhere in
-          // MIDI: 91 is reverb, 92 tremolo, 93 chorus, 94 celeste/detune, 95
-          // phaser. 94 was tried first because some synths read it as a delay
-          // depth -- but many more read it as detune, and a value landing on the
-          // wrong one of those is audibly wrong rather than merely ignored. 90
-          // sits in the undefined block (85-90), so nothing can mistake it for
-          // something else: a reader that does not know it ignores it, and one
-          // that does gets the send. Inert everywhere beats right sometimes and
-          // wrong the rest. That is a judgement, made deliberately -- not a
-          // measurement. The meta keeps the exact value beside them,
-          // and the rule when they disagree is the tempo's: seven bits cannot
-          // hold the editor's steps (pan is exact at 7 bits on 8.9% of the
-          // corpus's placements), so the meta wins while the controller still
-          // AGREES to within its own resolution, and the controller wins the
-          // moment it does not. Unedited files keep 0.25 exactly; an edited one
-          // gets what the fader says.
-          //
-          // ⚠️ On the master channel, which is where MPE puts a control that
-          // belongs to the whole zone. And `level` alone, not level times the
-          // channel volume: folding the mixer stage in would make it
-          // un-invertible, and 308 of the corpus's 338 sequencers have one
-          // channel at a uniform 0.75, which is a constant and not a balance.
-          controlChange(0, MASTER, 7, clamp7(t.level * 127)),
-          controlChange(0, MASTER, 10, clamp7(t.pan * 127)),
-          controlChange(0, MASTER, 91, clamp7(t.reverbSend * 127)),
-          controlChange(0, MASTER, 90, clamp7(t.echoSend * 127)),
-          metaText(0, 0x01, TRK_TAG + JSON.stringify({
+        const dup = dupOf.get(gi);
+        const named = dup === undefined ? nameOf(lead) : nameOf(lead) + ' #' + dup;
+        const label = laneCount[gi] > 1 ? named + ' (' + (lane + 1) + ')' : named;
+        const header: MidiEvent[] = [metaText(0, 0x03, label)];
+
+        /**
+         * The mixer, per placement, at the tick that placement's first clip
+         * begins.
+         *
+         * ❗ **The mixer on the controllers MIDI has for it.** Level, pan and
+         * both sends are CC 7, 10, 91 and 90 -- so a DAW plays the level's own
+         * mix instead of every part flat and centred, and a fader move survives
+         * the trip back. On a merged track they become automation, which is what
+         * a DAW does with a mixer that changes during a song, and the import
+         * matches each value to a placement by the tick of its first clip. That
+         * is unambiguous because **no two placements of a row group ever share a
+         * cell** -- 0 of 62,158 across the corpus.
+         *
+         * ⚠️ **CC 90 is UNDEFINED in the specification, and that is why it
+         * was chosen.** A delay send has no controller of its own anywhere in
+         * MIDI: 91 is reverb, 92 tremolo, 93 chorus, 94 celeste/detune, 95
+         * phaser. 94 was tried first because some synths read it as a delay
+         * depth -- but many more read it as detune, and a value landing on the
+         * wrong one of those is audibly wrong rather than merely ignored. 90
+         * sits in the undefined block (85-90), so nothing can mistake it for
+         * something else: a reader that does not know it ignores it, and one
+         * that does gets the send. Inert everywhere beats right sometimes and
+         * wrong the rest. A judgement, made deliberately -- not a measurement.
+         *
+         * The meta keeps the exact value beside them, and the rule when they
+         * disagree is the tempo's: seven bits cannot hold the editor's steps
+         * (pan is exact at 7 bits on 8.9% of the corpus's placements), so the
+         * meta wins while the controller still AGREES to within its own
+         * resolution, and the controller wins the moment it does not.
+         *
+         * ⚠️ On the master channel, which is where MPE puts a control that
+         * belongs to the whole zone. And `level` alone, not level times the
+         * channel volume: folding the mixer stage in would make it
+         * un-invertible, and 308 of the corpus's 338 sequencers have one channel
+         * at a uniform 0.75, which is a constant and not a balance.
+         */
+        const mixer: MidiEvent[] = [];
+        const held = new Map<number, number>();
+        const ordered = [...members].sort((a, b) => cellOf(parts[a]) - cellOf(parts[b]));
+        for (const index of ordered) {
+          const t = parts[index].track;
+          const tick = at(cellOf(parts[index]) * STEPS_PER_CELL);
+          const dials: [number, number][] = [
+            [7, clamp7(t.level * 127)],
+            [10, clamp7(t.pan * 127)],
+            [91, clamp7(t.reverbSend * 127)],
+            [90, clamp7(t.echoSend * 127)],
+          ];
+          for (const [cc, value] of dials) {
+            // A repeat says nothing a DAW can use and nothing the import needs.
+            if (held.get(cc) === value) continue;
+            held.set(cc, value);
+            mixer.push(controlChange(tick, MASTER, cc, value));
+          }
+        }
+
+        // ❗ **One meta per placement on the track.** A merged track holds
+        // several, each with its own cells and its own mixer, and the import
+        // hands a note to whichever declared the cell it falls in.
+        for (const index of members) {
+          const part = parts[index];
+          const t = part.track;
+          // ❗ On the FIRST lane only. Lanes merge into whichever part the
+          // import meets first, so a copy on each is bytes nobody reads.
+          const fix = lane === 0 ? patch?.get(index) : undefined;
+          const odd: Record<string, string> = {};
+          for (const at2 of part.tracks) {
+            const clip = sequencer.tracks[at2];
+            if (clip.name !== t.name) odd[String(clip.gridX)] = clip.name;
+          }
+          header.push(metaText(0, 0x01, TRK_TAG + JSON.stringify({
             // ⚠️ **No `name`.** It is the track name meta, and carrying a
             // second copy here meant the copy won: renaming a part in a DAW came
             // back as the name the level had. Everything else that has a
@@ -1324,33 +1405,28 @@ export function sequencerToMidi(
             // that mapped the same name to a different GUID silently changed
             // the instrument on a file nobody had touched.
             instrument: instrumentOf(t),
-            // ⚠️ **The Thing's own label, which is NOT always empty.** This used
-            // to say "empty on every placement of all 22 corpus levels" and that
-            // was simply wrong: 4,353 of the 62,158 (7.0%) carry one, though
-            // only 23 distinct strings -- they are the editor's own defaults,
+            // ⚠️ **The Thing's own label, which is NOT always empty.** This
+            // used to say "empty on every placement of all 22 corpus levels" and
+            // that was simply wrong: 4,353 of the 62,158 (7.0%) carry one,
+            // though only 23 distinct strings -- the editor's own defaults,
             // `Synth: Ray Gun` and the like. The track name does not carry it.
             ...(t.name ? { name: t.name } : {}),
             // ❗ And per clip where a part's clips disagree, which 7 parts of
             // 4,909 do. Without this their 84 clips came back unnamed.
-            ...(() => {
-              const odd: Record<string, string> = {};
-              for (const at of part.tracks) {
-                const clip = sequencer.tracks[at];
-                if (clip.name !== t.name) odd[String(clip.gridX)] = clip.name;
-              }
-              return Object.keys(odd).length > 0 ? { names: odd } : {};
-            })(),
+            ...(Object.keys(odd).length > 0 ? { names: odd } : {}),
             level: t.level, pan: t.pan, echoSend: t.echoSend, reverbSend: t.reverbSend,
             key: t.key, scale: t.scale, clips: part.clips,
             // Written only when it is not the game's current default, which is
             // what a file from a DAW should become. See `Part.rest`.
             ...(part.rest === 1 ? {} : { rest: part.rest }),
-            ...(laneCount[index] > 1 ? { lane } : {}),
-            ...(dupOf.has(index) ? { dup: dupOf.get(index) } : {}),
+            ...(laneCount[gi] > 1 ? { lane } : {}),
+            ...(dupOf.has(gi) ? { dup: dupOf.get(gi) } : {}),
             ...(fix ? { fix } : {}),
-          })),
-        ];
-        tracks.push({ events: [...header, ...sortEvents(bodies[laneBase[index] + lane], rank)] });
+          })));
+        }
+        tracks.push({
+          events: [...header, ...sortEvents([...mixer, ...bodies[laneBase[gi] + lane]], rank)],
+        });
       }
     });
     return tracks;
@@ -1643,11 +1719,18 @@ export function midiToSequencer(
    */
   const byIdentity = new Map<string, RawPart>();
   for (const track of file.tracks) {
-    const found = readPart(track, bendRange, parts.length, zoned, opts);
-    if (found === undefined) continue;
-    unmatched += found.unmatched;
-    const part = found.part;
-    if (part.notes.length === 0 && part.cells.length === 0) continue;
+    for (let which = 0; ; which += 1) {
+      const found = readPart(track, bendRange, parts.length, zoned, opts, ticksPerStep, which);
+      if (found === undefined) break;
+      unmatched += found.unmatched;
+      take(found.part);
+      if (which + 1 >= found.metas) break;
+    }
+  }
+
+  /** Fold one placement into the list, merging lanes that describe the same one. */
+  function take(part: RawPart): void {
+    if (part.notes.length === 0 && part.cells.length === 0) return;
     const identity = [
       part.guid, part.gridY, part.level, part.pan,
       part.echoSend, part.reverbSend, part.key, part.scale,
@@ -1656,7 +1739,7 @@ export function midiToSequencer(
     const already = byIdentity.get(identity);
     if (already) {
       already.notes.push(...part.notes);
-      continue;
+      return;
     }
     byIdentity.set(identity, part);
     parts.push(part);
@@ -1757,9 +1840,44 @@ function readPart(
   index: number,
   zoned: boolean,
   options: MidiImportOptions,
-): { part: RawPart; unmatched: number } | undefined {
+  ticksPerStep: number,
+  /**
+   * Which `LBP-TRK` meta on this track to read.
+   *
+   * ❗ **A merged track carries one per placement.** `mergeRows` puts every
+   * placement of a board row and instrument on one MIDI track, so the caller
+   * reads the track once per meta and each pass keeps only the notes that fall
+   * in that placement's own cells. `metas` in the result says how many there
+   * are.
+   */
+  which = 0,
+): { part: RawPart; unmatched: number; metas: number } | undefined {
   /** The track's own name, before anything is read out of it. */
   let label = '';
+  /** How many `LBP-TRK` metas the track carries; a merged one has several. */
+  let metas = 0;
+  /**
+   * Every meta's cell list, so a merged track's notes can be split by cell.
+   *
+   * ❗ Read before anything else, because deciding which notes are THIS
+   * placement's needs to know what the others claim.
+   */
+  const claimed: [number, number][][] = [];
+  for (const event of track.events) {
+    const text = metaString(event);
+    if (text?.type !== 0x01 || !text.text.startsWith(TRK_TAG)) continue;
+    try {
+      const meta = JSON.parse(text.text.slice(TRK_TAG.length)) as Record<string, unknown>;
+      claimed.push(Array.isArray(meta.clips)
+        ? (meta.clips as unknown[]).flatMap((clip) => (Array.isArray(clip)
+          && typeof clip[0] === 'number'
+          ? [[clip[0], typeof clip[1] === 'number' ? clip[1] : 128] as [number, number]]
+          : typeof clip === 'number' ? [[clip, 128] as [number, number]] : []))
+        : []);
+    } catch {
+      claimed.push([]);
+    }
+  }
   const part: RawPart = {
     name: `track ${index + 1}`,
     guid: 0,
@@ -1776,16 +1894,37 @@ function readPart(
    * The mixer controllers this track carries, by CC number.
    *
    * Read before the meta, because the meta needs them: only a controller that
-   * DISAGREES with the meta's exact value is an edit. First value wins -- these
-   * are written once, at tick 0, and anything later is automation we do not
-   * model.
+   * DISAGREES with the meta's exact value is an edit.
+   *
+   * ❗ **Kept per tick, because a merged track's mixer is automation.** Each
+   * placement's values are written at the tick its own first clip begins, so
+   * this reads them back the same way. On an unmerged track there is one tick
+   * and it is the first clip's.
    */
-  const mixer = new Map<number, number>();
+  const mixer = new Map<number, { tick: number; value: number }[]>();
   for (const event of track.events) {
-    if ((event.data[0] & 0xf0) === 0xb0 && !mixer.has(event.data[1])) {
-      if ([7, 10, 90, 91].includes(event.data[1])) mixer.set(event.data[1], event.data[2]);
-    }
+    if ((event.data[0] & 0xf0) !== 0xb0) continue;
+    if (![7, 10, 90, 91].includes(event.data[1])) continue;
+    const list = mixer.get(event.data[1]) ?? [];
+    list.push({ tick: event.tick, value: event.data[2] });
+    mixer.set(event.data[1], list);
   }
+  /**
+   * The value in force at a tick, which is the last one written at or before it.
+   *
+   * ❗ **Not the value AT that tick.** The exporter skips a controller whose
+   * value has not changed, so a placement whose pan matches its neighbour's
+   * writes nothing of its own -- and reading only its own tick would find
+   * nothing and fall back to the meta, which is right by luck. Reading what is
+   * in force is right by construction, and it is also what a DAW plays.
+   */
+  const inForce = (cc: number, tick: number): number | undefined => {
+    let found: number | undefined;
+    for (const entry of mixer.get(cc) ?? []) {
+      if (entry.tick <= tick) found = entry.value;
+    }
+    return found;
+  };
   for (const event of track.events) {
     const text = metaString(event);
     if (text?.type === 0x03 && text.text) {
@@ -1794,6 +1933,8 @@ function readPart(
       part.name = text.text;
     }
     if (text?.type === 0x01 && text.text.startsWith(TRK_TAG)) {
+      metas += 1;
+      if (metas - 1 !== which) continue;
       try {
         const meta = JSON.parse(text.text.slice(TRK_TAG.length)) as Record<string, unknown>;
         const pick = (key: string, fallback: number) =>
@@ -1849,10 +1990,23 @@ function readPart(
             }
           }
         }
-        part.level = dialled(mixer.get(7), pick('level', NEUTRAL.level));
-        part.pan = dialled(mixer.get(10), pick('pan', NEUTRAL.pan));
-        part.reverbSend = dialled(mixer.get(91), pick('reverbSend', NEUTRAL.reverbSend));
-        part.echoSend = dialled(mixer.get(90), pick('echoSend', NEUTRAL.echoSend));
+        // ❗ At the tick this placement's own first clip begins, which is where
+        // the exporter wrote them. Unambiguous because no two placements of a
+        // row group ever share a cell -- 0 of 62,158 across the corpus.
+        //
+        // ⚠️ Read from `meta.clips` and not from `part.cells`, which is filled
+        // in further down: taking it from there made every placement look like
+        // it began at cell 0, so the second one on a merged track read the
+        // first one's pan and came back at 0.598 instead of 0.3.
+        const firstCell = Array.isArray(meta.clips) && meta.clips.length > 0
+          ? Math.min(...(meta.clips as unknown[]).map((clip) =>
+            (Array.isArray(clip) ? Number(clip[0]) : Number(clip)) || 0))
+          : 0;
+        const tick = Math.round(firstCell * STEPS_PER_CELL * ticksPerStep);
+        part.level = dialled(inForce(7, tick), pick('level', NEUTRAL.level));
+        part.pan = dialled(inForce(10, tick), pick('pan', NEUTRAL.pan));
+        part.reverbSend = dialled(inForce(91, tick), pick('reverbSend', NEUTRAL.reverbSend));
+        part.echoSend = dialled(inForce(90, tick), pick('echoSend', NEUTRAL.echoSend));
         // The part's resting bit, and the game's current default without one.
         part.rest = pick('rest', 1) === 0 ? 0 : 1;
         if (meta.fix !== null && typeof meta.fix === 'object') {
@@ -2051,7 +2205,28 @@ function readPart(
     unmatched += 1;
     end(key, Math.max(last, sounding.get(key)?.startTick ?? 0));
   }
-  return part.notes.length > 0 || part.guid !== 0 ? { part, unmatched } : undefined;
+  // ❗ **A merged track's notes belong to whichever placement declared the cell
+  // they fall in.** No two placements of a row group share a cell -- 0 of
+  // 62,158 across the corpus -- so this is a partition, not a guess. A note no
+  // placement claims stays with the first, where it would have gone anyway.
+  if (metas > 1 && claimed.length === metas) {
+    const fits = (cells: [number, number][], from: number, to: number) =>
+      cells.some(([cell, steps]) => {
+        const at = cell * STEPS_PER_CELL;
+        return at <= from && to - at < steps;
+      });
+    part.notes = part.notes.filter((note) => {
+      const startThirds = thirdsOf(note.startTick, ticksPerStep);
+      const endThirds = Math.max(startThirds, thirdsOf(note.endTick, ticksPerStep) - 3);
+      const from = Math.floor(startThirds / 3);
+      const to = Math.floor(endThirds / 3);
+      const mine = fits(claimed[which], from, to);
+      if (mine) return true;
+      // Nobody's? Then the first pass keeps it rather than the file losing it.
+      return which === 0 && !claimed.some((cells) => fits(cells, from, to));
+    });
+  }
+  return part.notes.length > 0 || part.guid !== 0 ? { part, unmatched, metas } : undefined;
 }
 
 /** Positions are thirds of a step, which is the finest the record format has. */
