@@ -38,9 +38,10 @@
  *
  * The bound stays an assertion for the reason it always was: `requireLbp3`
  * refuses anything outside it rather than reading an older layout with newer
- * rules and producing plausible nonsense. What the 2-of-19 says is that at
- * `0x272` it would do exactly that — 13 of those 19 want a part called
- * `EFFECTOR` that nothing here implements, and four break the stream outright.
+ * rules and producing plausible nonsense. What the 5-of-19 says is that at
+ * `0x272` it would do exactly that: every one of the fourteen failures is the
+ * stream diverging outright — negative string lengths, reads past the end — and
+ * none of them is a part this reader is merely missing.
  */
 
 export const COMPRESSED_INTEGERS = 1;

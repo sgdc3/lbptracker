@@ -258,10 +258,23 @@ function fillThing(
     // `1 << index`, which would silently wrap at 32.
     if ((mask & (1n << BigInt(part.index))) === 0n) continue;
     const read = readers.get(part.name);
-    if (!read) throw new UnimplementedPartError(part.name);
     const partStart = s.position;
     trace?.(part.name, partStart, -1);
-    const value = s.reference((self) => read(self, thing));
+    // ❗ **The refusal belongs INSIDE the reference, not in front of it.** A
+    // part's mask bit says the Thing has the field; the reference id that
+    // follows says whether it holds anything. Refusing on the bit alone rejects
+    // a level for a part that is null in it -- measured 2026-09-05: `EFFECTOR`
+    // appears in 13 of the archive sample's LBP1 levels and **every one of the
+    // 13 is a null reference**, one byte and no body. Those levels were being
+    // turned away over a field that is not there.
+    //
+    // ⚠️ It also means `UnimplementedPartError` now says what it always claimed
+    // to: this file has data for a part nothing here can read. A part that is
+    // merely *declared* costs nothing and is skipped.
+    const value = s.reference((self) => {
+      if (!read) throw new UnimplementedPartError(part.name);
+      return read(self, thing);
+    });
     trace?.(part.name, partStart, s.position);
     thing.parts.set(part.name, value);
   }

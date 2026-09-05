@@ -333,7 +333,7 @@ them is an even spread over the game's life, which is what puts old revisions in
 |---|---|---|
 | `0x3b7` | `0/0` | **4 of 4** |
 | `0x3b8`–`0x3f9` | `0/0` | **78 of 78** |
-| `0x272` | `4c44` (LEERDAMMER) | **2 of 19** |
+| `0x272` | `4c44` (LEERDAMMER) | **5 of 19**, and no failure is a missing part any more |
 | `0x26e` | — | 0 of 1, the chunk table is not where this reader looks |
 | — | — | 1 file the archive stores truncated |
 
@@ -368,10 +368,22 @@ some are.
 
 ### What is left
 
-- **LBP1, `0x272` and below** — 19 of the 103. ❗ **13 of the 19 fail on one thing: `no reader for
-  part EFFECTOR`.** That is a nameable, bounded piece of work rather than an era. The other four
-  break the stream outright (negative string lengths, a read past the end), which is the layout
-  genuinely diverging. Two parse, and two of nineteen is not evidence that they parse *correctly*.
+- **LBP1, `0x272` and below** — 19 of the 103, now **5 of 19 parsing** where it was 2, and
+  ❗ **not one failure left is a missing part.** Every remaining one is the stream genuinely
+  diverging: negative string lengths, a read past the end. That is the honest wall, and it is where
+  a byte-level trace has to start rather than a part list.
+
+  ⚠️ **What moved it was not the part it looked like.** 13 of the 19 said `no reader for part
+  EFFECTOR`, so `PEffector` was ported — nine fields, no version gates, 46 bytes. Then the span
+  tracer said `EFFECTOR 1B x13`: **all 13 are a null reference**, and the reader has never run. The
+  walk was refusing on the mask *bit*, before reading the id that says whether the field holds
+  anything. Moving the refusal inside `s.reference` is what freed them, and it is a real bug in the
+  walk rather than an LBP1 nicety — `UnimplementedPartError` now means "this file has data for a
+  part nothing here can read" instead of "this file mentions one".
+
+  ❗ **`readEffector` is therefore untested and is documented as such.** A faithful port of a
+  gate-free struct is a good guess and nothing more; 103 archive levels do not contain a single
+  effector with a body.
 - **A quest of a type other than 5** — still never seen, now in 103 archive levels as well as the
   saves. `readQuest` refuses rather than guessing.
 - **Branch `0x4431`** — one level in the saves, `f331efa7`, version 0x3e2. ⚠️ **Nothing in the
