@@ -261,6 +261,59 @@ offsets:**
 five pages, so **verify the object identity before believing either** — the discriminator is
 whether the same function also touches `+0x84` (the root note) or a `0x98` stride.
 
+### 2026-09-05: two escapes closed, one hypothesis killed, and the random is not `U(0,1)`
+
+**❗ The random is `rand() * 2^-30`, and the steering has been calling it `U(0,1)` on an assumption.**
+Read instruction by instruction rather than from a summary:
+
+```
+0x1ae1  call 0x140                      ; -> eax
+0x1aea  xmm0 = (float)eax
+0x1aee  xmm1 = 9.3132257e-10            ; v0x4540, exactly 2^-30
+0x1af6  xmm0 *= 2^-30
+0x1aff  xmm0 = (p2 * length) * xmm0
+0x1b07  [voice + layer*8 + 0x40] = (double)xmm0
+```
+
+The pitch line beside it settles what the code *expects*: `1 + 0.05 * (r*2p0 - p0)` is `U(-p0, +p0)`
+only if `r` is in `[0, 1)`, i.e. only if the import at `0x140` returns `[0, 2^30)`. ⚠️ **If it is an
+ordinary `rand()` with `RAND_MAX = 2^31 - 1`, `r` reaches 2** — and then `Params[2] = 1.000` puts
+half of every kit's hits *past the end of their own sample*, where `0x3056` kills them on the first
+block. That is a different prediction from "starts in a random place", and the game does neither.
+
+⚠️ **The import at `0x140` is NOT resolved**, and `CLAUDE.md`'s rule says resolve a NID before
+building on it. It is PLT entry **#6** (`push 6` at `0x0146`). `tools/ebdyn.py` does this for the
+eboot; **there is no equivalent for the PRXs**, and the obvious route does not work: the SELF
+segment table maps ELF index 3 (`PT_DYNAMIC`, `filesz 0x270`) to file offset `0x52f0`, and the 16
+bytes there are zero, so the dynamic table is not simply at its segment's file offset. That is the
+next concrete step and it is a tool, not a guess.
+
+**❌ "1.000 is just a default nobody changed" — dead.** Measured over all 68 instruments:
+
+| `Params[2]` | instruments |
+|---|---|
+| exactly `1.000 / 1.000` | **10** |
+| exactly `0.000 / 0.000` | 41 |
+| anything else | 17 |
+
+Ten of sixty-eight is a decision, not a default. The ten are the six kits plus `electronic_kit`,
+`hand_percussion`, **`choir` and `synth_strings`** — and the last two have `Numstack` 5, so whatever
+the field means it is not "percussion only".
+
+**✔ Two escapes closed.**
+
+- **Nothing clears the position between the stack loop and the renderer.** `sub_0x3930` writes
+  `+0x0c`, `+0x10`, `+0x18`-`+0x24`, `+0x28`, `+0x2c`-`+0x34`, `+0x3c`/`+0x3e`/`+0x3f` and **nothing
+  at `+0x40` or above**, over its whole 460-instruction body. `sub_0x280` calls only `0x19e0` and
+  then `0x3930` before returning to its loop.
+- **The renderer reads the same field the stack loop wrote.** `0x2b70` loads
+  `[r14 + rsi*8 + 0x40]` per layer and `0x2ddc` stores it back; `0x3035`'s end-of-sample test reads
+  `[r14 + 0x40]`, which is layer 0's. There is no second position and layer 0 is not special.
+
+⚠️ **`src/core/render.ts` implements `U(0, 1)`** (`rand()` at line 808) *and* skips layer 0. Both
+halves of that are now known to be readings rather than measurements: the skip is the listener's, and
+the `U(0, 1)` is this summary's.
+
 ## 12b. The old note on `Params[2]`
 
 Reported by ear: "the acoustic kit's kick is broken, as if the start of the sample were skipped and
