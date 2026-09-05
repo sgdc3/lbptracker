@@ -457,7 +457,7 @@ only the current one lets a glide sweep.
 low nibble — bits 4 and 5 are never set corpus-wide, and `0x40` is bit 30, which the engine already
 uses for the triplet sub-step. There is no unread per-note flag hiding there.
 
-## 9. Board row → mixer channel — the routing is MEASURED; one link is still inferred
+## 9. Board row → mixer channel — the WRITER is read, and it is not a modulo
 
 The old note here guessed "a row is very likely a mixer channel" as a direct index. **The corpus
 refutes that**: 88% of tracks have a `gridY` outside `0..NumChannels-1`, boards run to 25 distinct
@@ -549,6 +549,59 @@ wrong — but they were mixed wrong before too, since the volumes were not appli
 `NumChannels = 1` with all six volumes at 1.0, so every row lands on the same 0.75. The 30 that do
 use it carry descending ramps like `1.00, 0.70, 0.50, 0.20` — which reads like an intensity
 layering, not a per-instrument mixer.
+
+### ✔ 2026-09-05: the writer is found, and it is a DIVIDE AND CLAMP, not a modulo
+
+The inference is over. `v0x1608d0` fills the 16-byte header, and the way to it was the method note
+below rather than another sweep: byte-scan for `E8` displacements landing on `v0x1607c0` (the clip
+filler, one caller: `v0x1c449b`), find that function's prologue by searching backwards for
+`55 48 89 e5`, disassemble from **there**, and read to the end.
+
+`v0x1c4420` is the per-clip setter. Its tail:
+
+```
+v0x1c4527  esi = clipIndex
+v0x1c452a  esi <<= 4                    ; the 16-byte header array
+v0x1c452d  rsi += [state + 0x1af8]      ; or +0x1b00 -- the double buffer
+v0x1c4544  ecx = [clip + 0x30]
+v0x1c454a  edx = [rbp + 0x18]           ; the caller's second stack argument
+v0x1c454d  call v0x1608d0
+```
+
+and `v0x1608d0(rdi = PInstrument, rsi = &header[clip], edx = divisor, ecx = bound)` is nine
+instructions:
+
+```
+v0x1608d3  eax = [inst + 0x58]; if (eax < 0) eax = 0
+v0x1608df  [header + 0x00] = eax                       ; gridX -- and A[block][0]*16 proved it
+v0x1608e1  eax = [inst + 0x5c]
+v0x1608e9  div r8d                                     ; unsigned divide by the argument
+v0x1608ee  if (eax < 0) eax = 0
+v0x1608f5  edx = (eax < ecx) ? eax : ecx - 1           ; clamp to [0, bound-1]
+v0x1608fa  [header + 0x04] = edx                       ; -> the mixer channel
+v0x1608fd  [header + 0x08] = [inst + 0x60]             ; the clip's bound, as v0x1607c0 also reads
+v0x160906  [header + 0x0c] = [inst + 0x5c]             ; the row again, raw
+```
+
+❗ **So the routing is `clamp([inst+0x5c] / divisor, 0, bound - 1)`, not `row mod NumChannels`.**
+`src/core/project.ts` implements the modulo. The `mod 8` at `0x3afc` that the modulo was inferred
+from is a **safety net on an already-clamped value**, not the mapping.
+
+⚠️ **Do not change `channelVolume` yet.** Two operands are unread and getting either wrong is worse
+than the modulo:
+
+- **the divisor**, `[rbp+0x18]` of `v0x1c4420`, passed as `edx` from `v0x1c5b0f` and set earlier in
+  a function starting at `v0x1c5670`;
+- **the bound**, `[clip + 0x30]` — almost certainly `NumChannels`, and one read away.
+
+❗ **The shape argues for row *bands*.** A divisor greater than one groups consecutive rows onto one
+channel — rows 0-3 to channel 0, 4-7 to channel 1 — and that is exactly what the 30 multi-channel
+sequencers' descending ramps (`1.00, 0.70, 0.50, 0.20`) look like: an intensity layering by band,
+not a per-instrument mixer. ⚠️ It also explains why the corpus could not tell modulo from clamp:
+**308 of 338 sequencers have `NumChannels = 1`**, where every row lands on channel 0 either way.
+
+⚠️ `[header + 0x0c]` keeps the row **undivided and unclamped** beside the routed copy, so whatever
+else reads the array can still see where the placement actually sat.
 
 ### A method note: linear disassembly of the eboot desynchronises
 
