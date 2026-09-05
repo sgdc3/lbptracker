@@ -935,24 +935,59 @@ volume` and the like) that were never opened. **Print them before theorising.**
   98.8% (modulation ascending) and 94.9% (volume descending). Adding one would look like the other
   three and not be one.
 
-## 28. Four resources in the corpus that still will not open
+## 28. What still will not open — now measured against the archive, not six saves
 
-Everything else in the six measured saves reads. These four do not, and each fails **by name**,
-which is the reader's growth path working rather than a silence to chase.
+⚠️ **Re-based 2026-09-05.** This used to list four failures out of six PS3 saves. The public archive
+made a wider corpus possible, so it was swept: **47 levels off the index, across LBP1, LBP2 and both
+LBP3 platforms.** That is a far better test than the saves, which are one creator's and one console
+generation's.
 
-- **`YELLOWHEAD`** — one plan. `PYellowHead` is a player's poppet state: two dozen fields, a nested
-  `Poppet` struct with its own tree, and a `SerializationException` thrown by cwlib itself in two
-  subVersion ranges. Twenty minutes of layout for one file, and a plan carrying a *player* is not
-  where music lives. Anchor: `cwlib/structs/things/parts/PYellowHead.java`.
-- **Revision `0x272`** — one plan, an LBP1-era resource `requireLbp3` refuses on purpose. Widening
-  the range means adding the older branches field by field, not relaxing the check; see
-  `serializer.ts`.
-- **Branch `0x4431`** — one level, `f331efa7`, version 0x3e2. Neither `LEERDAMMER` (0x4c44) nor
-  `MIZUKI` (0x4d5a), so **cwlib does not know this branch either**. Its first Thing reports no
-  `WORLD` part, which means the header layout diverges before the part mask. Unknowable from the
-  corpus alone: one file is not enough to reverse a branch from.
-- **A quest of a type other than 5** — not seen yet, and `readQuest` refuses rather than guessing:
-  the other types carry a trailing block whose shape depends on the type.
+### What the sweep found
 
-**None of these is in the way of music.** They are listed so that a failure on screen can be
-recognised as one of them rather than investigated twice.
+**28 of 43 real resources parse**, and the failures fall into two piles that want completely
+different things.
+
+**Pile one — out of scope by design, 9 files.** Revisions below the LBP3 range `serializer.ts`
+accepts: `0x23d`, `0x26e` (×4), `0x272` (×5, branch `4c44/17` — **LEERDAMMER**), and one `0x3b7`,
+which misses the lower bound of `0x3b8` by a single revision. Widening the range means adding the
+older branches field by field, not relaxing the check.
+
+⚠️ **Four of those said "chunk 0/26 failed to inflate"**, which sends you to look at zlib. It is not
+zlib: it is our header layout being wrong for an LBP1 resource, so the chunk table is garbage. The
+message now names the revision.
+
+**Pile two — real bugs on files this reader claims to support, 4 files, all `v0x3f9`:**
+
+| file | |
+|---|---|
+| `8b904be1` | ✔ **one bug fixed** (below); still fails 2,888 bytes later than it did |
+| `69318581` | `Thing test marker was 0x80` at byte 10633 |
+| `7c0f1a1d` | `Thing test marker was 0x80` at byte 158804 |
+| `5576f758` | `no reader for part WORLD` — the symptom the old branch-`0x4431` entry had, on branch `0/0` |
+
+### ✔ `PStreamingHint.connected` was a double reference
+
+`s.references((self) => readThingRef(self, readers))` reads a reference id **and then calls a
+builder that reads another one**, so every element cost two ids where cwlib's `thingarray` reads
+one. The fix is `things(s, readers)`, the helper every other Thing array already uses.
+
+❗ **The whole corpus missed it because `connected` is empty in every file of it** — the loop never
+ran. It took one level from the archive with a single connected Thing: measured on `8b904be1`, the
+count is 1 at byte 120322, its one id is read at 120323, and the extra read ate the next Thing's
+`0xaa` at 120328.
+
+That is the second bug of exactly this shape in one day — question 36 was the first. **A field that
+is empty or zero everywhere in the corpus is untested, whatever it is declared as.**
+
+### The anchor for what is left
+
+The technique that found both, in order: `setTrace` from `thing.ts` for the part spans; then patch
+`Serializer.prototype` from a probe so **every read is logged with its value** — widths align at any
+offset, values do not; then read the raw bytes at the disagreement.
+
+⚠️ For `69318581` the next Thing is **not** three bytes away: there is no `0xaa` at all within a
+hundred bytes of 10633, and the bytes there are two `3f 80 00 00` four apart. The parse is a long way
+off by then, so bisect from an earlier Thing rather than from the reported byte.
+
+**None of this is in the way of music** — the 28 that parse yield 26 sequencers — but the archive is
+now where these get found, and it will keep finding them.

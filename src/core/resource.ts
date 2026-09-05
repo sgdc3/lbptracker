@@ -127,9 +127,17 @@ export async function loadResource(
     try {
       inflated = await inflate(deflated, rawSize);
     } catch (cause) {
-      throw new ResourceFormatError(`chunk ${i}/${chunkCount} failed to inflate`, {
-        cause,
-      });
+      // ❗ **Name the revision.** A chunk that will not inflate is almost never
+      // a broken file: it is a header this reader laid out wrongly, and the
+      // usual reason is a revision older than the range it implements. Four
+      // LBP1 levels out of the public archive (0x23d, 0x26e) said only "chunk
+      // 0/26 failed to inflate", which sends you looking at zlib.
+      throw new ResourceFormatError(
+        `chunk ${i}/${chunkCount} failed to inflate — revision 0x${
+          revision.version.toString(16)} sub 0x${revision.branch.toString(16)}` +
+          ', whose header layout may not be the one this reader implements',
+        { cause },
+      );
     }
     if (inflated.length !== rawSize) {
       throw new ResourceFormatError(

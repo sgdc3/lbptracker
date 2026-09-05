@@ -2116,13 +2116,23 @@ function readStreamingData(s: Serializer): void {
   s.i16(); // originator, subVersion > 0xdd
 }
 
-/** `PStreamingHint`: the volume that asks for a chunk to be streamed in. */
+/**
+ * `PStreamingHint`: the volume that asks for a chunk to be streamed in.
+ *
+ * ⚠️ **`connected` is `things`, not `references(readThingRef)`.** The second
+ * reads a reference id and then calls a builder that reads *another* one, so
+ * every element cost two ids instead of one -- and the whole corpus missed it
+ * because `connected` is empty in every file of it, so the loop never ran. It
+ * took a level out of the public archive with a single connected Thing to
+ * expose it: measured on `8b904be1`, the array's count is 1 at byte 120322, its
+ * one id is read at 120323, and the extra read then ate the next Thing's `0xaa`.
+ */
 function readStreamingHint(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
   s.i32(); // type
   s.vector3(); // offset
   s.vector3(); // size
   readThingRef(s, readers); // relativeToThing
-  s.references((self) => readThingRef(self, readers)); // connected
+  things(s, readers); // connected
 }
 
 /** `PRef`: a Thing standing in for a plan that has not been instanced. */
