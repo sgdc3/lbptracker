@@ -1041,8 +1041,15 @@ unknowns, below.
 - **Revisions below `0x3b8`** — 11 of the 43, and a *decision* rather than a mystery: `0x23d`,
   `0x26e`, `0x272` (branch `4c44/17`, LEERDAMMER) and one `0x3b7` that misses the bound by a single
   revision. Widening means adding the older branches field by field.
-- **`YELLOWHEAD`** — one plan in the saves. `PYellowHead` is a player's poppet state and cwlib
-  itself throws on it in two subVersion ranges. Anchor: `cwlib/structs/things/parts/PYellowHead.java`.
+- ~~**`YELLOWHEAD`**~~ — ✔ **implemented and verified, 2026-09-05.** `PYellowHead` plus the whole
+  `Poppet` tree under it (`PoppetMode`, `RaycastResults`, `PoppetMaterialOverride`,
+  `PoppetShapeOverride`), ported from cwlib. The two `SerializationException` ranges that made this
+  look expensive — subVersion `[0xc, 0x66)` and `[0x88, 0xa3)` — **cannot fire in the range this
+  reader accepts**, which starts at 0x207, so LBP3 is a clean path through it. The corpus goes from
+  **211 plans parsing to 212**, and `test/plan.test.ts` verifies it properly rather than by not
+  throwing: `readPlan` requires the Thing array to fill `thingData` exactly, so every field was read
+  at the right width. ⚠️ Only the post-0x2ec `Poppet` layout is implemented; below that it is a
+  different structure and `requireLbp3` rules those files out first.
 - **A quest of a type other than 5** — still never seen, in the saves or in 43 archive levels.
   `readQuest` refuses rather than guessing; the other types carry a trailing block whose shape
   depends on the type.

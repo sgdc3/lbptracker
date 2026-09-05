@@ -141,10 +141,18 @@ test('every plan in the corpus parses, and holds the music the levels do not', a
     }
   }
   assert.deepEqual(unexplained, [], 'no plan failed for a reason other than a known gap');
-  // Measured 2026-09-04 over the five saves in the checkout. The two that do not
-  // parse are one `YELLOWHEAD` and one revision 0x272, both named above.
+  // Measured 2026-09-04 over the five saves in the checkout, and again on
+  // 2026-09-05 when `YELLOWHEAD` was implemented: **the one that does not parse
+  // is a revision 0x272**, refused on purpose.
+  //
+  // ❗ **This test is what verified the `PYellowHead` port**, and it did it
+  // properly rather than by not throwing: `readPlan` requires the Thing array to
+  // fill `thingData` **exactly**, so a plan that comes back has had every field
+  // of that part read at the right width. There was no other file to try it on
+  // -- a player's popit state lives in a save, and none of the 43 levels or 86
+  // resources pulled out of the public archive carries one.
   assert.equal(plans, 213, 'plans in the corpus');
-  assert.equal(parsed, 211, 'plans that parse');
+  assert.equal(parsed, 212, 'plans that parse');
   // ⚠️ **This is the number that says why plans matter.** The same five saves
   // hold five levels between them; the music is in the popit copies. 172 out of
   // 171 plans -- one plan carries two sequencers, which is why this counts the
