@@ -328,11 +328,15 @@ export async function readChunk(
   }
   const things: (Thing | undefined)[] = [];
   const problems: string[] = [];
-  for (const plan of plans) {
+  for (let island = 0; island < plans.length; island += 1) {
     try {
-      things.push(...(await readPlan(plan, inflate, readers)).things);
+      things.push(...(await readPlan(plans[island], inflate, readers)).things);
     } catch (error) {
-      problems.push(`island ${problems.length + 1}: ${
+      // ⚠️ **The island's own index, not the count of problems so far.** This
+      // said `problems.length + 1`, so the first failure in a chunk of 167
+      // islands was always "island 1" -- and chasing question 36 meant finding
+      // island 48 by hand before anything else could start.
+      problems.push(`island ${island} of ${plans.length}: ${
         error instanceof Error ? error.message : String(error)}`);
     }
   }
