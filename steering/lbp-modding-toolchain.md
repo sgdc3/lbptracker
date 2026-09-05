@@ -260,7 +260,7 @@ Measured 2026-09-03 over the corpus, both channel modes, `dev/verify-midi.ts`:
 
 ```
 62.158 clips, 1.448.224 records: 0 came back different
-177 clips carried verbatim, 0 unpatchable, 24.0 MB
+54 clips carried verbatim, 0 unpatchable, 24.0 MB
 ```
 
 and it is a **fixed point from the first trip**: three round trips give 1,448,224 records and the
@@ -285,7 +285,9 @@ Three things got it there, in the order they were found:
    [midi-interchange.md](midi-interchange.md).
 4. **A verbatim record patch for the remainder.** The exporter imports its own output, compares
    clip by clip, and writes the originals base64 in the `LBP-TRK` meta's `fix` for the ones that
-   differ — **177 clips of 62,158**, 34 kB, 0.15% of the file.
+   differ — **54 clips of 62,158**, 15 kB, 0.063% of the file. It was 177 when this was written and
+   109 the day after; what closed the gap each time was a thing MIDI could say after all, and the
+   remainder is now a single family. See question 24 in [open-questions.md](open-questions.md).
 
 ⚠️ **A patch is not the same kind of thing as the metas around it.** `LBP-SEQ` and `LBP-TRK`
 describe the *placement* — the mixer, the board, the key — and stay true however the notes are
@@ -297,7 +299,7 @@ present in the patch.
 
 ⚠️ So `flattened`, `dropped` and `dragged` describe what a **foreign reader** loses, not what a
 round trip loses — the honest reading of them, and always was. `LBP_MIDI_LOOSE=1` turns the patch
-off and measures MIDI alone: worst deviation pitch 0.167, volume 0.500, and 177 clips that would
+off and measures MIDI alone: worst deviation pitch 0.167, volume 0.500, and 54 clips that would
 have needed a patch.
 
 ⚠️ **`Track.records` is the file's own bytes and `Track.notes` is not a re-encoding of them.**

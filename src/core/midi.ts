@@ -421,7 +421,11 @@ interface Part {
    * importer has to guess. With each clip's own extent as well that falls to
    * **0.09%**: 99.91% of notes fit exactly one. One number per clip.
    */
-  readonly clips: ([number, number] | [number, number, number])[];
+  readonly clips: (
+    | [number, number]
+    | [number, number, number]
+    | [number, number, number, string]
+  )[];
   /**
    * Byte 3's bit 6 at rest, which the engine reads only when bit 7 is set.
    *
@@ -460,6 +464,54 @@ function restingBit(track: Track): number {
   return set >= clear && set > 0 ? 1 : 0;
 }
 
+/**
+ * A clip whose inert records do not agree, as one bit per record.
+ *
+ * ❗ **31 of the corpus's 62,158 clips mix the two values**, and they used to be
+ * the largest single family in the verbatim record patch -- a clip in the patch
+ * is a clip whose bytes go stale the moment a DAW edits its notes, so carrying
+ * an inert bit was costing the whole clip. 93 bytes of bitmap over the corpus
+ * replaces all of it.
+ *
+ * ⚠️ **The hypothesis this replaced was wrong and is worth not repeating.**
+ * Steering proposed a run length, on the reasoning that a level saved across the
+ * editor change would hold its old notes first and its new ones after. Measured:
+ * only **11** of the 31 are two runs; the rest scatter over as many as **11**,
+ * and the longest sample reads `10110111111111111010101111`. There is no run
+ * structure to exploit and there never was.
+ *
+ * One bit per record, in the clip's own record order, LSB first. A DAW that
+ * edits the notes misaligns it -- and the bit is inert, so nothing is heard.
+ */
+function restingBits(track: Track, rest: number): string | undefined {
+  const records = track.records;
+  const count = Math.floor(records.length / NOTE_RECORD_SIZE);
+  const bits = new Uint8Array(Math.ceil(count / 8));
+  let mixed = false;
+  for (let i = 0; i < count; i += 1) {
+    const at = i * NOTE_RECORD_SIZE;
+    // A record at sub-step 1 or 2 spends this bit on the sub-step; only the
+    // ones at rest carry a free one, and only those can disagree.
+    if ((records[at] & 0x80) !== 0) continue;
+    const bit = (records[at + 3] & 0x40) !== 0 ? 1 : 0;
+    if (bit !== rest) mixed = true;
+    if (bit) bits[i >> 3] |= 1 << (i & 7);
+  }
+  return mixed ? toBase64(bits) : undefined;
+}
+
+/** One clip's entry: its cell, its extent, its resting bit and, if mixed, a bitmap. */
+function clipEntry(
+  track: Track,
+  steps: number,
+): [number, number, number] | [number, number, number, string] {
+  const rest = restingBit(track);
+  const bits = restingBits(track, rest);
+  return bits === undefined
+    ? [track.gridX, steps, rest]
+    : [track.gridX, steps, rest, bits];
+}
+
 function partsOf(sequencer: Sequencer): Part[] {
   const byKey = new Map<string, Part>();
   sequencer.tracks.forEach((track, index) => {
@@ -475,10 +527,10 @@ function partsOf(sequencer: Sequencer): Part[] {
     const found = byKey.get(key);
     if (found) {
       found.tracks.push(index);
-      found.clips.push([track.gridX, steps, restingBit(track)]);
+      found.clips.push(clipEntry(track, steps));
     } else {
       byKey.set(key, {
-        track, tracks: [index], clips: [[track.gridX, steps, restingBit(track)]], rest: 0,
+        track, tracks: [index], clips: [clipEntry(track, steps)], rest: 0,
       });
     }
   });
@@ -492,7 +544,10 @@ function partsOf(sequencer: Sequencer): Part[] {
       ...part,
       rest,
       clips: part.clips.map((clip) =>
-        clip[2] === rest ? ([clip[0], clip[1]] as [number, number]) : clip),
+        // ⚠️ A clip with a bitmap keeps its own bit as well: the bitmap is
+        // indexed by record and the bit is the fallback for the records the
+        // bitmap does not decide, so dropping either is not the same file.
+        clip.length === 3 && clip[2] === rest ? ([clip[0], clip[1]] as [number, number]) : clip),
     };
   });
 }
@@ -1330,19 +1385,29 @@ export function sequencerToMidi(
         // 1,077: a note that sat at 96 for two steps and then faded came back
         // fading from its very first frame, which is the trap the loop's own
         // comment above already warned about.
+        //
+        // ❗ **And `k === steps` for the same reason at the other end.** The
+        // resampled values are rounded, so a ramp reaches its final value one
+        // or two thirds BEFORE the control point the author wrote; suppressing
+        // the last sample as a repeat then leaves the segment's end unstated
+        // and the importer folds the ramp back onto the last change instead.
+        // `17:57 -> 31:46` came back as `30+2/3:46` for exactly that. Worth 20
+        // clips of question 24's patch, and the symmetry is the argument: a
+        // moving segment states both of its ends or neither.
+        const edge = k === 0 || k === steps;
         if (from.semitones !== to.semitones) {
           const value = bendValue(semitones);
-          if (k === 0 || value !== sentBend) out.push(pitchBend(tick, channel, value));
+          if (edge || value !== sentBend) out.push(pitchBend(tick, channel, value));
           sentBend = value;
         }
         if (from.volume !== to.volume) {
           const value = clamp7(volume);
-          if (k === 0 || value !== sentPress) out.push(channelPressure(tick, channel, value));
+          if (edge || value !== sentPress) out.push(channelPressure(tick, channel, value));
           sentPress = value;
         }
         if (from.modulation !== to.modulation) {
           const value = modTo7(modulation);
-          if (k === 0 || value !== sentMod) out.push(controlChange(tick, channel, 74, value));
+          if (edge || value !== sentMod) out.push(controlChange(tick, channel, 74, value));
           sentMod = value;
         }
       }
@@ -1714,7 +1779,7 @@ interface RawPart {
    * The clips this part had, `[gridX, steps, rest]`, when the file remembers
    * them. `rest` is byte 3's inert bit 6 -- see `Part.rest`.
    */
-  cells: [number, number, number][];
+  cells: [number, number, number, string?][];
   notes: RawNote[];
 }
 
@@ -2139,7 +2204,10 @@ function readPart(
                 clip[0],
                 typeof clip[1] === 'number' ? clip[1] : 128,
                 clip[2] === 0 || clip[2] === 1 ? clip[2] : part.rest,
-              ] as [number, number, number]];
+                // The fourth slot is the per-record resting bitmap, and only
+                // the 31 clips of the corpus that mix the bit carry one.
+                typeof clip[3] === 'string' ? clip[3] : undefined,
+              ] as [number, number, number, string?]];
             }
             return [];
           });
@@ -2387,24 +2455,45 @@ function simplify(
     let worst = -1;
     // Normalised, so 1 is "at its tolerance" for whichever field is worst.
     let worstBy = 1;
-    for (let i = a + 1; i < b; i += 1) {
+    // Each field against its own tolerance, then the worst of the three. Pitch
+    // is held far tighter than the others because it is no longer rounded
+    // before it gets here: what arrives is the ramp the file drew, and the only
+    // slack it needs is the bend's own 14-bit step.
+    const byOf = (i: number): number => {
       const t = width > 0 ? (points[i].thirds - from.thirds) / width : 0;
-      // Each field against its own tolerance, then the worst of the three.
-      // Pitch is held far tighter than the others because it is no longer
-      // rounded before it gets here: what arrives is the ramp the file drew,
-      // and the only slack it needs is the bend's own 14-bit step.
-      const by = Math.max(
+      return Math.max(
         Math.abs(from.pitch + (to.pitch - from.pitch) * t - points[i].pitch) / PITCH_TOLERANCE,
         Math.abs(from.volume + (to.volume - from.volume) * t - points[i].volume) / TOLERANCE,
         // ❗ On the nibble's own scale: the modulation is 0..1 in steps of 1/15.
         Math.abs((from.mod + (to.mod - from.mod) * t - points[i].mod) * 15) / TOLERANCE,
       );
+    };
+    for (let i = a + 1; i < b; i += 1) {
+      const by = byOf(i);
       if (by > worstBy) {
         worstBy = by;
         worst = i;
       }
     }
     if (worst < 0) continue;
+    // ❗ **At a near tie, take the breakpoint that sits on a whole step.**
+    // Authors write on steps; the exporter resamples onto thirds; and a corner
+    // in a staircase deviates from its chord by almost exactly as much one
+    // third before the corner as at it. Douglas-Peucker's plain "furthest from
+    // the chord" then picks the third, and the clip comes back with its corner
+    // moved -- which is the single largest family in question 24. The band is
+    // in units of the field's own tolerance, so it is a fraction of the error
+    // that cannot change a rendered note in the first place.
+    if (points[worst].thirds % 3 !== 0) {
+      let best = -1;
+      for (let i = a + 1; i < b; i += 1) {
+        if (points[i].thirds % 3 !== 0 || byOf(i) < worstBy - WHOLE_STEP_BAND) continue;
+        // The nearest qualifying whole step, not the earliest: the corner the
+        // author wrote is the one beside the corner the resampling made.
+        if (best < 0 || Math.abs(i - worst) < Math.abs(best - worst)) best = i;
+      }
+      if (best >= 0) worst = best;
+    }
     keep[worst] = true;
     stack.push([a, worst], [worst, b]);
   }
@@ -2429,6 +2518,24 @@ const TOLERANCE = 0.5 + 1e-9;
  * fiftieth of the smallest musical interval there is.
  */
 const PITCH_TOLERANCE = 0.02;
+
+/**
+ * How far below the worst deviation a whole-step breakpoint may sit and still
+ * be preferred to it, in units of the field's own tolerance.
+ *
+ * **One**, and it is the rounding's own size rather than a fitted number: a
+ * resampled value is `round(exact)` and so misses the true ramp by up to half a
+ * unit, which `TOLERANCE` normalises to exactly 1. Two candidate corners a third
+ * apart on the same staircase cannot differ by more than that.
+ *
+ * ❗ **Widening it cannot cost accuracy**, which is why the plateau is so broad.
+ * Douglas-Peucker keeps splitting until nothing exceeds its tolerance, so
+ * choosing a different point of the ones that exceed it changes *which* records
+ * come back, never how far the reconstruction sits from the curve. Measured over
+ * the corpus the patch is 78 clips at 0.1, 57 at 0.2 and **54 from 0.34 all the
+ * way to 5**.
+ */
+const WHOLE_STEP_BAND = 1;
 
 /**
  * A part to LBP clips.
@@ -2589,6 +2696,16 @@ function cutIntoClips(
   const cells = [...part.cells].sort((a, b) => a[0] - b[0]);
   /** The clip being written, and the inert bit 6 its records carry. */
   let resting = part.rest;
+  /**
+   * The clip's per-record resting bits, when it carries a bitmap.
+   *
+   * ⚠️ **Indexed by record, in this reconstruction's own order.** For the clips
+   * that carry one the records match the file's exactly apart from this bit, so
+   * the orders agree; a file a DAW has edited misaligns it and puts an inert bit
+   * on the wrong record, which is the whole reason a bitmap is safe where a
+   * verbatim patch is not.
+   */
+  let restingMap: Uint8Array | undefined;
   /** Every clip that could hold a note, nearest cell last. */
   const fitting = (startStep: number, endStep: number): number[] => {
     // The clips' own windows first, and whole clips only if nothing fits --
@@ -2637,7 +2754,11 @@ function cutIntoClips(
         // when byte 0's bit 7 is set, and which the editor writes at rest
         // anyway. Bits 4..5 select one of four per-block tables and nothing
         // here models them, so they stay clear.
-        const high = subStep === 1 ? 0 : subStep === 2 ? 0x40 : resting * 0x40;
+        const slot = at / NOTE_RECORD_SIZE;
+        const bit = restingMap === undefined
+          ? resting
+          : ((restingMap[slot >> 3] ?? 0) >> (slot & 7)) & 1;
+        const high = subStep === 1 ? 0 : subStep === 2 ? 0x40 : bit * 0x40;
         bytes[at + 3] = Math.round(point.mod * 15) | high;
         at += NOTE_RECORD_SIZE;
       });
@@ -2692,15 +2813,17 @@ function cutIntoClips(
     // instrument dropped on the board and never written in -- and there is
     // nothing in a MIDI file to bring them back except the cell list itself.
     // Without this the round trip quietly returned 62,106 clips for 62,158.
-    for (const [cell, , rest] of cells) {
+    for (const [cell, , rest, bits] of cells) {
       const at = cell * STEPS_PER_CELL;
       clipStart = at;
       resting = rest;
+      restingMap = bits === undefined ? undefined : fromBase64(bits);
       open = byCell.get(at) ?? [];
       byCell.delete(at);
       flush(true);
     }
     resting = part.rest;
+    restingMap = undefined;
     for (const [at, group] of [...byCell].sort((a, b) => a[0] - b[0])) {
       clipStart = at;
       open = group;

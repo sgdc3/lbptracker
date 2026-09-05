@@ -25,7 +25,7 @@ over the corpus (10 levels, 149 sequencers, 953,791 notes, 62,158 clips, 1,448,2
 | note on | 15.58% | 953,791 |
 | note off | 15.58% | 953,791 |
 | **`LBP-TRK` meta** — placement and cells | **5.18%** | 4,911 |
-| **`LBP-TRK` `fix`** — verbatim records | **0.15%** | 47 |
+| **`LBP-TRK` `fix`** — verbatim records | **0.06%** | 47 |
 | track name meta | 0.33% | 5,060 |
 | **`LBP-SEQ` meta** — the sequencer | **0.12%** | 149 |
 | tempo, time signature, end of track | 0.09% | 5,358 |
@@ -70,6 +70,8 @@ fails there, rather than silently in a DAW six months later.
 
 `guid` · `instrument` · `gridY` · `level` · `pan` · `echoSend` · `reverbSend` · `key` · `scale` ·
 `clips` · `name`? · `rest`? · `lane`? · `fix`?
+
+A `clips` entry is `[gridX, steps]`, `[gridX, steps, rest]` or `[gridX, steps, rest, bitmap]`.
 
 The first nine are the placement — instrument, mixer row, level, pan, both sends, and the key and
 scale that were folded into the note numbers. The last three are the interesting ones.
@@ -204,13 +206,27 @@ for one number per clip.
 all — an instrument dropped on the board and never written in — and nothing else in the file can
 bring one back.
 
-### `rest` — byte 3's inert bit 6, per part, with a per-clip override
+### `rest` — byte 3's inert bit 6, per part, per clip, and now per record
 
 A third element on a `clips` tuple overrides the part's value. Omitted entirely when it is 1, which
 is what the game's current editor writes and therefore what a file from a DAW should become.
 
 ⚠️ Inert to the engine and still a fact about the file: dropping it made **78% of clips** come back
 different. Measured in [sequencer-data-model.md](sequencer-data-model.md).
+
+✅ **And a fourth element, added 2026-09-05: a base64 bitmap, one bit per record.** 31 of the
+corpus's 62,158 clips mix the two values, and they were the largest single family in the verbatim
+patch — an inert bit was costing a whole clip its editability. **93 bytes of bitmap over the whole
+corpus** replaces all 31.
+
+⚠️ **It is the one channel here that degrades rather than breaks.** The bitmap is indexed by record
+in the reconstruction's own order, so a DAW that edits the notes misaligns it — and what lands on
+the wrong record is a bit the engine never reads. That is the whole argument for carrying it this
+way instead of in `fix`.
+
+❌ **A run length would have been the obvious encoding and the data refuses it.** Only 11 of the 31
+are two runs; the rest scatter over as many as eleven, and one reads
+`10110111111111111010101111`.
 
 ### `lane` — which MIDI track of a part this is
 
@@ -227,12 +243,29 @@ same identity so the import merges them. It cost **2 extra tracks across the who
 | ~~a control point where nothing moves~~ | ~~509 notes~~ **0** | **yes, and it is now said in MIDI** — see below |
 | ~~a coincident pair's first volume~~ | ~~23 clips~~ **0** | **yes** — one more channel-pressure message, below |
 | ~~a chain stored out of position order~~ | ~~45 clips~~ **0** | **not carried, and need not be** — below |
-| a ramp re-cut onto the staircase its own rounding makes | 73 | the reconstruction tracks the staircase where the author named two endpoints; it is tighter to the curve, not looser |
-| byte 3's resting bit on a clip that is not uniform | 31 | inert to the engine, per note, and MIDI has no per-note carrier for it |
-| a note whose records differ some other way | 5 | not diagnosed |
+| ~~a ramp re-cut onto the staircase its own rounding makes~~ | ~~73~~ **0** | **yes** — the exporter now states a moving segment's END as well as its start, and the simplifier prefers a whole step at a near tie. See below |
+| ~~byte 3's resting bit on a clip that is not uniform~~ | ~~31~~ **0** | **yes**, as a per-record bitmap in the `clips` tuple — see `rest` above |
+| a note that fits two of a part's overlapping clips and went to the other one | 54 | **no**, and six tie-break rules have been measured against it |
 
-❗ **The 109 are open question 24**, with what has already been ruled out and the concrete anchor
-for each bucket: [open-questions.md](open-questions.md).
+❗ **The 54 are open question 24**, with what has already been ruled out:
+[open-questions.md](open-questions.md). They are one family now rather than four.
+
+✅ **The patch went 109 clips → 54 on 2026-09-05**, and 23 kB → **15,069 bytes, 0.063% of the
+file**. The taxonomy above was replaced along with it: bucketing by which record *field* differs —
+forty lines against `decodeRecords` on both sides — said in one command what three sessions of
+theorising had got wrong.
+
+- **A moving segment states both of its ends.** `k === steps` joins `k === 0` in the exporter's
+  de-duplication exemption. A resampled value is rounded, so a ramp reaches its final value one or
+  two thirds *before* the control point the author wrote; suppressing the last sample as a repeat
+  left the end unstated and the importer folded the ramp onto the last change instead. `17:57 →
+  31:46` came back as `30+2/3:46`.
+- **Douglas–Peucker prefers a whole step at a near tie**, within one unit of the field's own
+  tolerance — which is the size of the rounding itself, not a fitted number. Authors write on steps.
+
+  ❗ **Neither is worth anything alone**: the segment end alone moves the count by **0** and the
+  tie-break alone by **3**. Together they are worth **24**. A fix that measures as worthless may be
+  half of one.
 
 ✅ **The patch went 177 clips → 109 on 2026-09-04**, and 34 kB → 23 kB (0.10% of the file), by
 finding two more things that could be said after all:
@@ -297,8 +330,8 @@ records; edit the notes in a DAW and the import hands back the original clip ins
 ⚠️ **The importer trusts the patch over the note events**, which is why `flattened`, `dropped`
 and `dragged` describe what a **foreign reader** loses, not what a round trip loses.
 
-The exporter earns it: it imports its own output and patches only what came back wrong. **177 clips
-of 62,158, 34 kB.** Carrying every clip we could not *prove* would cost 22%.
+The exporter earns it: it imports its own output and patches only what came back wrong. **54 clips
+of 62,158, 15 kB.** Carrying every clip we could not *prove* would cost 22%.
 
 ## 3. Track name — meta type `0x03`
 

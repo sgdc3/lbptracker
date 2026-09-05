@@ -235,7 +235,7 @@ solve at low cutoffs; or the capture chain again. ⚠️ It is suspiciously *fla
 resampling or interpolation error would tilt with frequency rather than sit at −1 dB across five
 octaves, which argues for something gain-like that this project applies to part of the signal.
 
-## 24. The last 109 clips that need a verbatim record patch
+## 24. The last 54 clips that need a verbatim record patch
 
 ⚠️ **Nothing here is audible, and nothing here is broken.** The MIDI round trip is exact — 0 records
 different in 1,448,224 — *because* the exporter carries these clips' records verbatim in the
@@ -243,65 +243,80 @@ different in 1,448,224 — *because* the exporter carries these clips' records v
 because every clip in it is a clip whose bytes go stale the moment a DAW edits its notes. See
 [midi-interchange.md](midi-interchange.md) for what `fix` is and why it exists.
 
-**Where it stands, measured 2026-09-04 over the ten-level corpus** (`LBP_MIDI_LOOSE=1` turns the
-patch off so the residue is visible):
+**109 → 54 on 2026-09-05**, and every anchor this entry carried before that was wrong. What follows
+is the state after, with the wrong turns kept because two of the three were wrong in an instructive
+way.
 
-| | clips | |
-|---|---|---|
-| a ramp re-cut onto the staircase its own rounding makes | **73** | the reconstruction is *tighter* to the curve than the author's encoding |
-| byte 3's resting bit is not uniform within the clip | **31** | inert to the engine; per note, and MIDI has no free per-note carrier |
-| not diagnosed | **5** | |
+### Where it stands, measured 2026-09-05
 
-**109 of 62,158 clips (0.18%), 23 kB, 0.10% of the file.** It was 177 the same day and 649 the day
-before; the things that closed the gap are written up in `midi-interchange.md`, and each of them was
-a case where MIDI *could* say the thing after all.
+`LBP_MIDI_LOOSE=1` turns the patch off so the residue is visible. Bucketed by which record field
+differs — which is a better taxonomy than the one this entry used to carry, and cheap: 40 lines
+against `decodeRecords` on both sides.
 
-### 24a. The re-cut ramps — 73 clips
+| | clips |
+|---|---|
+| the reconstruction has **more** records than the file, or **fewer** | 44 |
+| the same count, different notes | 10 |
 
-The exporter resamples a glide onto thirds of a step and the importer folds the samples back with
-Douglas–Peucker at a half-unit tolerance. Volume and modulation are integers, so a ramp is really a
-staircase, and the reconstruction keeps the staircase's own corner where the author named an
-endpoint: `28+0:63:44 29+0:53:75 30+0:53:75 32+0:55:44 47+0:55:22 63+0:55:0` comes back with an
-extra record at `46+2/3`.
+**54 of 62,158 clips (0.09%).** ❗ **They are one family, not four**: a part's clips overlap — a
+cell is 16 steps and a clip may hold 128 — and a note that two of them could hold went to the other
+one. `5aa77945` seq 745160 cells 31 and 107 are the same story from both ends, one clip short of
+its last sixteen notes and its neighbour long by them.
 
-⚠️ **It is tighter to the curve, not looser**, so loosening the simplifier to make the record count
-match would make the curve *worse*. That is why this is not simply a bug to fix.
+⚠️ **That family is already ruled out as tractable**, below: six tie-break rules were measured
+against each other and the best moved the total by 6. Trying a seventh is the thing not to do.
 
-**The anchor**: when two candidate breakpoints both sit inside the tolerance, Douglas–Peucker takes
-the one furthest from the chord. Preferring the one on a **whole step** at equal deviation would
-match the author's encoding more often for free, since authors write on steps. The experiment is one
-comparison in `simplify` and a corpus run; if it does not move the 73, the remaining ones are
-genuinely ambiguous and the patch is the right answer.
+### What closed the other 55
 
-### 24b. Byte 3's resting bit inside a mixed clip — 31 clips
+Three changes, and the second and third only work together:
 
-The bit is described in [sequencer-data-model.md](sequencer-data-model.md): the engine reads it only
-when byte 0's bit 7 is set, and the editor writes it anyway, decided by the level's revision. It is
-uniform within a note in 953,777 of 953,791 and within a clip in 62,075 of 62,106, so it travels as
-a per-clip default in the `clips` tuple. These 31 clips hold notes with both values.
+- **A per-record bitmap for byte 3's resting bit** — 31 clips, 93 bytes of bitmap over the whole
+  corpus. `restingBits` in `src/core/midi.ts`; it rides in the `clips` tuple's fourth slot. A DAW
+  that edits the notes misaligns it and puts an inert bit on the wrong record, which is precisely
+  why a bitmap is safe where a verbatim patch is not.
+- **A moving segment now states where it ENDS as well as where it starts** (`k === steps` joins
+  `k === 0` in the exporter's de-duplication exemption). The resampled values are rounded, so a ramp
+  reaches its final value one or two thirds *before* the control point the author wrote; suppressing
+  the last sample as a repeat left the segment's end unstated.
+- **Douglas–Peucker prefers a whole step at a near tie** (`WHOLE_STEP_BAND`). Authors write on
+  steps; the exporter resamples onto thirds; and a corner in a rounded staircase deviates from its
+  chord by almost as much one third early as at the corner itself.
 
-**The anchor**: measure whether the bit is constant across a **contiguous run** of a mixed clip's
-notes — a level saved across the editor change would have the old notes first and the new ones
-after, which is a run-length and would fit in the clips tuple in a few bytes. If it is scattered
-instead, only a per-note carrier could hold it and the patch stays.
-
-### 24c. The five that are not diagnosed
-
-The scratchpad's field-by-field diff (`why177.ts` in this session's scratch) buckets the patched
-clips by which field differs; these five fall into mixtures (`pitch + position + record count +
-volume` and the like) that were never opened. **Print them before theorising.**
+❗ **Neither of the last two is worth anything alone.** Measured: the segment end alone moves the
+count by 0 — the point exists but the simplifier still prefers the neighbouring third — and the
+tie-break alone by 3, because the point it would prefer is not in the file. Together they are worth
+**24**. That is the shape to remember: a fix that measures as worthless may be half of one.
 
 ### What has already been ruled out — do not repeat these
 
-- **The flat-run markers are not the cause of the stray thirds.** Turning them off takes the patch
-  from 109 clips to **277**, so they are carrying far more than they cost.
-- **Six clip-assignment tie-break rules** (nearest, earliest, tightest, loosest, busiest, same-start)
-  were measured against each other and moved the total from 686 to 680 at best. The cell ambiguity
-  is not where the remaining clips are.
+- **Six clip-assignment tie-break rules** (nearest, earliest, tightest, loosest, busiest,
+  same-start) were measured against each other and moved the total by 6 at best. Re-measured
+  2026-09-05 on the new baseline: `busiest` gives 52 against `first-empty`'s 54, and the rule as it
+  stands was chosen to stop clips being emptied. **The cell ambiguity is not worth another rule.**
 - **A fourth record-order key does not exist.** Position ascending, then pitch descending, then the
   end ascending are each 100% over the corpus; among the 254 clips tied on all three, nothing beats
-  98.8% (modulation ascending) and 94.9% (volume descending). Adding one would look like the other
-  three and not be one.
+  98.8% (modulation ascending) and 94.9% (volume descending).
+- **The flat-run markers are carrying their weight.** Turning them off took the patch from 109 clips
+  to 277 on the old baseline.
+
+### The three anchors this entry used to carry, and why each was wrong
+
+Worth more than the fixes, because all three were plausible and all three cost a session's worth of
+belief:
+
+- ❌ **"73 clips are a ramp re-cut onto the staircase its own rounding makes, and the anchor is a
+  whole-step tie-break in Douglas–Peucker."** The tie-break was the right idea and **73 was not a
+  measured number** — it came from a taxonomy that bucketed by a guess rather than by diffing the
+  records. Implemented alone it moved **3**. The real fix was upstream, in the exporter, and the
+  diff found it in one command.
+- ❌ **"31 clips mix byte 3's resting bit; measure whether it is constant across a contiguous run,
+  because a level saved across the editor change would have the old notes first and the new ones
+  after."** Measured: **11** of the 31 are two runs and the rest scatter over as many as **eleven**
+  — `10110111111111111010101111` is a real one. There is no run structure. A bitmap does not care,
+  and one bit per record is smaller than any run-length would have been anyway.
+- ❌ **"Five are not diagnosed; print them before theorising."** There were never five of anything:
+  the old three-way split did not survive contact with a field-by-field diff. **Print them first,
+  not before theorising — the theorising is what produced the buckets.**
 
 ## 28. What still will not open — now measured against the archive, not six saves
 
