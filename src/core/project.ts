@@ -134,6 +134,13 @@ export interface Sequencer {
   readonly startPoint: number;
   readonly numChannels: number;
   readonly volumes: readonly number[];
+  /**
+   * The board's height in cells, which is what bands a track to a channel.
+   *
+   * `floor(circuitBoardSizeY / 105 + 0.5)`, exactly as the eboot computes it at
+   * `v0x1c7909`. See `channelVolume`.
+   */
+  readonly boardRows: number;
   readonly tracks: readonly Track[];
   /** Highest step any of its notes reaches; 0 when it is empty. */
   readonly lengthSteps: number;
@@ -215,6 +222,7 @@ export function importLevel(
       startPoint: settings.startPoint,
       numChannels: settings.numChannels,
       volumes: settings.volumes,
+      boardRows: boardRows(found.boardHeight),
       tracks,
       lengthSteps,
     });
@@ -260,48 +268,73 @@ export const CHANNEL_COUNT = 8;
 /**
  * The mixer channel a track feeds, and the gain that comes with it.
  *
- * **What is measured**, in `fmodextinput.prx`:
+ * ❗ **The board is cut into `NumChannels` horizontal bands and a placement's
+ * channel is the band it sits in.** Read end to end on 2026-09-05; it was an
+ * inference for two months and it was the wrong one. `v0x1608d0` in the eboot
+ * fills the 16-byte block header the plugin then reads:
  *
  * ```
- * 0x3a32  r15d = header[block] + 0x04        ; the 16-byte per-block header
- * 0x3afc  r15d = r15d mod 8                  ; signed modulo, eight records
- * 0x3b1b  rcx  = channel * 3                 ; 12-byte records
+ * v0x1608df  header[+0x00] = max(inst.gridX, 0)
+ * v0x1608fa  header[+0x04] = clamp(inst.row / divisor, 0, channels - 1)
+ * v0x160906  header[+0x0c] = inst.row                     ; kept raw beside it
+ * ```
+ *
+ * and its caller computes the divisor from the board's own height:
+ *
+ * ```
+ * v0x1c7909  rows    = floor(circuitBoardSizeY / 105 + 0.5)
+ * v0x1c7928  divisor = max(rows / channels, 1)            ; integer division
+ * ```
+ *
+ * The plugin's `mod 8` at `0x3afc` — which this used to reason from — is a
+ * bounds guard on a value the eboot has **already** clamped, not the mapping.
+ *
+ * ```
+ * 0x3a32  r15d = header[block] + 0x04
+ * 0x3afc  r15d = r15d mod 8                  ; eight records, signed modulo
  * 0x3b3c  xmm0 = [state + 0x1a68 + 12*channel]   ; that channel's volume
  * ```
  *
- * ✔ **The wrap is `NumChannels`, and the plugin's `mod 8` is a bounds guard.**
- * Corrected 2026-09-03 by a listener who plays the game: a sequencer set to one
- * channel puts everything through that channel's fader, which `gridY % 8` does
- * not do.
+ * ⚠️ **`gridY % NumChannels` was here until 2026-09-05 and it is not what the
+ * game does.** It was a good inference — it put every row in range, and a
+ * listener had already corrected an earlier `% 8` — but it wraps where the game
+ * bands, and on the corpus's ten multi-channel sequencers **667 of 1,821 tracks
+ * change channel**. It survives only as the fallback below.
  *
- * ⚠️ **Only the `mod 8` was ever measured**, and this file used to read more
- * into it than it said. The plugin holds eight channel records and clamps into
- * them; **what the eboot writes at `header + 0x04` was never read** -- the linear
- * disassembly of the sequencer module desynchronises and no indexed 16-byte
- * store was found -- so "that value is the board row" was an inference, and it
- * was flagged as one. Both readings survive the plugin: if the eboot has already
- * reduced the row to `0..NumChannels-1`, its `mod 8` never changes anything.
+ * ✔ **The row count is confirmed twice over by the corpus.** Board heights come
+ * out 3..25 cells, median 13 — and 25 is exactly the largest row any placement
+ * uses. In all 51 sequencers with tracks the highest placement sits **strictly
+ * inside** its board (`max gridY` 24 against `max rows` 25, none outside), which
+ * is what falsifies a wrong unit: a half-extent or a doubled one would put
+ * placements off the board everywhere.
  *
- * The corpus argument that killed the *direct* index still stands and now points
- * here instead: **88% of tracks have a `gridY` outside `0..NumChannels-1`** and
- * boards run to 25 distinct rows, so the row cannot BE the channel -- but taken
- * modulo `NumChannels` it lands in range by construction, for every track.
- *
- * 308 of 338 sequencers set `NumChannels` to 1. Under the old reading their
- * eight faders each did a little and none did much; under this one a single
- * fader does all of it, which is what the game shows.
- *
- * Only 30 of 338 use more than one channel, and 28 of those carry a non-unit
- * volume -- typically a descending ramp like `1.00, 0.70, 0.50, 0.20`.
+ * 308 of 338 sequencers set `NumChannels` to 1, where every row lands on channel
+ * 0 under banding, wrapping or a direct index alike — which is why no amount of
+ * corpus work could ever have settled this, and why it took the writer.
  */
+export function boardRows(boardHeight: number): number {
+  // `v0x1c7909`-`v0x1c791f`: divide by the cell size, add a half, floor.
+  return Number.isFinite(boardHeight) ? Math.floor(boardHeight / CELL_HEIGHT + 0.5) : 0;
+}
+
 export function channelVolume(
-  sequencer: { numChannels: number; volumes: readonly number[] },
+  sequencer: { numChannels: number; volumes: readonly number[]; boardRows?: number },
   track: { gridY: number },
 ): number {
   // A sequencer claiming no channels still has one to play through, and the
   // plugin only has eight records however many the field claims.
   const count = Math.min(CHANNEL_COUNT, Math.max(1, sequencer.numChannels));
-  const channel = ((track.gridY % count) + count) % count;
+  // ❗ **Bands, not a modulo.** `v0x1608d0` writes
+  // `clamp(row / max(rows / channels, 1), 0, channels - 1)` into the block
+  // header the mixer reads, so the board is cut into `channels` horizontal
+  // strips of equal height and a placement's channel is the strip it sits in.
+  // ⚠️ A sequencer with no board height falls back to the old modulo rather
+  // than to a clamp: `max(0 / n, 1)` is 1, which would put every row past the
+  // last band on the top channel, and that is a worse guess than wrapping.
+  const rows = sequencer.boardRows ?? 0;
+  const channel = rows > 0
+    ? Math.min(count - 1, Math.max(0, Math.floor(track.gridY / Math.max(Math.floor(rows / count), 1))))
+    : ((track.gridY % count) + count) % count;
   // Records past `Volume[5]` keep the engine's initialised 0.75, which is the
   // same as a volume of 1.0 through the headroom factor.
   const volume = channel < sequencer.volumes.length ? sequencer.volumes[channel] : 1;

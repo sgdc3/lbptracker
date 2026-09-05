@@ -1386,6 +1386,10 @@ export function sequencerToMidi(
       loop: sequencer.loop,
       startPoint: sequencer.startPoint,
       numChannels: sequencer.numChannels,
+      // ❗ MIDI has no board, and the board's height is what bands a track to a
+      // channel -- see `channelVolume`. Without it a re-imported file routes
+      // every track by the fallback modulo instead, which is a different mix.
+      boardRows: sequencer.boardRows,
       volumes: sequencer.volumes,
     })),
   ];
@@ -1876,6 +1880,7 @@ export function midiToSequencer(
       loop: typeof header?.loop === 'boolean' ? (header.loop as boolean) : true,
       startPoint: num('startPoint', 0),
       numChannels: Math.min(CHANNEL_COUNT, Math.max(1, num('numChannels', 1))),
+      boardRows: num('boardRows', 0),
       volumes,
       tracks,
       lengthSteps,

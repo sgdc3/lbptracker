@@ -62,6 +62,7 @@ function makeSequencer(tracks: Track[], over: Partial<Sequencer> = {}): Sequence
     uid: 7, name: 'fixture', tempo: 120, swing: 0,
     echoFeedback: 0.54, echoTime: 1, echoMix: 0.6, reverb: 5,
     loop: true, startPoint: 0, numChannels: 1, volumes: [1, 1, 1, 1, 1, 1],
+    boardRows: 0,
     tracks, lengthSteps,
     ...over,
   };
@@ -694,14 +695,17 @@ test('every sequencer and placement field that survives, does', () => {
     {
       uid: 98765, name: 'A Song', tempo: 173, swing: 0.35,
       echoFeedback: 0.42, echoTime: 3, echoMix: 0.75, reverb: 11,
-      loop: false, startPoint: 7, numChannels: 4,
+      loop: false, startPoint: 7, numChannels: 4, boardRows: 12,
       volumes: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
     },
   );
   const { sequencer: back } = midiToSequencer(sequencerToMidi(seq).bytes);
   for (const field of [
     'uid', 'name', 'tempo', 'swing', 'echoFeedback', 'echoTime', 'echoMix',
-    'reverb', 'loop', 'startPoint', 'numChannels',
+    // ⚠️ `boardRows` is here because MIDI has no board, and losing it re-routes
+    // every track to a different mixer channel on the way back. See
+    // `channelVolume` and answered question 9.
+    'reverb', 'loop', 'startPoint', 'numChannels', 'boardRows',
   ] as const) {
     assert.deepEqual(back[field], seq[field], `sequencer.${field}`);
   }

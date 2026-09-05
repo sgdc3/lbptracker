@@ -39,7 +39,12 @@ gives a level its board back.
 Meta type `0x01`, the tag then JSON. **Only what MIDI has no message for**:
 
 `v` · `uid` · `swing` · `swingBaked` · `echoFeedback` · `echoTime` · `echoMix` · `reverb` · `loop` ·
-`startPoint` · `numChannels` · `volumes`
+`startPoint` · `numChannels` · `volumes` · `boardRows`
+
+⚠️ **`boardRows` joined on 2026-09-05** and it is the clearest case for the rule above: MIDI has no
+circuit board, and the board's height in cells is what bands a track to a mixer channel
+(`channelVolume`). Drop it and a re-imported file routes every track by the fallback modulo instead
+— a different mix, silently.
 
 ✅ **Five fields left in 2026-09-03 because MIDI already says them**, and the rule they taught is
 worth more than the 12 kB: **a duplicated field is a field that can disagree with itself.**

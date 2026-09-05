@@ -477,6 +477,8 @@ export interface FoundSequencer {
   readonly name: string;
   /** One entry per instrument placed on the board, in board order. */
   readonly placements: readonly Placement[];
+  /** The circuit board's height in world units — `PMicrochip.circuitBoardSizeY`. */
+  readonly boardHeight: number;
 }
 
 /**
@@ -520,7 +522,9 @@ export function musicSequencers(things: readonly (Thing | undefined)[]): FoundSe
         placements.push({ x: cell.x, y: cell.y, instrument });
       }
     }
-    out.push({ uid: thing.uid, settings, name: chip.name, placements });
+    out.push({
+      uid: thing.uid, settings, name: chip.name, placements, boardHeight: chip.sizeY,
+    });
   }
   return out;
 }

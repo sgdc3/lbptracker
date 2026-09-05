@@ -785,6 +785,17 @@ export interface Microchip {
   readonly name: string;
   readonly components: readonly Component[];
   /**
+   * The board's own extent, in world units.
+   *
+   * ❗ **`sizeY` is what routes a track to a mixer channel.** The engine cuts the
+   * board into `NumChannels` horizontal bands -- `floor(sizeY / 105 + 0.5)` rows
+   * divided by the channel count -- and a placement's channel is its band. Both
+   * fields were read and discarded here until 2026-09-05; see `channelVolume` in
+   * `project.ts` and answered question 9.
+   */
+  readonly sizeX: number;
+  readonly sizeY: number;
+  /**
    * The board Thing.
    *
    * ⚠️ Needed because `components` is **empty while the board is open in the
@@ -865,6 +876,8 @@ export function readMicrochip(
   if (version >= 0x2e9) s.vector4(); // offset
 
   let name = '';
+  let sizeX = 0;
+  let sizeY = 0;
   const components: Component[] = [];
   if (version >= 0x34d) {
     name = decodeEntities(s.wstr());
@@ -879,13 +892,13 @@ export function readMicrochip(
       s.bool(); // flipped
       components.push({ thing, x, y });
     }
-    s.f32(); // circuitBoardSizeX
-    s.f32(); // circuitBoardSizeY
+    sizeX = s.f32(); // circuitBoardSizeX
+    sizeY = s.f32(); // circuitBoardSizeY
   }
 
   if (subVersion >= 0x1d) s.bool(); // keepVisualVertical
   if (subVersion >= 0x2d) s.u8(); // broadcastType
-  return { name, components, board };
+  return { name, components, board, sizeX, sizeY };
 }
 
 /** `CameraNode`: one framing in a camera zone's list. */

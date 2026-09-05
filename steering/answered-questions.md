@@ -2592,3 +2592,49 @@ store without following its pointer to the sample loop names the wrong destinati
 - The oscillator at stub `0x130` is `_FSin`, named from the PRX's import table by `tools/prxnid.py`
   rather than inferred — it takes an integer selector in `edi`, zero for sine.
 
+## 9. Board row → mixer channel — ANSWERED and IMPLEMENTED: bands, 2026-09-05
+
+**The board is cut into `NumChannels` horizontal bands of equal height, and a placement's channel is
+the band its row falls in.**
+
+```
+rows    = floor(circuitBoardSizeY / 105 + 0.5)    the board's height in cells
+divisor = max(rows / NumChannels, 1)              integer division, at least one
+channel = clamp(row / divisor, 0, NumChannels-1)
+```
+
+`v0x1608d0` writes it into the 16-byte block header; `v0x1c7909`-`v0x1c793c` computes the divisor;
+`v0x1c452a` is the `<< 4` that indexes the array. The plugin's `mod 8` at `0x3afc` — which every
+earlier reading reasoned from — is a **bounds guard on an already-clamped value**, not the mapping.
+
+### ❌ Two wrong readings preceded it, and both were reasonable
+
+- `gridY` as a **direct index**. Killed by the corpus: 88% of tracks have a `gridY` outside
+  `0..NumChannels-1`.
+- `gridY % NumChannels`. It put every row in range by construction, a listener had already corrected
+  an earlier `% 8`, and it shipped for two months. It wraps where the game bands: **667 of 1,821
+  tracks change channel** on the ten multi-channel sequencers in the corpus.
+
+⚠️ **No amount of corpus work could have settled it.** 308 of 338 sequencers set `NumChannels` to 1,
+where every row lands on channel 0 under banding, wrapping and a direct index alike. It took the
+writer, and the writer took the method note this question had been carrying since 2026-09-02:
+byte-scan for `E8` displacements landing on a known callee, find the caller's prologue by searching
+backwards for `55 48 89 e5`, and disassemble from **there** — never from a round address.
+
+### The datum that was missing was in the file all along
+
+`readMicrochip` read `circuitBoardSizeX` and `circuitBoardSizeY` and **threw both away**. They are
+now kept, carried out through `FoundSequencer.boardHeight`, and turned into `Sequencer.boardRows`.
+
+✔ **The corpus confirms the unit twice.** Board heights come out **3..25 cells, median 13**, and 25
+is exactly the largest row any placement uses. In all 51 sequencers with tracks the highest
+placement sits **strictly inside** its board — `max gridY` 24 against `max rows` 25, **none**
+outside. A half-extent or a doubled unit would put placements off the board everywhere; none is.
+
+### What it touched
+
+`channelVolume` bands, and falls back to the old modulo only when `boardRows` is 0 — which never
+happens on a real level, because `circuitBoardSizeY` is written at every revision this reader
+accepts. ⚠️ `boardRows` is also now in the **MIDI header**, for the reason `midi-interchange.md`
+gives: MIDI has no board, and losing it re-routes every track on the way back.
+
