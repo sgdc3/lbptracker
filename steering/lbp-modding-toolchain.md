@@ -509,6 +509,30 @@ hash** into the tracker; `dev/lbparchive.ts` turns the hash into a URL and the p
 **branch 0x218**, which the corpus did not contain. The Things a level's music lives on are in the
 level's own resource; the separate `.plan` resources matter for a creator's *backup*, not for this.
 
+### ✔ And the archive's own index is downloadable, which makes coverage a measurement
+
+⚠️ **`dry.db`, 2.6 GB of SQLite from <https://archive.org/download/dry23db>, 10,467,874 level
+slots.** `lbp-download` uses it and it is on this machine. Its `slot` table carries the 20-byte
+`rootLevel` SHA-1 the archive is keyed by, so **the index plus `rootLevelUrl` is a scriptable corpus
+of every level that survives**. `dev/archive-sample.mjs` is that: pick an even spread of ids per
+game, download, hand the directory to `dev/walk-levels.ts`.
+
+❗ **This is what turned question 28 from an errand into a number.** The reader's coverage was
+argued from ten levels of one creator on one console; it is now 103 levels across LBP1, LBP2 and
+LBP3 slots, and the answer is 82 of 103 with **no failure anywhere in the range the reader claims**.
+Every real bug found in `src/core/parts.ts` on 2026-09-05 came out of a file no PS3 save here
+contains.
+
+⚠️ **`slot.game` is which title the slot was PUBLISHED for, not the revision the file carries.** A
+level published as LBP2 and last saved in LBP3 is stored as LBP3, so `game` 1 spans `0x3b7`–`0x3f9`
+and only `game` 0 reaches LEERDAMMER. Sampling by `game` and expecting revisions to follow is the
+mistake to avoid.
+
+⚠️ **A 200 from the archive is not a level.** A missing entry comes back as a short body rather than
+a 404, and the first sweep's two-byte file reached the walk as "too short to be a resource" — a
+reader bug report for something that was never downloaded. The sampler rejects anything under a
+header's length.
+
 ### The dependency table — the whole backup, from one hash
 
 Measured 2026-09-05. The table sits **after** the compressed payload, at the offset the header

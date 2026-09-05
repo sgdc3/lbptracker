@@ -23,8 +23,9 @@
  *
  * ## What is deliberately absent
  *
- * The LBP3 range this project accepts (`serializer.ts`: version `0x3b8`-`0x3ff`,
- * subVersion `0x213`) rules out every deprecated part by itself:
+ * The LBP3 range this project accepts (`serializer.ts`: version `0x3b7`-`0x3ff`;
+ * subVersions `0x0` and `0x205`-`0x218` are what the archive sample carries, and
+ * nothing range-checks them) rules out every deprecated part by itself:
  *
  * - `head & 0xffff >= 0x13c` excludes indices `0x36`-`0x3c` — the six LBP1 parts;
  * - the same test at `0x18c` excludes `PARTICLE_EMITTER_2` (`0x3d`);

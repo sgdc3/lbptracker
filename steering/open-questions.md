@@ -318,128 +318,88 @@ belief:
   the old three-way split did not survive contact with a field-by-field diff. **Print them first,
   not before theorising — the theorising is what produced the buckets.**
 
-## 28. What still will not open — now measured against the archive, not six saves
+## 28. What still will not open — measured over 103 archive levels
 
-⚠️ **Re-based 2026-09-05.** This used to list four failures out of six PS3 saves. The public archive
-made a wider corpus possible, so it was swept: **47 levels off the index, across LBP1, LBP2 and both
-LBP3 platforms.** That is a far better test than the saves, which are one creator's and one console
-generation's.
+⚠️ **Re-based twice.** This listed four failures out of six PS3 saves, then 43 levels pulled by
+hand through the browser. It is now **103 levels sampled from the archive's own index**, and the
+sampling is a command rather than an errand: `node dev/archive-sample.mjs` reads `dry.db` — the
+10,467,874-slot SQLite the archive publishes — picks an even spread of ids per game, downloads the
+root levels and leaves them for `dev/walk-levels.ts`. Ids are chronological, so an even spread over
+them is an even spread over the game's life, which is what puts old revisions in the sample.
 
-### What the sweep found
+### What the sweep finds, 2026-09-05
 
-**28 of 43 real resources parse**, and the failures fall into two piles that want completely
-different things.
-
-**Pile one — out of scope by design, 9 files.** Revisions below the LBP3 range `serializer.ts`
-accepts: `0x23d`, `0x26e` (×4), `0x272` (×5, branch `4c44/17` — **LEERDAMMER**), and one `0x3b7`,
-which misses the lower bound of `0x3b8` by a single revision. Widening the range means adding the
-older branches field by field, not relaxing the check.
-
-⚠️ **Four of those said "chunk 0/26 failed to inflate"**, which sends you to look at zlib. It is not
-zlib: it is our header layout being wrong for an LBP1 resource, so the chunk table is garbage. The
-message now names the revision.
-
-**Pile two — real bugs on files this reader claims to support. It is now empty.** There were four
-and all four are fixed; the sweep stands at **32 of 43**, with every remaining failure a revision
-below the LBP3 range.
-
-| file | was | |
+| version | branch | parses |
 |---|---|---|
-| `8b904be1` | marker at 120328 | ✔ `PStreamingHint.connected` was a double reference |
-| `69318581`, `7c0f1a1d` | marker at 10633 / 158804 | ✔ the **part mask lost a bit above 2^53** |
-| `5576f758` | `no reader for part WORLD` | ✔ **`WORLD` was installed on a copy of the map** |
+| `0x3b7` | `0/0` | **4 of 4** |
+| `0x3b8`–`0x3f9` | `0/0` | **78 of 78** |
+| `0x272` | `4c44` (LEERDAMMER) | **2 of 19** |
+| `0x26e` | — | 0 of 1, the chunk table is not where this reader looks |
+| — | — | 1 file the archive stores truncated |
 
-### ✔ `PStreamingHint.connected` was a double reference
+**82 of 103**, and there is not a single failure anywhere in the range the reader claims. The wall
+is at LBP1 and it is sharp.
 
-`s.references((self) => readThingRef(self, readers))` reads a reference id **and then calls a
-builder that reads another one**, so every element cost two ids where cwlib's `thingarray` reads
-one. The fix is `things(s, readers)`, the helper every other Thing array already uses.
+### ✔ The bound was one revision too high, and that is now measured
 
-❗ **The whole corpus missed it because `connected` is empty in every file of it** — the loop never
-ran. It took one level from the archive with a single connected Thing: measured on `8b904be1`, the
-count is 1 at byte 120322, its one id is read at 120323, and the extra read ate the next Thing's
-`0xaa` at 120328.
+`LBP3_MIN_VERSION` was `0x3b8` because that is where the **ten-level corpus** starts — not because
+anything changes there. Two measurements settle it:
 
-That is the second bug of exactly this shape in one day — question 36 was the first. **A field that
-is empty or zero everywhere in the corpus is untested, whatever it is declared as.**
+- **cwlib has exactly one gate at `0x3b8` in its whole tree**, `PPhysicsTweak`'s
+  `version > 0x3b8 && configuration == 0xd`, and `readPhysicsTweak` has it. A `0x3b7` file therefore
+  takes the older branch because the branch is there.
+- **All four `0x3b7` levels in the sample parse** the moment the bound allows them.
 
-### ✔ A part mask above 2^53 lost its low bits
+It is `0x3b7` now. ❗ **And the reason the bound cannot simply be dropped is measured too**: at
+`0x272` it is **2 of 19**, which is what "reading an older layout with newer rules and producing
+plausible nonsense" looks like from the outside.
 
-`Serializer.u64` returns a **`number`**, and a double has 53 bits of mantissa. The highest part
-index is **53** (`STREAMING_HINT`). So a Thing carrying `STREAMING_HINT` *and* any low part has a
-mask that cannot be held exactly:
+### ❌ The scope note in `serializer.ts` was wrong about its own code
 
-```
-the file says   0x20000008040039   bits 0, 3, 4, 5, 18, 27, 53
-u64() returns   0x20000008040038   bit 0 is gone
-```
+It said cwlib's older branches had been stripped in the port — *"roughly nine tenths of them are
+dead … implementing only that range turns `PSwitch`'s 323 lines into a few dozen"*. Counted:
+`src/core/parts.ts` carries **238 distinct version gates spanning `0x137`–`0x3f0`** and **163
+subVersion gates**. The branches are all there; they have simply never been run against a file old
+enough to take one.
 
-That Thing lost its `BODY`, the walk read five parts where six were written, and the level failed
-**560 bytes later** at the next Thing's marker. Measured on `69318581`, Thing 14249 at byte 10563:
-the mask varint is `b9 80 90 c0 80 80 80 10`, its neighbour 14248's is `b9 80 90 40` — the same
-three bytes and then a continuation instead of a stop.
+⚠️ **That changes what "widening the range" means.** It is not "add the older branches field by
+field" — it is "find out which of the branches already ported are wrong". The 2-of-19 says at least
+some are.
 
-⚠️ **`BigInt(s.u64())` does not fix it**, and `thing.ts` was already doing exactly that: converting
-after the fact widens a value that has already been rounded. The bits have to survive the
-accumulation, which is what `u64Big` is for.
+### What is left
 
-❗ **This one was not archive-only.** Any Thing in anyone's level with `STREAMING_HINT` and a low
-part hit it, silently, and the symptom was a marker failure hundreds of bytes downstream. The golden
-fixture is unchanged (62,158 placements byte for byte), so no file in the ten-level corpus happened
-to carry that combination — which is the whole reason it lasted.
+- **LBP1, `0x272` and below** — 19 of the 103. ❗ **13 of the 19 fail on one thing: `no reader for
+  part EFFECTOR`.** That is a nameable, bounded piece of work rather than an era. The other four
+  break the stream outright (negative string lengths, a read past the end), which is the layout
+  genuinely diverging. Two parse, and two of nineteen is not evidence that they parse *correctly*.
+- **A quest of a type other than 5** — still never seen, now in 103 archive levels as well as the
+  saves. `readQuest` refuses rather than guessing.
+- **Branch `0x4431`** — one level in the saves, `f331efa7`, version 0x3e2. ⚠️ **Nothing in the
+  archive is on it**: every sampled level is branch `0/0` or `4c44`. One file is not enough to
+  reverse a branch from, and a 103-level sample did not supply a second.
 
-### ✔ `WORLD` was set on a map nothing looked at
+**None of this is in the way of music**, and the sampler is now the way to find the next one: every
+real reader bug since 2026-09-05 came out of a file no PS3 save on this machine contains.
 
-`partReaders` binds every reader as `(s) => read(s, readers)`, closing over **the map it builds**.
-`readLevel` then did `new Map(readers)` and set `WORLD` on the copy — so the copy had a world
-reader and every part reader still consulted the original, which did not. A world Thing reached
-through any part therefore threw `no reader for part WORLD`.
+### How the four fixed bugs were found — the technique, kept
 
-❗ **A level really can carry a second world Thing.** `5576f758` has one inside a `CREATURE` at byte
-290542: uid −1, no parent, `createdBy`/`changedBy` −1, guid 0 — the same shape as the level's own
-world at byte 2. So the fix is two things, not one:
+`setTrace` from `thing.ts` for the part spans; then patch `Serializer.prototype` from a probe so
+**every read is logged with its value** — widths align at any offset, values do not; then read the
+raw bytes at the disagreement.
 
-- install `WORLD` on the map the readers captured, and
-- **only the outermost world stops the parse.** `readWorld` threw `StopParse` unconditionally, which
-  is right for the level's own world and would have returned the *creature's* inner Things as if
-  they were the level's. It returns now, and `readLevel`'s wrapper throws the first time only.
-
-### The anchor for what is left
-
-The technique that found both, in order: `setTrace` from `thing.ts` for the part spans; then patch
-`Serializer.prototype` from a probe so **every read is logged with its value** — widths align at any
-offset, values do not; then read the raw bytes at the disagreement.
-
-✔ **The step that cracked it was neither of those**: list every top-level Thing with its span, and
+✔ **The step that cracked it was neither of those**: list every top-level Thing with its span and
 look for the one whose *size* breaks the pattern. Nineteen Things of 575-588 bytes and then one of
 **64** says exactly where to look, and it needs no byte-level reading at all. `0xaa` then a plausible
 uid varint also locates the true next Thing — 11187, not 10633 — which turns "how far off are we"
 into a number.
 
-Nothing in scope is left to point it at. What remains of this entry is one decision and two
-unknowns, below.
+The four, with what each turned out to be:
 
-### What is left: one decision and two unknowns
+| file | was | |
+|---|---|---|
+| `8b904be1` | marker at 120328 | `PStreamingHint.connected` was a **double reference** — `s.references(builder)` reads an id and then the builder reads another. Empty in every corpus file, so the loop never ran |
+| `69318581`, `7c0f1a1d` | marker at 10633 / 158804 | the **part mask lost a bit above 2^53**. `Serializer.u64` returned a `number`; the highest part index is 53, so a Thing with `STREAMING_HINT` *and* a low part cannot be held exactly. ⚠️ `BigInt(s.u64())` does not fix it — the bits have to survive the accumulation, which is what `u64Big` is for |
+| `5576f758` | `no reader for part WORLD` | **`WORLD` was installed on a copy of the reader map.** A level really can carry a second world Thing — this one has one inside a `CREATURE` — so only the outermost may throw `StopParse` |
 
-- **Revisions below `0x3b8`** — 11 of the 43, and a *decision* rather than a mystery: `0x23d`,
-  `0x26e`, `0x272` (branch `4c44/17`, LEERDAMMER) and one `0x3b7` that misses the bound by a single
-  revision. Widening means adding the older branches field by field.
-- ~~**`YELLOWHEAD`**~~ — ✔ **implemented and verified, 2026-09-05.** `PYellowHead` plus the whole
-  `Poppet` tree under it (`PoppetMode`, `RaycastResults`, `PoppetMaterialOverride`,
-  `PoppetShapeOverride`), ported from cwlib. The two `SerializationException` ranges that made this
-  look expensive — subVersion `[0xc, 0x66)` and `[0x88, 0xa3)` — **cannot fire in the range this
-  reader accepts**, which starts at 0x207, so LBP3 is a clean path through it. The corpus goes from
-  **211 plans parsing to 212**, and `test/plan.test.ts` verifies it properly rather than by not
-  throwing: `readPlan` requires the Thing array to fill `thingData` exactly, so every field was read
-  at the right width. ⚠️ Only the post-0x2ec `Poppet` layout is implemented; below that it is a
-  different structure and `requireLbp3` rules those files out first.
-- **A quest of a type other than 5** — still never seen, in the saves or in 43 archive levels.
-  `readQuest` refuses rather than guessing; the other types carry a trailing block whose shape
-  depends on the type.
-- **Branch `0x4431`** — one level in the saves, `f331efa7`, version 0x3e2, a branch cwlib does not
-  know either. ⚠️ **Nothing in the archive is on it**: 43 levels and 86 further resources are all
-  branch `0/0` or `4c44` (LEERDAMMER). One file is still not enough to reverse a branch from, and
-  the archive does not supply a second.
-
-**None of this is in the way of music** — the 28 that parse yield 26 sequencers — but the archive is
-now where these get found, and it will keep finding them.
+❗ **A field that is empty or zero everywhere in the corpus is untested, whatever it is declared
+as.** Two of those four are exactly that shape, found on the same day.

@@ -110,6 +110,14 @@ they are the ground truth the JavaScript has to reproduce:
   `0x17000` — which closed question 12. **When a question turns on what a system function does,
   check `sce_module/` before reasoning about the platform.**
 
+`dev/archive-sample.mjs` — **a corpus, from the archive's own index**: `node
+dev/archive-sample.mjs 60` reads `dry.db` (2.6 GB of SQLite from archive.org, 10.5M level slots),
+picks an even spread of ids per game, downloads the root levels into `fixtures/archive/` and leaves
+them for `dev/walk-levels.ts`. ⚠️ **Reach for this before arguing about reader coverage from the
+ten-level corpus**, which is one creator on one console generation: the 103-level sweep behind
+`LBP3_MIN_VERSION` took one command, and every real `parts.ts` bug found on 2026-09-05 came out of a
+file no PS3 save here contains. `LBP_DRY_DB` points at the index.
+
 ⚠️ **`RawDump.java` is gone**, deleted 2026-09-02. It walked a level's Thing graph through the
 external toolkit jar and dumped every music sequencer's note records; `src/core/level.ts` does
 that now, in TypeScript, and nothing in the pipeline needs Java. What it leaves behind is

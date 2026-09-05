@@ -12,25 +12,51 @@
  *   rather than four or eight bytes; signed ones are zigzagged. Reading one as
  *   fixed-width when it is a varint desynchronises just as badly.
  *
- * ## Scope: LBP3 only, and it says so
+ * ## Scope: LBP3 only, and the bound is now measured
  *
- * cwlib's serialisers carry branches back to LBP1, and roughly nine tenths of
- * them are dead for the revisions this project cares about — the corpus runs
- * version `0x3b8`–`0x3f9` at subVersion `0x213`. Implementing only that range
- * turns `PSwitch`'s 323 lines into a few dozen.
+ * ⚠️ **This used to say the older branches had been stripped in the port. They
+ * were not.** `src/core/parts.ts` carries **238 distinct version gates spanning
+ * `0x137`–`0x3f0`** and 163 subVersion gates — cwlib's own, ported with the
+ * branches intact. What the bound below protects is therefore not a reader that
+ * only knows LBP3; it is a reader whose *older* branches have never been run
+ * against an older file.
  *
- * That is a deliberate trade and it is safe **only because the range is
- * asserted**: `requireLbp3` refuses anything outside it rather than reading an
- * older layout with newer rules and producing plausible nonsense. Widening the
- * range means adding the branches, not relaxing the check.
+ * ❗ **And that protection is measured, 2026-09-05, over 103 archive levels**
+ * sampled from `dry.db` across all three games:
+ *
+ * | version | parse |
+ * |---|---|
+ * | `0x3b7` | **4 of 4** |
+ * | `0x3b8`–`0x3f9` | **78 of 78** |
+ * | `0x272` (LEERDAMMER, branch `4c44`) | **2 of 19** |
+ *
+ * So the wall is real and it is at LBP1, not at `0x3b8`. `0x3b8` was where the
+ * ten-level corpus happened to start. **cwlib has exactly one gate at `0x3b8`
+ * in its whole tree** — `PPhysicsTweak`'s `version > 0x3b8 && configuration ==
+ * 0xd` — and `readPhysicsTweak` has it, so a `0x3b7` file takes the older branch
+ * because the branch is there.
+ *
+ * The bound stays an assertion for the reason it always was: `requireLbp3`
+ * refuses anything outside it rather than reading an older layout with newer
+ * rules and producing plausible nonsense. What the 2-of-19 says is that at
+ * `0x272` it would do exactly that — 13 of those 19 want a part called
+ * `EFFECTOR` that nothing here implements, and four break the stream outright.
  */
 
 export const COMPRESSED_INTEGERS = 1;
 export const COMPRESSED_VECTORS = 2;
 export const COMPRESSED_MATRICES = 4;
 
-/** The version range this reader implements. */
-export const LBP3_MIN_VERSION = 0x3b8;
+/**
+ * The version range this reader implements.
+ *
+ * ❗ **`0x3b7`, not `0x3b8`, and the difference is 4 archive levels of 103.**
+ * See the header: the bound was the ten-level corpus's own floor, and the one
+ * field cwlib changes at `0x3b8` is implemented, so the revision below it reads
+ * on the older branch as it should. Going further down is a different question
+ * and the measurement says no.
+ */
+export const LBP3_MIN_VERSION = 0x3b7;
 export const LBP3_MAX_VERSION = 0x3ff;
 
 export class SerializerError extends Error {}
