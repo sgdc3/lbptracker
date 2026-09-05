@@ -244,13 +244,18 @@ function fillThing(
   const partsRevision = s.s32();
   // The part mask. `u64` here is a varint when the stream is compressed, and a
   // part index can be as high as 0x35, so this really does need 64 bits.
-  const mask = version >= 0x297 ? s.u64() : -1;
+  //
+  // ⚠️ **`u64Big`, not `u64`.** A `number` has 53 bits of mantissa and the
+  // highest part index is 53, so a mask carrying `STREAMING_HINT` alongside any
+  // low part comes back rounded and the low part vanishes without a word. See
+  // `Serializer.u64Big` for the measurement.
+  const mask = version >= 0x297 ? s.u64Big() : -1n;
 
   for (const part of PARTS) {
     if (partsRevision < part.since) continue;
-    // `mask` can exceed 2^53, so the bit test goes through BigInt rather than
+    // `mask` can exceed 2^53, so it is a BigInt all the way rather than
     // `1 << index`, which would silently wrap at 32.
-    if ((BigInt(mask) & (1n << BigInt(part.index))) === 0n) continue;
+    if ((mask & (1n << BigInt(part.index))) === 0n) continue;
     const read = readers.get(part.name);
     if (!read) throw new UnimplementedPartError(part.name);
     const partStart = s.position;

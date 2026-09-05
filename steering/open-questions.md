@@ -956,14 +956,14 @@ older branches field by field, not relaxing the check.
 zlib: it is our header layout being wrong for an LBP1 resource, so the chunk table is garbage. The
 message now names the revision.
 
-**Pile two — real bugs on files this reader claims to support, 4 files, all `v0x3f9`:**
+**Pile two — real bugs on files this reader claims to support.** There were four; **three are fixed**
+and the sweep now stands at **31 of 43**.
 
 | file | |
 |---|---|
-| `8b904be1` | ✔ **one bug fixed** (below); still fails 2,888 bytes later than it did |
-| `69318581` | `Thing test marker was 0x80` at byte 10633 |
-| `7c0f1a1d` | `Thing test marker was 0x80` at byte 158804 |
-| `5576f758` | `no reader for part WORLD` — the symptom the old branch-`0x4431` entry had, on branch `0/0` |
+| `8b904be1` | ✔ fixed — `PStreamingHint.connected`, below |
+| `69318581`, `7c0f1a1d` | ✔ fixed — the **part mask lost a bit**, below |
+| `5576f758` | still fails: `no reader for part WORLD`, inside a `CREATURE` at byte 290542 |
 
 ### ✔ `PStreamingHint.connected` was a double reference
 
@@ -979,15 +979,45 @@ count is 1 at byte 120322, its one id is read at 120323, and the extra read ate 
 That is the second bug of exactly this shape in one day — question 36 was the first. **A field that
 is empty or zero everywhere in the corpus is untested, whatever it is declared as.**
 
+### ✔ A part mask above 2^53 lost its low bits
+
+`Serializer.u64` returns a **`number`**, and a double has 53 bits of mantissa. The highest part
+index is **53** (`STREAMING_HINT`). So a Thing carrying `STREAMING_HINT` *and* any low part has a
+mask that cannot be held exactly:
+
+```
+the file says   0x20000008040039   bits 0, 3, 4, 5, 18, 27, 53
+u64() returns   0x20000008040038   bit 0 is gone
+```
+
+That Thing lost its `BODY`, the walk read five parts where six were written, and the level failed
+**560 bytes later** at the next Thing's marker. Measured on `69318581`, Thing 14249 at byte 10563:
+the mask varint is `b9 80 90 c0 80 80 80 10`, its neighbour 14248's is `b9 80 90 40` — the same
+three bytes and then a continuation instead of a stop.
+
+⚠️ **`BigInt(s.u64())` does not fix it**, and `thing.ts` was already doing exactly that: converting
+after the fact widens a value that has already been rounded. The bits have to survive the
+accumulation, which is what `u64Big` is for.
+
+❗ **This one was not archive-only.** Any Thing in anyone's level with `STREAMING_HINT` and a low
+part hit it, silently, and the symptom was a marker failure hundreds of bytes downstream. The golden
+fixture is unchanged (62,158 placements byte for byte), so no file in the ten-level corpus happened
+to carry that combination — which is the whole reason it lasted.
+
 ### The anchor for what is left
 
 The technique that found both, in order: `setTrace` from `thing.ts` for the part spans; then patch
 `Serializer.prototype` from a probe so **every read is logged with its value** — widths align at any
 offset, values do not; then read the raw bytes at the disagreement.
 
-⚠️ For `69318581` the next Thing is **not** three bytes away: there is no `0xaa` at all within a
-hundred bytes of 10633, and the bytes there are two `3f 80 00 00` four apart. The parse is a long way
-off by then, so bisect from an earlier Thing rather than from the reported byte.
+✔ **The step that cracked it was neither of those**: list every top-level Thing with its span, and
+look for the one whose *size* breaks the pattern. Nineteen Things of 575-588 bytes and then one of
+**64** says exactly where to look, and it needs no byte-level reading at all. `0xaa` then a plausible
+uid varint also locates the true next Thing — 11187, not 10633 — which turns "how far off are we"
+into a number.
+
+`5576f758` is the one left: the failure is inside a `CREATURE` (290542) around a nested Thing at
+290992, so it is `readCreature` or something it calls, and the same three steps apply.
 
 **None of this is in the way of music** — the 28 that parse yield 26 sequencers — but the archive is
 now where these get found, and it will keep finding them.

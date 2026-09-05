@@ -199,6 +199,35 @@ export class Serializer {
     return this.uleb128();
   }
 
+  /**
+   * The same value as `u64`, but **exact above 2^53**.
+   *
+   * ❗ **`u64` returns a `number` and a `number` cannot hold 64 bits.** A double
+   * has 53 bits of mantissa, so `0x20000008040039` -- a real Thing's part mask,
+   * bit 53 set alongside bits 0, 3, 4, 5, 18 and 27 -- comes back as
+   * `0x20000008040038` and **bit 0 is silently gone**. That Thing lost its
+   * `BODY`, the walk read five parts where there were six, and the level failed
+   * 560 bytes later at the next Thing's marker. Measured on `69318581` from the
+   * public archive, Thing 14249 at byte 10563.
+   *
+   * ⚠️ Converting after the fact does not help: `BigInt(s.u64())` widens a value
+   * that has already been rounded. The bits have to survive the accumulation,
+   * which is what this does and `uleb128` cannot.
+   */
+  u64Big(force = false): bigint {
+    if (force || !this.compressedIntegers) {
+      const at = this.need(8);
+      return this.view.getBigUint64(at, false);
+    }
+    let result = 0n;
+    for (let shift = 0n; shift < 64n; shift += 7n) {
+      const byte = this.u8();
+      result |= BigInt(byte & 0x7f) << shift;
+      if ((byte & 0x80) === 0) return result;
+    }
+    throw new SerializerError('LEB128 value longer than 64 bits');
+  }
+
   /** Length-prefixed ASCII. The length is an `s32`, so it is a varint too. */
   str(): string {
     const length = this.s32();
