@@ -42,7 +42,7 @@ import { channelVolume, schedule, type Sequencer } from './project.ts';
 import { type RInstrument } from './rinstrument.ts';
 import { blockRoot, notePitch } from './scale.ts';
 import { swungFrame } from './swing.ts';
-import { foldGain, pitchRatio, samplesPerStep, velocityGain } from './voice.ts';
+import { pitchRatio, samplesPerStep, velocityGain } from './voice.ts';
 
 /** The output rate. The engine's own is hard-coded to this too. */
 export const RATE = 48000;
@@ -120,13 +120,34 @@ export const RATE = 48000;
  * the pan to `W` and leaving the gain alone renders everything a flat
  * **−4.645 dB** under the game's own stereo.
  *
- * `foldGain` in `src/core/voice.ts` is the other half, `1/W`, and it is applied
- * wherever the narrowing is — in the spec's gain here, and in the worklet for
- * the live path, which renders at `panWidth: 1` and narrows on the audio
- * thread. ⚠️ **It did not show in a WAV**, because `dev/render-level.ts`
- * normalises; it showed the first time a listener played the live page.
+ * {@link FOLD_GAIN} is the other half. ⚠️ **It did not show in a WAV**, because
+ * `dev/render-level.ts` normalises; it showed the first time a listener played
+ * the live page, which does not.
  */
 export const PAN_WIDTH = 2 - Math.SQRT2;
+
+/**
+ * The gain the same fold puts on the sum: **`1 / PAN_WIDTH` = 1.7071068**.
+ *
+ * `L = ch0 + k·d·(ch0 + ch1)` shrinks the difference by `1/(1 + 2·k·d)` and
+ * grows the sum by `(1 + 2·k·d)`, and those are the same number — so the width
+ * and this are one linear operator seen from two sides. Applying only the first
+ * renders everything a flat **−4.645 dB** under the game's own stereo, at every
+ * pan: the ratio is 0.585786 at 0, 0.25, 0.5, 0.75 and 1 alike.
+ *
+ * ❗ **A CONSTANT, and deliberately not `1 / panWidth`.** It was the reciprocal
+ * of the knob for one commit, which is defensible physics — a narrower fold is a
+ * bigger centre feed, which really is louder — and a bad instrument: the live
+ * page's width slider became a volume control, **+20 dB at 0.1** and back to the
+ * −4.6 dB the fix existed to remove at 1.0, so the one thing the slider is for
+ * (hearing the image with and without the narrowing) could not be done without
+ * a loudness difference confounding it.
+ *
+ * The game's fold is fixed — `k = 0.5` and `d = 1/sqrt2` are constants of FMOD
+ * and of BS.775, not settings — so its gain is fixed too. `panWidth` stays what
+ * it always was: a diagnostic on the **image**, at constant level.
+ */
+export const FOLD_GAIN = 1 / PAN_WIDTH;
 
 /** One instrument, with its samples decoded and mipmapped. */
 export interface LoadedInstrument {
@@ -741,12 +762,12 @@ export async function renderSequencer(
         2 *
         P(OUTPUT_PARAMS.level) *
         stackGain *
-        // ❗ **The fold's gain, the other half of `panWidth`.** Narrowing the
-        // pan without it renders everything a flat -4.645 dB under the game's
-        // own stereo fold; see `foldGain`. A `panWidth` of 1 -- what the live
-        // path renders at, because the worklet narrows instead -- returns 1, so
-        // this is applied exactly once wherever the narrowing happens.
-        foldGain(panWidth),
+        // ❗ **The fold's gain, the other half of `panWidth`** -- and a constant,
+        // so it applies here whatever `panWidth` is. The live path renders at
+        // `panWidth: 1` and narrows in the worklet, which is why this is the one
+        // site: the gain travels with the plan and the worklet moves the image
+        // only. See {@link FOLD_GAIN}.
+        FOLD_GAIN,
       // `Params[26]`. The engine clamps it to 0..1 when the note starts
       // (`0x3cd8`-`0x3cf3`) and again to 0.95 in the block; `driveCoefficient`
       // does the second, so only the first belongs here.

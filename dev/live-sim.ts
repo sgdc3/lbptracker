@@ -126,10 +126,10 @@ interface Planned {
 const plan: Planned[] = [];
 const planResult = await renderSequencer(seq, loadInstrument, {
   planOnly: true,
-  // ⚠️ **`panWidth: 1` means no fold and therefore no fold GAIN**, so the levels
-  // this file prints are 4.645 dB under the page's. It compares two paths
-  // against each other and both get the same treatment, which is all it needs;
-  // do not read its rms as what a listener hears. See `foldGain`.
+  // `panWidth: 1` renders the file's own image and leaves the narrowing to the
+  // page's worklet, which is what the live path does. The fold's GAIN is a
+  // constant and applies either way, so the levels here are the page's --
+  // see `FOLD_GAIN` in `src/core/render.ts`.
   panWidth: 1,
   // Uncapped on purpose: the point of the exercise is to apply the pool live,
   // so the plan must not have its cuts baked in.

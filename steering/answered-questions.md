@@ -1547,9 +1547,21 @@ by `(1 + 2kd)`, the same number. Narrowing without it is a uniform **−4.645 dB
 | 0.50 | 0.853553 | 0.500000 | 0.585786 |
 | 1.00 | 0.353553 | 0.207107 | 0.585786 |
 
-`foldGain(width) = 1/width` in `src/core/voice.ts` is the missing half, applied wherever the
-narrowing happens — the spec's gain offline, the worklet live. Corpus peaks go 0.547 → 0.934,
-0.435 → 0.743, 0.119 → 0.203 with no frame clipped.
+`FOLD_GAIN = 1 / PAN_WIDTH` in `src/core/render.ts` is the missing half, applied once in the voice
+spec's gain. Corpus peaks go 0.547 → 0.934, 0.435 → 0.743, 0.119 → 0.203 with no frame clipped.
+
+❗ **It is a constant, and the first attempt made it `1 / panWidth` instead.** That is defensible
+physics — a narrower fold is a bigger centre feed, which really is louder — and it wrecked the
+instrument: the live page's width slider became a volume control, **+20 dB at 0.1** and back to the
+−4.6 dB the fix existed to remove at 1.0. A listener found it in minutes. The game's `k = 0.5` and
+`d = 1/sqrt2` are constants of FMOD and of BS.775, not settings, so the gain is fixed and
+`panWidth` stays a diagnostic on the **image** at constant level. Measured after: the render's rms
+moves 0.09914 → 0.09784 across width 1 → 0.2, which is the 0.11 dB the narrowing genuinely
+redistributes between channels, against the 4.6 dB it used to swing.
+
+⚠️ **The lesson is about the knob, not the physics.** A parameter that is a *diagnostic* must vary
+one thing; coupling a second to it — however honestly — makes the comparison it exists for
+impossible to hear.
 
 ⚠️ **A normalising renderer hid it for two days.** `dev/render-level.ts` normalises its WAV, so
 every offline check came out at full scale and nothing ever looked quiet. It took a listener playing

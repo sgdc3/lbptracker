@@ -14,7 +14,6 @@
 import { Echo, Reverb, clipToUnit, reverbPreset } from './effects.ts';
 import { INTERPOLATORS, type InterpolatorName } from './interpolate.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from './mixer.ts';
-import { foldGain } from '../core/voice.ts';
 import { buildMipChain } from './mipmap.ts';
 
 /** A sample handed over from the main thread, with its channels transferred. */
@@ -242,12 +241,12 @@ export class MixerProcessor extends AudioWorkletProcessor {
             this.panWidth === 1
               ? message.voice.pan
               : 0.5 + (message.voice.pan - 0.5) * this.panWidth;
-          // ❗ **The narrowing carries a gain and it is applied here**, because
-          // here is where the narrowing happens: the live path renders its plan
-          // at `panWidth: 1` so `render.ts` applies neither, and the slider on
-          // the page moves both together. See `foldGain`.
-          const gain = message.voice.gain * foldGain(this.panWidth);
-          this.mixer.play({ ...message.voice, sample, pan, gain });
+          // ⚠️ **Pan only — the fold's GAIN is not this knob's to move.** It
+          // briefly was, as `1/panWidth`, and that turned the page's width
+          // slider into a volume control: at 0.1 it was +20 dB and at 1.0 it
+          // was the -4.6 dB the fix existed to remove. The gain is the game's
+          // fold and is a constant; see `FOLD_GAIN` in `src/core/render.ts`.
+          this.mixer.play({ ...message.voice, sample, pan });
         }
         break;
       }
