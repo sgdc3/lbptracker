@@ -809,9 +809,23 @@ are is **not** established; see open-questions.
 | offset | type | what |
 |---|---|---|
 | `+0x00`, `+0x28`, `+0x50` | 40 B each | **mip 0 (full rate), mip 1 (÷2), mip 2 (÷4)**; each has data pointers at its own `+0x08` and `+0x10` |
-| `+0x78` | i32 | **length in frames**. `<= 0` switches the slot to a saw oscillator (below) |
+| `+0x78` | i32 | **playable length in frames** — what the player stops at (`0x304d`) and what `Params[2]` scales (`0x1ad1`). `<= 0` switches the slot to a saw oscillator (below) |
 | `+0x7c` | i32 | **loop start** |
 | `+0x80` | i32 | **loop length**; `<= 0` means no loop |
+
+⚠️ **`+0x78` is not the same field as the decoded length at `+0x00`**, and the mip builder is what
+separates them. `0x12e2`-`0x12f6`:
+
+```
+r8d = [rdi + 0x00]                ; what actually decoded
+if [rdi + 0x78] > r8d:            ; the declared end ran past the buffer
+    [rdi + 0x78] = r8d            ; truncate to it
+    [rdi + 0x7c] = [rdi + 0x80] = 0   ; and drop the loop, which cannot survive that
+```
+
+A **minimum**, never a maximum, and the only thing in the PRX that writes any of the three; the
+eboot supplies them with the rest of the record. Steering said for three days that the mip builder
+"writes the sample length" here, which reads the clamp as an assignment.
 | `+0x84` | i32 | the slot's **root note** |
 | `+0x88` | f32 | the slot's **native tempo** |
 | `+0x8c` | f32 | **fine tune in semitones** |
@@ -1116,7 +1130,7 @@ where the three remaining low `Params` live.
 
 ```
 for i in 0 .. Numstack-1:
-    r01 = rand() * 9.31323e-10                      ; v0x??? , and 9.31323e-10 * 2^30 = 1.0 exactly
+    r01 = rand() * 9.31323e-10                      ; v0x4540; U(0,1) exactly -- see RAND_MAX below
     voice.position[i]  = eval(Params[2]) * slot.lengthFrames * r01        ; +0x40 + 8i, a double
     r = eval(Params[0])
     voice.detune[i]    = 1 + 0.05 * (r01' * 2r - r)                       ; +0x68 + 4i
@@ -1133,9 +1147,9 @@ So:
 
 | param | what it does |
 |---|---|
-| `Params[0]` | **detune spread**: each layer gets `1 + 0.05·U(−r, +r)`, a ratio, so ±5% at full range |
-| `Params[1]` | **stereo/offset spread**: each layer gets `0.5·U(−r, +r)`, centred on zero |
-| `Params[2]` | **random start position**: each layer begins at `range · length · U(0,1)` frames in |
+| `Params[0]` | **detune spread**: each layer gets `1 + 0.05·U(−r, +r)`, a ratio, so ±5% at full range. ✔ **Layer 0 included** — nothing clears `+0x68`. |
+| `Params[1]` | **stereo/offset spread**: each layer gets `0.5·U(−r, +r)`, centred on zero. ✔ **Layer 0 included** — nothing clears `+0x7c`. The renderer adds it to the voice's own pan at `0x25b2` *before* the pan law at `0x2d21`/`0x2d40`, so FMOD's output narrowing applies to the sum. |
+| `Params[2]` | **random start position**: `range · length · U(0,1)` frames in — ⚠️ **for layers 1+ only**. The loop computes it for layer 0 too and `0x1bda` then clears layer 0's, so the parameter is **inert on any instrument with `Numstack` 1**, which is 18 of the 27 that set it. This one line was in the pseudocode above from the day it was read and missing from this table for four days; it was the whole of question 12. |
 
 ### The record is now fully accounted for
 
@@ -1184,6 +1198,26 @@ initialiser computes and its shape — a ratio centred on 1, an offset centred o
 follow from that shape and from the corpus, not from the consumer.
 
 **`sub_0x130` is `ZtjspkJQ+vw`, libc's sine/cosine — see the section below.**
+
+### `RAND_MAX` is `2^30 - 1`, and the `9.31323e-10` is `1/(RAND_MAX + 1)`
+
+Measured 2026-09-05, not assumed. The game **ships its own libc** at `sce_module/libc.prx`, and the
+NID suffix on the import (`cpCOXWMgha0#B#C`) indexes `IMPORT_LIB` id 1 and `NEEDED_MODULE` id 2,
+both named `libc` — so `rand` is a function on this disk. `prxnid.py libc export rand` puts it at
+vaddr `0x17000`, 37 bytes, and `prxdis.py libc 0x17000 8` reads:
+
+```
+state = state * 0x5851f42d4c957f2d + 1        ; a 64-bit LCG, state initially 1
+return (state >> 32) & 0x3fffffff             ; RAND_MAX = 2^30 - 1
+```
+
+So `rand() * 2^-30` is `U(0, 1)`, `2*pi/2^30` is a uniform phase, and the pitch and pan lines that
+compute `r*2d - d` really are the symmetric `U(-d, +d)` they look like.
+
+⚠️ **The plausible wrong answer was `2^31 - 1`**, the FreeBSD value, and this libc is
+FreeBSD-derived. That would make the pitch spread `U(-d, +3d)` and put half of every kit's hits past
+the end of their own sample. Reasoning about libc lineage would have got it wrong; reading the
+shipped file got it right.
 
 ## `Params[15..26]` — three LFOs and an output stage. The block is complete
 

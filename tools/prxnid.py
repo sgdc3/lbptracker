@@ -1,11 +1,25 @@
-"""Resolve the imports of one of the audio PRXs, by NID.
+"""Resolve a PRX's imports and exports, by NID.
 
     prxnid.py <module> imports              every PLT import, with its NID
     prxnid.py <module> <n>                  one PLT entry, by index or stub vaddr
     prxnid.py <module> guess <name> ...     hash names and say which import they are
+    prxnid.py <module> export <name> ...    where this module DEFINES those names
     prxnid.py hash <name> ...               just the NID for a name
 
-`<module>` is `reverb` (fmodsmsreverb.prx) or `input` (fmodextinput.prx).
+`<module>` is `reverb` (fmodsmsreverb.prx), `input` (fmodextinput.prx) or `libc`
+(`sce_module/libc.prx`, which the game ships its own copy of).
+
+❗ **`export` is what closes a question rather than narrowing it.** `input`'s import of `rand`
+resolves to module `libc`, and that libc is on this disk, so:
+
+```
+prxnid.py libc export rand      -> vaddr 0x17000, 37 bytes
+prxdis.py libc 0x17000 8        -> a 64-bit LCG returning (state >> 32) & 0x3fffffff
+```
+
+which is `RAND_MAX == 2**30 - 1` **measured**, and the `2^-30` the sequencer multiplies by is
+therefore exactly `1/(RAND_MAX + 1)`. Question 12 turned on that and no amount of reasoning about
+FreeBSD would have settled it.
 
 ⚠️ **`tools/ebdyn.py` does this for the eboot and cannot do it for a PRX**, which is
 why this exists. The eboot's dynamic tables are where an ELF reader expects them;
@@ -69,6 +83,9 @@ import sys
 MODULES = {
     'reverb': r'D:\PS4Games\CUSA00063-patch\gamedata_orbis\spu\fmodsmsreverb.prx',
     'input': r'D:\PS4Games\CUSA00063-patch\gamedata_orbis\spu\fmodextinput.prx',
+    # The game ships its own libc, so the module both audio PRXs import from is a
+    # file on this disk. `export` below turns a name into an address in it.
+    'libc': r'D:\PS4Games\CUSA00063-patch\sce_module\libc.prx',
 }
 
 _SALT = bytes.fromhex('518D64A635DED8C1E6B039B1C3E55230')
@@ -182,6 +199,27 @@ def imports(module):
     return out
 
 
+def exports(module, names):
+    """`(name, nid, vaddr, size)` for each name this module exports.
+
+    The dynamic symbol table covers imports and exports alike; an export is the entry whose
+    `st_value` is non-zero, and that value is a vaddr `tools/prxdis.py` can disassemble directly.
+    """
+    data, blob, tags = tables(MODULES[module])
+    strtab = blob + tags[0x61000035]
+    symtab = blob + tags[0x61000039]
+    want = {nid(n): n for n in names}
+    out = []
+    for i in range(tags[0x6100003F] // 24):
+        st_name, = struct.unpack_from('<I', data, symtab + i * 24)
+        st_value, st_size = struct.unpack_from('<QQ', data, symtab + i * 24 + 8)
+        p = strtab + st_name
+        raw = data[p:data.index(b'\0', p)].decode('ascii', 'replace')
+        if st_value and raw.split('#')[0] in want:
+            out.append((want[raw.split('#')[0]], raw, st_value, st_size))
+    return out
+
+
 def _show(rows):
     for i, got, raw, name in rows:
         # A plain symbol -- `module_start` and friends -- is already its own name.
@@ -200,6 +238,10 @@ def main(argv):
     if len(argv) < 3 or argv[1] not in MODULES:
         raise SystemExit(__doc__)
     module, what = argv[1], argv[2]
+    if what == 'export':
+        for name, raw, vaddr, size in exports(module, argv[3:]):
+            print('%-24s %-20s vaddr=%#x size=%#x' % (name, raw, vaddr, size))
+        return
     rows = imports(module)
     if what == 'imports':
         print('%s: %d PLT imports' % (module, len(rows)))

@@ -131,16 +131,12 @@ const planResult = await renderSequencer(seq, loadInstrument, {
   // so the plan must not have its cuts baked in.
   voiceLimit: VOICES_UNLIMITED,
   onVoice: (voice, where) => {
-    // ⚠️ **The spec's `random` is the render's own seeded PRNG, and it is
-    // shared.** Handing the same spec to three mixers means each `new Voice`
-    // draws three more values from one stream, so the three renders get
-    // different LFO phases and differ for a reason that has nothing to do with
-    // what is being compared. Drawing the phases here -- exactly as
-    // `dev/live.ts` does -- freezes them, and the variants become comparable.
-    const draw = voice.random ?? Math.random;
-    const phase = [0, 1, 2].map(
-      (n) => draw() * 2 * Math.PI + (voice.lfoPhaseOffset?.[n] ?? 0),
-    ) as unknown as readonly [number, number, number];
+    // ⚠️ **The spec's `random` must not reach the mixers.** Handing the same
+    // spec to three of them would have each `new Voice` draw from one shared
+    // stream, so the three renders would differ for a reason that has nothing
+    // to do with what is being compared. The render has already drawn this
+    // note's LFO phases into `voice.lfoPhase`, so dropping `random` freezes
+    // them and the variants become comparable.
     // `LBP_STRIP=envelope,filter` drops fields from every spec before it is
     // played, which is how the block-size divergence gets bisected: strip until
     // the blocked render matches the direct one, and the last thing removed is
@@ -148,7 +144,6 @@ const planResult = await renderSequencer(seq, loadInstrument, {
     const stripped: Record<string, unknown> = {
       ...voice,
       random: () => 0,
-      lfoPhaseOffset: phase,
     };
     for (const field of STRIP) delete stripped[field];
     plan.push({

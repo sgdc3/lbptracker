@@ -307,15 +307,24 @@ export interface VoiceSpec {
    * `Params[2]` gives each layer of a stacked voice its own random start,
    * `startOffset * sampleLength * U(0, 1)` frames in, which is what stops the
    * layers from being one louder copy of each other.
+   *
+   * ❗ **Layer 0 always starts at 0**, whatever `Params[2]` says: the engine
+   * draws its offset with the others and then throws it away at `0x1bda`. See
+   * `src/core/render.ts`.
    */
   readonly startPosition?: number;
   /**
-   * Radians added to each LFO's randomised start phase, one per LFO.
+   * Each LFO's start phase in radians, one per LFO — **absolute**, not an
+   * offset.
    *
-   * `Params[17|20|23]` times `2 * PI / Numstack` per layer, so a stacked
-   * voice's layers sit at different points of the same cycle.
+   * The engine draws one base phase per voice *record* and fans a stacked
+   * voice's layers off it by `Params[17|20|23]` times `2 * PI / Numstack` per
+   * layer, so the layers sit at different points of the same cycle rather than
+   * at three independent random ones. Both halves of that are the caller's to
+   * compute; {@link Lfo} takes what it is given. When this is absent the mixer
+   * draws `U(0, 2*PI)` per LFO from {@link random}.
    */
-  readonly lfoPhaseOffset?: readonly [number, number, number];
+  readonly lfoPhase?: readonly [number, number, number];
   /**
    * A caller's handle on this voice, for {@link Mixer.release}.
    *
@@ -459,11 +468,15 @@ class Voice {
       ? Math.pow(10, -Math.abs(spec.decayDbPerSecond) / 20 / outputRate)
       : 1;
     this.mipLevel = mipLevelFor(spec.playbackRate);
-    const phase = spec.lfoPhaseOffset;
+    // One base phase per record, fanned per layer -- both already done by
+    // whoever built the spec. Drawing here is the fallback for a caller that
+    // has no opinion, and it is per voice rather than per record.
+    const draw = spec.random ?? Math.random;
+    const phase = spec.lfoPhase;
     this.lfo = [
-      new Lfo(spec.random, phase?.[0] ?? 0),
-      new Lfo(spec.random, phase?.[1] ?? 0),
-      new Lfo(spec.random, phase?.[2] ?? 0),
+      new Lfo(phase?.[0] ?? draw() * 2 * Math.PI),
+      new Lfo(phase?.[1] ?? draw() * 2 * Math.PI),
+      new Lfo(phase?.[2] ?? draw() * 2 * Math.PI),
     ];
     this.position = spec.startPosition ?? 0;
     this.secondsPerFrame = 1 / outputRate;
@@ -994,7 +1007,7 @@ class Voice {
         // the cutoff pinned the noise stays dull for the whole sweep: measured
         // by zero-crossing rate it rose 1.83x where the pitch rose 4.76x.
         //
-        // ⚠️ Which rate the engine feeds this term is **open question 12**, and
+        // ⚠️ Which rate the engine feeds this term is **open question 15**, and
         // `LBP_NO_KEYTRACK` exists because the term may be inert altogether. What
         // is not in doubt is that between the opening rate and the current one,
         // only the current one lets a glide sweep.

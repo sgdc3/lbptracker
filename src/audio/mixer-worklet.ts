@@ -27,21 +27,13 @@ export interface SamplePayload {
 export type MixerMessage =
   | { type: 'load'; sample: SamplePayload }
   /**
-   * `lfoPhase` is the three LFO start phases, in radians, already including
-   * whatever spread the spec asked for.
-   *
    * ⚠️ **A `VoiceSpec.random` cannot cross a thread** -- it is a function, and
-   * `postMessage` drops it -- so a scheduler that wants the render's exact LFO
-   * phases has to compute them on its own side and send the numbers. When they
-   * are present the voice's own randomness is switched off, which is the whole
-   * point: the phases ARE the offsets.
+   * `postMessage` drops it. That used to mean a scheduler wanting the render's
+   * exact LFO phases had to draw them on its own side and send them alongside;
+   * it does not any more. `VoiceSpec.lfoPhase` holds them as three plain
+   * numbers, drawn once per note by the render, and an array crosses.
    */
-  | {
-      type: 'play';
-      sampleId: string;
-      voice: Omit<VoiceSpec, 'sample'>;
-      lfoPhase?: readonly [number, number, number];
-    }
+  | { type: 'play'; sampleId: string; voice: Omit<VoiceSpec, 'sample'> }
   // 'engine' is not an interpolator: it selects the game's own sampler, which
   // is linear plus octave mipmaps and is the faithful setting. The named
   // interpolators switch it off so they can be heard against it.
@@ -249,17 +241,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
             this.panWidth === 1
               ? message.voice.pan
               : 0.5 + (message.voice.pan - 0.5) * this.panWidth;
-          this.mixer.play(
-            message.lfoPhase
-              ? {
-                  ...message.voice,
-                  sample,
-                  pan,
-                  lfoPhaseOffset: message.lfoPhase,
-                  random: () => 0,
-                }
-              : { ...message.voice, sample, pan },
-          );
+          this.mixer.play({ ...message.voice, sample, pan });
         }
         break;
       }

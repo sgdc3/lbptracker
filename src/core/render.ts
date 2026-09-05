@@ -695,6 +695,11 @@ export async function renderSequencer(
     const stackGain = Math.sqrt(1 / layers);
     const sampleFrames = slot.wav.channels[0].length;
     const bipolar = () => rand() * 2 - 1;
+    // ❗ **One draw per NOTE, not per layer.** `0x1bed`-`0x1c3e` writes the three
+    // phases to `voice+0x98`/`+0x9c`/`+0xa0` -- fixed offsets, no layer index --
+    // after the stack loop has run, so a stacked voice's layers share a base and
+    // differ only by the fan below.
+    const basePhase = [0, 1, 2].map(() => rand() * 2 * Math.PI);
 
     const spec: VoiceSpec = {
       sample: slot.wav,
@@ -781,33 +786,39 @@ export async function renderSequencer(
           cut === undefined
             ? undefined
             : Math.round(swungFrame(cut, framesPerStep, seq.swing)),
-        // ⚠️ All three of Params[0..2] are per-LAYER, and a voice with one layer
-        // has nothing to spread against itself. Applying them regardless is what
-        // broke the drums twice over: the random start turned every hit into half
-        // a sample, and the random detune -- ±0.15% on `a_kit_1` -- put a phaser
-        // over the kit, because this level plays every drum hit on TWO board
-        // components at once (140 of 140 (step, pitch) slots in the window, across
-        // 146 components) and two coherent copies a hair apart is a comb filter.
-        playbackRate:
-          spec.playbackRate *
-          (layer === 0 ? 1 : 1 + 0.05 * P(STACK_PARAMS.detune) * bipolar()),
-        pan: layer === 0 ? spec.pan : clamp01(spec.pan + 0.5 * P(STACK_PARAMS.spread) * bipolar()),
-        // ⚠️ Layers after the first only. Applied to every voice, this destroys
-        // any instrument whose `Numstack` is 1: `a_kit_1` sets `Params[2]` to
-        // **1.000**, so every drum hit started at a uniformly random point
-        // anywhere in its sample -- on average half a kick, with no transient and
-        // a click where the waveform jumps. Six of the game's kits do the same
-        // (`8bit_kit_1`, `a_kit_1`, `bb_kit_1`, `bb_kit_2`, `e_kit_1`,
-        // `e_perc_1`), all with `Numstack` 1.
+        // ❗ **All three of Params[0..2] run from layer 0, and the engine then
+        // throws exactly one of them away.** `sub_0x1a70` enters its stack loop
+        // at `xor ebx, ebx` with no guard on `Numstack`, writes a random start,
+        // detune and pan for every layer -- and the instruction after the loop
+        // is `mov qword ptr [r14 + 0x40], 0`, which is layer 0's start position
+        // and nothing else. So the detune and the pan apply to a single-layer
+        // voice and the start offset does not. Measured 2026-09-05; the loop and
+        // its tail are `0x1a70`-`0x1c51`.
+        playbackRate: spec.playbackRate * (1 + 0.05 * P(STACK_PARAMS.detune) * bipolar()),
+        // ⚠️ **The offset is narrowed with the pan, not added after it.** The
+        // engine sums them inside the DSP -- `0x25ab` loads `voice+0x18` and
+        // `0x25b2` adds `voice + layer*4 + 0x7c` -- and the pan law at
+        // `0x2d21`/`0x2d40` runs on the sum, so everything FMOD's output stage
+        // does to the base pan it does to this too. `spec.pan` is already
+        // narrowed, hence the factor here. (The live path renders at
+        // `panWidth: 1` and narrows in the worklet, which sums first anyway.)
+        pan: clamp01(spec.pan + panWidth * 0.5 * P(STACK_PARAMS.spread) * bipolar()),
+        // ⚠️ The draw happens for layer 0 too -- the engine calls `rand()` and
+        // then overwrites the result -- so it stays here rather than behind the
+        // branch. Moving it would change every later value in the stream.
         //
-        // A per-layer randomisation exists to decorrelate stacked layers, and a
-        // single layer has nothing to decorrelate, so skipping it there is the
-        // conservative reading. ⚠️ It does not explain why those kits set the
-        // value at all -- see open question 12.
-        startPosition:
-          layer === 0 ? 0 : P(STACK_PARAMS.startOffset) * sampleFrames * rand(),
-        lfoPhaseOffset: [0, 1, 2].map(
-          (n) => P(LFO_PARAMS[n].spread) * ((2 * Math.PI) / layers) * layer,
+        // This is what makes `Params[2] = 1.000` harmless on the six kits that
+        // set it (`8bit_kit_1`, `a_kit_1`, `bb_kit_1`, `bb_kit_2`, `e_kit_1`,
+        // `e_perc_1`, all `Numstack` 1): the field is inert on every unstacked
+        // instrument, which is 18 of the 27 that set it. Applied to layer 0 it
+        // starts every drum hit at a uniformly random point inside its own
+        // sample -- half a kick, no transient, a click at the discontinuity --
+        // which is what a listener reported and what cost 11.6 dB of drum kit.
+        startPosition: ((offset) => (layer === 0 ? 0 : offset))(
+          P(STACK_PARAMS.startOffset) * sampleFrames * rand(),
+        ),
+        lfoPhase: [0, 1, 2].map(
+          (n) => basePhase[n] + P(LFO_PARAMS[n].spread) * ((2 * Math.PI) / layers) * layer,
         ) as unknown as readonly [number, number, number],
       };
       // One voice, offered to whoever asked and then mixed. A realtime player

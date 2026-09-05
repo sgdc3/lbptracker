@@ -18,6 +18,10 @@
  * start**, so sine versus cosine is a constant offset on an already-random
  * phase. That randomisation is not a detail either -- it is why two notes of
  * the same instrument never modulate in lockstep.
+ *
+ * ✔ **The randomisation is measured**, 2026-09-05, at `0x1bed`-`0x1c3e`; the
+ * three constants are `2*PI / 2^30` and the draw is one per voice record. See
+ * {@link Lfo}.
  */
 
 /** One LFO's settings, already evaluated for a note's modulation. */
@@ -39,19 +43,27 @@ export const LFO_RATE_SCALE = [100, 100, 50] as const;
 /**
  * A phase accumulator.
  *
- * `random` is injected so a render can be made deterministic; the engine uses
- * `rand()` scaled by `2^-30`, which is uniform on `[0, 1]`.
+ * ❗ **It does not draw its own start phase**, and that is a measurement rather
+ * than a style. `sub_0x1a70` draws the three phases **once per voice record**,
+ * after the stack loop has finished, at `0x1bed`/`0x1c0b`/`0x1c29`:
+ *
+ * ```
+ * [voice + 0x98] = rand() * 5.85167248e-09    ; 2*PI / 2^30, so U(0, 2*PI)
+ * [voice + 0x9c] = rand() * 2*PI / 2^30
+ * [voice + 0xa0] = rand() * 2*PI / 2^30
+ * ```
+ *
+ * The offsets carry no layer index, so **every layer of a stacked voice shares
+ * one base phase** and differs only by the spread fan. Drawing here would give
+ * each layer its own, which is a different and more diffuse sound. The caller
+ * owns the draw; see `src/core/render.ts`.
  */
 export class Lfo {
   private phase: number;
 
-  /**
-   * @param offset radians added to the randomised start phase. This is how a
-   *   stacked voice fans its layers around the cycle: `Params[17|20|23]` times
-   *   `2 * PI / Numstack` per layer.
-   */
-  constructor(random: () => number = Math.random, offset = 0) {
-    this.phase = random() * 2 * Math.PI + offset;
+  /** @param phase the start phase in radians, base plus the layer's fan. */
+  constructor(phase = 0) {
+    this.phase = phase;
   }
 
   /** Advance by `dt` seconds at `rate`, already scaled. */
@@ -73,8 +85,8 @@ export class Lfo {
     return this.phase;
   }
 
-  reset(random: () => number = Math.random): void {
-    this.phase = random() * 2 * Math.PI;
+  reset(phase = 0): void {
+    this.phase = phase;
   }
 }
 

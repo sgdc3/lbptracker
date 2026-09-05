@@ -11,11 +11,13 @@ test('the rate scales are the engine’s: 100, 100, 50', () => {
   assert.deepEqual([...LFO_RATE_SCALE], [100, 100, 50]);
 });
 
-test('a phase starts random in [0, 2π) and advances at the given rate', () => {
+test('a phase starts where it is told and advances at the given rate', () => {
   // Two voices of the same instrument must not modulate in lockstep -- that is
-  // the whole point of randomising the phase at note start.
-  const a = new Lfo(fixed(0));
-  const b = new Lfo(fixed(0.5));
+  // the whole point of randomising the phase at note start. ⚠️ **The draw is the
+  // caller's**: the engine draws one phase per voice record and every layer of
+  // a stacked voice shares it, which an Lfo that drew its own could not do.
+  const a = new Lfo(0);
+  const b = new Lfo(Math.PI);
   assert.equal(a.radians, 0);
   assert.ok(Math.abs(b.radians - Math.PI) < 1e-12);
   assert.notEqual(a.value, b.value);
@@ -25,7 +27,7 @@ test('a phase starts random in [0, 2π) and advances at the given rate', () => {
 });
 
 test('the phase stays bounded rather than drifting into float mush', () => {
-  const lfo = new Lfo(fixed(0));
+  const lfo = new Lfo(0);
   for (let i = 0; i < 100_000; i += 1) lfo.advance(1 / 48000, 100);
   assert.ok(Math.abs(lfo.radians) <= 2 * Math.PI);
   assert.ok(Number.isFinite(lfo.value));

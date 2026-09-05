@@ -1129,9 +1129,10 @@ and `0x3035` stops the voice:
   loopless percussion and the offset vanishes" was the tidy way out of question 12, and `0x3780`
   kills it: the loop length is `+0x80`, a different field. `a_kit_1`'s kick would still start
   anywhere inside its own 0.8 seconds.
-- **So question 12's contradiction stands**, unchanged: the engine runs the random start from layer
-  0, and doing that destroys the drums by the ear's account. What has changed is that there is no
-  longer a plausible misreading left to hide behind.
+- ~~**So question 12's contradiction stands**~~ — **RESOLVED 2026-09-05, three days later**: the
+  loop does run the random start from layer 0, and the instruction *after* the loop throws layer
+  0's away. Every field named above is still right; what was missing was one more instruction. See
+  *12* below.
 - ⚠️ **`0x3035` is direct code evidence for question 10** — a voice whose position passes the
   sample length **with no loop** is stopped, which is "a loopless sample plays to the end of the
   sample" written in the engine rather than inferred from a corpus. It says nothing about whether a
@@ -2638,3 +2639,148 @@ happens on a real level, because `circuitBoardSizeY` is written at every revisio
 accepts. ⚠️ `boardRows` is also now in the **MIDI header**, for the reason `midi-interchange.md`
 gives: MIDI has no board, and losing it re-routes every track on the way back.
 
+
+## 12. `Params[2]` — ANSWERED, 2026-09-05: the engine throws layer 0's away
+
+The contradiction stood for three days: the stack loop computes a random start offset for **every**
+layer including layer 0, six of the game's kits set `Params[2]` to a flat `1.000` with `Numstack`
+1, and applying it as written starts every kick, snare and hat at a uniformly random point inside
+its own sample. A listener called that "the start of the sample skipped, only the cut tail, with a
+click", and confining the three randomisations to layers 1+ was worth **11.6 dB** of drum kit.
+
+**The answer is the instruction after the loop.** `sub_0x1a70` ends:
+
+```
+0x1bca  inc rbx
+0x1bcd  cmp ebx, [r15 + 0x4e4]           ; Numstack
+0x1bd4  jl  0x1aa0                       ; <- the loop
+0x1bda  mov qword ptr [r14 + 0x40], 0    ; LAYER 0's START POSITION, CLEARED
+0x1be2  mov qword ptr [r14 + 0x90], 0
+0x1bed  call 0x140                       ; rand()
+0x1bfa  vmulss xmm0, xmm0, [v0x4550]     ; 5.8516725e-09 = 2*PI / 2^30
+0x1c02  [r14 + 0x98] = xmm0              ; LFO 1's start phase
+0x1c0b  ... [r14 + 0x9c] = ...           ; LFO 2's
+0x1c29  ... [r14 + 0xa0] = ...           ; LFO 3's
+0x1c51  ret
+```
+
+`+0x40` is a qword — layer 0's position is a `double` and this is exactly it, not the pitch at
+`+0x68` and not the pan at `+0x7c`. **Both paths reach it**: the loop falls through, and the
+`Numstack <= 0` guard at `0x1a92` jumps straight there. Nothing later in the function writes it and
+the function ends at `0x1c51`.
+
+So the engine does draw a random start for layer 0, and then starts layer 0 at zero. **The repair
+made by ear was the engine's own behaviour**, and it is now in the code for that reason instead.
+
+### The corpus says the same thing, from the other end
+
+`Params[2]` is non-zero on 27 of the 68 instruments and **18 of those 27 have `Numstack` 1**, where
+the field is now known to do nothing at all. That is what makes a flat `1.000` on six drum kits an
+unremarkable thing for a sound designer to leave in a patch: the knob is inert on a single-layer
+instrument, and the editor does not say so.
+
+The other two of the three are **not** cleared, and that is the half this project had wrong:
+
+| param | applies to layer 0? | non-zero on | of those, unstacked |
+|---|---|---|---|
+| `Params[0]` detune | **yes** | 29 instruments | 19 |
+| `Params[1]` pan spread | **yes** | 15 | 4 |
+| `Params[2]` start offset | **no**, cleared at `0x1bda` | 27 | 18 |
+
+Confining all three to layers 1+ therefore silently dropped a per-note detune from 19 unstacked
+instruments and a per-note pan scatter from 4. The strongest case is `baiyon_city_guildford`
+(`Numstack` 1, detune `0.406..0.394`, spread `0.631..0.000`): its 616 notes in `Zero` (uid 15844)
+now spread over pan **0.317..0.685** and ±230 cents of rate variation where they used to be a
+single dead-centre value. `baiyon_drums_1`, `baiyon_tinkle_01` and `baiyon_shiny_01` are the others.
+
+### `RAND_MAX` is `2^30 - 1`, measured out of the game's own libc
+
+The multiplier at `v0x4540` is `9.3132257e-10`, exactly `2^-30`, and whether `rand() * 2^-30` is
+`U(0, 1)` depends entirely on what `RAND_MAX` is. Reasoning about it was going nowhere — the PS4's
+libc is FreeBSD-derived, where `RAND_MAX` is `2^31 - 1`, which would make the pitch spread
+`U(-p, +3p)` and put half of every kit's hits past the end of their own sample.
+
+❗ **The game ships its own libc**, at `sce_module/libc.prx`, and the import resolves to it: the
+NID suffix `#B#C` indexes `IMPORT_LIB` id 1 and `NEEDED_MODULE` id 2, both named `libc`. So the
+function is a file on this disk. `prxnid.py libc export rand` puts it at vaddr `0x17000`, 37 bytes:
+
+```
+0x17000  lea    rcx, [rip + 0xa18e9]              ; the state, initially 1
+0x17007  movabs rax, 0x5851f42d4c957f2d
+0x17011  imul   rax, [rcx]
+0x17015  inc    rax
+0x17018  [rcx] = rax                              ; a 64-bit LCG
+0x1701b  shr    rax, 0x20
+0x1701f  and    eax, 0x3fffffff                   ; <- RAND_MAX = 2^30 - 1
+0x17024  ret
+```
+
+`rand() * 2^-30` **is** `U(0, 1)`, the `2^-30` is exactly `1/(RAND_MAX + 1)`, and the pitch and pan
+lines beside it really are the symmetric `U(-d, +d)` they look like. The steering had been calling
+it `U(0,1)` on an assumption since the block was first read; it is a measurement now.
+
+### The three LFO phases, and why they are not per layer
+
+`0x1bed`-`0x1c3e` draws three `U(0, 2*PI)` phases into `+0x98`, `+0x9c`, `+0xa0`. **The offsets
+carry no layer index**, so a stacked voice's five layers share one base phase and differ only by
+`Params[17|20|23] * 2*PI / Numstack * layer`. This project drew a fresh phase per layer, which is a
+more diffuse sound and not the engine's; `src/core/render.ts` now draws once per note and `Lfo`
+takes the phase rather than a generator.
+
+### The voice record's layer arrays tile at exactly five
+
+Falling out of the same read, and worth having because it bounds `Numstack` from the engine rather
+than from the corpus:
+
+| offset | array | stride | five layers end at |
+|---|---|---|---|
+| `+0x40` | start position, `double` | 8 | `+0x68` |
+| `+0x68` | pitch factor, `float` | 4 | `+0x7c` |
+| `+0x7c` | pan offset, `float` | 4 | `+0x90` |
+
+`+0x90` is the next field, cleared at `0x1be2`. **Five is the maximum**, and `choir` and
+`synth_strings` — the corpus's largest — are exactly 5.
+
+### Two corrections to what steering said about the slot
+
+Both were in *12b* and both were nearly right; the mip builder's head reads differently from a
+function start:
+
+- **`+0x78` is not "the sample length" written by the mip builder.** The length is `+0x00`. `0x12e5`
+  *clamps `+0x78` down to it* and zeroes `+0x7c`/`+0x80` when it does, which is "the playable end
+  ran past the buffer, so truncate and drop the loop". Everything downstream is unchanged: `0x304d`
+  stops a voice past `+0x78` and `0x1ad1` scales `Params[2]` by it, so `slot.wav.channels[0].length`
+  is still the right thing for the tracker to use.
+- **The stack loop reads the length of the note's own zone**, not of slot 0: `0x1aa0` reloads
+  `[r14 + 0xcc]` and `0x1aca` multiplies it by the `0x98` slot stride each iteration.
+
+### The wrong turns, and the first one is the one that matters
+
+- ❗❗ **The answer was already written down, on 2026-09-01, and nobody joined it up.**
+  `steering/sequencer-data-model.md` has carried the line `voice.position[0] = 0 ; layer 0 always
+  starts at the beginning` in its stack-loop pseudocode since commit `f559cf5`, the *same* commit
+  that first read the loop. Two lines below it, the same section's table said "`Params[2]`: **each
+  layer** begins at `range · length · U(0,1)` frames in". The file contradicted itself in one
+  screen, question 12 was opened beside it, re-attacked three times over four days, and repaired by
+  ear — while the measurement sat there.
+
+  **The lesson is not about the engine.** A steering file is only ground truth if a claim added to
+  it is checked against what the file already says; a prose table restating a pseudocode block is
+  exactly where the two drift apart, and the drift is invisible because both halves look measured.
+  Before adding a summary row next to a transcript, read the transcript.
+
+- ⚠️ **Every re-read stopped at the `jl`.** The range steering named was `0x1a70`-`0x1bd5`, and
+  `0x1bd5` is the byte after the loop's backward jump — so three separate sessions disassembled
+  exactly up to the answer and no further. **When a note quotes an address range, disassemble past
+  its end**: a range that stops at a loop's back-edge stops before the loop's own conclusion.
+- ⚠️ **Four searches went looking for who writes `+0x78` in the eboot** (see *12b* and question 12's
+  old text): no `imul ..., 0x98`, no per-field stores, no `setParameterData`, and finally the
+  discovery that the eboot owns all 6,992 bytes and hands them over by pointer. All of it correct,
+  all of it irrelevant — the field was never the problem.
+- ⚠️ **"1.000 is a default nobody changed" was killed by the corpus** (10 instruments at exactly
+  `1.000/1.000` against 41 at `0.000/0.000`) and that was taken as evidence the field must *do*
+  something. It does; just not on those ten. A parameter can be deliberately set and still be inert.
+- ✔ **The listener's ear was right and the reasoning behind the repair was wrong.** "A per-layer
+  randomisation exists to decorrelate stacked layers, and one layer has nothing to decorrelate" gave
+  the correct answer for `Params[2]` and the wrong one for `Params[0..1]`, which is why the repair
+  had to be split rather than kept.

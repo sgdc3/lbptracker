@@ -29,6 +29,16 @@ transposition and this project ignored it. See *18. `Notes.y`, `Key` and `Splitn
 last: nothing in it is audible and nothing in it is broken. It asks whether the MIDI converter's
 verbatim record patch can be made smaller, not whether the game has been read correctly.
 
+❗ **The sampler side is now closed too.** Question 12 — `Params[2]`, the last unresolved thing the
+engine does to a note before it sounds — was answered on 2026-09-05: the stack loop computes a
+random start for every layer and the instruction after it clears layer 0's, which is why six drum
+kits can set the parameter to 1.000 harmlessly. That entry is worth reading for its method failure
+rather than its answer: **the measurement had been in
+[sequencer-data-model.md](sequencer-data-model.md) since the day the loop was first read, two lines
+above a summary table that contradicted it.** What is left in this file is one thing about the
+engine that is genuinely unread (22, inside FMOD) and two reports that need a capture from real
+hardware (15, 23).
+
 Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then working outward from it. That
 run closed questions 5 and 7 outright, the whole of 8's `Params`, and the triplet half of 3; it
 opened 5b; and it corrected several things steering had wrong — the state block's pointers, the
@@ -50,9 +60,14 @@ anything; all are places where an answer stopped just short.
   array in the DSP record is all zeros -- `Splitnotes` is `[87,0,0,…]` and the walk reads `[1..8]`,
   see *19* in [answered-questions.md](answered-questions.md) -- so `0 <= note` on the first
   comparison and **every note resolves to slot 0**, the base-81 `pluck_a6`. The other three samples
-  are unreachable as zones, which is what "1 zone, 4 samples" means. What is still open is only
-  whether the engine reaches them as *layers*: this project plays slot 0 five times, and four
-  octave-spaced samples going unused on a five-layer patch is suspicious on its own.
+  are unreachable as zones, which is what "1 zone, 4 samples" means.
+
+  ✔ **CLOSED 2026-09-05: they are not reachable as layers either, and this project is right.** The
+  `0x98` slot stride appears at exactly four sites in the whole module — `0x1aca`, `0x1d6a`,
+  `0x2c68`, `0x3046` — and every one of them indexes by `voice+0xcc`, the **zone**, which `0x1a83`
+  writes once per note from `note & 7`. `0x2bc2` loads it once into `r12` for the render loop. There
+  is no per-layer slot index anywhere, so a stacked voice plays one slot `Numstack` times, and
+  `mime_artist`'s other three samples are dead weight in the patch. Nothing outstanding.
 - ~~**Per-note modulation across a note's own points.**~~ **SETTLED 2026-09-03: the engine ramps
   it and re-reads it every chunk.** `sub_0x3930` writes a slide rate for it at `0x3e8a` beside the
   ones for volume and pitch, and `sub_0x1c60` advances it by `slide × dt` at `0x1f4a` and reads the
@@ -116,282 +131,6 @@ All three feed the same conversion in the scheduler
 (`samplesPerStep = rate * 60 / (Tempo * stepsPerBeat)`). Answerable from the sequencer module, or
 empirically by recording the game's output and measuring inter-onset intervals at a known tempo —
 which has the advantage of validating the whole timing chain at once.
-
-## 12. `Params[2]` — the formula is now READ, and it contradicts our repair
-
-The per-layer init is at `fmodextinput.prx` `0x1ae7`-`0x1bd5`, inside the stack loop
-(`cmp [r15+0x4e4], 0` is `Numstack`, and the layer index starts at **0**):
-
-```
-0x1ae7  p    = Params[2].x + mod * (y - x)     ; mod is voice+0x28
-0x1b11  p   *= (int)[slot + 0x78]              ; a length
-0x1b21  rand()
-0x1b47  [voice + layer*8 + 0x40] = p * rand01  ; the layer's start position, a double
-
-0x1b4e  d    = Params[0].x + mod * (y - x)
-0x1b8d  r    = rand01 * 2d - d                 ; U(-d, +d)
-0x1b99  r   *= 0.05
-0x1ba1  [voice + layer*4 + 0x68] = 1 + r       ; the layer's pitch factor
-```
-
-`Params[0]`'s formula is **exactly** what this project implements. `Params[2]`'s is too --
-`offset * length * U(0,1)`.
-
-⚠️ **But both run from layer 0**, so the engine applies them to a single-layer voice, and this
-project no longer does. The repair that confined them to later layers was made because a listener
-reported `a_kit_1`'s kick as "the start of the sample skipped, only the cut tail, with a click" --
-which is precisely what `Params[2] = 1.000` with `Numstack` 1 produces, and six of the game's kits
-set exactly that. The repair is worth **11.6 dB** of drum kit and is not in doubt as a description of
-what sounds right; it is in doubt as a description of the engine.
-
-~~**Next step: find what writes `[slot + 0x78]`.**~~ **Done, 2026-09-02 — see *12b* in
-[answered-questions.md](answered-questions.md).** It is the **sample length**, written by the mipmap
-builder at `0x12e0`, with the **loop start at `+0x7c`** and the **loop length at `+0x80`** beside it;
-all three are named from the wrap at `0x3780` and the voice-stop at `0x3035`.
-
-That closes the field but **not the question**, and it closes off the escape route:
-
-- ⚠️ The earlier reading, "a running maximum of sample lengths", was wrong in both halves — it is
-  one slot's own length and the update is a **minimum**. `src/core/render.ts` scales `Params[2]` by
-  `slot.wav.channels[0].length`, which is now right for a reason rather than by luck.
-- ⚠️ **The tidy reconciliation is dead.** "If that field is the loop length it is zero for the
-  loopless percussion samples and the offset vanishes" was the way out that let the code and the ear
-  agree. `0x3780` reads the loop length from `+0x80`, a different field, so it is not available.
-  `a_kit_1`'s kick would still start anywhere inside its own 0.8 seconds.
-
-### The contradiction is now bare, and three escapes are closed
-
-The stack loop was read a third time, in full, on 2026-09-02. `0x1a70`-`0x1bd5`:
-
-```
-0x1a80  edx &= 7 ; [voice+0xcc] = edx           ; the voice remembers its zone
-0x1a8a  if (int)[inst+0x4e4] <= 0: skip         ; Numstack
-0x1a98  ebx = 0 ; jmp body                      ; <- THE LOOP ENTERS AT LAYER 0
-body:
-  p2 = Params[2].x + mod*(y-x)                  ; +0x4f8 / +0x4fc
-  p2 *= (float)slot[zone].sampleLength          ; +0x78
-  [voice + ebx*8 + 0x40] = (double)(p2 * U(0,1))    ; the layer's start position
-  p0 = Params[0].x + mod*(y-x)                  ; +0x4e8 / +0x4ec
-  [voice + ebx*4 + 0x68] = 1 + U(-p0,p0)*0.05   ; the layer's pitch factor
-  p1 = Params[1].x + mod*(y-x)                  ; +0x4f0 / +0x4f4
-  [voice + ebx*4 + 0x7c] = U(-p1,p1)*0.5        ; the layer's pan offset
-  ebx++
-```
-
-Closed on the way, so nobody re-opens them:
-
-- **The layer index really does start at 0**, unconditionally — `xor ebx, ebx` then a `jmp` straight
-  into the body, with no guard on `Numstack == 1`.
-- **`voice+0x28` really is the note's modulation.** `0x057a`: `bextr` with `0x418` takes bits 24..27
-  of the note word and scales by `1/15` before `0x19e0` stores it at `+0x28`.
-- **The modulation cannot rescue the kits.** All six set `Params[2]` to **`1.000 .. 1.000`** — flat,
-  so `x + mod*(y - x)` is 1.000 at every modulation. (`baiyon_drums_1`, by contrast, is
-  `0.000 .. 0.194` and is harmless at modulation 0, which is where 89% of drum notes sit.)
-
-So: the formula is read, every input is named, and applying it as written starts every kick, snare
-and hat of six kits at a uniformly random point inside its own sample. A listener called that "the
-start of the sample skipped, only the cut tail, with a click", and confining the three
-randomisations to layers 1+ was worth **11.6 dB** of drum kit. **Both cannot be true.**
-
-### Who writes `+0x78` on the eboot side — SEARCHED 2026-09-02, NOT FOUND, and that is informative
-
-`+0x78` is never *initialised* in the PRX, only clamped downward by the mip builder, so something
-else must fill it. Four searches, all negative, and together they rule out the obvious shape of the
-answer:
-
-- **The record builder does not.** It is at **`v0x2a1144`**, not `v0x2a1190` — that address is
-  mid-function and disassembling from it prints garbage; the constructor above it starts at
-  `v0x2a0e80` and reaches the builder through a vtable, so it has no direct callers. Read in full,
-  the builder writes **only** `+0x5c0`…`+0x5e4`, `+0x4e8` (`Params`, a `memcpy` of `0xd8`),
-  `+0x4c0`…`+0x4e4` (the nine `Splitnotes` and `Numstack`), and per slot `+0x84` (qword), `+0x8c`
-  (dword), `+0x90` (word). **Nothing below `+0x84` in any slot**, so it never touches the mip
-  pointers, the lengths, or these three fields.
-- **Nothing in the eboot indexes a slot by its stride.** A disassembly of the whole image,
-  `v0x100000`–`v0x1180000`, finds **zero** `imul ..., 0x98` sites. Every slot access in the eboot is
-  unrolled, which is why the builder above has eight copies of the same three stores.
-- **Searching the unrolled offsets does not discriminate.** `+0x78 + 0x98i` for i in 0..7 gives 196
-  store sites image-wide, `+0x7c` 112 and `+0x80` 220, and the ones inspected are all unrelated
-  structures — `0x78`, `0x110` and `0x240` are ordinary offsets in a 18 MB binary.
-- **`0x5f0` is a stride in exactly one place**, `v0x00b3a820`, and that is a vector-grow: compute a
-  new capacity, allocate `capacity * 0x5f0`, copy the old elements. The container for the records,
-  not a filler.
-
-⚠️ **So the shape of the answer is probably not "eboot code writes the field".** The fields below
-`+0x84` — the three mip pointers at `+0x10`/`+0x38`/`+0x60`, their lengths, and `+0x78`/`+0x7c`/
-`+0x80` — are the *sample* side, and everything about the search says they arrive as a **blob**:
-no stride arithmetic anywhere, no per-field stores, and the PRX's only interaction with `+0x78` is a
-clamp of a value that must already be there. A `setParameterData` copy into the record fits all four
-negatives at once.
-
-### And the blob route, followed 2026-09-02 — the eboot owns the whole state
-
-⚠️ **There is no `setParameterData` to find.** FMOD **Ex 4**'s DSP parameters are floats and
-nothing else; the data-parameter API is FMOD Studio's. So the block cannot arrive that way, and
-looking for it wastes a session.
-
-It arrives as an argument. Following the record-array pointer backwards:
-
-- The PRX does not own the array. `0x0526`-`0x0547` takes its base from a **global block at
-  `v0xb860`**, at `+0x08` or `+0x10`, selected by a byte flag at `+0x00` — two bases, so the eboot
-  is double-buffering them.
-- That global is filled by **`memcpy(v0xb860, arg3, 0x1b50)`** at `0x0abd`, inside the entry
-  `0x0a90(rdi, esi, rdx)`. `0x1b50` is **6,992** — the DSP state block, whose size steering already
-  had from the 32 voice records at `+0x28`…`+0x1a27`.
-- `0x1060` is the matching initialiser: it zeroes `+0x00`, `+0x08`, `+0x10` and `+0x18`.
-
-**So the eboot owns all 6,992 bytes and hands them over by pointer on each call**, records included
-— which is why nothing in the PRX ever initialises `+0x78`, and why the mip builder can only clamp a
-value that arrived from outside.
-
-⚠️ And the eboot never mentions `0x1b50` **anywhere in the image**, so the block is a type there,
-not a size constant. Its `0x5f0` sites are all one neighbourhood: a vector-grow at `v0x00b3a820`
-(new capacity, allocate `capacity * 0x5f0`, copy the elements) and its callers around `v0x00b37c71`.
-That is the container for the instrument records.
-
-**Next step — two concrete addresses, in that neighbourhood, found by scanning it for the slot
-offsets:**
-
-- **`v0x00b3ab0e`–`v0x00b3ab20`**: reads `[r14 + 0x78]` and `[r14 + 0x80]` as **qwords** and writes
-  them to `[rbx + 0x78]` / `[rbx + 0x80]` — a record-to-record copy of exactly the three fields in
-  question, which means the struct is being copied whole somewhere and the *source* is upstream.
-- **`v0x00b37e69`** / **`v0x00b37e7d`**: `[rax + 0x78] = 0` then `[rax + 0x7c] = rcx` as a qword — an
-  initialiser shape.
-
-⚠️ Both are in a region dense with `std::` container code, and `+0x10` alone matches 285 times in
-five pages, so **verify the object identity before believing either** — the discriminator is
-whether the same function also touches `+0x84` (the root note) or a `0x98` stride.
-
-### 2026-09-05: two escapes closed, one hypothesis killed, and the random is not `U(0,1)`
-
-**❗ The random is `rand() * 2^-30`, and the steering has been calling it `U(0,1)` on an assumption.**
-Read instruction by instruction rather than from a summary:
-
-```
-0x1ae1  call 0x140                      ; -> eax
-0x1aea  xmm0 = (float)eax
-0x1aee  xmm1 = 9.3132257e-10            ; v0x4540, exactly 2^-30
-0x1af6  xmm0 *= 2^-30
-0x1aff  xmm0 = (p2 * length) * xmm0
-0x1b07  [voice + layer*8 + 0x40] = (double)xmm0
-```
-
-The pitch line beside it settles what the code *expects*: `1 + 0.05 * (r*2p0 - p0)` is `U(-p0, +p0)`
-only if `r` is in `[0, 1)`, i.e. only if the import at `0x140` returns `[0, 2^30)`. ⚠️ **If it is an
-ordinary `rand()` with `RAND_MAX = 2^31 - 1`, `r` reaches 2** — and then `Params[2] = 1.000` puts
-half of every kit's hits *past the end of their own sample*, where `0x3056` kills them on the first
-block. That is a different prediction from "starts in a random place", and the game does neither.
-
-✔ **The import at `0x140` is `rand`, resolved 2026-09-05** — by hash, not by guess. It needed a
-tool (`tools/prxnid.py`, written for it) because a PRX's dynamic tables are not where an ELF reader
-expects: `PT_DYNAMIC` has no data segment of its own and lives inside `SCE_DYNLIBDATA`, and half the
-SELF segment entries are 32-byte digests. All nine of this PRX's imports now have names, and two of
-them confirm readings steering already had from call shapes alone:
-
-```
-#0 memset   #2 ?  #4 __stack_chk_fail  #6 rand   #8 memcpy
-#1/#3 module_stop / module_start       #5 ?      #7 exp2f
-```
-
-**So the fork is sharp and it is about `RAND_MAX`.**
-
-- If the PS4's `rand()` returns `[0, 2^30)`, then `rand() * 2^-30` **is** `U(0, 1)`, the pitch and
-  pan lines are the symmetric `U(-d, +d)` they look like, and the steering's long-standing `U(0,1)`
-  was right for a reason at last. The contradiction in this question then stands exactly as it was.
-- If it returns `[0, 2^31)` — the FreeBSD `RAND_MAX`, and this libc is FreeBSD-derived — then the
-  product reaches **2**, the pitch spread is `U(-p0, +3p0)` rather than symmetric, and
-  `Params[2] = 1.000` puts **half of every kit's hits past the end of their own sample**, where
-  `0x3056` kills them on the first block. The game does not drop half its drums, so this arm
-  predicts something plainly false — which is itself evidence for the first arm.
-
-❗ **Three sites in one loop build a symmetric range out of this constant** — the start offset, the
-pitch and the pan, each `x + r*(y - x)` or `r*2d - d`. Three independent uses agreeing that
-`r ∈ [0, 1)` is the strongest argument available short of a `RAND_MAX` from the SDK, and it says the
-implementation's `U(0, 1)` is safe. **What it does not do is explain the kits**, which is still the
-whole question.
-
-**❌ "1.000 is just a default nobody changed" — dead.** Measured over all 68 instruments:
-
-| `Params[2]` | instruments |
-|---|---|
-| exactly `1.000 / 1.000` | **10** |
-| exactly `0.000 / 0.000` | 41 |
-| anything else | 17 |
-
-Ten of sixty-eight is a decision, not a default. The ten are the six kits plus `electronic_kit`,
-`hand_percussion`, **`choir` and `synth_strings`** — and the last two have `Numstack` 5, so whatever
-the field means it is not "percussion only".
-
-**✔ Two escapes closed.**
-
-- **Nothing clears the position between the stack loop and the renderer.** `sub_0x3930` writes
-  `+0x0c`, `+0x10`, `+0x18`-`+0x24`, `+0x28`, `+0x2c`-`+0x34`, `+0x3c`/`+0x3e`/`+0x3f` and **nothing
-  at `+0x40` or above**, over its whole 460-instruction body. `sub_0x280` calls only `0x19e0` and
-  then `0x3930` before returning to its loop.
-- **The renderer reads the same field the stack loop wrote.** `0x2b70` loads
-  `[r14 + rsi*8 + 0x40]` per layer and `0x2ddc` stores it back; `0x3035`'s end-of-sample test reads
-  `[r14 + 0x40]`, which is layer 0's. There is no second position and layer 0 is not special.
-
-⚠️ **`src/core/render.ts` implements `U(0, 1)`** (`rand()` at line 808) *and* skips layer 0. Both
-halves of that are now known to be readings rather than measurements: the skip is the listener's, and
-the `U(0, 1)` is this summary's.
-
-## 12b. The old note on `Params[2]`
-
-Reported by ear: "the acoustic kit's kick is broken, as if the start of the sample were skipped and
-only the cut tail played, with a click at the front." That is exactly what it was, and the cause was
-this project's own code.
-
-`STACK_PARAMS.startOffset` is documented as "per-layer random start,
-`r · sampleLength · U(0, 1)` frames in", and wiring the unison stack applied it to **every** voice.
-**`a_kit_1` sets `Params[2]` to 1.000 with `Numstack` 1**, so every drum hit began at a uniformly
-random point anywhere in its own sample — on average half a kick, with no transient and a click at
-the discontinuity. Six of the game's kits do the same: `8bit_kit_1`, `a_kit_1`, `bb_kit_1`,
-`bb_kit_2`, `e_kit_1`, `e_perc_1`, all at 1.000 and all with `Numstack` 1. Of the 27 instruments with
-a non-zero `Params[2]`, **18 have `Numstack` ≤ 1**.
-
-The measured cost, `a_kit_1` isolated over one 25-second window:
-
-| | RMS | peak |
-|---|---|---|
-| offset on every voice | 0.0186 | 0.211 |
-| offset on layers after the first | **0.0711** | **0.646** |
-
-**11.6 dB of drum kit.** It also resolves the puzzle that had been chased for several rounds: the
-kit rendered 13 dB below `baiyon_drums_1` with a similar note count, and afterwards sits 1.5 dB
-below it — which is exactly their `Params[24]` difference (0.344 against 0.419, 1.7 dB).
-
-The code now applies **all three** of `Params[0..2]` only to layers after the first, on the reasoning
-that a per-layer randomisation exists to decorrelate stacked layers and one layer has nothing to
-decorrelate.
-
-⚠️ **The detune had to follow, and the second symptom turned out to be a third bug.** Fixing only
-the start offset put an audible **phaser** over the same kit, because `a_kit_1`'s `Params[0]` is
-0.030 and `1 + 0.05 * detune * U(-1,1)` gave every hit a random ±0.15% pitch. That is inaudible on
-one voice, and the note here used to say the level plays every drum hit on two board components at
-once — 140 of 140 `(step, pitch)` slots doubled.
-
-**It does not. The dump did.** The old Java dump emitted 60 of the corpus's 338 sequencers twice, so
-every note in them was rendered twice and the "doubling" was ours. See *The `RawDump` duplication*
-in [lbp-modding-toolchain.md](lbp-modding-toolchain.md). Two coherent copies a hair apart in pitch
-really is a comb filter and really does sweep, so the phaser was real — but its cause was the
-duplication, and confining the detune to layers after the first only hid it. The detune change
-still stands on its own reasoning; it just was not what fixed the phaser.
-
-⚠️ **The method failure worth keeping**: a doubling was observed, an explanation was invented
-that fitted it ("the composer placed everything twice"), and it was written into steering as a fact
-about the level. Nobody asked whether every cell being doubled was plausible as authored content.
-One query — are the two components at the same board cell? — would have shown they were.
-
-⚠️ **That is a repair, not an explanation.** It does not say why six kits set the value at all,
-and a parameter that is meaningless on 18 of the 27 instruments that set it is probably not the
-parameter this project thinks it is. The values cluster suggestively: exactly **1.000** on every
-acoustic kit, small numbers (0.01–0.09) on textures like `record_static`, `mosquito` and
-`ghost`, and ranges on `noise` and `ray_gun`. Worth re-deriving from the engine rather than trusting
-the name.
-
-⚠️ **The method failure is the lesson.** `Params[2]` was measured, documented, and wired up
-without once checking what values the game's own instruments carry. Reading the corpus first — one
-query — would have shown 1.000 against `Numstack` 1 and stopped the change.
 
 ## 15. `robot` sounds thin, and the numbers say why — but not whether it should
 

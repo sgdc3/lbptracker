@@ -77,21 +77,29 @@ they are the ground truth the JavaScript has to reproduce:
   ⚠️ **Run this before building anything on a NID.** Matching a NID against the string table alone
   once turned libc into "the sequencer plugin's only export"; the module suffix settles it in one
   query. Its docstring has the story.
-- `prxnid.py` — **the PRXs' imports, by NID**: `prxnid.py input imports` lists all nine of
+- `prxnid.py` — **a PRX's imports and exports, by NID**: `prxnid.py input imports` lists all nine of
   `fmodextinput.prx`'s, `prxnid.py input 0x140` resolves one stub, `prxnid.py input guess rand`
-  confirms a name against them, `prxnid.py hash <name>` just prints a NID. ⚠️ `ebdyn.py` does this
+  confirms a name against them, `prxnid.py hash <name>` just prints a NID, and
+  **`prxnid.py libc export rand`** says where a name is *defined*. ⚠️ `ebdyn.py` does this
   for the eboot and **cannot** for a PRX: a PRX's `PT_DYNAMIC` has no data segment of its own, it
   lives inside `SCE_DYNLIBDATA`, and half the SELF segment entries are 32-byte digests rather than
   data. Both traps are in the docstring, with the addresses. It is how `0x140` in the unison stack
-  loop was settled as **`rand`** rather than assumed (open question 12). ✔ It reads shadPS4's
+  loop was settled as **`rand`** rather than assumed. ✔ It reads shadPS4's
   `aerolib.inl` when that checkout is present — 171,520 `STUB("nid", name)` lines — so every import
   resolves rather than being guessed at, and Sony's own table agrees with the hash on `rand`.
-- `prxdis.py` — the same for the two audio PRXs: `prxdis.py reverb|input <vaddr> [count]`,
-  resolving rip-relative operands to the float/double there. The whole reverb was read with it.
+- `prxdis.py` — the same for the PRXs' code: `prxdis.py reverb|input|libc <vaddr> [count]`,
+  resolving rip-relative operands to the float/double there, and `prxdis.py <module> map` for the
+  segment map. The whole reverb was read with it.
   Disassemble from a **function start**, not an arbitrary address: a mid-function start
   desynchronises the stream and prints convincing nonsense. ⚠️ Its file deltas were both **0x40
   too small** until 2026-09-02, so every PRX address in a steering note older than that is 0x40
   too high — the readings are fine, the labels are not. The script's docstring says why.
+
+  ❗ **`libc` is in both tools because the game ships its own** at `sce_module/libc.prx`, so the
+  libc `fmodextinput.prx` links against is a file on this disk rather than a fact about the
+  console. That is how `RAND_MAX` was settled as `2^30 - 1` — `rand` is a 37-byte LCG at vaddr
+  `0x17000` — which closed question 12. **When a question turns on what a system function does,
+  check `sce_module/` before reasoning about the platform.**
 
 ⚠️ **`RawDump.java` is gone**, deleted 2026-09-02. It walked a level's Thing graph through the
 external toolkit jar and dumped every music sequencer's note records; `src/core/level.ts` does

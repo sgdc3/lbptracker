@@ -15,9 +15,9 @@
  *
  * ⚠️ **`VoiceSpec.random` and `VoiceSpec.sample` cannot cross a thread** -- one
  * is a function and the other is megabytes of mipmaps. The sample is sent once
- * per instrument slot and referenced by id; the LFO phases are drawn here, from
- * the render's own seeded generator and in the render's own order, and sent as
- * numbers. See `lfoPhase` in `src/audio/mixer-worklet.ts`.
+ * per instrument slot and referenced by id; the LFO phases are plain numbers on
+ * the spec (`lfoPhase`, drawn by the render, one base per note) and cross as
+ * they are, so dropping `random` costs the worklet nothing.
  */
 
 import { HANDOFF_KEY, loaderFor, manifest, asset, type Manifest } from './assets.ts';
@@ -145,7 +145,6 @@ interface Planned {
   readonly pointSteps: readonly number[];
   readonly sampleId: string;
   readonly voice: Omit<VoiceSpec, 'sample' | 'random' | 'startFrame' | 'endFrame' | 'cutFrame'>;
-  readonly lfoPhase: readonly [number, number, number];
   /**
    * What the voice pool needs, in its own units.
    *
@@ -546,12 +545,6 @@ async function prepare(restart = true): Promise<void> {
           },
         });
       }
-      // Drawn here, from the render's own seeded generator and in the render's
-      // own order, so the phases are the ones the WAV would have had.
-      const draw = voice.random ?? Math.random;
-      const phase = [0, 1, 2].map(
-        (n) => draw() * 2 * Math.PI + (voice.lfoPhaseOffset?.[n] ?? 0),
-      ) as unknown as readonly [number, number, number];
       const {
         sample: _s, random: _r, startFrame: _f, endFrame, cutFrame: _c, ...rest
       } = voice;
@@ -568,8 +561,6 @@ async function prepare(restart = true): Promise<void> {
         pointSteps: where.pointSteps,
         sampleId,
         voice: rest,
-
-        lfoPhase: phase,
         poolStart: where.poolStart,
         note: where.note,
         layer: where.layer,
@@ -798,7 +789,6 @@ function pump(): void {
         endFrame: life === undefined ? undefined : delay + life,
         cutFrame: cut === undefined ? undefined : delay + cut,
       },
-      lfoPhase: p.lfoPhase,
     });
     handed.set(p.index, p.startStep);
     if (stole) {

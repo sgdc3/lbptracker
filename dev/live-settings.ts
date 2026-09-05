@@ -157,20 +157,16 @@ await renderSequencer(seq, loadInstrument, {
   panWidth: 1,
   voiceLimit: VOICES_UNLIMITED,
   onVoice: (voice, where) => {
-    // The phases are drawn here, from the render's own generator, exactly as
-    // the page does -- otherwise each mixer draws its own and the two renders
-    // differ for a reason that has nothing to do with the settings.
-    const draw = voice.random ?? Math.random;
-    const phase = [0, 1, 2].map(
-      (n) => draw() * 2 * Math.PI + (voice.lfoPhaseOffset?.[n] ?? 0),
-    ) as unknown as readonly [number, number, number];
     plan.push({
       startStep: where.startStep,
       endStep: where.endStep,
       row: where.row,
       baseGain: where.channelGain === 0 ? voice.gain : voice.gain / where.channelGain,
       pointSteps: where.pointSteps,
-      spec: { ...voice, random: () => 0, lfoPhaseOffset: phase },
+      // ❗ `random` is dropped, not kept: the render already drew this note's
+      // three LFO phases into `voice.lfoPhase`, so a second mixer replays them
+      // rather than drawing its own and the two renders stay comparable.
+      spec: { ...voice, random: () => 0 },
     });
   },
 });
@@ -214,12 +210,8 @@ async function renderTurned(): Promise<[Float32Array, Float32Array]> {
     panWidth: 1,
     voiceLimit: VOICES_UNLIMITED,
     onVoice: (voice) => {
-      const draw = voice.random ?? Math.random;
-      const phase = [0, 1, 2].map(
-        (n) => draw() * 2 * Math.PI + (voice.lfoPhaseOffset?.[n] ?? 0),
-      ) as unknown as readonly [number, number, number];
       if ((voice.startFrame ?? 0) >= frames) return;
-      mixer.play({ ...voice, random: () => 0, lfoPhaseOffset: phase });
+      mixer.play({ ...voice, random: () => 0 });
     },
   });
   mixer.render(left, right);
