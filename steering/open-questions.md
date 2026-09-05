@@ -1157,11 +1157,66 @@ listener accepts that render. So the tail is not the thing that turns a comforta
 crowded one; it roughly doubles the time already spent over the cap, and the ear rejects the
 difference between 16% and 29%.
 
-That moves the suspicion off the tail and onto the baseline: **if the engine's demand were lower
-than ours across the board, the correct tail on a correct baseline could still sit under 32.** What
-would make it lower is now the question worth asking, and nothing checked so far does it — one
-record per note-chain is what the engine walks (`+0x38` clip, `+0x3c` note index, `0x3a66` advances
-along the chain), which is exactly what `durationSteps` models.
+That moved the suspicion onto the baseline, and the baseline was then checked.
+
+### ✔ The baseline is not ours — it is the song, 2026-09-05
+
+Counted **straight off the note records**, with no renderer in the way: every track's `stepOffset`
+plus each note's `startPosition`, held for `endPosition - startPosition + 1`.
+
+| | median | p95 | peak | over 32 |
+|---|---|---|---|---|
+| from the raw records | 24 | 44 | 63 | **21.0%** |
+| what the renderer asks the pool for | 21 | 42 | 61 | 16.0% |
+
+**`C4K3 S0NG` writes more notes than the hardware can play**, and our occupancy is *lower* than the
+music, not higher — the sample-exhaustion rule takes 21% down to 16%. Three ways it could have been
+our fault were checked and all three are clean:
+
+- ❌ **Duplicate placements.** All **244 tracks are distinct** in at least one field with positions
+  included; 85 distinct clip contents reused at different offsets, which is composition.
+- ❌ **One-shot overhang.** `max(durationSteps, oneShotSteps)` could have inflated drums. **0 of the
+  13,091 notes are one-shots** in this song, and the overhang is 0 record-steps.
+- ❌ **The note length.** `duration` and `endPosition - startPosition + 1` disagree on 1,057 notes,
+  which looks alarming and is not: `duration` is whole steps (`endStep - startStep + 1`) and the
+  other carries the sub-step, so the gap is the triplet population. `render.ts` uses the sub-step
+  one, which question 30 verified. The gate walk read today agrees: `0x3a41 cmp r12d, edx; jle` —
+  the release fires as soon as the integer step **passes** the last point's step.
+
+❗ **So the engine steals constantly on this song, tail or no tail.** A fifth of it wants more than
+32 records. "The game does not sound truncated" cannot mean "the game never steals": it steals a
+lot, and the ear does not hear it, because the victim is always the cheapest voice in a texture of
+twenty-four.
+
+### ✔ What the tail actually changes, and it is small
+
+Comparing the two occupancy timelines moment by moment:
+
+| | share of the song |
+|---|---|
+| over 32 with or without the tail | 16.0% |
+| **over 32 only because of the tail** | **12.7%** |
+| over 32 only without it | 0.0% |
+
+And in that newly crowded 12.7%, how far over it goes:
+
+| records wanted | share of that time |
+|---|---|
+| 33-34 | 29.6% |
+| 35-36 | 24.0% |
+| 37-40 | 28.3% |
+| 41-48 | 16.1% |
+| 49+ | 2.0% |
+
+**More than half of it is one to four records over.** So the tail is *marginally* too generous, not
+structurally wrong — and what it does is turn passages that were comfortably under the cap into
+passages that steal. That is exactly where an ear notices, and it is why the reproducer is a quiet
+chord change at 25.85 s (18 records without the tail, 35 with) rather than a dense one.
+
+⚠️ **A pool of 36, or a tail 15% shorter, would erase most of the difference.** Neither is
+justified by anything measured — the pool is `(0x1a28 - 0x28) / 0xd0 = 32` and the release is
+verified identical to the engine's — but it says how small the remaining error is, and that a
+capture only has to settle a few records either way.
 
 ### Where it has been left
 
