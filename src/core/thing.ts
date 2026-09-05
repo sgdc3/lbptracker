@@ -172,9 +172,10 @@ export function setTrace(fn: Trace | undefined): void {
 /**
  * Read one Thing.
  *
- * `readers` maps a part name to its reader; a part with no reader throws
- * `UnimplementedPartError` naming it, which is what makes building this out a
- * loop rather than a guess.
+ * `readers` maps a part name to its reader; a part that **has a body** and no
+ * reader throws `UnimplementedPartError` naming it, which is what makes building
+ * this out a loop rather than a guess. A part the Thing merely declares — its
+ * mask bit set and its reference null — needs none; see the note at the call.
  */
 /** An empty Thing, registered before its body is read so cycles resolve. */
 export function emptyThing(): Thing {
