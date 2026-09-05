@@ -47,13 +47,20 @@ two. The salt is the well-known `518D64A635DED8C1E6B039B1C3E55230`.
 is PLT #8, and the shape of both call sites already said so — `0xe0` is called
 with `(record, 0, 0xd0)` and its result discarded.
 
-⚠️ **It is one-way.** A NID cannot be turned back into a name; `guess` hashes
-candidates and matches them, which is the only method there is. What is not in the
-table below is not "unknown to Sony", it is "nobody here has guessed it yet".
+⚠️ **The hash is one-way**, so names come from a table. There are two, and the
+second makes the first almost unnecessary:
 
-Still unguessed, and it is imported by **both** PRXs, so it is worth another try
-by anyone passing: `H2e8t5ScQGc#B#C` — `input` #2, `reverb` #6. Sixty-odd libc and
-libkernel names have missed it.
+- the handful seeded below, kept so this works with nothing else installed;
+- ⚠️ **shadPS4's `aerolib.inl`**, 171,520 lines of `STUB("nid", name)` covering
+  every symbol Sony ships. If the checkout is where `AEROLIB` points, everything
+  resolves and `guess` becomes a curiosity.
+
+✔ That table also **confirms the hash independently**: it gives `cpCOXWMgha0` as
+`rand`, which is what the salt-and-SHA1 above computes and what question 12 hangs
+on. Two derivations, one answer.
+
+❗ It is worth knowing what sixty guesses could not find: `H2e8t5ScQGc`, imported
+by both PRXs, is `__cxa_finalize`. Nobody would have guessed that.
 """
 import hashlib
 import struct
@@ -67,8 +74,16 @@ MODULES = {
 _SALT = bytes.fromhex('518D64A635DED8C1E6B039B1C3E55230')
 _ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-'
 
-# Every name that has been confirmed against a NID in these two files, so the
-# next reader does not repeat the search. Extend it by running `guess`.
+# shadPS4 ships the whole of Sony's NID table as `STUB("nid", name)` lines. It is
+# the difference between resolving every import and guessing at them.
+AEROLIB = (
+    'C:' + chr(92) + 'Users' + chr(92) + 'sgdc3' + chr(92) + 'Desktop' + chr(92)
+    + 'shadPS4' + chr(92) + 'shared' + chr(92) + 'src' + chr(92) + 'core'
+    + chr(92) + 'aerolib' + chr(92) + 'aerolib.inl'
+)
+
+# Seeded from the hash below, so this still resolves the common ones with no
+# shadPS4 checkout at all. `aerolib` overwrites and extends it when present.
 KNOWN = {}
 
 
@@ -89,6 +104,20 @@ for _name in (
     'sceKernelUsleep', 'sceKernelGetProcessTime', 'clock_gettime',
 ):
     KNOWN[nid(_name)] = _name
+
+try:
+    with open(AEROLIB, encoding='utf-8', errors='replace') as _f:
+        for _line in _f:
+            _at = _line.find('STUB("')
+            if _at < 0:
+                continue
+            _rest = _line[_at + 6:]
+            _nid, _, _rest = _rest.partition('"')
+            _name = _rest.strip().lstrip(',').strip().rstrip(')').strip()
+            if _nid and _name:
+                KNOWN[_nid] = _name
+except OSError:
+    pass  # no checkout; the seeded names above still work
 
 
 def _dynlib(path):

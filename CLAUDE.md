@@ -83,7 +83,9 @@ they are the ground truth the JavaScript has to reproduce:
   for the eboot and **cannot** for a PRX: a PRX's `PT_DYNAMIC` has no data segment of its own, it
   lives inside `SCE_DYNLIBDATA`, and half the SELF segment entries are 32-byte digests rather than
   data. Both traps are in the docstring, with the addresses. It is how `0x140` in the unison stack
-  loop was settled as **`rand`** rather than assumed (open question 12).
+  loop was settled as **`rand`** rather than assumed (open question 12). ✔ It reads shadPS4's
+  `aerolib.inl` when that checkout is present — 171,520 `STUB("nid", name)` lines — so every import
+  resolves rather than being guessed at, and Sony's own table agrees with the hash on `rand`.
 - `prxdis.py` — the same for the two audio PRXs: `prxdis.py reverb|input <vaddr> [count]`,
   resolving rip-relative operands to the float/double there. The whole reverb was read with it.
   Disassemble from a **function start**, not an arbitrary address: a mid-function start
