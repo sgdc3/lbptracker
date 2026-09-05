@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  decodeEntities, parseSearch, parseSlot, rootLevelUrl, searchUrl,
+  decodeEntities, parseSearch, parseSlot, readQuery, rootLevelUrl, searchUrl,
 } from '../dev/lbpsearch.ts';
 
 /** Two rows and a next-page link, in the template's own markup. */
@@ -144,4 +144,27 @@ test('the archive URL is sharded by the first two hex digits', () => {
 test('an entity this site never emits is left exactly as it was', () => {
   assert.equal(decodeEntities('a &amp; b &lt;c&gt; &#34;d&#39;'), `a & b <c> "d'`);
   assert.equal(decodeEntities('&hearts; &#x2665;'), '&hearts; ♥');
+});
+
+// ❗ **The hash route is the one that works with no server**, so what counts as
+// a hash is worth pinning. `\b` cannot find one in `…eb%2F8febe1f9…` -- the
+// character before it is the `F` of `%2F`, itself a hex digit -- which is how a
+// first attempt matched a 40-digit window two characters off.
+test('the box tells a hash from a level link from words', () => {
+  const sha1 = '8febe1f91343b2b97843530297d54df113043b89';
+  assert.deepEqual(readQuery(`  ${sha1.toUpperCase()} `), { kind: 'hash', sha1 });
+  assert.deepEqual(readQuery(rootLevelUrl(sha1)), { kind: 'hash', sha1 });
+  assert.deepEqual(readQuery('https://zaprit.fish/slot/44229280'), {
+    kind: 'slot',
+    id: 44229280,
+  });
+  // A bare number is a plausible level name, so it searches rather than opening
+  // slot 1017 without being asked to.
+  assert.deepEqual(readQuery('1017'), { kind: 'words', words: '1017' });
+  assert.deepEqual(readQuery(' music gallery '), { kind: 'words', words: 'music gallery' });
+  // 39 and 41 digits are not hashes, and neither is a word that merely has hex
+  // letters in it.
+  assert.equal(readQuery(sha1.slice(1)).kind, 'words');
+  assert.equal(readQuery(`${sha1}0`).kind, 'words');
+  assert.equal(readQuery('deadbeef').kind, 'words');
 });

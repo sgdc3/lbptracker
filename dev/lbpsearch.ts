@@ -134,6 +134,37 @@ export function rootLevelUrl(sha1: string): string {
 }
 
 /**
+ * What a listener typed: words to search for, a level to open, or a hash.
+ *
+ * ❗ **The hash is the one that needs no server at all.** `rootLevelUrl` is a
+ * pure function and archive.org answers any origin, so a page with no proxy
+ * behind it can still open a level -- the listener searches on zaprit.fish
+ * itself and copies the 40 hex digits the level page shows. That is the whole
+ * static-hosting story; see the note in `dev/archive-panel.ts`.
+ *
+ * A bare number is **words**, not a slot id: "1017" is a plausible level name
+ * and guessing otherwise would silently open the wrong thing.
+ */
+export type Typed =
+  | { readonly kind: 'hash'; readonly sha1: string }
+  | { readonly kind: 'slot'; readonly id: number }
+  | { readonly kind: 'words'; readonly words: string };
+
+export function readQuery(text: string): Typed {
+  const trimmed = text.trim();
+  const slot = /\/slot\/(\d+)/.exec(trimmed);
+  if (slot) return { kind: 'slot', id: Number(slot[1]) };
+  // ⚠️ **The hash is what the text ENDS with, not a run found inside it.** A
+  // word boundary cannot find one in `…eb%2F8febe1f9…`: the character before it
+  // is the `F` of `%2F`, itself a hex digit, so `\b` fails there and a
+  // backtracking match lands on a 40-digit window that is off by two. Taking the
+  // last segment handles the bare hash and a pasted archive.org URL alike.
+  const tail = trimmed.split(/[/\?#=]|%2F/i).pop() ?? '';
+  if (/^[0-9a-f]{40}$/i.test(tail)) return { kind: 'hash', sha1: tail.toLowerCase() };
+  return { kind: 'words', words: trimmed };
+}
+
+/**
  * Rows out of a search page.
  *
  * The table's ten columns are fixed by the template and are, in order: icon,

@@ -8,12 +8,22 @@
  * resource `src/core/level.ts` already reads -- so this ends in the same
  * `onOpen` as a dropped file, with the same bytes in the same reader.
  *
- * ⚠️ **Two hosts, and the level comes from the second one.** The search goes
- * through `dev/serve.mjs` because zaprit.fish sends no CORS headers; the
- * **bytes come straight from archive.org to the page**, because it does. See
- * `dev/lbpsearch.ts`. The consequence worth knowing: **the search needs the dev
- * server**, so a page opened from `file://` gets a clear message instead of a
- * silent failure.
+ * ⚠️ **Two hosts, and they do not have the same manners.**
+ *
+ * - `zaprit.fish` sends **no CORS headers**, so a page cannot read it. The
+ *   search goes through `dev/serve.mjs`, which is why **searching by words
+ *   needs the dev server**.
+ * - `archive.org` sends `Access-Control-Allow-Origin` and echoes whatever origin
+ *   asks (verified from `https://example.github.io`), so **the level itself is
+ *   fetched by the page**, from anywhere, with no server in between.
+ *
+ * ❗ **That asymmetry is why this box takes a hash as well as words.**
+ * `rootLevelUrl` is a pure function of the root level's SHA-1, which every level
+ * page on zaprit.fish prints in a box made to be copied. Paste those 40 digits
+ * and the level opens with no proxy at all -- from a static host, or from
+ * `file://`. It is the whole answer to "can this work without a backend", and
+ * the reason the answer is not simply no. The measurements behind it are in
+ * *The public archive* in `steering/lbp-modding-toolchain.md`.
  *
  * ❗ **Names from the archive are put in the DOM as text, never as markup.**
  * A level title is whatever its creator typed in 2011, arriving over the
@@ -21,6 +31,7 @@
  * is the whole defence and it costs nothing.
  */
 
+import { readQuery, rootLevelUrl, SEARCH_HOST } from './lbpsearch.ts';
 import type { Opened } from './open-level.ts';
 import type { ArchiveRow, ArchiveSearch, ArchiveSlot, SearchSort } from './lbpsearch.ts';
 
@@ -62,8 +73,8 @@ export function wireArchiveSearch(opts: {
   host.hidden = true;
   host.innerHTML =
     '<div class="row">' +
-    '<input class="archive-q" type="text" placeholder="a level, or an author…" ' +
-    'aria-label="Search the LBP archive" autocomplete="off">' +
+    '<input class="archive-q" type="text" placeholder="a level, an author, or a root-level hash…" ' +
+    'aria-label="Search the LBP archive" autocomplete="off" spellcheck="false">' +
     '<select class="archive-sort" aria-label="Sort">' +
     '<option value="hearts">most hearted</option>' +
     '<option value="name">by name</option>' +
@@ -73,6 +84,10 @@ export function wireArchiveSearch(opts: {
     '</div>' +
     '<p class="archive-note">Levels published to the Mm servers before they closed, from the ' +
     'Internet Archive. The level is downloaded to your browser and read there.</p>' +
+    '<p class="archive-hint">Searching needs the dev server. A level’s <b>root level</b> hash — ' +
+    'the 40 digits on its page at <a href="' + SEARCH_HOST + '" target="_blank" ' +
+    'rel="noreferrer noopener">zaprit.fish</a> — can be pasted here instead, and that works ' +
+    'with no server at all.</p>' +
     '<div class="archive-list"></div>' +
     '<div class="row archive-pager" hidden>' +
     '<button type="button" class="archive-prev">previous</button>' +
@@ -105,18 +120,19 @@ export function wireArchiveSearch(opts: {
    * ⚠️ Opened from `file://` or a static host there is no `/zaprit/` route, so
    * the fetch either fails outright or returns the page's own HTML with a 404.
    * A JSON parse error on a 404 read as "the archive is down" would send
-   * somebody looking in the wrong place entirely.
+   * somebody looking in the wrong place entirely -- and the message names the
+   * way out, because there is one and it is in this same box.
    */
   async function ask<T>(path: string): Promise<T> {
+    const noServer = 'searching needs `node dev/serve.mjs` — but a root-level hash '
+      + 'pasted in this box opens a level without it';
     let answer: Response;
     try {
       answer = await fetch(path, { headers: { accept: 'application/json' } });
     } catch {
-      throw new Error('cannot reach the dev server — the search needs `node dev/serve.mjs`');
+      throw new Error(`cannot reach the dev server: ${noServer}`);
     }
-    if (answer.status === 404) {
-      throw new Error('this page is not being served by `node dev/serve.mjs`, which the search needs');
-    }
+    if (answer.status === 404) throw new Error(noServer);
     const body = (await answer.json().catch(() => ({}))) as T & { error?: string };
     if (!answer.ok) throw new Error(body.error ?? `the archive answered ${answer.status}`);
     return body;
@@ -137,17 +153,12 @@ export function wireArchiveSearch(opts: {
       button_.classList.add('archive-quiet');
       button_.title = 'LittleBigPlanet 1 has no music sequencer';
     }
-    button_.addEventListener('click', () => void open_(row));
+    button_.addEventListener('click', () => void openSlot(row.id));
     return button_;
   };
 
   async function search(to: number): Promise<void> {
-    if (busy) return;
     const q = query.value.trim();
-    if (q === '') {
-      query.focus();
-      return;
-    }
     busy = true;
     go.disabled = true;
     say('searching…');
@@ -172,30 +183,34 @@ export function wireArchiveSearch(opts: {
     }
   }
 
-  /** Fetch one level: its hash from the index, then its bytes from the archive. */
-  async function open_(row: ArchiveRow): Promise<void> {
+  /**
+   * Fetch a level's bytes and hand them on.
+   *
+   * ❗ Straight from archive.org, not through the dev server: the level is the
+   * one thing that must not travel over it. `mode: 'cors'` is the default and is
+   * spelled out because it is the property being relied on.
+   */
+  async function fromArchive(url: string, label: string, sha1: string): Promise<void> {
+    const answer = await fetch(url, { mode: 'cors' });
+    if (!answer.ok) throw new Error(`the archive answered ${answer.status} for the level`);
+    const bytes = new Uint8Array(await answer.arrayBuffer());
+    say('');
+    host.hidden = true;
+    // Named after its SHA-1, which is what a backup calls it too.
+    await onOpen({ label, files: [{ name: sha1, bytes }], many: false });
+  }
+
+  /** Open a level found by search: its hash from the index, then its bytes. */
+  async function openSlot(id: number): Promise<void> {
     if (busy) return;
     busy = true;
-    say(`opening “${row.name}”…`);
+    say('opening…');
     try {
-      const slot = await ask<ArchiveSlot>(`/zaprit/slot/${row.id}`);
+      const slot = await ask<ArchiveSlot>(`/zaprit/slot/${id}`);
       if (slot.missing) {
         throw new Error('the archive never got this level’s data — its bytes are missing');
       }
-      // ❗ Straight from archive.org, not through the dev server: the level is
-      // the one thing that must not travel over it. `mode: 'cors'` is the
-      // default and is spelled out because it is the property being relied on.
-      const answer = await fetch(slot.url, { mode: 'cors' });
-      if (!answer.ok) throw new Error(`the archive answered ${answer.status} for the level`);
-      const bytes = new Uint8Array(await answer.arrayBuffer());
-      say('');
-      host.hidden = true;
-      await onOpen({
-        label: `${slot.name} — ${slot.author}`,
-        // Named after its SHA-1, which is what a backup calls it too.
-        files: [{ name: slot.sha1, bytes }],
-        many: false,
-      });
+      await fromArchive(slot.url, `${slot.name} — ${slot.author}`, slot.sha1);
     } catch (error) {
       say(error instanceof Error ? error.message : String(error), true);
     } finally {
@@ -203,19 +218,56 @@ export function wireArchiveSearch(opts: {
     }
   }
 
+  /** Open a level by its root level hash. **This one needs no server.** */
+  async function openHash(sha1: string): Promise<void> {
+    if (busy) return;
+    busy = true;
+    say(`fetching ${sha1.slice(0, 8)}…`);
+    try {
+      // No name to give it: the index is what knows names, and the whole point
+      // of this path is not needing the index. The level's own title comes back
+      // out of the resource anyway, on the songs in it.
+      await fromArchive(rootLevelUrl(sha1), `root level ${sha1.slice(0, 8)}`, sha1);
+    } catch (error) {
+      say(
+        error instanceof Error
+          ? `${error.message} — check the hash, or that the archive has this level`
+          : String(error),
+        true,
+      );
+    } finally {
+      busy = false;
+    }
+  }
+
+  /** What the box does depends on what is in it; see `readQuery`. */
+  function submit(): void {
+    if (busy) return;
+    const typed = readQuery(query.value);
+    if (typed.kind === 'hash') {
+      void openHash(typed.sha1);
+    } else if (typed.kind === 'slot') {
+      void openSlot(typed.id);
+    } else if (typed.words === '') {
+      query.focus();
+    } else {
+      void search(0);
+    }
+  }
+
   button.addEventListener('click', () => {
     host.hidden = !host.hidden;
     if (!host.hidden) query.focus();
   });
-  go.addEventListener('click', () => void search(0));
+  go.addEventListener('click', submit);
   query.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       event.preventDefault();
-      void search(0);
+      submit();
     }
   });
   sort.addEventListener('change', () => {
-    if (query.value.trim() !== '') void search(0);
+    if (readQuery(query.value).kind === 'words' && query.value.trim() !== '') void search(0);
   });
   prev.addEventListener('click', () => void search(Math.max(0, page - 1)));
   next.addEventListener('click', () => void search(page + 1));

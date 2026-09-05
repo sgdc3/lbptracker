@@ -226,6 +226,11 @@ input.picker-search {
 input.archive-q { flex: 1 1 16rem; min-width: 0; text-align: left; font-family: inherit; }
 .archive-note { margin: .7rem 0 0; color: var(--dimmer); font-size: .85rem; }
 .archive-note.bad { color: var(--bad); }
+/* The permanent line under the status one: what the box takes, and the fact
+   that one of the two needs no server. */
+.archive-hint { margin: .35rem 0 0; color: var(--dimmer); font-size: .8rem; }
+.archive-hint b { color: var(--dim); font-weight: 600; }
+.archive-hint a { color: var(--accent); }
 .archive-list { margin-top: .6rem; max-height: 21rem; overflow-y: auto; }
 .archive-row {
   display: flex; flex-direction: column; align-items: flex-start; gap: .05rem;

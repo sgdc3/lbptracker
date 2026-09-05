@@ -440,7 +440,11 @@ by the page straight from archive.org, which does send CORS headers.
 
 ⚠️ **The search therefore needs the dev server**, and a page opened from `file://` or a static host
 has no `/zaprit/` route. `dev/archive-panel.ts` says so in as many words rather than reporting it as
-the archive being down, which would send somebody looking in the wrong place entirely.
+the archive being down, which would send somebody looking in the wrong place entirely — **and the
+message names the way out, because there is one in the same box**: the search field also takes a
+root level's SHA-1 (or a pasted archive.org URL), and that path never touches the proxy. See *Can
+the search work with no server at all?* in `lbp-modding-toolchain.md` for what was measured and what
+a real serverless search would cost.
 
 ~~**The Thing walk is the big one.**~~ Done, and it was a real port rather than an afternoon:
 reaching a `PInstrument` means deserialising every Thing and every part that precedes it in the

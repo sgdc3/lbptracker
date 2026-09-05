@@ -484,6 +484,36 @@ source:
 **branch 0x218**, which the corpus did not contain. The Things a level's music lives on are in the
 level's own resource; the separate `.plan` resources matter for a creator's *backup*, not for this.
 
+### Can the search work with no server at all? — measured 2026-09-05
+
+Asked directly, and the answer is **the search no, the download yes**, which is why the box takes a
+hash as well as words.
+
+**Reading the archive's own database from a page is impossible**, and not for want of trying. The
+index behind zaprit.fish is `dry.db`, a **2.65 GB SQLite** published as `archive.org/details/dry23db`
+(2,651,348,992 bytes). Paging through it over HTTP — the `sql.js-httpvfs` technique — needs `Range`
+**and** CORS on the same URL, and archive.org gives exactly one of the two:
+
+| URL | `Range` | CORS |
+|---|---|---|
+| `archive.org/download/dry23db/dry.db` | ✔ `206 Partial Content` | ✘ no header at all |
+| `archive.org/cors/dry23db/dry.db` | ✘ ignored: `200 OK`, `Content-Length: 2651348992` | ✔ echoes the origin |
+
+So a static page can have the whole 2.65 GB or none of it. That closes the clever route.
+
+✔ **The level download, though, works from any origin.** `view_archive.php` echoes whatever `Origin`
+is sent — verified with `https://example.github.io` — so the bytes were never the problem. Only
+finding them is. And `rootLevelUrl` is a pure function of the SHA-1 that every level page prints in
+a copyable box, so **pasting those 40 digits opens a level with no server in the loop**. Proved in
+the browser by stubbing every `/zaprit/` request to a 404: the hash route made **zero** proxy
+requests and still opened 31 sequencers, and the words route said what was wrong and what to paste
+instead.
+
+What is left, if a real search without a server is ever wanted: **ship our own index**. `dry.db`
+downloaded once, LBP2/LBP3 slots reduced to id, name, author, hearts and root hash, sharded by
+search prefix so a page fetches `mu.json` and nothing else. Or ask upstream for one header —
+`Access-Control-Allow-Origin: *` on `/search` and `/slot/{id}` would delete the proxy entirely.
+
 ## The save archive — how a PS3 backup opens, and it does open
 
 A PS3 level backup is a save-game folder: `PARAM.SFO`, `PARAM.PFD`, `ICON0.PNG` and numbered files
