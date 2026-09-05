@@ -11,6 +11,7 @@
  * server only serves the repository, so nothing leaves this machine.
  */
 
+import { asset } from './assets.ts';
 import { ADSR_PARAMS, ADSR_PARAMS_B, evaluateAdsr } from '../src/core/envelope.ts';
 import { FILTER_PARAMS } from '../src/audio/moog.ts';
 import { LFO_PARAMS, OUTPUT_PARAMS } from '../src/core/params.ts';
@@ -87,7 +88,10 @@ const heldKeys = new Set<string>();
 async function ensureAudio(): Promise<AudioWorkletNode> {
   if (node) return node;
   context = new AudioContext();
-  await context.audioWorklet.addModule('/src/audio/mixer-worklet.ts');
+  // ⚠️ Through `asset`, not as `/src/...`: a root-absolute path is the one thing
+  // in these pages that would stop a built copy working under a prefix, and
+  // `dev/build.mjs` emits a site that is relocatable everywhere else.
+  await context.audioWorklet.addModule(asset('src/audio/mixer-worklet.ts'));
   node = new AudioWorkletNode(context, 'lbp-mixer', { outputChannelCount: [2] });
   node.port.onmessage = (event) => {
     if (event.data?.type === 'missingSample') {

@@ -290,12 +290,28 @@ first and only write our own reader if it turns out not to cover `RInstrument`/`
 
 ## Asset licensing — a design constraint, not a footnote
 
-Every sample in these banks is copyrighted Sony / Media Molecule material. The tracker **must not
-redistribute them**. The loading flow is: the user points the app at their own
-`sfxbank_compressed.fsb` (file picker or drag-and-drop), it is parsed entirely client-side, nothing
-is uploaded. Build it that way from the first commit — retrofitting a "bring your own assets" flow
-onto a design that assumed bundled samples is painful, and shipping a build with the samples baked
-in even once is not something you can take back.
+Every sample in these banks is copyrighted Sony / Media Molecule material, and so is every level in
+the public archive its creators' work. Nothing of either is in this repository: `fixtures/` is
+gitignored and always has been.
+
+**The code's constraint stands: assets arrive at runtime, never baked into a build.** The user
+points the app at their own `sfxbank_compressed.fsb` (file picker or drag-and-drop) and it is parsed
+entirely client-side; `dev/assets.ts` fetches manifests and samples from `../` relative to itself,
+which is whatever the deployment's own root is. Retrofitting "bring your own assets" onto a design
+that assumed bundled samples is painful, and it is why the flow was built this way from the first
+commit.
+
+⚠️ **Where a deployment gets those files from is the deployment's decision, and the plan of record
+is that the hosted copy serves them from the same bucket as the site.** That is a change from what
+this note used to say — "the tracker must not redistribute them" — and the sentence is gone rather
+than quietly contradicted, because a steering file that forbids what the project does is a trap for
+the next session. The owner has weighed it; the copyright fact above is unchanged and is why it was
+worth weighing.
+
+❗ **Nothing in the app claims either way.** The footer used to say "no game data is included here",
+which was true of a tracker that only read the user's own copy and would not be true of that
+deployment, so it was removed rather than left to become false; `LICENSE` says only that this
+repository contains no game data, which stays true. See `dev/footer.ts`.
 
 ## ⚠️ Two sample GUIDs shared one filename, and one kit played the other's kick
 

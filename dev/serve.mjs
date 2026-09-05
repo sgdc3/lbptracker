@@ -8,7 +8,12 @@
  * no node_modules, and the same source runs in the browser and under
  * `node --test`.
  *
- *     node dev/serve.mjs [port]
+ *     node dev/serve.mjs [port] [webroot]
+ *
+ * `webroot` swaps `dev/` for another directory as the first place a URL is
+ * looked up -- `node dev/serve.mjs 8174 dist` previews a build. The repository
+ * stays as the second candidate, which is what lets a built copy borrow
+ * `fixtures/` from the checkout instead of needing its own.
  *
  * Binds to 127.0.0.1 only. It serves files out of the repository and nothing
  * else -- game assets are read by the page from the user's own disk through a
@@ -31,6 +36,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const PORT = Number(process.argv[2] ?? 8173);
+const WEB = process.argv[3] ?? 'dev';
 
 const TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],
@@ -62,7 +68,7 @@ function candidates(urlPath) {
   const clean = decodeURIComponent(urlPath.split('?')[0]);
   const rel = `.${clean === '/' ? '/index.html' : clean}`;
   // Never serve outside the repository, whatever the URL claims.
-  return [path.resolve(ROOT, 'dev', rel), path.resolve(ROOT, rel)].filter(
+  return [path.resolve(ROOT, WEB, rel), path.resolve(ROOT, rel)].filter(
     (target) => target === ROOT || target.startsWith(ROOT + path.sep),
   );
 }
@@ -115,5 +121,5 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`lbptracker dev server: http://127.0.0.1:${PORT}/`);
-  console.log(`serving ${ROOT}`);
+  console.log(`serving ${path.resolve(ROOT, WEB)}, then ${ROOT}`);
 });

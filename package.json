@@ -9,7 +9,10 @@
     "node": ">=22.6"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "build": "node dev/build.mjs",
+    "serve": "node dev/serve.mjs",
+    "preview": "node dev/serve.mjs 8174 dist"
   },
   "devDependencies": {
     "@types/node": "^26.4.0",

@@ -430,6 +430,36 @@ AudioWorklet module scripts loaded this way **do** support static imports, so
 `audioWorklet.addModule('/src/audio/mixer-worklet.ts')` pulls in `mixer.ts` and `interpolate.ts`
 without bundling. That was the risky part of the design and it works.
 
+## Shipping it: `npm run build`
+
+`dev/build.mjs` writes the four pages and everything they import into `dist/` as plain `.js`, using
+the same `stripTypeScriptTypes` the dev server uses per request. **Still no bundler**: every module
+keeps its own file and its own imports, and the only edits are the type strip and turning `.ts`
+specifiers into `.js`. What runs in the browser is still the source `node --test` runs.
+
+| | |
+|---|---|
+| `npm run build` | 43 modules (749 kB of source) + 4 pages → `dist/` |
+| `npm run preview` | serves `dist/` at :8174, falling back to the repository for `fixtures/` |
+
+❗ **It walks imports from the four pages rather than copying every `.ts`.** `dev/` holds Node-only
+tools beside the page code — `live-sim.ts` and `walk-levels.ts` import `node:fs` — and shipping
+those would put files in `dist/` that cannot load. ⚠️ **The AudioWorklet module is nothing's import**:
+it is fetched at runtime by a string, so it is a root of the walk in its own right. Miss it and the
+build succeeds and the player is silent.
+
+❗ **The output is relocatable, and that is tested rather than asserted.** Pages sit at the root with
+their modules under `dev/`, so `../src/…` means the same thing it means in the checkout, and nothing
+in the built site is an absolute path — the one that was, `addModule('/src/audio/mixer-worklet.ts')`
+in `dev/app.ts`, now goes through `asset()` like the live page's. ✔ Verified by serving `dist/` under
+a prefix (`/dist/live.html`) *and* at a bare root: `Ascetic` opens to 25 sequencers, 19,772 voices
+are scheduled, and it plays — `9 notes · audio 10.9% · no dropouts`, no console errors.
+
+⚠️ `fixtures/` is not copied and never should be. See *Asset licensing* in
+[game-assets.md](game-assets.md) for where a deployment's assets come from instead.
+
+## The dev server
+
 The server serves only files inside the repository and **makes no outbound requests at all**. Game
 assets never pass through it — the page reads the user's bank through a file picker, in the tab, as
 the licensing story requires — and neither does a level: one opened from the archive is fetched by
