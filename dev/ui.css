@@ -213,34 +213,22 @@ input.picker-search {
 .group { min-width: 0; border: 1px solid var(--line-soft); border-radius: 8px; padding: .7rem .8rem; }
 .hintline { color: var(--dimmer); font-size: .82rem; margin: .55rem 0 0; }
 
-/* ------------------------------------------------------- the archive search */
-/* The third way to open a level, beside a file and a folder: `dev/lbpsearch.ts`
-   reads the LBP archive index and `dev/archive-panel.ts` supplies this markup. */
+/* -------------------------------------------------------- the archive field */
+/* The third way to open a level, beside a file and a folder: a root level hash,
+   fetched straight from the Internet Archive. `dev/archive-panel.ts` supplies
+   this markup. */
 .archive {
   margin-top: .8rem; padding: .8rem; background: var(--panel);
   border: 1px solid var(--line); border-radius: var(--radius);
 }
-/* `input[type="text"]` above centres its text in a monospace face, which is
-   right for a number box and wrong for a search field; naming the element wins
-   the specificity, exactly as `.picker-search` has to. */
-input.archive-q { flex: 1 1 16rem; min-width: 0; text-align: left; font-family: inherit; }
+/* `input[type="text"]` above centres its text in a monospace face. Monospace is
+   right for forty hex digits; centring is not, and naming the element is what
+   wins the specificity, exactly as `.picker-search` has to. */
+input.archive-q { flex: 1 1 24rem; min-width: 0; text-align: left; }
 .archive-note { margin: .7rem 0 0; color: var(--dimmer); font-size: .85rem; }
 .archive-note.bad { color: var(--bad); }
-/* The permanent line under the status one: what the box takes, and the fact
-   that one of the two needs no server. */
+/* The permanent line under the status one: where a hash comes from, and the
+   fact that this needs no server. */
 .archive-hint { margin: .35rem 0 0; color: var(--dimmer); font-size: .8rem; }
 .archive-hint b { color: var(--dim); font-weight: 600; }
 .archive-hint a { color: var(--accent); }
-.archive-list { margin-top: .6rem; max-height: 21rem; overflow-y: auto; }
-.archive-row {
-  display: flex; flex-direction: column; align-items: flex-start; gap: .05rem;
-  width: 100%; text-align: left; background: none; border: 0; border-radius: 6px;
-  padding: .4rem .5rem; color: var(--ink);
-}
-.archive-row:hover { background: var(--panel-2); }
-.archive-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.archive-detail { color: var(--dimmer); font-size: .82rem; }
-/* A level from a game with no music sequencer: shown, and shown to be quiet. */
-.archive-quiet .archive-name { color: var(--dim); }
-.archive-pager { margin-top: .6rem; justify-content: center; }
-.archive-page { color: var(--dimmer); font-size: .85rem; }

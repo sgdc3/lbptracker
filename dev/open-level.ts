@@ -15,7 +15,7 @@
  * nothing about files at all. See `steering/game-assets.md`.
  */
 
-import { wireArchiveSearch } from './archive-panel.ts';
+import { wireArchiveOpen } from './archive-panel.ts';
 import type { BackupFile, BackupResult } from '../src/core/backup.ts';
 
 /**
@@ -127,11 +127,11 @@ export function isZip(file: File | { name: string }): boolean {
  * cannot tell it from a click on its own background. Two buttons, one job each,
  * and the drag stays for a file or a folder.
  *
- * ❗ **The archive search is the third button and it lives here** rather than
- * beside each page's own wiring. Three pages open levels; the last time two of
- * them grew their own copy of something this small it cost a day. A page opts
- * in by having the markup and passing `searchButton` and `searchHost`, and
- * everything it then does ends in this same `onOpen`.
+ * ❗ **The archive is the third button and it lives here** rather than beside
+ * each page's own wiring. Three pages open levels; the last time two of them
+ * grew their own copy of something this small it cost a day. A page opts in by
+ * having the markup and passing `archiveButton` and `archiveHost`, and what it
+ * then opens ends in this same `onOpen`.
  */
 export function wireOpen(opts: {
   zone: HTMLElement;
@@ -139,14 +139,14 @@ export function wireOpen(opts: {
   folderInput?: HTMLInputElement;
   fileButton?: HTMLElement | null;
   folderButton?: HTMLElement | null;
-  /** The "search the archive" button and the empty box the panel is built in. */
-  searchButton?: HTMLElement | null;
-  searchHost?: HTMLElement | null;
+  /** The "from the archive" button and the empty box the panel is built in. */
+  archiveButton?: HTMLElement | null;
+  archiveHost?: HTMLElement | null;
   onOpen: (opened: Opened) => void | Promise<void>;
 }): void {
   const { zone, fileInput, folderInput, fileButton, folderButton, onOpen } = opts;
-  if (opts.searchButton && opts.searchHost) {
-    wireArchiveSearch({ button: opts.searchButton, host: opts.searchHost, onOpen });
+  if (opts.archiveButton && opts.archiveHost) {
+    wireArchiveOpen({ button: opts.archiveButton, host: opts.archiveHost, onOpen });
   }
   const give = async (from: Promise<Opened | undefined>) => {
     const opened = await from;

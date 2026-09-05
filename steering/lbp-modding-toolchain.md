@@ -457,62 +457,67 @@ arrives at the wrong pitch.
 
 ## The public archive — where to get a level when you have no backup
 
-Measured 2026-09-05, when the live page grew a third way to open a song.
+Measured 2026-09-05, when the pages grew a third way to open a song.
 
 The Mm servers closed in 2021 and their resource store survives as an Internet Archive dump
 (`@tamiya99/uploads`), indexed by Zaprit's **LBP Search Facility**, <https://zaprit.fish>
-(<https://github.com/Zaprit/LBPSearch>). Four facts about it, all read off the running site and its
-source:
+(<https://github.com/Zaprit/LBPSearch>). A listener finds a level there and pastes its **root level
+hash** into the tracker; `dev/lbparchive.ts` turns the hash into a URL and the page downloads it.
 
-- **There is no API.** Every route renders Go `html/template`; the search result table has ten fixed
-  columns and the level page carries the root level's SHA-1 in a `<span class="code">`. That is what
-  `dev/lbpsearch.ts` reads, and `test/lbpsearch.test.ts` freezes the two shapes.
-- **`zaprit.fish` sends no CORS headers, `archive.org` does.** So the search has to go through
-  `dev/serve.mjs` and the level does not — which is the better split anyway, because it means no
-  level ever passes through our server.
 - **The download URL is a pure function of the hash**, from `SlotHandler` in `handlers.go`:
-  `archive.org/download/dry23r<h[0]>/dry<h[0:2]>.zip/<h[0:2]>%2F<h[2:4]>%2F<h>`. A page can build it
-  without asking anyone. The site also knows which hashes the archive never received and says so on
-  the level's page, which is worth passing on rather than letting the download 404.
-- ⚠️ **The site's own page number is not the page number.** `?page=` is zero-based (the offset is
-  `page * 50`), and the template prints `page + 1` except on a full page, where the handler
-  overwrites it with `page`. So a full first page renders "Page 0" and a short one renders "Page 1".
-  Read your own page number, never the site's.
+  `archive.org/download/dry23r<h[0]>/dry<h[0:2]>.zip/<h[0:2]>%2F<h[2:4]>%2F<h>`. That is what makes
+  the whole thing possible without asking anyone anything.
+- **`archive.org` answers any origin.** `view_archive.php` echoes whatever `Origin` is sent —
+  verified from `https://example.github.io` — so the download works from a dev server, a static host
+  or a `file://` page alike.
+- ⚠️ **`zaprit.fish` sends no CORS headers at all**, on any route. A page cannot read its search or
+  its level pages. This is the fact the whole design turns on.
 
 ✔ **A root level on its own is enough.** Downloaded straight from archive.org, "Music Gallery #3"
 (`8febe1f9…`, LBP3 PS4/PS5, 339 KB) parses into **31 sequencers with zero problems** — and on
 **branch 0x218**, which the corpus did not contain. The Things a level's music lives on are in the
 level's own resource; the separate `.plan` resources matter for a creator's *backup*, not for this.
 
-### Can the search work with no server at all? — measured 2026-09-05
+### ❌ The search, built and then removed — 2026-09-05
 
-Asked directly, and the answer is **the search no, the download yes**, which is why the box takes a
-hash as well as words.
+For one commit the tracker had a real search box: `dev/serve.mjs` proxied `/zaprit/*`, scraped the
+site's HTML (there is no API — every route is Go `html/template`) and returned JSON. **It worked**,
+and it was removed the same day, deliberately.
 
-**Reading the archive's own database from a page is impossible**, and not for want of trying. The
-index behind zaprit.fish is `dry.db`, a **2.65 GB SQLite** published as `archive.org/details/dry23db`
-(2,651,348,992 bytes). Paging through it over HTTP — the `sql.js-httpvfs` technique — needs `Range`
-**and** CORS on the same URL, and archive.org gives exactly one of the two:
+The reason is not that it was hard. It is that it only worked on a dev machine: the search needed a
+Node process running beside the page, so the tracker's most useful "I have no backup" path would
+have been the one that broke the moment anyone hosted it. A file server should not also be a proxy,
+and a listener's search should not travel through it. The hash needs nothing.
+
+Kept here because they cost hours to learn and the history is where the code went:
+
+- The result table has ten fixed columns; the level page carries the SHA-1 in a `<span class="code">`
+  and warns, in a toast, about hashes the archive never received.
+- ⚠️ **The site's own page number is not the page number.** `?page=` is zero-based (the offset is
+  `page * 50`), and the template prints `page + 1` except on a full page, where the handler
+  overwrites it with `page`. A full first page renders "Page 0" and a short one renders "Page 1".
+- ⚠️ **A hash cannot be found in text with ``.** In `…eb%2F8febe1f9…` the character before it is
+  the `F` of `%2F`, itself a hex digit, so the boundary fails and a backtracking match lands on a
+  40-digit window two characters off. Take the last path segment instead — `readPaste` does, and the
+  test pins it.
+
+### Why a search cannot be served from a static page — measured
+
+Not for want of trying. The index behind zaprit.fish is `dry.db`, a **2.65 GB SQLite** published as
+`archive.org/details/dry23db` (2,651,348,992 bytes). Paging through it over HTTP — the
+`sql.js-httpvfs` technique — needs `Range` **and** CORS on the same URL, and archive.org gives
+exactly one of the two:
 
 | URL | `Range` | CORS |
 |---|---|---|
 | `archive.org/download/dry23db/dry.db` | ✔ `206 Partial Content` | ✘ no header at all |
 | `archive.org/cors/dry23db/dry.db` | ✘ ignored: `200 OK`, `Content-Length: 2651348992` | ✔ echoes the origin |
 
-So a static page can have the whole 2.65 GB or none of it. That closes the clever route.
-
-✔ **The level download, though, works from any origin.** `view_archive.php` echoes whatever `Origin`
-is sent — verified with `https://example.github.io` — so the bytes were never the problem. Only
-finding them is. And `rootLevelUrl` is a pure function of the SHA-1 that every level page prints in
-a copyable box, so **pasting those 40 digits opens a level with no server in the loop**. Proved in
-the browser by stubbing every `/zaprit/` request to a 404: the hash route made **zero** proxy
-requests and still opened 31 sequencers, and the words route said what was wrong and what to paste
-instead.
-
-What is left, if a real search without a server is ever wanted: **ship our own index**. `dry.db`
-downloaded once, LBP2/LBP3 slots reduced to id, name, author, hearts and root hash, sharded by
-search prefix so a page fetches `mu.json` and nothing else. Or ask upstream for one header —
-`Access-Control-Allow-Origin: *` on `/search` and `/slot/{id}` would delete the proxy entirely.
+So a static page can have the whole 2.65 GB or none of it. If a real serverless search is ever
+wanted, the way in is **our own index**: `dry.db` downloaded once, LBP2/LBP3 slots reduced to id,
+name, author, hearts and root hash, sharded by search prefix so a page fetches `mu.json` and nothing
+else. Or one header upstream — `Access-Control-Allow-Origin: *` on `/search` and `/slot/{id}` would
+make the browser able to ask directly, with no proxy and no index of our own.
 
 ## The save archive — how a PS3 backup opens, and it does open
 

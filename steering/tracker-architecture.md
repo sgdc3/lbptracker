@@ -8,9 +8,9 @@ non-obvious choices, so a future session can disagree with the reasoning rather 
 A creator's backup is not a file, it is a **pile**: the game writes each
 resource under its own SHA-1, so "open your level" otherwise means "find the
 right extensionless file among forty and guess". All three pages that open
-levels take a folder, a zip of one, a single file, **or a search of the public
-archive** — and every one of those four ends in the same `onOpen` with the same
-`{ name, bytes }[]`.
+levels take a folder, a zip of one, a single file, **or a root level hash out of
+the public archive** — and every one of those four ends in the same `onOpen`
+with the same `{ name, bytes }[]`.
 
 - `src/core/backup.ts` — the reading, over `{ name, bytes }[]`. It knows nothing
   about files, directories or archives, because the user's own game data is read
@@ -20,10 +20,13 @@ archive** — and every one of those four ends in the same `onOpen` with the sam
   `inflateRawSync` in Node).
 - `dev/open-level.ts` — the one drop zone, shared. The three pages had grown
   three copies of the drag wiring already.
-- `dev/lbpsearch.ts` + `dev/archive-panel.ts` — the fourth route, for a listener
-  with no backup of their own: the LBP archive index, searched. Wired from
-  `wireOpen` rather than from each page, for the reason the drop zone is. See
-  *The public archive* in `lbp-modding-toolchain.md` and *The dev server* below.
+- `dev/lbparchive.ts` + `dev/archive-panel.ts` — the fourth route, for a listener
+  with no backup of their own: paste the root level hash a level's page at
+  zaprit.fish shows, and the level comes straight from the Internet Archive.
+  Wired from `wireOpen` rather than from each page, for the reason the drop zone
+  is. ❗ **It needs no server** — not even the dev one — which is why it is a
+  hash and not a search; see *The public archive* in `lbp-modding-toolchain.md`
+  for the search that was built and removed the same day.
 
 ❗ **A level is told from everything else by its first four bytes** — `LVLb` or
 `PLNb` — and never by its name. A backup is full of `ICON0.PNG`, `PARAM.SFO`,
@@ -427,24 +430,17 @@ AudioWorklet module scripts loaded this way **do** support static imports, so
 `audioWorklet.addModule('/src/audio/mixer-worklet.ts')` pulls in `mixer.ts` and `interpolate.ts`
 without bundling. That was the risky part of the design and it works.
 
-The server serves only files inside the repository, and makes exactly one kind of outbound
-request: **`/zaprit/*` asks the LBP archive index for a level search**, because that site sends no
-CORS headers and a page therefore cannot ask it directly. Only the words a listener typed go out,
-the reply comes back as JSON parsed by `dev/lbpsearch.ts`, and the upstream URL is rebuilt here from
-parsed parameters rather than passed through — a dev server on a laptop must not become an open
-proxy by accident. See *The public archive* in `lbp-modding-toolchain.md`.
+The server serves only files inside the repository and **makes no outbound requests at all**. Game
+assets never pass through it — the page reads the user's bank through a file picker, in the tab, as
+the licensing story requires — and neither does a level: one opened from the archive is fetched by
+the page straight from archive.org, which answers any origin.
 
-Game assets never pass through it — the page reads the user's bank through a file picker, in the
-tab, as the licensing story requires — and **neither does a level**: one found by search is fetched
-by the page straight from archive.org, which does send CORS headers.
-
-⚠️ **The search therefore needs the dev server**, and a page opened from `file://` or a static host
-has no `/zaprit/` route. `dev/archive-panel.ts` says so in as many words rather than reporting it as
-the archive being down, which would send somebody looking in the wrong place entirely — **and the
-message names the way out, because there is one in the same box**: the search field also takes a
-root level's SHA-1 (or a pasted archive.org URL), and that path never touches the proxy. See *Can
-the search work with no server at all?* in `lbp-modding-toolchain.md` for what was measured and what
-a real serverless search would cost.
+❗ **That is a decision, not an absence.** For one commit the server proxied a level search to
+zaprit.fish, which sends no CORS headers; it worked and was removed the same day. A file server
+should not also be a proxy, a listener's search should not travel through it, and — the part that
+settled it — a feature that needs a Node process beside the page is the wrong shape for the one
+route that exists *because* the listener has nothing set up. See *The search, built and then
+removed* in `lbp-modding-toolchain.md`.
 
 ~~**The Thing walk is the big one.**~~ Done, and it was a real port rather than an afternoon:
 reaching a `PInstrument` means deserialising every Thing and every part that precedes it in the
