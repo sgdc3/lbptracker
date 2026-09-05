@@ -587,18 +587,55 @@ v0x160906  [header + 0x0c] = [inst + 0x5c]             ; the row again, raw
 `src/core/project.ts` implements the modulo. The `mod 8` at `0x3afc` that the modulo was inferred
 from is a **safety net on an already-clamped value**, not the mapping.
 
-⚠️ **Do not change `channelVolume` yet.** Two operands are unread and getting either wrong is worse
-than the modulo:
+### ✔ And both operands are read: **the board is cut into bands**
 
-- **the divisor**, `[rbp+0x18]` of `v0x1c4420`, passed as `edx` from `v0x1c5b0f` and set earlier in
-  a function starting at `v0x1c5670`;
-- **the bound**, `[clip + 0x30]` — almost certainly `NumChannels`, and one read away.
+Traced the same way — the other two call sites of `v0x1c4420` are in one function, `v0x1c74b0`, and
+both pass `r15d`:
 
-❗ **The shape argues for row *bands*.** A divisor greater than one groups consecutive rows onto one
-channel — rows 0-3 to channel 0, 4-7 to channel 1 — and that is exactly what the 30 multi-channel
-sequencers' descending ramps (`1.00, 0.70, 0.50, 0.20`) look like: an intensity layering by band,
-not a per-instrument mixer. ⚠️ It also explains why the corpus could not tell modulo from clamp:
-**308 of 338 sequencers have `NumChannels = 1`**, where every row lands on channel 0 either way.
+```
+v0x1c7900  vpermilps xmm0, xmm0, …          ; a lane of the board's size
+v0x1c7909  xmm0 /= 105.0                    ; the cell size -- `boardCell`'s own constant
+v0x1c7911  xmm0 += 0.5
+v0x1c7919  floor
+v0x1c791f  rax = (int)xmm0                  ; ROWS: the board's height in cells
+v0x1c7928  div dword [r13 + 0x30]           ; ÷ the same field the clamp bounds with
+v0x1c792f  r15d = eax
+v0x1c7932  eax = r15d - 1
+v0x1c7939  if (r15d != 0) eax = 0
+v0x1c793c  r15d -= eax                      ; max(quotient, 1)
+```
+
+`r13` is the object that goes on to be `v0x1c4420`'s `rdi`, so `[obj + 0x30]` is **both** the
+divisor's denominator and the clamp's bound — which is what a channel count is. The whole routing,
+in three lines:
+
+```
+rows    = floor(boardHeight / 105 + 0.5)          the board's height in cells
+divisor = max(rows / NumChannels, 1)              rows per band, integer division, at least 1
+channel = clamp(row / divisor, 0, NumChannels-1)
+```
+
+❗ **The board is cut into `NumChannels` horizontal bands of equal height, and a placement's channel
+is the band its row falls in.** Not a modulo, and not a direct index. That reading was reached from
+the shape before it was read — the 30 multi-channel sequencers carry descending ramps like
+`1.00, 0.70, 0.50, 0.20`, which is an intensity layering by band rather than a per-instrument mixer
+— and the code says exactly that.
+
+⚠️ It also explains why the corpus could never have settled it: **308 of 338 sequencers have
+`NumChannels = 1`**, where every row lands on channel 0 under any of the three readings.
+
+### What is left is one datum, and it is not in the binary
+
+⚠️ **`channelVolume` still implements `row mod NumChannels` and is still not changed**, because
+`rows` — the board's height in cells — is **not extracted from the level today**. `boardCell`
+projects a placement onto the board's axes and `readShape` reads the board's polygon and discards
+it. The height is there; nothing carries it out.
+
+So this stops being reverse engineering and becomes ordinary work: extract the board's extent
+alongside its matrix, divide by 105 the way `v0x1c7909` does, and the formula above is
+implementable. ⚠️ Until then the modulo stays, because a banding computed from a guessed `rows`
+would be worse than a mapping that is at least consistent — and it is 30 sequencers of 338 either
+way.
 
 ⚠️ `[header + 0x0c]` keeps the row **undivided and unclamped** beside the routed copy, so whatever
 else reads the array can still see where the placement actually sat.
