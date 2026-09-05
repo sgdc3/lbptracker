@@ -42,7 +42,7 @@ import { channelVolume, schedule, type Sequencer } from './project.ts';
 import { type RInstrument } from './rinstrument.ts';
 import { blockRoot, notePitch } from './scale.ts';
 import { swungFrame } from './swing.ts';
-import { pitchRatio, samplesPerStep, velocityGain } from './voice.ts';
+import { foldGain, pitchRatio, samplesPerStep, velocityGain } from './voice.ts';
 
 /** The output rate. The engine's own is hard-coded to this too. */
 export const RATE = 48000;
@@ -112,10 +112,19 @@ export const RATE = 48000;
  * alike, which is why the tracker reproduces it. It does mean the game's
  * **internal** image is wider than what this renders.
  *
- * ⚠️ **Width, not gain.** The recordings were level-matched, so they fix the
- * ratio between the channels and say nothing about the absolute level. This
- * scales the pan and leaves `(left + right)` at 1 exactly as before, changing
- * only the quantity that was measured.
+ * ❌ **This used to say "width, not gain", and that was half of a linear
+ * operator.** The recordings were level-matched, so they say nothing about
+ * absolute level — but the *fold* does, and the fold is now read rather than
+ * fitted. `L = ch0 + k·d·(ch0+ch1)` shrinks the difference by `1/(1 + 2·k·d)`
+ * and grows the **sum** by `(1 + 2·k·d)`, which is the same number: narrowing
+ * the pan to `W` and leaving the gain alone renders everything a flat
+ * **−4.645 dB** under the game's own stereo.
+ *
+ * `foldGain` in `src/core/voice.ts` is the other half, `1/W`, and it is applied
+ * wherever the narrowing is — in the spec's gain here, and in the worklet for
+ * the live path, which renders at `panWidth: 1` and narrows on the audio
+ * thread. ⚠️ **It did not show in a WAV**, because `dev/render-level.ts`
+ * normalises; it showed the first time a listener played the live page.
  */
 export const PAN_WIDTH = 2 - Math.SQRT2;
 
@@ -731,7 +740,13 @@ export async function renderSequencer(
         channelVolume(seq, track) *
         2 *
         P(OUTPUT_PARAMS.level) *
-        stackGain,
+        stackGain *
+        // ❗ **The fold's gain, the other half of `panWidth`.** Narrowing the
+        // pan without it renders everything a flat -4.645 dB under the game's
+        // own stereo fold; see `foldGain`. A `panWidth` of 1 -- what the live
+        // path renders at, because the worklet narrows instead -- returns 1, so
+        // this is applied exactly once wherever the narrowing happens.
+        foldGain(panWidth),
       // `Params[26]`. The engine clamps it to 0..1 when the note starts
       // (`0x3cd8`-`0x3cf3`) and again to 0.95 in the block; `driveCoefficient`
       // does the second, so only the first belongs here.

@@ -14,6 +14,7 @@
 import { Echo, Reverb, clipToUnit, reverbPreset } from './effects.ts';
 import { INTERPOLATORS, type InterpolatorName } from './interpolate.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from './mixer.ts';
+import { foldGain } from '../core/voice.ts';
 import { buildMipChain } from './mipmap.ts';
 
 /** A sample handed over from the main thread, with its channels transferred. */
@@ -241,7 +242,12 @@ export class MixerProcessor extends AudioWorkletProcessor {
             this.panWidth === 1
               ? message.voice.pan
               : 0.5 + (message.voice.pan - 0.5) * this.panWidth;
-          this.mixer.play({ ...message.voice, sample, pan });
+          // ❗ **The narrowing carries a gain and it is applied here**, because
+          // here is where the narrowing happens: the live path renders its plan
+          // at `panWidth: 1` so `render.ts` applies neither, and the slider on
+          // the page moves both together. See `foldGain`.
+          const gain = message.voice.gain * foldGain(this.panWidth);
+          this.mixer.play({ ...message.voice, sample, pan, gain });
         }
         break;
       }

@@ -145,6 +145,41 @@ export function panGains(pan: number): { left: number; right: number } {
   return panGainsInto(pan, { left: 0, right: 0 });
 }
 
+/**
+ * The gain that comes with narrowing a pan to `width` — **the other half of the
+ * same operator**.
+ *
+ * ❗ **Narrowing a pan is not a rotation, it is a fold, and a fold has a gain.**
+ * The game's stereo is a 7.1 bus folded down: FMOD's matrix puts `k·(ch0+ch1)`
+ * in the centre with `k = 0.5` (`v0xa2599f`) and BS.775's downmix adds the
+ * centre to both sides at `d = 1/sqrt2`, so
+ *
+ * ```
+ *   L = ch0 + k·d·(ch0 + ch1)          the difference shrinks by 1/(1 + 2·k·d)
+ *   R = ch1 + k·d·(ch0 + ch1)          and the SUM grows by  (1 + 2·k·d)
+ * ```
+ *
+ * `PAN_WIDTH` is `1/(1 + 2·k·d) = 2 - sqrt2`, so the sum's gain is exactly its
+ * reciprocal. Applying `pan' = 0.5 + (p - 0.5)·W` and `gain × 1/W` reproduces
+ * the fold at every pan **exactly** — the ratio `ours/engine` is a flat `W` at
+ * pan 0, 0.25, 0.5, 0.75 and 1 without it, which is the arithmetic below.
+ *
+ * ⚠️ **This project applied the narrowing and not the gain for two days**, so
+ * everything it rendered was a uniform **−4.645 dB** under the game's own fold.
+ * It did not show in a WAV, because `dev/render-level.ts` normalises; it showed
+ * on the live page, which does not. A listener reported it as "the whole
+ * sequencer is quiet", and that is what a half-applied linear operator sounds
+ * like.
+ *
+ * A `width` of 1 is the fold switched off and returns 1, so `LBP_PAN_WIDTH=1`
+ * still renders the file's own pans at the file's own level.
+ */
+export function foldGain(width: number): number {
+  // A width of 0 is not a fold anyone can build -- it needs an infinite centre
+  // feed -- and the live page's slider can ask for it. Leave the gain alone.
+  return width > 0 ? 1 / width : 1;
+}
+
 /** `panGains` writing into a caller-owned object. Same arithmetic. */
 export function panGainsInto(
   pan: number,

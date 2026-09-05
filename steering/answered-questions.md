@@ -1532,11 +1532,30 @@ type_infos, and dumping one prints strings where functions should be. Require sl
 ### What was implemented
 
 `PAN_WIDTH` in `src/core/render.ts`, applied where the voice spec is built; `LBP_PAN_WIDTH=1`
-restores the file's own pans. ⚠️ **Width, not gain** -- the recordings were level-matched, so they
-fix the ratio between the channels and say nothing about the absolute level. The implementation
-scales the pan and leaves `left + right` at 1, changing only the quantity that was measured.
-`panGains` itself stays hard-panning and linear, because that **is** the plugin's law at `0x2d21`;
-the narrowing belongs above it.
+restores the file's own pans. `panGains` itself stays hard-panning and linear, because that **is**
+the plugin's law at `0x2d21`; the narrowing belongs above it.
+
+❌ **It said "width, not gain" for two days, and that was half of a linear operator.** The captures
+are level-matched and say nothing about absolute level, which was the right reason to be careful —
+but the fold is *read* now, and it fixes the level relative to the DSP whether or not a capture can
+confirm it. `L = ch0 + k·d·(ch0+ch1)` shrinks the difference by `1/(1 + 2kd)` and grows the **sum**
+by `(1 + 2kd)`, the same number. Narrowing without it is a uniform **−4.645 dB**, at every pan:
+
+| pan | engine L | ours L | ratio |
+|---|---|---|---|
+| 0.00 | 1.353553 | 0.792893 | 0.585786 |
+| 0.50 | 0.853553 | 0.500000 | 0.585786 |
+| 1.00 | 0.353553 | 0.207107 | 0.585786 |
+
+`foldGain(width) = 1/width` in `src/core/voice.ts` is the missing half, applied wherever the
+narrowing happens — the spec's gain offline, the worklet live. Corpus peaks go 0.547 → 0.934,
+0.435 → 0.743, 0.119 → 0.203 with no frame clipped.
+
+⚠️ **A normalising renderer hid it for two days.** `dev/render-level.ts` normalises its WAV, so
+every offline check came out at full scale and nothing ever looked quiet. It took a listener playing
+the **live** page, which does not normalise, to say "the whole sequencer is quiet" — which is
+exactly what a half-applied fold sounds like. **A test that normalises cannot see a gain error**, and
+this project has a lot of tests that normalise.
 
 ### The wrong turn, and it lasted a day
 
