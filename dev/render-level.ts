@@ -139,7 +139,8 @@ const oneShot = (process.env.LBP_ONESHOT ?? 'gate') as 'full' | 'natural' | 'gat
  * `LBP_RELEASE_TAIL=1` keeps a voice's pool record through its release.
  *
  * ❗ The engine does that; a listener says the game does not sound like it.
- * See `RenderOptions.releaseTail` and question 29 -- 25.85 s of `C4K3 S0NG` is
+ * See `RenderOptions.releaseTail` and question 29 in answered-questions.md --
+ * 25.85 s of `C4K3 S0NG` is
  * the reproducer.
  */
 const releaseTail = process.env.LBP_RELEASE_TAIL === '1';

@@ -519,7 +519,8 @@ export async function renderSequencer(
       // ⚠️ **This makes the renderer cut MORE notes, not fewer**: 1,411 of
       // `C4K3 S0NG`'s 13,091 become 2,922. That is the engine's arithmetic and
       // it is what the pool is for; a version that steals less is a version
-      // playing notes the game does not have room for. See question 29 --
+      // playing notes the game does not have room for. See question 29 in
+      // answered-questions.md --
       // including what a capture would have to show to overturn this.
       occupancySteps: Math.min(
         Math.max(event.durationSteps, oneShotSteps) + (withReleaseTail ? releaseTail : 0),
@@ -570,7 +571,8 @@ export async function renderSequencer(
         // **automation**: the engine re-reads `[record + 0x0c]` from whichever
         // control point is current, so a note fading out really does become the
         // cheapest victim. `allocateVoices` scores a note once, at its opening
-        // velocity. That one is a real divergence and is open question 29.
+        // velocity. That one is a real divergence; see question 29 in
+        // steering/answered-questions.md.
         score: channelVolume(seq, track) * track.level * velocityGain(e.volume),
       };
       entries.push({ eventIndex: i });

@@ -2039,3 +2039,363 @@ walk is right and the plumbing is proved; the payoff is still hypothetical, exac
 plans (16 distinct songs either way on "Music Gallery #3"). What is now certain is that a hash off
 the index opens *something* whatever kind of thing it names, which was not true before.
 
+## 29. Does a releasing voice still hold its record? — ANSWERED: yes, 2026-09-05
+
+**Yes.** The engine frees a voice record when the sound ends, not when the note does, and that is
+measured from six independent places in `fmodextinput.prx` (the table below). The question is closed.
+
+⚠️ **What the tracker ships is a decision rather than the measurement**, and it is deliberate:
+`RenderOptions.releaseTail` (`LBP_RELEASE_TAIL=1`) defaults **off**. With the tail on, a listener
+rejects the render at a named timestamp; with it off, the same listener accepts it. Shipping an
+artefact the game does not have is worse than shipping a model that is knowingly short, and the
+switch keeps the measured behaviour one environment variable away.
+
+**The residual is one experiment, not an unknown**: capture the game at 25.85 s of `C4K3 S0NG` and
+count the choir chord's voices. Everything else on both sides is measured, including how far wrong
+the decision can be — the tail newly crowds 12.7% of that song and more than half of that is one to
+four records over the cap.
+
+What follows is the whole investigation as it stood, because the wrong turns in it are the useful
+part.
+
+**The engine frees a voice record when the SOUND ends, not when the note does.** Measured in
+`fmodextinput.prx`'s per-voice renderer, at the bottom of `sub_0x1c60`:
+
+```
+0x3035  xmm0 = (float)[r14+0x40]        ; the voice position, a double
+0x304d  eax  = [r8 + slot*0x98 + 0x78]  ; the slot's frame count
+0x3056  vucomiss xmm0, xmm1             ; past the end of the sample?
+0x305c  cmp [r8 + slot*0x98 + 0x80], 0  ; ...and not looped?
+0x306b  [r14+4] = 0                     ; then silence it
+0x3093  [r14] = 0xff                    ; and FREE the record
+0x3097  [r14+0x10] = 1
+        -- or, the other way in:
+0x20ea  vucomiss xmm3(=0), [r12+4]      ; has the voice's level reached zero?
+0x2117  [rbp-0xb74] = 1                 ; -> free it at 0x3093
+```
+
+`[r12+4]` is the same field the allocator scores with, so the second condition is "this voice has
+faded to nothing". **A record is therefore held for the note plus its release tail**, and
+`occupancySteps` in `src/core/render.ts` is the note's written duration and nothing else.
+
+### Why it is not simply implemented
+
+Measured on `C4K3 S0NG` (13,091 notes, step = 115.4 ms). Release times in steps: median **0.18**,
+p90 **2.65**, p99 **6.48**, max **10.77**; **19.1%** of notes release for longer than a step. Adding
+that tail to the occupancy:
+
+| occupancy | notes cut short |
+|---|---|
+| the written duration (today) | 1,526 (11.7%) |
+| plus the release tail | **3,908 (29.9%)** |
+
+⚠️ **That is worse than the bug that was just fixed.** A listener rejected 3,634 (28%) by ear as
+"nothing like the original", and this would land at 3,908. So the model is missing something that
+lets a releasing voice give up its record cheaply.
+
+### `[+0x14]` — found, and it is NOT the answer
+
+The allocator has a branch that looked like the reconciliation:
+
+```
+0x1610  test dil, dil                ; a bool the CALLER passes
+0x1615  cmp dword [rax + 0x14], 0
+0x1619  jg 0x1652                    ; take THIS record, before asking if it is free
+0x161b  cmp byte [rax], 0xff         ; the ordinary free test
+```
+
+❌ **It is dead code in this plugin.** The allocator has exactly two callers — found by scanning
+the file for `E8` displacements that land on `0x1600`, `v0x4ef` and `v0x96b` — and **both pass
+`xor edi, edi`**. `dil` is never set, so the fast path is never taken and `[+0x14]` never decides
+anything here.
+
+And `[+0x14]` itself is a plain marker, written at note start by the same store that opens the gate:
+
+```
+0x0a47  mov byte [r13], r12b            ; claim the record: [+0x00] = the slot index
+0x0a4b  movabs rax, 0x271000000000
+0x0a55  mov qword [r13 + 0x10], rax     ; [+0x10] = 0 (held), [+0x14] = 10000
+```
+
+The block driver zeroes `+0x10` and `+0x14` together when it frees a record (`0x10a0`-`0x10a3`). A
+constant 10000 and a dead branch.
+
+⚠️ **Correction, 2026-09-05: it IS read again.** `sub_0x3930` opens with
+
+```
+0x3944  cmp dword [rsi + 0x1a44], 0     ; a state-block flag
+0x394b  jne 0x395f
+0x394d  cmp dword [rbx + 0x14], 0       ; <- the "never read again" field
+0x3951  jne 0x395f
+0x3953  test r14, r14
+0x3956  jne 0x395f
+0x3958  mov dword [rbx + 0x10], 1       ; release the voice
+```
+
+so a record whose `+0x14` is **zero** is released when that state flag is clear. On a claimed record
+`+0x14` is 10000 and the branch never fires, which is why this changes no number — but "nothing
+reads it" was wrong and the next person to look would have found the same instruction and wondered
+what else the note had missed.
+
+### So the tail really is held, and the discrepancy is somewhere else
+
+With that door closed, everything measured says the engine holds a record through the release:
+
+- the free predicate is the **envelope reaching zero** — `0x2089` calls the envelope, `0x20e0`
+  compares its result against 0 and jumps to `0x2117`, which sets the flag `0x307f` reads to free
+  the record at `0x3093`;
+- the allocator's score is `[+0x04] * [+0x0c]`, and the renderer only ever **reads** those, so a
+  fading voice does not become a cheaper victim as it fades;
+- the release times are not inflated: `ENVELOPE_SECONDS_PER_UNIT = 4` is measured off the engine's
+  own `dt` arithmetic, not chosen.
+
+### ❌ "The steal sounds different" — refuted by the code, 2026-09-04
+
+The hypothesis was that the engine hands the record over smoothly where we stop the voice dead, so
+that the same count of steals would sound far gentler. **It does not.** The note-start path calls
+the record initialiser at `0x19e0`, and that opens with:
+
+```
+0x1a06  xor esi, esi
+0x1a08  mov edx, 0xd0        ; the whole 208-byte voice record
+0x1a0d  call 0xe0            ; zero it
+0x1a12  mov byte [rbx], r14b ; then the slot index
+0x1a1a  [rbx+0x28] = xmm0    ; the modulation
+0x1a1f  [rbx+0x10] = 0       ; gate: held
+```
+
+`0xe0` is a PLT stub taking `(record, 0, 0xd0)` with its result discarded; a source pointer of zero
+rules out the `memcpy` in the import set, so it is a fill. ⚠️ The NID was **not** resolved — this is
+measured from the call's shape, not from the symbol.
+
+**So the engine wipes the record: envelope accumulator, position, phases, all of it.** The stolen
+voice stops instantly and the new note starts from silence. `Voice.renderChunk`'s hard stop at
+`begin + this.cut` is exactly what the game does, and a fade would be an invention. **Do not add
+one.**
+
+### Where that leaves it
+
+Every part of the engine's side is now measured and none of it explains the ear:
+
+| | |
+|---|---|
+| the pool is 32 | ✔ `(0x1a28 - 0x28) / 0xd0` |
+| a stacked note takes one record | ✔ the layer loop is inside the per-voice renderer |
+| a record is held until the envelope reaches zero | ✔ `0x2089` → `0x20e0` → `0x3093` |
+| a releasing voice is not a cheaper victim | ✔ the score fields are only read |
+| the `[+0x14]` fast path could yield one | ❌ dead: both callers pass `dil = 0` |
+| release times are not inflated | ✔ `ENVELOPE_SECONDS_PER_UNIT` is measured |
+| a steal is abrupt in the game too | ✔ the record is zeroed on takeover |
+
+That predicts **29.9%** of `C4K3 S0NG`'s notes cut short, and a listener says the game is nothing
+like that. Both candidates on **our** side have since been checked, and both are clean:
+
+- ✔ **`durationSteps` is right**, to the third of a step. The gate closes at
+  `lastStep + 1 + endSubStep/3` and that is exactly what `endPosition - startPosition + 1` gives.
+  See *30* in [answered-questions.md](answered-questions.md) for the two halves of the mechanism.
+- ❌ **"We schedule notes the engine would not" was a misreading, closed 2026-09-04.** The skip at
+  `0x04d4` tests `channelVolume x clipLevel`, **not the note's velocity** — `0x04cb` multiplies by
+  `[clip + 0x420]`, which `v0x1607c6` fills from `PInstrument.Level`. Measured over the corpus:
+  **0 of 74,864 clips set `Level` to zero and 0 notes sit on a muted channel**, so the skip never
+  fires on real data. The 701 notes were zero-**velocity** — a quantity the test does not look at —
+  and the engine gives every one of them a record, exactly as we do.
+
+❗ **What that chase did turn up is a real divergence, and it is now the whole of this question.**
+`sub_0x3930` rewrites both score factors once per block: `[record+0x04]` from the channel volume
+times the clip's `Level`, and `[record+0x0c]` from **the current control point's** velocity
+(`0x3c29 bextr eax, [note], 0x810`). So the engine's score **follows the note's volume automation**,
+and a note fading out becomes the cheapest thing in the pool while it fades. `allocateVoices` scores
+a note once, at its opening velocity, and never again.
+
+That is a mechanism by which a note on its way out yields its record early. **It was measured before
+being built, and it does not help this question at all.** Scoring every note by the quietest point
+it ever reaches — the most generous a following score could ever be to a thief — gives **1,494**
+steals against today's 1,411. Slightly *more*, not fewer.
+
+❗ **Because the score does not decide HOW MANY notes are stolen, only WHICH ones.** The count is
+set by the occupancy model alone: when more than 32 records are wanted at once, something is stolen
+whatever the scores say. So no refinement of the score can move 29.9% toward what the ear accepts,
+and **this question is entirely about occupancy**. The score work stands on its own — the clip's
+`Level` was genuinely missing and is now in — but it is not the way in.
+
+What remains, then, is the same single fact with nothing else attached: the engine holds a record
+until the envelope reaches zero, and a listener says the game is nothing like that. Every other
+number on both sides is measured and agrees — including the envelope itself, whose release is now
+verified identical to ours (*32* in [answered-questions.md](answered-questions.md)), so there is no
+shorter tail hiding in it. Computed properly, with the level the envelope had actually reached at
+the gate rather than the full `0 → 1` time, the tail gives **22.3%** against today's 10.8%.
+
+### ❗ A listener found the reproducer, 2026-09-04
+
+The release tail was implemented and the song rendered for judgement. The verdict came back with a
+timestamp: *"at 0:25 a choir note is interrupted; in the original it is not."*
+
+At **25.85 s** `C4K3 S0NG`'s choir (`choir.rinst`, guid 186894) starts a five-note chord and **four
+of the five are stolen at the instant they start**, so they never sound at all. With the tail off,
+**nothing is cut in that window**. The A/B is exact and the reproducer is two seconds long.
+
+Why the choir and not something else: it is genuinely the cheapest thing in the song. Its clips
+carry `Level` 0.09-0.60 against 1.0 for the drums and strings, and its velocities run 28-91 against
+127 — a score of 0.033 where the drums score 0.750. **Our score is the engine's formula exactly**
+(`channelVolume x clipLevel x velocity/127`, `sub_0x3930` `0x3afc`-`0x3c3a`), so the engine would rob
+the choir first too. The disagreement is not about which voice is stolen; it is about whether the
+pool was full.
+
+⚠️ **And the song sits right on the edge**, which is why this is so sensitive: most instruments have
+releases of 0-70 ms and add under 10% to their occupancy. One (`129081`, 1,694 notes) has 305 ms
+against a 231 ms median gate and nearly doubles its own hold. That small a change in total occupancy
+moves **1,512 notes** between cut and not cut.
+
+### ❗ Re-derived from the binary, 2026-09-05 — and the framing was wrong
+
+Every link was disassembled again from scratch, and **all of them hold**:
+
+| | address | what it says |
+|---|---|---|
+| the allocator | `0x1620`-`0x1631` | score is `[rec+0x04] * [rec+0x0c]`, minimum wins; a free record (`byte == 0xff`) short-circuits first |
+| the score's factors | `0x3b12`, `0x3c3a` | `[+0x04] = channelVolume x clip Level`, `[+0x0c] = the control point's velocity` |
+| the free predicate | `0x20de`, `0x20e4`, `0x20f1` -> `0x3093` | freed when the envelope's level reaches **zero at both ends of the block**, or the score factor is zero |
+| the sample-end free | `0x3035`-`0x3069` | position past an unlooped sample's frame count |
+| the gate | `0x3a24`, `0x3a4b`, `0x3a5a` | the record walks its clip's note chain and releases at the note carrying bit 15 |
+| a released voice | `0x3963` -> `0x3f06` | **skips the score update entirely**, so it keeps the score it had — it does not fade into being a cheap victim |
+
+So the engine's side is not in doubt and there is no unexplored door in it.
+
+### ✔ What the numbers say instead, measured 2026-09-05
+
+Two censuses of `C4K3 S0NG`'s *uncapped* demand, taken from the plan the renderer builds.
+
+**At 25.85 s, the listener's own reproducer:**
+
+| | records held | of them releasing |
+|---|---|---|
+| tail off | **18** | 0 |
+| tail on | **35** | **17** |
+
+and the seventeen tails are three instruments — `synth_strings` (6), `choir` (6), `mime_artist` (5).
+All three have **decay 0 and sustain 1.0**, so a note reaches the gate at full level and its tail is
+the whole release: 0.176 s, 0.076 s, 0.058 s. It is a chord change: the outgoing chord is still
+decaying while the incoming one asks for records, and three instruments changing chord together is
+what puts 35 where 32 fit.
+
+**Over the whole song, and this is the part that reframes the question:**
+
+| | median | p95 | p99 | peak | over 32 |
+|---|---|---|---|---|---|
+| tail off | 21 | 42 | 51 | 61 | **16.0% of the song** |
+| tail on | 25 | 48 | 56 | 75 | **28.7% of the song** |
+
+❗ **The pool is not "tipped over" by the tail — it is saturated either way.** Our model already
+wants more than 32 records for a sixth of the song with the tail off, peaking at 61, and the
+listener accepts that render. So the tail is not the thing that turns a comfortable song into a
+crowded one; it roughly doubles the time already spent over the cap, and the ear rejects the
+difference between 16% and 29%.
+
+That moved the suspicion onto the baseline, and the baseline was then checked.
+
+### ✔ The baseline is not ours — it is the song, 2026-09-05
+
+Counted **straight off the note records**, with no renderer in the way: every track's `stepOffset`
+plus each note's `startPosition`, held for `endPosition - startPosition + 1`.
+
+| | median | p95 | peak | over 32 |
+|---|---|---|---|---|
+| from the raw records | 24 | 44 | 63 | **21.0%** |
+| what the renderer asks the pool for | 21 | 42 | 61 | 16.0% |
+
+**`C4K3 S0NG` writes more notes than the hardware can play**, and our occupancy is *lower* than the
+music, not higher — the sample-exhaustion rule takes 21% down to 16%. Three ways it could have been
+our fault were checked and all three are clean:
+
+- ❌ **Duplicate placements.** All **244 tracks are distinct** in at least one field with positions
+  included; 85 distinct clip contents reused at different offsets, which is composition.
+- ❌ **One-shot overhang.** `max(durationSteps, oneShotSteps)` could have inflated drums. **0 of the
+  13,091 notes are one-shots** in this song, and the overhang is 0 record-steps.
+- ❌ **The note length.** `duration` and `endPosition - startPosition + 1` disagree on 1,057 notes,
+  which looks alarming and is not: `duration` is whole steps (`endStep - startStep + 1`) and the
+  other carries the sub-step, so the gap is the triplet population. `render.ts` uses the sub-step
+  one, which question 30 verified. The gate walk read today agrees: `0x3a41 cmp r12d, edx; jle` —
+  the release fires as soon as the integer step **passes** the last point's step.
+
+❗ **So the engine steals constantly on this song, tail or no tail.** A fifth of it wants more than
+32 records. "The game does not sound truncated" cannot mean "the game never steals": it steals a
+lot, and the ear does not hear it, because the victim is always the cheapest voice in a texture of
+twenty-four.
+
+### ✔ What the tail actually changes, and it is small
+
+Comparing the two occupancy timelines moment by moment:
+
+| | share of the song |
+|---|---|
+| over 32 with or without the tail | 16.0% |
+| **over 32 only because of the tail** | **12.7%** |
+| over 32 only without it | 0.0% |
+
+And in that newly crowded 12.7%, how far over it goes:
+
+| records wanted | share of that time |
+|---|---|
+| 33-34 | 29.6% |
+| 35-36 | 24.0% |
+| 37-40 | 28.3% |
+| 41-48 | 16.1% |
+| 49+ | 2.0% |
+
+**More than half of it is one to four records over.** So the tail is *marginally* too generous, not
+structurally wrong — and what it does is turn passages that were comfortably under the cap into
+passages that steal. That is exactly where an ear notices, and it is why the reproducer is a quiet
+chord change at 25.85 s (18 records without the tail, 35 with) rather than a dense one.
+
+⚠️ **A pool of 36, or a tail 15% shorter, would erase most of the difference.** Neither is
+justified by anything measured — the pool is `(0x1a28 - 0x28) / 0xd0 = 32` and the release is
+verified identical to the engine's — but it says how small the remaining error is, and that a
+capture only has to settle a few records either way.
+
+### Where it has been left
+
+`RenderOptions.releaseTail` (`LBP_RELEASE_TAIL=1` on the CLI), **defaulting OFF** — the unmeasured
+reading. That is deliberate and uncomfortable: the engine plainly holds the record through the
+release, and shipping an artefact the game does not have is still worse than shipping a model that
+is short. The switch keeps the measured behaviour one environment variable away.
+
+✔ **Confirmed by ear on the corrected render, same day**: with the tail off the choir enters whole
+at 25.85 s and the passage sounds right. That is one listener against a static reading of the
+binary, and it is what the default rests on until a capture says otherwise — the same kind of
+evidence, from the same person, that settled question 10.
+
+✔ **One thing did come out of it and is unconditional**: a voice whose **unlooped sample runs out**
+gives its record back — the other half of the engine's free condition (`0x3035`-`0x3065`, the
+position past the frame count with no loop) and it was missing here. A drum whose sample lasts 0.2 s
+no longer holds a record for its 1 s release. That alone took the default from 1,411 cuts to
+**1,318**.
+
+### It cannot be settled from the binary, and here is what would settle it
+
+Both models are self-consistent; what separates them is what the game **sounds like** on a dense
+passage, and that is a recording. This project has done exactly that before — question 10, the
+one-shot gate, was settled against a capture of the game and overturned what the code had implied.
+
+The experiment is now **two seconds long**: capture `C4K3 S0NG` from the game around **25.85 s** and
+listen for whether the choir chord enters with five voices or one. That is the whole question, and
+it needs no counting.
+
+⚠️ **And be ready for the answer to be uncomfortable.** With the tail, the game plays at most 32
+notes at once; without it, this renderer routinely runs 35 to 50. If the tail is right then our
+render is *denser* than the game's, which is exactly why it sounds less truncated — the cuts are
+masked by notes the game never played. The version that sounds better may be the wrong one.
+
+**So every number on both sides of the line is now measured, and they still disagree with the ear.**
+That is where this stands. The remaining thread is the one the volume test exposed: its multiplier
+is indexed by the note record's **bits 28..29**, the block-table select, into a four-entry table at
+`+0x420` — which is not the row-to-channel mapping `channelVolume` uses. Somebody should find out
+what `[rbp-0x78]` and that table are before trusting either reading.
+
+⚠️ **And our own two halves disagree.** The mixer keeps a voice alive through its release
+(`env.finished` ends it); the pool frees the record at the note's written end. The pool is the
+optimistic one, and it is the half that matches the ear — a coincidence until something above
+explains it.
+
+⚠️ **Do not implement the tail until this is answered.** Today's model is knowingly short by the
+release, and short is audibly right; long is audibly wrong.
+
