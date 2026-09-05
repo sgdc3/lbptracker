@@ -28,8 +28,8 @@ LittleBigPlanet is a trademark of Sony Interactive Entertainment. This project
 is not affiliated with, endorsed by, or connected to Sony Interactive
 Entertainment or Media Molecule.
 
-No game data is included here or distributed with it. The instrument samples
-this tracker plays are copyrighted Sony / Media Molecule material and are read
-from the user's own copy of the game, in their own browser, and never uploaded.
-Levels opened from the public archive are their creators' work and are likewise
-fetched by the browser and read there. See steering/game-assets.md.
+This repository contains no game data. The instrument samples this tracker
+plays are copyrighted Sony / Media Molecule material, and levels opened from the
+public archive are their creators' work; none of it is covered by the licence
+above, and none of it is in this repository. Where a deployment gets those
+assets from is a question about that deployment, not about this code.

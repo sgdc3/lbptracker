@@ -7,11 +7,16 @@
  * reason `dev/open-level.ts` and `dev/seq-picker.ts` exist. A page opts in with
  * one import; nothing here needs a page to be edited again.
  *
- * ❗ **The disclaimer is not decoration.** This project reads copyrighted Sony /
- * Media Molecule material out of the user's own copy of the game and other
- * people's levels out of a public archive, and it redistributes neither. Saying
- * so on every page is the honest version of a stance that
- * `steering/game-assets.md` calls a design constraint rather than a footnote.
+ * ❗ **The disclaimer is not decoration**, and it says only what is true. It
+ * used to add "no game data is included here", which was right for a tracker
+ * that only ever read the user's own copy and **stops being right the moment the
+ * site serves the banks itself** -- the plan of record. A footer that claims
+ * more than the deployment does is worse than one that claims nothing, so what
+ * is left is the trademark disclaimer, which is true either way.
+ *
+ * ⚠️ `steering/game-assets.md` still says the tracker "must not redistribute
+ * them". That stance and this deployment cannot both stand; the steering note is
+ * the one to settle, not this file.
  */
 
 import { APP_VERSION } from '../src/version.ts';
@@ -32,18 +37,19 @@ export function mountFooter(): void {
   foot.className = 'site-foot';
   foot.innerHTML =
     `<p class="site-foot-line"><b>LBP Tracker</b> <span class="site-foot-v">v${APP_VERSION}</span>` +
-    ' · MIT licensed · everything runs in your browser</p>' +
+    // ⚠️ No "everything runs in your browser" here: the nav already says
+    // "everything runs on your machine", and the same claim twice on one screen
+    // reads as a slogan rather than as the fact it is.
+    ' · by <b>sgdc3</b> · MIT licensed</p>' +
     '<p class="site-foot-line">Standing on ' +
     link('https://github.com/ennuo/toolkit', 'ennuo’s craftworld toolkit') +
     ', which is the reference this project checks its resource reading against; ' +
     link('https://zaprit.fish', 'Zaprit’s LBP Search Facility') +
     ' and the ' +
     link('https://archive.org/details/@tamiya99', 'Internet Archive') +
-    ', where the levels survive.</p>' +
+    ', where the levels survive. Built with the help of AI.</p>' +
     '<p class="site-foot-line site-foot-small">Not affiliated with, endorsed by or connected to ' +
-    'Sony Interactive Entertainment or Media Molecule. LittleBigPlanet is their trademark. ' +
-    '<b>No game data is included here.</b> The instrument samples are read from your own copy of ' +
-    'the game, in this tab, and never uploaded; a level opened from the archive is its creator’s ' +
-    'work and is fetched by your browser, not by any server of ours.</p>';
+    'Sony Interactive Entertainment or Media Molecule. LittleBigPlanet is their trademark, and the ' +
+    'instrument samples are their work.</p>';
   document.body.append(foot);
 }
