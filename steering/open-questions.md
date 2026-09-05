@@ -284,31 +284,51 @@ that the enumeration is cheap enough to do before the inference.
 
 ### What is left
 
-**The transfer curve.** Everything above is which knobs are set; none of it says what the DSP does
-to a sample. Specifically:
+**The detector and the application.** The *static curve* is settled — measured 2026-09-06 from the
+table build at `0xc43`, in closed form, in `tools/wavehammer.py`, and written up in
+[lbp-audio-engine.md](lbp-audio-engine.md). Two pieces remain, and they are what turn a curve into
+an effect on a signal:
 
-- The **4000-entry gain table** built at `0xc43` of `0xa40`: input level → `_FLog` → dB → soft
-  knee against `thresh ± 3` → gain. Reading this loop is the bulk of the work and it is the part
-  that matters.
-- **How the table is applied.** `0x1194` multiplies the output gain into a value read from the
-  second scratch buffer and compares it against `[state+0xf0]` (1.0 at create) and `[state+0xf8]`
-  (the attack/release coefficient), with a per-channel envelope at `[state+0x108]`. Whether
-  −18.0 dB of output gain is a net −18 dB on the mix, or is absorbed by the curve, is decided here.
-- **The envelope's rate.** Coefficients come out as `0.1^(1/x)` with `x = round(rate * ms * 1e-4)/8
-  - 3` (`0x6c8`). The `1e-4` and the `/8` both want explaining — at 48 kHz a 10 ms attack gives
-  x = 3, which is not 10 ms of anything obvious.
+- **`0x180` — the detector.** Called at `0x0e1a` with `(dest = the second scratch buffer, count)`
+  and gated on `[cfg+1]`. It fills the array that everything downstream indexes. Until it is read we
+  do not know what quantity the 4000-entry table is being indexed *by* — mean square over what
+  window, per channel or summed, with or without the look-ahead the 0x1000 and 0x3e80 buffers imply.
+- **`0x1190` — the application.** `0x1194` multiplies `[state+0x104]` into a value from that buffer
+  and compares it against `[state+0xf0]` (1.0), then branches on `[state+0xf8]` (the attack/release
+  coefficient) and a per-channel envelope at `[state+0x108]`. It is a level-domain test, not an
+  output scaling, so the constant is **not** simply a gain on the mix.
+- **The envelope's rate**, still. Coefficients are `0.1^(1/x)` with
+  `x = round(rate * ms * 1e-4)/8 - 3` (`0x6c8`). At 48 kHz a 10 ms attack gives x = 3, which is not
+  10 ms of anything obvious; the `1e-4` and the `/8` both want explaining, and `0x180` may explain
+  them by running the detector at one eighth of the sample rate.
 
-⚠️ **Do not implement it from the parameter table.** Knowing it is "10:1 at -18 dB with a 6 dB
-knee" is enough to write *a* compressor and not enough to write *this* one; the knee shape, the
-detector and the release modifier are all in the code. It is on disk: read it.
+❌ **Two things this entry used to say that are now wrong, kept so they are not re-derived:**
+
+- *"the -18 dB output gain might mean the game runs 18 dB down."* It does not. `0xd44` divides
+  0.995 by the last table entry as an unconditional make-up, and `[state+0x104]` comes out at
+  **0.8088, -1.84 dB**. `CompAutoGain = 0` does not disable it — that flag gates a *different*
+  make-up in `0x620` which this path overwrites.
+- *"read the table loop and hope."* The loop is 30 instructions and the curve is a two-line closed
+  form. The expensive part was never the arithmetic, it was not knowing `_FLog` — which is
+  `log10f`, 21 bytes at libc `0x383e0`, and could have been resolved on day one with
+  `prxnid.py libc export _FLog`.
 
 ### The anchor
 
-`prxdis.py hammer 0xa40 700`, and disassemble from a **function start** — the module has exactly
-eight (`0x0`, `0x180`, `0x380`, `0x620`, `0xa40`, `0x1770`, `0x19f0`, `0x1a80`), so there is no
-excuse for a mid-function start here. `0x620` is the coefficient recompute, `0xa40` the kernel. The
-reverb's entry in [answered-questions.md](answered-questions.md) is the template for the write-up,
-including its table of wrong readings.
+**`prxdis.py hammer 0x180`** — the detector, and read it before `0x1190`, because what the
+application does only means something once you know what it is applying it *to*.
+
+Disassemble from a **function start**: the module has exactly eight (`0x0`, `0x180`, `0x380`,
+`0x620`, `0xa40`, `0x1770`, `0x19f0`, `0x1a80`), so there is no excuse for a mid-function start
+here. `0x620` is the coefficient recompute, `0xa40` the kernel, and `tools/wavehammer.py` already
+holds the part of `0xa40` that is settled. The reverb's entry in
+[answered-questions.md](answered-questions.md) is the template for the write-up, including its table
+of wrong readings.
+
+⚠️ **Transcribe, then reduce, then check the reduction against the transcription.** The closed form
+above was wrong for `R ≥ 50` on the first pass and `wavehammer.py check` caught it in one run;
+without the transcription to check against, a plausible two-line formula would have gone into
+steering as a measured fact.
 
 ## 28. What still will not open — measured over 103 archive levels
 

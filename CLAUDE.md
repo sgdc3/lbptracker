@@ -68,6 +68,12 @@ they are the ground truth the JavaScript has to reproduce:
   ```
 
   Then `node dev/serve.mjs` and open http://127.0.0.1:8173/ to play them.
+- `wavehammer.py` — the static gain curve of the compressor the game ends its chain with:
+  `wavehammer.py` reports the shipped configuration, `wavehammer.py check` agrees a literal
+  transcription of the PRX against the two-line closed form over five configurations. ❗ Its headline
+  is that **`CompOutGain = −180` is not 18 dB of attenuation** — an unconditional make-up cancels it
+  to −1.84 dB. Only the *static* curve; the detector (`0x180`) and the application (`0x1190`) are
+  question 37.
 - `panmeasure.py` — the stereo width of a recording: the least-squares leak of one channel into the
   other, with the residual that says whether a single number describes it at all. This is how the
   pan width was settled; use it on any new capture of the game.

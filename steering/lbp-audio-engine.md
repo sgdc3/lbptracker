@@ -168,10 +168,74 @@ The arithmetic in `0xa40` and in the coefficient function `0x620` settles the un
 - The compressor is table-driven: a **4000-entry** gain curve in the 0x3e80-byte buffer, rebuilt
   only when the dirty counters move (`0xc43`) and otherwise memcpy'd back from the cache (`0xb44`).
 
-⚠️ **What is not settled is the transfer curve**, and therefore what the −18 dB output gain nets out
-to. Do not read the table above as "the game is 18 dB quieter than us": the gain enters a
-level-domain computation at `0x1194` that also involves `[state+0xf0]`, `[state+0xf8]` and a
-per-channel envelope at `[state+0x108]`, none of which is traced yet. See question 37 in
+### The static curve, exactly — measured 2026-09-06 from the table build at `0xc43`
+
+The compressor is table-driven. `0xa40` fills **4000 float entries** at `scratch + 0x1000`, indexed
+by a **linear sweep of the mean-square level**: entry `i` is the gain for `x = F + (1−F)·i/3999`,
+where `F = [state+0xc8]` — which `create` memsets to zero and **nothing ever writes**, so `x = i/3999`.
+`L = 10·log₁₀(x)` via `_FLog(1, ·)`, and that is `log10f`: `_FLog` is 21 bytes at libc `0x383e0`
+and jumps to `0x37c20` for a positive first argument. Since `x` is a mean square, `L` is ordinary
+dBFS and the `10^(ΔL/20)` at `0x0d1a` is the matching amplitude gain.
+
+With threshold `T` (dB) and ratio `R`, the assembly builds
+
+```
+K  = 3(1 + 1/R)        A  = 6/K        B  = A/R          (R ≥ 50: K = 3, B = 0)
+c2 = 3 − 2A − B        c3 = A + B − 2
+t  = (L − T + 3) / 6                      the ±3 dB knee, normalised
+out = (T−3) + K·(A·t + c2·t² + c3·t³)     for L ≤ T+3
+out = T + (L − T)/R                       for L > T+3   (R ≥ 50: out = T)
+gain = 10^((out − L)/20)
+```
+
+The cubic is not arbitrary: `P(1) = 1`, `K·A/6 = 1` and `K·B/6 = 1/R` hold **identically in R**, so
+it is the unique Hermite that matches value *and* slope at both ends of the knee — unity gain at
+`T−3`, slope `1/R` at `T+3`. Which collapses the whole thing to a closed form:
+
+```
+r = 0 if R ≥ 50 else 1/R                  the masked reciprocal, see below
+gain_dB = −3(1 − r)·t²                    t ≤ 1
+gain_dB =  3(1 − 2t)(1 − r)               t ≥ 1
+```
+
+⚠️ **`R ≥ 50` is not the same curve with a small `1/R`.** `0xbc9` masks the reciprocal to zero and
+`0xcb6` takes `out = T` outright, so from 50:1 up the DSP is a hard limiter rather than a 50:1
+compressor. Writing `1 − 1/R` there instead of `1 − 0` costs 0.74 dB at entry 1 — which is exactly
+how `tools/wavehammer.py check` caught it, so that case stays in the configurations it sweeps.
+
+✔ `tools/wavehammer.py` holds both the literal transcription of `0xbb4`–`0xd31` and the closed form;
+`check` agrees them over five configurations × 3999 entries to **2.1e-14 dB**.
+
+⚠️ **There is no lower clamp, and that is not an oversight in the reading** — `0xc99` branches only
+on `L > T+3`, so the cubic is evaluated with `t < 0` all the way down. Below `T−3` the DSP is a
+**downward expander**: −2.7 dB at 9 dB under the threshold, −16.9 dB at entry 1. And `table[0]` is
+**NaN**, because `log10(0)` is −∞ and `out − L` is then ∞ − ∞. Entry 0 is exact digital silence.
+
+⚠️ The axis is linear in *power*, so it is lopsided on purpose: with `T = −18 dB` the threshold
+lands at entry **63 of 4000**. Everything below the threshold gets 63 entries; the compressing
+region gets the other 3936.
+
+### ❗ The −18 dB output gain is not an attenuation
+
+After the loop, `0xd44` computes `0.995 / table[3999]` — an **automatic make-up**, unconditional in
+this path — and `0xd5e`–`0xdad` multiplies it by the manual gain. So
+
+```
+[state+0x104] = (0.995 / table[3999]) · 10^(CompOutGain/20)
+              = 6.4243 · 0.12589
+              = 0.8088                      = −1.84 dB
+```
+
+The +16.16 dB of make-up all but cancels the −18.0 dB the parameter table shows. **Do not read
+`CompOutGain = −180` as the game running 18 dB down**; the constant in the shipped configuration is
+−1.84 dB. (`CompAutoGain = 0` does not disable this — that flag gates a *different* make-up in
+`0x620`, computed from `[state+0x100]`, which the table-rebuild path here then overwrites.)
+
+⚠️ **What is still not settled is how the table and that constant reach the samples.** `0x1194`
+multiplies `[state+0x104]` into a value read from the second scratch buffer and compares it against
+`[state+0xf0]` (1.0) — a level-domain test, not an output scaling. The buffer is filled by
+**`0x180`**, the detector, called at `0x0e1a` and gated on `[cfg+1]`. Until that is read, the static
+curve above is the DSP's shape and not yet its effect on a signal. See question 37 in
 [open-questions.md](open-questions.md).
 
 ## The output stage: the game is a 7.1 renderer
@@ -216,13 +280,15 @@ capture the game's eight channels directly.
   combs plus two stereo comb pairs, an output delay, and three panned early-reflection taps. There
   is no Freeverb, no allpass and no `aSfxDsp` in the path. See *6 / 14. The reverb* in
   [answered-questions.md](answered-questions.md); `src/audio/effects.ts` implements it.
-- **Compressor**: **located and configured, not yet reproduced.** `SMS WaveHammer` sits last on the
-  sequencer's channel with its limiter bypassed and its compressor running at −18 dB / 10:1 / 10 ms
-  / 250 ms — see *The end of the chain* above. This project models none of it, and the hard clip it
-  does model belongs two DSPs earlier. ❗ It reframes every headroom argument: a chain ending in a
-  compressor can be driven hot on purpose, one ending in a hard clip cannot, and every judgement
-  made about level here — including "`FOLD_GAIN` leaves room, peak 0.934 on the busiest corpus song"
-  — assumed the clip was the end.
+- **Compressor**: **static curve settled, detector and application not.** `SMS WaveHammer` sits last
+  on the sequencer's channel with its limiter bypassed and its compressor running at −18 dB / 10:1 /
+  10 ms / 250 ms; its 4000-entry gain table is a closed form in `tools/wavehammer.py`, and its
+  output constant is **−1.84 dB**, not the −18 dB the parameter table shows. See *The end of the
+  chain* above. This project models none of it, and the hard clip it does model belongs two DSPs
+  earlier. ❗ It reframes every headroom argument: a chain ending in a compressor can be driven hot
+  on purpose, one ending in a hard clip cannot, and every judgement made about level here —
+  including "`FOLD_GAIN` leaves room, peak 0.934 on the busiest corpus song" — assumed the clip was
+  the end.
 - **Resampling**: FMOD Ex interpolates in `fmod_dsp_resampler.cpp` at a selectable quality. If we
   play samples through the browser's `AudioBufferSourceNode.playbackRate`, we get *the browser's*
   interpolator instead, which differs between engines and cannot be pinned. This is the single
