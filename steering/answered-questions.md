@@ -1272,7 +1272,11 @@ that has to be taken back out. Implementing the level without the drive made the
 ## 10. One-shots — SETTLED against a recording: **the engine gates every voice**
 
 Open since the beginning, closed 2026-09-03 when a listener recorded the game's own output for one
-drum section and synced it against a render. Two independent lines of evidence agree, and they
+drum section and synced it against a render. ✔ **That recording was made under shadPS4 and the
+conclusion survives it**: it rests on *envelope correlation* — a shape — and on the code, not on any
+absolute level. See *Provenance rule 2* in [lbp-modding-toolchain.md](lbp-modding-toolchain.md),
+which was written when the same listener retired question 23 for being a spectrum measurement
+against the same reference. Two independent lines of evidence agree, and they
 overturn what this project had believed.
 
 ### The code

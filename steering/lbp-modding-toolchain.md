@@ -43,6 +43,29 @@ Three of its claims were confirmed against `eboot-v128.bin` on 2026-09-01; they 
 sharper than our own prior reading and corrected an error in this steering (the phantom third bool
 in the sample slot).
 
+## Provenance rule 2 — every recording of "the game" is a recording of shadPS4
+
+Established 2026-09-05, when the listener who made them said so plainly of question 23: *"I
+perceived it comparing against an emulator, so I do not consider it reliable."* Every capture this
+project has been settled against was taken under **shadPS4**, not on a PS4. That is not a reason to
+throw them away — the emulator runs the game's own `fmodextinput.prx` and `fmodsmsreverb.prx`, so
+everything those compute is the game's arithmetic — but it splits the evidence in two, and the split
+is sharp:
+
+| a capture is | because |
+|---|---|
+| ✔ **trustworthy for structure** — how many voices sound, whether a note is gated, when something is cut, the *ratio* between two channels | the DSP is the game's own code, executed |
+| ✘ **not trustworthy for absolute level or spectrum** | between the plugin's output and the .wav sit shadPS4's mixer, its 7.1→stereo downmix, SDL's resampler and the host device — none of which is the PS4's |
+
+So question 10 (the one-shot gate, settled on **envelope correlation** — a shape) and question 22's
+pan width (settled on the **leak ratio between channels**, and the downmixer's own source read to
+explain it) survive the caveat by construction. A per-band decibel difference does not: see
+question 23, which is now parked for exactly this reason.
+
+⚠️ **Say which it is when you record a capture-based finding.** "Measured against the game" now
+means "measured against shadPS4 running the game", and the two are the same claim only for the top
+row of that table.
+
 ## What it implements that we care about
 
 | toolkit class | our topic |

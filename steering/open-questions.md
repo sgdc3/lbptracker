@@ -76,6 +76,10 @@ anything; all are places where an answer stopped just short.
   one.** The error the decision can be wrong by is bounded — the tail newly crowds 12.7% of that
   song, and more than half of that is one to four records over 32. See *29* in
   [answered-questions.md](answered-questions.md).
+  ✔ **A shadPS4 capture settles this one.** Counting voices in a chord is a question about
+  *structure*, and the voice pool lives in the game's own `fmodextinput.prx`, which the emulator
+  executes — so unlike question 23 this experiment does not need real hardware. See *Provenance
+  rule 2* in [lbp-modding-toolchain.md](lbp-modding-toolchain.md).
 
 ## 3. Grid resolution, swing, and triplets
 
@@ -316,6 +320,13 @@ without once checking what values the game's own instruments carry. Reading the 
 query — would have shown 1.000 against `Numstack` 1 and stopped the change.
 
 ## 15. `robot` sounds thin, and the numbers say why — but not whether it should
+
+⚠️ **Provenance, 2026-09-05: the reference is shadPS4.** "Thin, short of low end and short of
+resonance" is a judgement about spectrum, which is the kind of claim an emulator's output path can
+manufacture — see *Provenance rule 2* in [lbp-modding-toolchain.md](lbp-modding-toolchain.md) and
+what it did to question 23. Everything below is still worth having, because it is all measured off
+the *file* rather than off the capture, and every numeric explanation of the thinness was ruled out
+that way. But the report itself now needs a real capture before it is chased further.
 
 A listener reports the lead synth in `This Is Halloween` as **thin, short of low end and short of
 resonance** against the game. The instrument is `robot` (GUID 129082) — the report first named
@@ -813,10 +824,25 @@ rather than the dry path alone. That is what a fold below the mix looks like.
 | the level position | **no** — the listener plays the game and says so |
 
 
-## 23. A flat ~1 dB deficit above 315 Hz
+## 23. ⚠️ PARKED — a flat ~1 dB deficit above 315 Hz, against an emulator
 
-From the same comparison, and independent of question 22 — it is present in the **total** energy
-`L² + R²`, which does not care about stereo width.
+❗ **The reference was shadPS4, not a PS4, and the listener who made the capture does not consider it
+reliable** (2026-09-05). That retires this as a finding until a capture from real hardware exists.
+
+The reason it retires *this* one and not the others is in *Provenance rule 2* in
+[lbp-modding-toolchain.md](lbp-modding-toolchain.md): a capture under an emulator is evidence about
+**structure** — how many voices sound, whether a note is gated, the ratio between two channels —
+because the DSP is the game's own code being executed. It is not evidence about **absolute level or
+spectrum**, because between the plugin's output and the .wav sit the emulator's mixer, its 7.1→stereo
+downmix, SDL's resampler and the host device. A per-band decibel table is the second kind, and a
+**flat** deficit across five octaves with exact bass is exactly the shape an output path
+manufactures.
+
+⚠️ **Do not chase the candidates below until the reference is real hardware.** They are still the
+right list if the deficit survives one; the numbers under them are not evidence today.
+
+The numbers as they were taken, kept because they cost a session and will be the thing to compare a
+real capture against:
 
 | band | ours − game |
 |---|---|
