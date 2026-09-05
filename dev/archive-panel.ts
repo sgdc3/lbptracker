@@ -61,16 +61,24 @@ export function wireArchiveOpen(opts: {
     '<input class="archive-q" type="text" placeholder="a root level hash, or a link to its file…" ' +
     'aria-label="Root level hash" autocomplete="off" spellcheck="false">' +
     '<button type="button" class="archive-go primary">open</button>' +
+    // ⚠️ `autocomplete="off"`, like every other control on these pages: Chrome
+    // restores a checkbox across a reload, and a switch that comes back ticked
+    // when the markup says otherwise is a bug that looks like the code.
+    '<label class="check archive-deep"><input type="checkbox" autocomplete="off" checked>' +
+    'with its plans</label>' +
     '</div>' +
-    '<p class="archive-note">Paste the 40 digits and the level — with the plans it depends on — ' +
-    'is downloaded to your browser and read there.</p>' +
+    '<p class="archive-note">Paste the 40 digits and the level is downloaded to your browser ' +
+    'and read there.</p>' +
     '<p class="archive-hint">Find a level at <a href="' + SEARCH_HOST + '" target="_blank" ' +
     'rel="noreferrer noopener">zaprit.fish</a> — its page shows the <b>root level</b> hash in a ' +
     'box of its own, under the title. Nothing here needs a server: the level comes straight from ' +
-    'the Internet Archive.</p>';
+    'the Internet Archive. <b>With its plans</b> also fetches the saved copies the level depends ' +
+    'on — slower, and usually the same songs, but it is where a song that was never placed in the ' +
+    'level would be.</p>';
 
   const query = host.querySelector<HTMLInputElement>('.archive-q')!;
   const go = host.querySelector<HTMLButtonElement>('.archive-go')!;
+  const deep = host.querySelector<HTMLInputElement>('.archive-deep input')!;
   const note = host.querySelector<HTMLElement>('.archive-note')!;
 
   const NOTE = note.textContent ?? '';
@@ -130,6 +138,14 @@ export function wireArchiveOpen(opts: {
    *
    * ⚠️ **A missing plan is not a failed open.** Only the level itself is
    * required; anything else that will not come is counted and said out loud.
+   *
+   * ❗ **The walk is a checkbox, on by default.** Measured on "Music Gallery
+   * #3": the level plus its 17 plans took 10 s against 3 s for the level alone,
+   * and gave 46 sequencer rows instead of 31 — but **16 distinct songs either
+   * way**, every plan being a copy of a song already placed in the level. It is
+   * on because the one thing it can find, a song that lives only as a plan, is
+   * music silently missing from a music tracker; it is a checkbox because on
+   * most levels it is seven seconds and fifteen duplicate rows for nothing.
    */
   async function open_(sha1: string): Promise<void> {
     if (busy) return;
@@ -140,7 +156,10 @@ export function wireArchiveOpen(opts: {
       const root = await grab(sha1);
       const files: BackupFile[] = [{ name: sha1, bytes: root }];
       const seen = new Set([sha1]);
-      const queue = plansOf(root, seen);
+      // ❗ **Read once, at the start.** Ticking the box while eighteen fetches
+      // are in flight must not change what this open is doing halfway through.
+      const withPlans = deep.checked;
+      const queue = withPlans ? plansOf(root, seen) : [];
       let missing = 0;
       while (queue.length > 0 && files.length < RESOURCE_LIMIT) {
         say(`${files.length} of ${files.length + queue.length} resources…`);
@@ -159,6 +178,8 @@ export function wireArchiveOpen(opts: {
             continue;
           }
           files.push({ name: hash, bytes });
+          // A plan can depend on further plans, so the walk continues from what
+          // came back rather than stopping at the level's own list.
           queue.push(...plansOf(bytes, seen));
         }
       }

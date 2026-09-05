@@ -509,6 +509,11 @@ way**: every plan was a copy of a song already placed in the level. The case the
 a song that lives **only** as a plan (a prize bubble, an unplaced popit copy), and it cannot be
 known to be absent without fetching.
 
+So it is a **checkbox, ticked by default**: on, because the one thing it can find is music silently
+missing from a music tracker; a checkbox, because on most levels it is seven seconds and fifteen
+duplicate rows for nothing. It is read once when the open starts, so ticking it mid-fetch cannot
+change what that open is doing.
+
 ⚠️ Two of the 17 plans yield no project, and that is `readBackup` working: they parse cleanly and
 contain no sequencer, so they are dropped rather than listed. Checked directly before believing it.
 

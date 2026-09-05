@@ -225,6 +225,9 @@ input.picker-search {
    right for forty hex digits; centring is not, and naming the element is what
    wins the specificity, exactly as `.picker-search` has to. */
 input.archive-q { flex: 1 1 24rem; min-width: 0; text-align: left; }
+/* The switch sits in the same row as the field, and must not be squeezed by it
+   when the row wraps on a narrow page. */
+.archive-deep { flex: 0 0 auto; font-size: .9rem; }
 .archive-note { margin: .7rem 0 0; color: var(--dimmer); font-size: .85rem; }
 .archive-note.bad { color: var(--bad); }
 /* The permanent line under the status one: where a hash comes from, and the
