@@ -312,11 +312,18 @@ function readIsland(s: Serializer, plans: Uint8Array[]): void {
  * *does* put a sequencer in an island is not invisible, and because a `CHKb`
  * counted as "not a level" is a file nobody can look inside.
  */
-export async function readChunk(
+/**
+ * A chunk's islands, each a whole `PLNb` resource, without reading any of them.
+ *
+ * ❗ **Separate from `readChunk` so that one island can be looked at alone.**
+ * Question 36 is a three-byte over-read inside island 48 of 167 in one chunk,
+ * and every probe that chases it has to reach that island's `thingData` on its
+ * own; without this the first step is editing this file.
+ */
+export async function readChunkIslands(
   bytes: Uint8Array,
   inflate: Inflate,
-  readers: ReadonlyMap<string, PartReader>,
-): Promise<LevelParse> {
+): Promise<{ revision: RevisionInfo; plans: Uint8Array[] }> {
   const { revision, s } = await open(bytes, inflate);
   const plans: Uint8Array[] = [];
   s.references((self) => readIsland(self, plans));
@@ -326,6 +333,15 @@ export async function readChunk(
       `the chunk's island list left ${s.remaining} of ${s.data.length} bytes unread`,
     );
   }
+  return { revision, plans };
+}
+
+export async function readChunk(
+  bytes: Uint8Array,
+  inflate: Inflate,
+  readers: ReadonlyMap<string, PartReader>,
+): Promise<LevelParse> {
+  const { revision, plans } = await readChunkIslands(bytes, inflate);
   const things: (Thing | undefined)[] = [];
   const problems: string[] = [];
   for (let island = 0; island < plans.length; island += 1) {

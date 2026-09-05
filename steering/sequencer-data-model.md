@@ -1611,3 +1611,17 @@ carries the instrument's own shape.
 Other useful script bindings: `StopSequencerPlayback__Q5Thingi`, `TriggerSequencerMusic__Q5Thing`,
 `GetElemPSequencer__Q5Thingi`, `GetSizePSequencer__Q5Thing`, `GetTimeLengthOnSequencer__Q5Thing`,
 `GetSequencerReverbSetting__Q5Thing`, `TweakSequencer`.
+
+
+## ⚠️ `cf7` hides field-width bugs, and the archive's chunks are the only `cf0` corpus
+
+Found 2026-09-05 (answered question 36). With `COMPRESSED_INTEGERS` set — which every level and plan
+in the corpus has — an `i32` whose value is 0 is a **single varint byte**. So a field declared
+`s.i32()` that is really one byte reads correctly on all 62,158 placements of the golden fixture and
+is wrong the moment it meets an uncompressed stream. That is exactly what `parentBoneIndex` in
+`PControlinator` did.
+
+❗ **A field whose value is usually zero or small is untested for width by this corpus.** The only
+`cf0` files this project has are the `CHKb` chunks fetched from the public archive — 32 of them,
+5,832 Things, all parsing clean as of 2026-09-05. Run anything that touches a field width against
+them before believing the corpus.

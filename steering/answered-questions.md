@@ -2403,3 +2403,49 @@ explains it.
 ⚠️ **Do not implement the tail until this is answered.** Today's model is knowingly short by the
 release, and short is audibly right; long is audibly wrong.
 
+## 36. The island that would not parse — ANSWERED: one byte, 2026-09-05
+
+`parentBoneIndex` in `PControlinator` is **one byte**, and `readControlinator` read it with
+`s.i32()`.
+
+### Why the whole corpus missed it
+
+⚠️ **With `COMPRESSED_INTEGERS` an `i32` of 0 is a single varint byte.** Every level and plan this
+project has ever parsed is `cf7`, so `s.i32()` consumed exactly one byte there and was right by
+accident on 62,158 placements. The chunks pulled out of the public archive are **`cf0`** —
+uncompressed, every integer at full width — and there the same call ate four bytes and left the
+reader three past the next Thing's `0xaa`.
+
+❗ **So `cf7` hides field-width bugs, and until 2026-09-05 this project had no `cf0` corpus at all.**
+That is the general lesson, and it is worth more than the fix: any field whose value is usually zero
+or small reads correctly under compression whatever width it is declared with.
+
+### How it was found, which is the part to copy
+
+The failure is reported one Thing later — that is what the `0xAA` marker is for — so the byte it
+names is never the byte that is wrong. What located it:
+
+1. `setTrace` from `thing.ts` gives every part's span. It put the failure inside `CONTROLINATOR`
+   (64938-65710) and showed the Thing before it closing at 65710.
+2. Wrapping every `Serializer` method on the island's `thingData` logged each read as
+   `(name, start, end, value)`. **Values, not just widths** — widths align at any offset.
+3. The tail of `SWITCH` read plausibly (radius 250, 18 outputs, `angleRange` 180,
+   `randomOnTimeMin/Max` 30 and 30), so that part was aligned. The next field was not:
+   `parentBoneIndex = 4,161,536`.
+4. `4,161,536` is `0x003F8000` — a zero byte followed by three quarters of `3F 80 00 00`, which is
+   **1.0f**. Dumping the raw bytes settled it: an identity matrix begins at 65641, its four 1.0s
+   landing exactly on m00, m05, m10 and m15, and `CONTROLINATOR` ends at 65707 — which is where the
+   `-1417.5f / +1417.5f` min-max pair after it starts.
+
+### What it is worth
+
+| | before | after |
+|---|---|---|
+| archived chunks parsing | 31 of 32 | **32 of 32** |
+| island problems | 1 | **0** |
+| Things recovered from them | — | **5,832** |
+| the golden fixture | 62,158 placements byte for byte | **unchanged** |
+
+✔ **The 32 chunks are now a `cf0` regression corpus**, which is a dimension the ten-level corpus
+never tested. Anything that reads a field width should be run against them.
+
