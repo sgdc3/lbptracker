@@ -90,6 +90,19 @@ const skipGuids = (process.env.LBP_SKIP ?? '').split(',').filter(Boolean).map(Nu
  */
 const noKeyTrack = process.env.LBP_NO_KEYTRACK === '1';
 /**
+ * `LBP_SEED` — the render's PRNG seed, for the control every A/B needs.
+ *
+ * ❗ **Reseeding is the null hypothesis.** Everything random in a voice — the
+ * three LFO start phases, the unison stack's detune, pan and start offset — is
+ * drawn from one seeded stream, so a change that merely *reorders* the draws
+ * moves the output as much as a change that alters the sound. Measured on
+ * `robot` alone over 25 s of `Ascetic`: another seed is **−4.6 dB**, while the
+ * block clock going 128 → 256 is **−33 dB**. A difference smaller than the
+ * reseed is a difference a reshuffle could have produced, and question 15 turns
+ * on exactly that.
+ */
+const seed = process.env.LBP_SEED ? Number(process.env.LBP_SEED) : undefined;
+/**
  * Whether the plugin's own output clip runs. `LBP_NO_CLIP=1` removes it.
  *
  * `fmodextinput.prx` 0x0889 hard-clips all four output channels to +-1 once per
@@ -251,6 +264,7 @@ const result = await renderSequencer(seq, loadInstrument, {
   unpitchedGuids,
   unpitchedPercussion,
   noKeyTrack,
+  seed,
   voiceLimit,
   clip,
   pitchShift,

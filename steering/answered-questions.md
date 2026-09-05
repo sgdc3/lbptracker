@@ -3004,3 +3004,78 @@ degraded is not. The anchor for settling it is a capture: **record a fast unswun
 the game and measure inter-onset intervals against the exact step clock.** If the onsets sit on a
 256-frame grid the deviation is a sawtooth with a 5.33 ms range, which is unmistakable; if they are
 sample-accurate this reading is wrong somewhere.
+
+## 15. `robot` sounds thin — WITHDRAWN by the listener, 2026-09-05, and NOT attributed
+
+The report was: the lead synth in `This Is Halloween` is **thin, short of low end and short of
+resonance** against the game. On 2026-09-05 the listener says it now sounds right.
+
+❗ **Nothing here claims to know why, and the refusal is measured rather than modest.** This project
+has one recorded method failure of exactly this shape — a doubling was observed, an explanation was
+invented that fitted it, and it went into steering as a fact about the level (see *12b*). What
+follows is what can be said.
+
+### What changed that could reach `robot` at all
+
+`robot` is `Numstack` 1 and its notes carry modulation 0, so every parameter evaluates to its `x`:
+
+| | value at modulation 0 | what this session did |
+|---|---|---|
+| `Params[0]` detune | **0.000** | applied to layer 0 now — multiplied by zero |
+| `Params[1]` spread | **0.000** | applied to layer 0 now — multiplied by zero |
+| `Params[2]` start offset | 0.030 | layer 0's is cleared, as it was before |
+| `Params[5]` key tracking | **0.000** | the 2026-09-02 key-track fix cannot reach it |
+| `Params[6]` filter env amount | **0.980** | — |
+| `Params[16]` LFO 1 depth | **0.060** | a live vibrato |
+
+So exactly **one systematic change** touches it: the modulation block clock, `MORPH_FRAMES`
+128 → 256, which is the engine's own (question 3). It is credible on its face — `robot` takes 98%
+of its cutoff from a filter envelope that is re-derived once per block, and "thin, short of
+resonance" is a filter-envelope complaint.
+
+### ⚠️ And the control says that is not enough to conclude anything
+
+Everything random in a voice comes from one seeded stream, so a change that merely **reorders the
+draws** moves the output too. This session reordered them: a `Numstack`-1 voice used to draw 3
+values (its LFO phases, in the mixer) and now draws 6 (three phases in the render, plus the detune,
+pan and start offset that layer 0 now takes part in). Measured on `robot` alone over 25 s of
+`Ascetic`, 136 notes:
+
+| | difference | rms |
+|---|---|---|
+| block clock 256 against 128 | **−33.0 dB** | 0.014492 vs 0.014501 |
+| same clock, another seed | **−4.6 dB** | 0.014492 vs 0.014602 |
+
+**A reseed is 28 dB LARGER than the block clock.** So the biggest thing that happened to `robot`
+this session was its vibrato phases being reshuffled — which changes the rendering and not its
+character. The systematic change is real, small, and cannot be shown to be the one that was heard.
+
+❗ **`LBP_SEED` exists for this**, in `dev/render-level.ts`: reseeding is the null hypothesis, and a
+difference smaller than a reseed is a difference a reshuffle could have produced.
+
+⚠️ **The original reference was shadPS4**, which the same day's *Provenance rule 2* had already
+disqualified for judgements about spectrum. So the report that opened this and the report that
+closes it are both against an output path that is not a PS4's.
+
+### What was ruled out on the way, and is worth keeping
+
+All of it measured off the *file* rather than off a capture, which is why it survives the provenance
+caveat:
+
+- **The octave.** `robot` is one looped sample, `rude_bass_c3` at base note 36, and across the 18
+  levels that parse it carries **49,447 notes** from −12 to +30 semitones, smooth, peaking at
+  +24…+28, with 624 on the base note and 242 an octave below. A systematic octave error moves a
+  distribution; it does not put a fat middle at +26 and a tail at −1. Composers use it as a lead.
+- **`Key`.** 49,270 of those 49,447 notes carry `Key = 0`.
+- **A hidden per-note flag.** Byte 3 only ever holds `0x00`, `0x40` or a low nibble corpus-wide;
+  bits 4 and 5 are never set, and `0x40` is the triplet sub-step.
+- **The `x`/`y` interpolation direction**, settled for all 27 parameters — see *20*.
+- **The resonance.** `robot` is `resonance 0.000..0.709` and every one of its 1,696 note records in
+  that level carries timbre 0, so the interpolation lands on `x` and there is no resonance to hear.
+  20.9% of corpus records carry a non-zero timbre, so zero here is the composer's choice.
+
+⚠️ **One thing is still fixed on our side and unsettled on the engine's**: which playback rate the
+filter's key tracking is fed. It was the voice's *opening* rate, so a note that glides kept the
+cutoff it started with; `Northern Lights`'s `noise` riser swept 1.83× where the pitch swept 4.76×,
+and it is the current rate now. `LBP_NO_KEYTRACK` stays because the term may be inert altogether.
+None of this reaches `robot`, whose `keyTrack` is 0 at the modulation its notes carry.

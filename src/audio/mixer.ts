@@ -1059,7 +1059,8 @@ class Voice {
         // the cutoff pinned the noise stays dull for the whole sweep: measured
         // by zero-crossing rate it rose 1.83x where the pitch rose 4.76x.
         //
-        // ⚠️ Which rate the engine feeds this term is **open question 15**, and
+        // ⚠️ Which rate the engine feeds this term is the one thing left over from
+        // question 15 (now in `steering/answered-questions.md`), and
         // `LBP_NO_KEYTRACK` exists because the term may be inert altogether. What
         // is not in doubt is that between the opening rate and the current one,
         // only the current one lets a glide sweep.

@@ -51,8 +51,14 @@ was being stepped at the AudioWorklet's 128 rather than the engine's 256. Fixed 
 −50.6 dB of difference at an unchanged RMS. The same read showed that **note onsets land on that
 block** rather than on the sample, which is now the one open *decision* in section 0.
 
-**Nothing about the engine's signal path is unread any more.** What is left in this file is two
-listening reports that need a capture from real hardware (15, 23), two decisions with bounded error
+✔ **And question 15 is withdrawn**, 2026-09-05: the listener says `robot` now sounds right. It is in
+[answered-questions.md](answered-questions.md) with **no cause attached**, which is the point of the
+entry — the one systematic change that reaches `robot` is worth −33 dB and a mere reseed is worth
+−4.6 dB, so the biggest thing that happened to it was its vibrato phases being reshuffled. A
+difference smaller than a reseed is a difference a reshuffle could have produced.
+
+**Nothing about the engine's signal path is unread any more.** What is left in this file is one
+listening report that needs a capture from real hardware (23), two decisions with bounded error
 (section 0), one question that is not about fidelity at all (24), and one about files this reader
 does not claim to support (28).
 
@@ -127,70 +133,6 @@ anything; all are places where an answer stopped just short.
   *structure*, and the voice pool lives in the game's own `fmodextinput.prx`, which the emulator
   executes — so unlike question 23 this experiment does not need real hardware. See *Provenance
   rule 2* in [lbp-modding-toolchain.md](lbp-modding-toolchain.md).
-
-## 15. `robot` sounds thin, and the numbers say why — but not whether it should
-
-⚠️ **Provenance, 2026-09-05: the reference is shadPS4.** "Thin, short of low end and short of
-resonance" is a judgement about spectrum, which is the kind of claim an emulator's output path can
-manufacture — see *Provenance rule 2* in [lbp-modding-toolchain.md](lbp-modding-toolchain.md) and
-what it did to question 23. Everything below is still worth having, because it is all measured off
-the *file* rather than off the capture, and every numeric explanation of the thinness was ruled out
-that way. But the report itself now needs a real capture before it is chased further.
-
-A listener reports the lead synth in `This Is Halloween` as **thin, short of low end and short of
-resonance** against the game. The instrument is `robot` (GUID 129082) — the report first named
-`ghost`, which is not in that level at all.
-
-What the data says, all of it consistent:
-
-| instrument | sample | `baseNote` | notes it plays here |
-|---|---|---|---|
-| `robot` | `rude_bass_c3.smp` | **36** | 61, 69, 71, 78, 85 |
-| `square_wave` | `kenny_square_a4.smp` | 57 | the same line |
-| `pulse_wave` | `kenny_pulse_a5.smp` | 69 | |
-| `saw_wave` / `sine_wave` | `kenny_saw_a4` / `kenny_sine_a4` | 57 | |
-
-The sample names carry their own pitch and **every one of them agrees with its `baseNote`** under one
-convention (C3 = 36, A4 = 57, A5 = 69). So the `baseNote` reading is not in doubt. It does mean
-`robot` plays a **bass** sample **+25 to +49 semitones**, which is a thin sound by construction.
-
-And the resonance is zero, for a measured reason. `robot`'s `Params` are
-`cutoff 0.710..0.230`, `resonance 0.000..0.709` — a one-knob filter sweep — and **every one of its
-1,696 note records in this level carries timbre 0**, so the interpolation lands on `x`: cutoff 0.71,
-resonance 0. `square_wave` is the same story (`resonance 0.000..0.830`, all notes at 0). Corpus-wide
-20.9% of records carry a non-zero timbre, so zero here is the composer's choice, not a parse failure.
-
-**What is not settled** is whether the game sounds the same. Two things could still be wrong on our
-side and neither is checked:
-
-- ~~the direction of the `x`/`y` interpolation~~ — **SETTLED 2026-09-02 for all 27 parameters**, not
-  just the sends. See *20* in [answered-questions.md](answered-questions.md);
-
-⚠️ **A third thing, found 2026-09-02 and fixed on our side, but not settled on the engine's.**
-The filter's key tracking was being fed the voice's **opening** playback rate, so a note that glides
-kept the cutoff it started with. `Northern Lights` (`2bc7d95a`, uid 16629) opens on `noise` --
-`kenny_noise.smp`, a one-second loop, `keyTrack` **1.000**, cutoff 0.465..0.120 -- glided from y34 to
-y61 over 32 steps, which is +27 semitones and a rate of 4.76. With the cutoff pinned the riser did
-not rise: measured by zero-crossing rate the output swept **1.83x**, against **3.47x** once the
-current rate is used. `src/audio/mixer.ts` now passes the rate the voice is playing at this frame,
-and the `envAmount === 0` shortcut no longer fires for a voice whose rate moves. **Which rate the
-engine feeds that term is still this question**, and `LBP_NO_KEYTRACK` still exists because the term
-may be inert altogether -- what is not in doubt is that between the opening rate and the current one,
-only the current one lets a glide sweep.
-- ~~the octave~~ — **REFUTED 2026-09-02 by the corpus.** `robot` is one looped sample,
-  `rude_bass_c3` at base note 36, and across the 18 levels that parse it carries **49,447 notes**
-  spread from **−12 to +30 semitones** relative to that base, smooth, peaking at +24…+28 — with
-  **624 notes on the base note itself** and 242 an octave below it. A systematic octave error cannot
-  produce that shape; it would move the whole distribution, not put a fat middle at +26 and a tail at
-  −1. Composers simply use it as a lead. `LBP_PITCH` stays as a diagnostic, but there is nothing here
-  for it to fix, and the thinness has to be explained by something that is not the pitch.
-
-  ⚠️ `Key` was ruled out on the way: 49,270 of those 49,447 notes carry `Key = 0`, so question 4's
-  transposition changes almost nothing for this instrument.
-
-⚠️ One thing was ruled out on the way: byte 3 of a note record only ever holds `0x00`, `0x40` or a
-low nibble — bits 4 and 5 are never set corpus-wide, and `0x40` is bit 30, which the engine already
-uses for the triplet sub-step. There is no unread per-note flag hiding there.
 
 ## 23. ⚠️ PARKED — a flat ~1 dB deficit above 315 Hz, against an emulator
 
