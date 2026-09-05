@@ -171,14 +171,37 @@ export type Dependency =
 
 /**
  * Dependency types, as far as they have been **measured** rather than read off
- * somebody's enum: each was checked against the magic of the resource actually
- * downloaded for it.
+ * somebody's enum: every one was checked against the magic of the resource
+ * actually downloaded for it, over levels from both PS3 and PS4.
  *
- * ⚠️ Only these two are established. A streaming level's chunk files will have a
- * type of their own and nobody has looked at one yet; see `open-questions.md`.
+ * | type | magic | what it is | checked |
+ * |---|---|---|---|
+ * | 1 | `TEX ` | a texture | 3 |
+ * | 9 | `LVLb` | a level **inside an adventure** | 10 |
+ * | 38 | `PLNb` | a plan: a Thing saved in the popit | 17 |
+ * | 61 | `CHKb` | a **streaming chunk** | 22 |
+ * | 62 | `ADSb` | an adventure's shared data, 35-270 bytes | 2 |
+ *
+ * ❗ **Type 9 is why an adventure opens at all.** An `ADCb` has no world of its
+ * own: `readBackup` cannot open one, and its levels are hashed dependencies of
+ * this type. Following them turns "nothing happened" into the adventure.
  */
 export const DEPENDENCY_TEXTURE = 1;
+export const DEPENDENCY_LEVEL = 9;
 export const DEPENDENCY_PLAN = 38;
+export const DEPENDENCY_CHUNK = 61;
+export const DEPENDENCY_ADVENTURE_SHARED = 62;
+
+/**
+ * The dependency types worth fetching: exactly what `readBackup` can open.
+ *
+ * ⚠️ **Anything else is somebody else's bandwidth for no song.** A level's table
+ * names its textures, meshes and materials too, and `looksLikeLevel` throws all
+ * of them away on the first four bytes.
+ */
+export const OPENABLE_DEPENDENCIES: readonly number[] = [
+  DEPENDENCY_LEVEL, DEPENDENCY_PLAN, DEPENDENCY_CHUNK,
+];
 
 /**
  * The table at the end of a resource, which `loadResource` only points at.

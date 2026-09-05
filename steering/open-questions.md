@@ -1171,16 +1171,25 @@ the offline one is a fact this project would rather know than discover later.
 frame by frame. Find a voice near 30.038 s whose scheduled render differs, and it will be one spec
 small enough to put in a unit test.
 
-## 35. Which dependency type is a streaming level's chunk file?
+## 36. One island in one archived chunk will not parse
 
-`dev/archive-panel.ts` opens a level from the public archive by walking its dependency table and
-fetching every hashed dependency of **type 38**, which is measured to be `PLNb`. A streaming level
-keeps its world in `CHKb` chunk files instead, `src/core/level.ts` reads those, and they are
-presumably hashed dependencies with a type of their own — but no streaming level has been put
-through this path, so the number is unknown and such a level currently opens with its chunks
-missing.
+Found 2026-09-05 while answering question 35. Of **32 `CHKb` chunks** pulled out of the public
+archive — 19 from "Adventure Time: The Land Of Ooo", 3 from "My Little BiG Space", 10 from a
+streaming music level — **31 parse clean and one reports a single bad island**:
 
-**The anchor**: `readDependencies` already returns every entry with its type. Paste a streaming
-level's root hash, log the hashed dependencies whose type is not 1 or 38, fetch one and look at its
-magic. One level settles it, and the fix is a second constant beside `DEPENDENCY_PLAN`.
+```
+island 1: Thing test marker was 0x6e, not 0xaa, at byte 65735
+          -- the part reader before this one consumed the wrong number of bytes
+```
 
+That is the standard symptom of a part whose reader is wrong or missing: `src/core/parts.ts` has 30
+and the toolkit has ~55. It is **not** a chunk problem — `readChunk` reports per island precisely so
+that one bad island does not throw the other twenty away, and that design is what turned this into
+a one-line report instead of a lost chunk.
+
+**The anchor**: chunk `9712345a…`, island 1, byte 65735. The Thing before the failure names the part
+that over- or under-read; `dev/walk-levels.ts` already prints that trail for a level and wants only
+a chunk path adding.
+
+⚠️ **No sequencer has yet been found inside any chunk.** All 32 hold zero, so this costs no music
+today; it is a hole in the part table, and the next chunk might not be so quiet.

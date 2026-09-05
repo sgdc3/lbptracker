@@ -491,16 +491,14 @@ usefulness of the table to us: the hashed ones are in the public archive under t
 level itself, and the GUIDs are in the game's FileDB and are **not in the archive at all**. On that
 level: **20 hashed, 140 GUIDs**.
 
-Two dependency types are established, each checked against the magic of the resource actually
-downloaded for it — not read off somebody's enum:
+Six dependency types are established, each checked against the magic of the resource actually
+downloaded for it — not read off somebody's enum. The full table and how it was taken are in
+answered question 35; the three that matter here are **9 = `LVLb`** (a level inside an adventure),
+**38 = `PLNb`** and **61 = `CHKb`**, because those are exactly what `readBackup` can open.
 
-| type | is | count on Music Gallery #3 |
-|---|---|---|
-| **1** | `TEX ` | 3 hashed (54 more as GUIDs) |
-| **38** | `PLNb` | 17 hashed (13 more as GUIDs — stock objects) |
-
-⚠️ A streaming level's chunk files must have a type of their own and nobody has looked at one; see
-open question 35.
+❗ **An adventure (`ADCb`) has no world of its own**, and four of twelve "adventure map" hashes off
+the index are one. Its levels are the type-9 dependencies, so the walk is not optional when the root
+is not itself openable — otherwise a good hash would silently do nothing.
 
 ✔ **The walk works and it is worth knowing what it buys.** Fetching the level plus its 17 plans —
 18 resources, six at a time — took **10 s** against 3 s for the level alone, and gave **46

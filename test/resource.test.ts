@@ -4,7 +4,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  DEPENDENCY_PLAN, DEPENDENCY_TEXTURE, loadResource, readDependencies, ResourceFormatError,
+  DEPENDENCY_CHUNK, DEPENDENCY_LEVEL, DEPENDENCY_PLAN, DEPENDENCY_TEXTURE, loadResource,
+  OPENABLE_DEPENDENCIES, readDependencies, ResourceFormatError,
 } from '../src/core/resource.ts';
 import { nodeInflate, loadResourceFile } from '../src/platform/node.ts';
 
@@ -176,4 +177,16 @@ test('a truncated dependency table is an error, not a short list', () => {
 
 test('an empty dependency table is a table, not a failure', () => {
   assert.deepEqual(readDependencies(withDependencies([])), []);
+});
+
+// ⚠️ **These numbers are measurements, not an enum somebody transcribed**: each
+// was checked against the magic of the resource actually downloaded for it, on
+// levels from both PS3 and PS4 -- 1 TEX, 9 LVLb, 38 PLNb, 61 CHKb. A test that
+// merely restated the constants would be worthless; what it pins is that the
+// walk follows exactly the three a backup can open, and no texture.
+test('the walk follows the three dependency types a backup can open', () => {
+  assert.deepEqual([...OPENABLE_DEPENDENCIES].sort((a, b) => a - b), [
+    DEPENDENCY_LEVEL, DEPENDENCY_PLAN, DEPENDENCY_CHUNK,
+  ]);
+  assert.equal(OPENABLE_DEPENDENCIES.includes(DEPENDENCY_TEXTURE), false);
 });

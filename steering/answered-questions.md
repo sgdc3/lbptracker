@@ -2000,3 +2000,42 @@ each. It does not matter here: the game walks every Thing carrying `MusicSequenc
 0x56`, tested at `v0x1c5773`) when one begins playing, which is the "stop all other music
 sequencers" behaviour, and **even if two could sound, neither would get more than 32**. A single
 sequencer has 32 and that is the number the pool must model.
+
+## 35. Dependency types — ANSWERED by measurement, 2026-09-05
+
+`dev/archive-panel.ts` opens a level from the public archive by walking its dependency table, and
+the question was which type a streaming level's chunk file carries. Answered, and four more with it.
+**Every row was checked against the magic of the resource actually downloaded for it** — no enum was
+transcribed:
+
+| type | magic | what it is | fetched |
+|---|---|---|---|
+| 1 | `TEX ` | a texture | 3 |
+| 9 | `LVLb` | **a level inside an adventure** | 10 |
+| 38 | `PLNb` | a plan | 17 |
+| 46 | `VOPb` | a recording | 2 |
+| 61 | `CHKb` | **a streaming chunk** | 32 |
+| 62 | `ADSb` | an adventure's shared data, 35-270 bytes | 2 |
+
+The 32 chunks came from three levels on two platforms (PS3 and PS4), so 61 is not one creator's
+quirk. **31 of the 32 parse clean**; the one exception is question 36.
+
+### The surprise: an adventure is not a level, and would have opened as nothing
+
+Four of twelve "adventure map" hashes taken off the index are **`ADCb`**, which `readBackup` skips on
+its magic — `looksLikeLevel` tests for `LVLb`, `PLNb`, `CHKb` and nothing else. An `ADCb` has no
+world of its own: **its levels are type-9 dependencies**, ten of which were fetched and all ten
+parse clean.
+
+So the walk is **not optional when the root cannot itself be opened**. With the checkbox unticked a
+perfectly good adventure hash would have done nothing at all, silently, and a listener would have
+had no way to tell that from a broken hash. `open_` tests `looksLikeLevel(root)` and walks anyway.
+
+### What it is worth, and what it is not
+
+⚠️ **No chunk found so far contains a sequencer** — all 32 hold zero, across an Adventure Time map,
+a "big space" level and a streaming music level whose songs are all in the level and its plans. The
+walk is right and the plumbing is proved; the payoff is still hypothetical, exactly as it is for
+plans (16 distinct songs either way on "Music Gallery #3"). What is now certain is that a hash off
+the index opens *something* whatever kind of thing it names, which was not true before.
+

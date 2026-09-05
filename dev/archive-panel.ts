@@ -21,22 +21,24 @@
  */
 
 import { readPaste, rootLevelUrl, SEARCH_HOST } from './lbparchive.ts';
-import { DEPENDENCY_PLAN, readDependencies } from '../src/core/resource.ts';
+import { OPENABLE_DEPENDENCIES, readDependencies } from '../src/core/resource.ts';
+import { looksLikeLevel } from '../src/core/backup.ts';
 import type { BackupFile } from '../src/core/backup.ts';
 import type { Opened } from './open-level.ts';
 
 /**
  * How many resources one paste may pull in, and how many at a time.
  *
- * ⚠️ **The walk is plans only, and that is measured rather than assumed.** A
+ * ⚠️ **The walk fetches only what can be opened, and the list is measured.** A
  * level's dependency table names its textures, meshes and materials too, and
  * `src/core/backup.ts` would throw every one of them away -- it opens `LVLb`,
- * `PLNb` and `CHKb` and nothing else. Fetching them would be minutes of somebody
- * else's bandwidth for no song. Type 38 is the plan, checked against the magic
- * of what actually came back.
+ * `PLNb` and `CHKb` and nothing else. So the walk follows exactly the three
+ * types that are those: 9, 38 and 61, each checked against the magic of what
+ * actually came back. See `OPENABLE_DEPENDENCIES`.
  *
  * The cap is a guard against a level that references half the archive, not a
- * measured limit: "Music Gallery #3" needs 17.
+ * measured limit: "Music Gallery #3" needs 17, and an adventure map's levels and
+ * chunks together came to 25.
  */
 const RESOURCE_LIMIT = 250;
 const AT_A_TIME = 6;
@@ -65,16 +67,16 @@ export function wireArchiveOpen(opts: {
     // restores a checkbox across a reload, and a switch that comes back ticked
     // when the markup says otherwise is a bug that looks like the code.
     '<label class="check archive-deep"><input type="checkbox" autocomplete="off" checked>' +
-    'with its plans</label>' +
+    'whole backup</label>' +
     '</div>' +
     '<p class="archive-note">Paste the 40 digits and the level is downloaded to your browser ' +
     'and read there.</p>' +
     '<p class="archive-hint">Find a level at <a href="' + SEARCH_HOST + '" target="_blank" ' +
     'rel="noreferrer noopener">zaprit.fish</a> — its page shows the <b>root level</b> hash in a ' +
     'box of its own, under the title. Nothing here needs a server: the level comes straight from ' +
-    'the Internet Archive. <b>With its plans</b> also fetches the saved copies the level depends ' +
-    'on — slower, and usually the same songs, but it is where a song that was never placed in the ' +
-    'level would be.</p>';
+    'the Internet Archive. <b>Whole backup</b> also fetches the plans, chunks and levels it ' +
+    'depends on — slower, and usually the same songs, but it is where a song that was never placed ' +
+    'in the level would be. An adventure has no world of its own and always takes this route.</p>';
 
   const query = host.querySelector<HTMLInputElement>('.archive-q')!;
   const go = host.querySelector<HTMLButtonElement>('.archive-go')!;
@@ -105,13 +107,13 @@ export function wireArchiveOpen(opts: {
   }
 
   /**
-   * The plans a resource depends on that have not been asked for yet.
+   * The openable resources this one depends on that have not been asked for yet.
    *
    * A resource whose tail will not parse contributes nothing and is not an
    * error: the level itself is already in hand, and one unreadable dependency
    * table is no reason to refuse the songs that did arrive.
    */
-  function plansOf(bytes: Uint8Array, seen: Set<string>): string[] {
+  function partsOf(bytes: Uint8Array, seen: Set<string>): string[] {
     const out: string[] = [];
     let deps;
     try {
@@ -120,7 +122,8 @@ export function wireArchiveOpen(opts: {
       return out;
     }
     for (const dep of deps) {
-      if (dep.kind !== 'sha1' || dep.type !== DEPENDENCY_PLAN || seen.has(dep.sha1)) continue;
+      if (dep.kind !== 'sha1' || seen.has(dep.sha1)) continue;
+      if (!OPENABLE_DEPENDENCIES.includes(dep.type)) continue;
       seen.add(dep.sha1);
       out.push(dep.sha1);
     }
@@ -146,6 +149,13 @@ export function wireArchiveOpen(opts: {
    * on because the one thing it can find, a song that lives only as a plan, is
    * music silently missing from a music tracker; it is a checkbox because on
    * most levels it is seven seconds and fifteen duplicate rows for nothing.
+   *
+   * ⚠️ **Except when the root cannot be opened at all**, and then the walk is
+   * not optional. An adventure (`ADCb`) has no world of its own: `readBackup`
+   * skips it on its magic and its levels are type-9 dependencies, so with the
+   * box unticked a perfectly good hash would do nothing whatsoever. Four of
+   * twelve "adventure map" hashes taken off the index are `ADCb`, so this is not
+   * a corner case.
    */
   async function open_(sha1: string): Promise<void> {
     if (busy) return;
@@ -158,8 +168,9 @@ export function wireArchiveOpen(opts: {
       const seen = new Set([sha1]);
       // ❗ **Read once, at the start.** Ticking the box while eighteen fetches
       // are in flight must not change what this open is doing halfway through.
-      const withPlans = deep.checked;
-      const queue = withPlans ? plansOf(root, seen) : [];
+      // ❗ Not optional when the root is not itself openable: see above.
+      const withParts = deep.checked || !looksLikeLevel(root);
+      const queue = withParts ? partsOf(root, seen) : [];
       let missing = 0;
       while (queue.length > 0 && files.length < RESOURCE_LIMIT) {
         say(`${files.length} of ${files.length + queue.length} resources…`);
@@ -178,12 +189,18 @@ export function wireArchiveOpen(opts: {
             continue;
           }
           files.push({ name: hash, bytes });
-          // A plan can depend on further plans, so the walk continues from what
-          // came back rather than stopping at the level's own list.
-          queue.push(...plansOf(bytes, seen));
+          // An adventure names levels, a level names chunks and plans, and a
+          // plan can name further plans, so the walk continues from what came
+          // back rather than stopping at the root's own list.
+          queue.push(...partsOf(bytes, seen));
         }
       }
-      say(missing === 0 ? '' : `${missing} plan${missing === 1 ? '' : 's'} the archive does not have`, missing > 0);
+      say(
+        missing === 0
+          ? ''
+          : `${missing} of its parts ${missing === 1 ? 'is' : 'are'} not in the archive`,
+        missing > 0,
+      );
       host.hidden = missing === 0;
       // No name to give it: naming levels is what the index does, and not
       // needing the index is the point. The songs carry their own titles anyway.
