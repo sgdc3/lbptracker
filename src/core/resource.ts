@@ -155,3 +155,83 @@ export async function loadResource(
     dependencyTableOffset, chunks, data: out,
   };
 }
+
+/**
+ * One entry of a resource's dependency table.
+ *
+ * ❗ **A SHA-1 dependency is a USER resource and a GUID one is a GAME asset.**
+ * That distinction is the whole usefulness of this table to us: the hashed ones
+ * are in the public archive under the same URL as the level itself, and the
+ * GUIDs are in the game's own FileDB and are not in the archive at all. Measured
+ * on "Music Gallery #3": 160 dependencies, **20 hashed and 140 GUIDs**.
+ */
+export type Dependency =
+  | { readonly kind: 'sha1'; readonly sha1: string; readonly type: number }
+  | { readonly kind: 'guid'; readonly guid: number; readonly type: number };
+
+/**
+ * Dependency types, as far as they have been **measured** rather than read off
+ * somebody's enum: each was checked against the magic of the resource actually
+ * downloaded for it.
+ *
+ * ⚠️ Only these two are established. A streaming level's chunk files will have a
+ * type of their own and nobody has looked at one yet; see `open-questions.md`.
+ */
+export const DEPENDENCY_TEXTURE = 1;
+export const DEPENDENCY_PLAN = 38;
+
+/**
+ * The table at the end of a resource, which `loadResource` only points at.
+ *
+ * The layout is `u32 count` and then, per entry, `u8 kind` -- 1 for a 20-byte
+ * SHA-1, 2 for a `u32` GUID -- followed by a `u32` resource type. It is **not**
+ * inside the compressed payload: it sits after it, in the file, which is why
+ * this takes the raw bytes rather than a `Resource`.
+ *
+ * ✔ The reading is self-checking: on a real level the table ended at exactly the
+ * last byte of the file (0x52d02 of 0x52d02), which nothing but a correct walk
+ * of 160 variable-length entries can do.
+ */
+export function readDependencies(bytes: Uint8Array): Dependency[] {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let at = view.getUint32(8);
+  if (at < HEADER_MIN || at + 4 > bytes.length) {
+    throw new ResourceFormatError(`dependency table offset 0x${at.toString(16)} is outside the file`);
+  }
+  const count = view.getUint32(at);
+  at += 4;
+  const out: Dependency[] = [];
+  for (let i = 0; i < count; i += 1) {
+    // ⚠️ **The length check has to know the kind**, because the two entries are
+    // 25 and 9 bytes. Checking a fixed nine and then reading twenty was the
+    // first attempt: `subarray` shortens silently at the end of a buffer, so a
+    // truncated table produced a HASH THAT WAS SHORT rather than an error --
+    // and a short hash is a URL that 404s for a reason nobody could see. The
+    // test truncates a real table by eight bytes to keep this honest.
+    if (at + 1 > bytes.length) {
+      throw new ResourceFormatError(`dependency ${i} of ${count} runs past the end of the file`);
+    }
+    const kind = view.getUint8(at);
+    at += 1;
+    const needs = kind === 1 ? 24 : kind === 2 ? 8 : 0;
+    if (needs === 0) {
+      throw new ResourceFormatError(`dependency ${i} has kind ${kind}, which is neither hash nor GUID`);
+    }
+    if (at + needs > bytes.length) {
+      throw new ResourceFormatError(`dependency ${i} of ${count} runs past the end of the file`);
+    }
+    if (kind === 1) {
+      const sha1 = [...bytes.subarray(at, at + 20)]
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+      at += 20;
+      out.push({ kind: 'sha1', sha1, type: view.getUint32(at) });
+    } else {
+      const guid = view.getUint32(at);
+      at += 4;
+      out.push({ kind: 'guid', guid, type: view.getUint32(at) });
+    }
+    at += 4;
+  }
+  return out;
+}

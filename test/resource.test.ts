@@ -3,7 +3,9 @@ import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadResource, ResourceFormatError } from '../src/core/resource.ts';
+import {
+  DEPENDENCY_PLAN, DEPENDENCY_TEXTURE, loadResource, readDependencies, ResourceFormatError,
+} from '../src/core/resource.ts';
 import { nodeInflate, loadResourceFile } from '../src/platform/node.ts';
 
 /**
@@ -112,4 +114,66 @@ test('every level in the corpus parses, and chunk data ends on the dependency ta
       `revisions: ${[...revisions].sort().join(', ')}`,
   );
   assert.ok(levels.length >= 10, 'expected the full corpus');
+});
+
+// ---------------------------------------------------------- dependency table
+
+/**
+ * A resource whose only real content is its dependency table.
+ *
+ * `readDependencies` reads the offset at byte 8 and walks from there, so the
+ * head can be anything -- which is the point: the table is **after** the
+ * compressed payload, in the file, not inside it.
+ */
+function withDependencies(entries: (readonly [1 | 2, number[] | number, number])[]): Uint8Array {
+  const body: number[] = [];
+  const u32 = (n: number) => body.push((n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff);
+  u32(entries.length);
+  for (const [kind, key, type] of entries) {
+    body.push(kind);
+    if (kind === 1) body.push(...(key as number[]));
+    else u32(key as number);
+    u32(type);
+  }
+  // A header of the shortest length a real one can have, with the dependency
+  // table starting immediately after it. Only bytes 8..11 are read.
+  const head = new Array(HEAD).fill(0);
+  head[0] = 0x4c; head[1] = 0x56; head[2] = 0x4c; head[3] = 0x62; // "LVLb"
+  head[8] = 0; head[9] = 0; head[10] = 0; head[11] = HEAD;        // the offset
+  return new Uint8Array([...head, ...body]);
+}
+
+/** `HEADER_MIN` in `resource.ts`; an offset below it is rejected as nonsense. */
+const HEAD = 0x16;
+
+const HASH = Array.from({ length: 20 }, (_, i) => i + 1);
+const HASH_HEX = '0102030405060708090a0b0c0d0e0f1011121314';
+
+test('a dependency table separates hashed user resources from GUID game assets', () => {
+  const bytes = withDependencies([
+    [1, HASH, DEPENDENCY_PLAN],
+    [2, 0x1234, DEPENDENCY_TEXTURE],
+    [1, HASH.map((b) => b + 1), DEPENDENCY_TEXTURE],
+  ]);
+  assert.deepEqual(readDependencies(bytes), [
+    { kind: 'sha1', sha1: HASH_HEX, type: DEPENDENCY_PLAN },
+    { kind: 'guid', guid: 0x1234, type: DEPENDENCY_TEXTURE },
+    { kind: 'sha1', sha1: '02030405060708090a0b0c0d0e0f101112131415', type: DEPENDENCY_TEXTURE },
+  ]);
+});
+
+// The entries are variable-length, so a table that claims more than it holds
+// walks off the end. Saying which entry ran out beats returning a short list
+// that looks like a level with fewer plans than it has.
+test('a truncated dependency table is an error, not a short list', () => {
+  const bytes = withDependencies([[1, HASH, DEPENDENCY_PLAN]]);
+  assert.throws(() => readDependencies(bytes.subarray(0, bytes.length - 8)), ResourceFormatError);
+  const badKind = withDependencies([[1, HASH, DEPENDENCY_PLAN]]);
+  // The first entry's kind byte: past the header and the u32 count.
+  badKind[HEAD + 4] = 7;
+  assert.throws(() => readDependencies(badKind), /neither hash nor GUID/);
+});
+
+test('an empty dependency table is a table, not a failure', () => {
+  assert.deepEqual(readDependencies(withDependencies([])), []);
 });

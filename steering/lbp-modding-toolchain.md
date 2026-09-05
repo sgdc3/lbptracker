@@ -478,6 +478,40 @@ hash** into the tracker; `dev/lbparchive.ts` turns the hash into a URL and the p
 **branch 0x218**, which the corpus did not contain. The Things a level's music lives on are in the
 level's own resource; the separate `.plan` resources matter for a creator's *backup*, not for this.
 
+### The dependency table — the whole backup, from one hash
+
+Measured 2026-09-05. The table sits **after** the compressed payload, at the offset the header
+carries at byte 8, and is `u32 count` then per entry `u8 kind` — 1 for a 20-byte SHA-1, 2 for a
+`u32` GUID — followed by a `u32` resource type. ✔ On "Music Gallery #3" the walk of 160
+variable-length entries ended at exactly the last byte of the file (0x52d02 of 0x52d02), which is
+the check that the reading is right. `src/core/resource.ts` `readDependencies` does this.
+
+❗ **A hashed dependency is a USER resource and a GUID one is a GAME asset.** That is the whole
+usefulness of the table to us: the hashed ones are in the public archive under the same URL as the
+level itself, and the GUIDs are in the game's FileDB and are **not in the archive at all**. On that
+level: **20 hashed, 140 GUIDs**.
+
+Two dependency types are established, each checked against the magic of the resource actually
+downloaded for it — not read off somebody's enum:
+
+| type | is | count on Music Gallery #3 |
+|---|---|---|
+| **1** | `TEX ` | 3 hashed (54 more as GUIDs) |
+| **38** | `PLNb` | 17 hashed (13 more as GUIDs — stock objects) |
+
+⚠️ A streaming level's chunk files must have a type of their own and nobody has looked at one; see
+open question 35.
+
+✔ **The walk works and it is worth knowing what it buys.** Fetching the level plus its 17 plans —
+18 resources, six at a time — took **10 s** against 3 s for the level alone, and gave **46
+sequencer rows instead of 31**. But *distinct* songs, by name and track count, were **16 either
+way**: every plan was a copy of a song already placed in the level. The case the walk exists for is
+a song that lives **only** as a plan (a prize bubble, an unplaced popit copy), and it cannot be
+known to be absent without fetching.
+
+⚠️ Two of the 17 plans yield no project, and that is `readBackup` working: they parse cleanly and
+contain no sequencer, so they are dropped rather than listed. Checked directly before believing it.
+
 ### ❌ The search, built and then removed — 2026-09-05
 
 For one commit the tracker had a real search box: `dev/serve.mjs` proxied `/zaprit/*`, scraped the

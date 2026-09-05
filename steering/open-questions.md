@@ -1170,3 +1170,17 @@ the offline one is a fact this project would rather know than discover later.
 **The anchor**: `LBP_DIFF=<index>` in `dev/live-sim.ts` already bisects one voice's two renders
 frame by frame. Find a voice near 30.038 s whose scheduled render differs, and it will be one spec
 small enough to put in a unit test.
+
+## 35. Which dependency type is a streaming level's chunk file?
+
+`dev/archive-panel.ts` opens a level from the public archive by walking its dependency table and
+fetching every hashed dependency of **type 38**, which is measured to be `PLNb`. A streaming level
+keeps its world in `CHKb` chunk files instead, `src/core/level.ts` reads those, and they are
+presumably hashed dependencies with a type of their own — but no streaming level has been put
+through this path, so the number is unknown and such a level currently opens with its chunks
+missing.
+
+**The anchor**: `readDependencies` already returns every entry with its type. Paste a streaming
+level's root hash, log the hashed dependencies whose type is not 1 or 38, fetch one and look at its
+magic. One level settles it, and the fix is a second constant beside `DEPENDENCY_PLAN`.
+
