@@ -83,6 +83,7 @@ import sys
 MODULES = {
     'reverb': r'D:\PS4Games\CUSA00063-patch\gamedata_orbis\spu\fmodsmsreverb.prx',
     'input': r'D:\PS4Games\CUSA00063-patch\gamedata_orbis\spu\fmodextinput.prx',
+    'hammer': r'D:\PS4Games\CUSA00063-patch\gamedata_orbis\spu\fmodsmswavehammer.prx',
     # The game ships its own libc, so the module both audio PRXs import from is a
     # file on this disk. `export` below turns a name into an address in it.
     'libc': r'D:\PS4Games\CUSA00063-patch\sce_module\libc.prx',

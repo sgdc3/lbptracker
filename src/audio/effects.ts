@@ -156,10 +156,21 @@ export class Echo {
  * frame. Channels 0-1 are what reaches the master and 2-3 are the reverb send,
  * so both are clipped — the reverb is fed a clipped signal.
  *
- * ⚠️ This is the only nonlinearity in the sequencer's output stage, and whether
- * it engages depends on our absolute level matching the game's, which is not
- * independently verified. `dev/render-level.ts` reports how much of the render
- * it touches, and `LBP_NO_CLIP=1` turns it off for an A/B.
+ * ⚠️ **It is the plugin's own clip and NOT the end of the game's chain.** Read
+ * 2026-09-05: the channel carries two more DSPs after this one —
+ * `Channel::addDSP` is called at `v0x3e67f9` for "SMS Reverb" and at `v0x3e6976`
+ * for **"SMS Wavehammer"**, Sony's compressor/limiter, and `addDSP` inserts at
+ * the head so the limiter sits closest to the output. The signal path is
+ * `Sequencer → Reverb → Wavehammer → mixer`; this function models the first
+ * arrow and nothing models the third. See open question 37.
+ *
+ * ❗ That distinction is not pedantry. A chain that ends in a limiter can be
+ * driven hot on purpose and one that ends in a hard clip cannot, so every
+ * headroom judgement this project has made assumed the wrong end.
+ *
+ * Whether this clip engages also depends on our absolute level matching the
+ * game's, which is not independently verified. `dev/render-level.ts` reports how
+ * much of the render it touches, and `LBP_NO_CLIP=1` turns it off for an A/B.
  */
 export function clipToUnit(v: number): number {
   return v > 1 ? 1 : v < -1 ? -1 : v;

@@ -3,8 +3,12 @@
     prxdis.py <module> <vaddr> [instruction-count]
     prxdis.py <module> map                       the segment map, vaddr -> file offset
 
-`<module>` is `reverb` (fmodsmsreverb.prx), `input` (fmodextinput.prx) or **`libc`**
-(`sce_module/libc.prx`).
+`<module>` is `reverb` (fmodsmsreverb.prx), `input` (fmodextinput.prx), `hammer`
+(fmodsmswavehammer.prx) or **`libc`** (`sce_module/libc.prx`).
+
+❗ **`hammer` is the limiter at the end of the game's chain** and nothing in this project models it
+yet: `Channel::addDSP` puts it on the sequencer's own channel after the reverb (eboot `v0x3e6976`).
+Its block function is `0x1770`, 256 frames, 4 in and 4 out. See open question 37.
 
 ❗ **`libc` is here because the game ships its own copy**, so the libc that `fmodextinput.prx`
 imports from is a file on this disk rather than an assumption about the console. That is how
@@ -39,6 +43,7 @@ import capstone
 MODULES = {
     'reverb': r'D:\PS4Games\CUSA00063-patch\gamedata_orbis\spu\fmodsmsreverb.prx',
     'input': r'D:\PS4Games\CUSA00063-patch\gamedata_orbis\spu\fmodextinput.prx',
+    'hammer': r'D:\PS4Games\CUSA00063-patch\gamedata_orbis\spu\fmodsmswavehammer.prx',
     'libc': r'D:\PS4Games\CUSA00063-patch\sce_module\libc.prx',
 }
 
