@@ -339,10 +339,21 @@ export interface VoiceSpec {
 /**
  * How often a morphing voice re-derives what the modulation feeds.
  *
- * The AudioWorklet's render quantum, so that the offline render and the live one
- * chunk identically and stay bit-for-bit equal.
+ * ✔ **256, and it is measured**, 2026-09-05. `fmodextinput.prx`'s DSP read
+ * callback at `0x0170` asserts its length is a multiple of 256 (`test r14b, r14b`
+ * then `int 0x41`) and then calls the block function `sub_0x0a90` with
+ * **`mov esi, 0x100`** -- a fixed 256 frames per call, looping over the
+ * callback's length. Everything the modulation feeds is re-derived once per that
+ * block, in `sub_0x1c60`; see question 27 in steering/answered-questions.md for
+ * the cadence and *3. The block clock* for the length.
+ *
+ * ⚠️ **It used to be 128, and that was the AudioWorklet's quantum rather than
+ * the engine's block.** The grid below is therefore the *mixer's* running clock
+ * and not the offset within one `render` call: a live render of 128 frames at a
+ * time and an offline render of the whole song must cross the same boundaries,
+ * and 256 no longer divides the live call.
  */
-const MORPH_FRAMES = 128;
+const MORPH_FRAMES = 256;
 
 /** What one chunk of a voice wrote, and the sends that were live for it. */
 interface RenderedSpan {
@@ -411,6 +422,16 @@ class Voice {
   private curGain: number;
   private curEcho: number;
   private curReverb: number;
+  /**
+   * Whether this voice has ever re-derived its modulation.
+   *
+   * ⚠️ **Per voice, not per `render` call.** The chunk grid is the mixer's, so a
+   * chunk that continues one already begun must not re-derive -- but a voice's
+   * very first chunk must, wherever its start delay left it. A live render
+   * enters `render` once per 128 frames and would treat every entry as a first
+   * chunk without this.
+   */
+  private derived = false;
   /**
    * Whether this voice can ever reach a send bus.
    *
@@ -641,6 +662,9 @@ class Voice {
   private readonly filterScratch = { freq: 0, res: 0 };
   private readonly ladderScratch = { p: 0, f: 0, q: 0 };
   private readonly panScratch = { left: 0, right: 0 };
+  /** What {@link stepLfos} last read out of oscillators 1 and 2. */
+  private curLfoRate = 1;
+  private curLfoGain = 1;
 
   get finished(): boolean {
     const source = this.spec.sample.channels[0];
@@ -689,11 +713,11 @@ class Voice {
    * A voice with no `morph` is handed straight through and runs exactly the code
    * it ran before this existed.
    *
-   * `MORPH_FRAMES` is our own choice, not a measurement: the engine advances the
-   * modulation once per chunk in `sub_0x1c60` and how long its chunks are has
-   * not been read out. 128 is the AudioWorklet's own quantum, so the offline
-   * render and the live one still agree frame for frame -- which they are
-   * measured to do, and must keep doing.
+   * `MORPH_FRAMES` is **256, the engine's own block length**; see the note
+   * there. `gridPhase` is the mixer's frame clock modulo it, which is what lets
+   * a 128-frame live call and a whole-song offline call cross the same
+   * boundaries -- they are measured to agree frame for frame, and must keep
+   * doing.
    */
   render(
     outLeft: Float32Array,
@@ -702,6 +726,7 @@ class Voice {
     interpolate: Interpolator,
     engineSampler: boolean,
     into?: RenderedSpan[],
+    gridPhase = 0,
   ): { begin: number; end: number } {
     // ❗ **A voice with a live LFO chunks too**, because the LFO advances once
     // per chunk in the engine and holding one value for a whole offline render
@@ -729,13 +754,27 @@ class Voice {
     let begin = -1;
     let end = 0;
     while (at < frames) {
-      // ⚠️ **The chunk grid is the block's, not the voice's.** Taking a full
-      // `MORPH_FRAMES` from wherever the delay ended would put the boundaries
-      // at `delay + 128k`, and then an offline render and a 128-frame live one
-      // would step the modulation at different frames. Aligning to the grid is
-      // what keeps them identical -- see `test/audio.test.ts`.
-      const take = Math.min(MORPH_FRAMES - (at % MORPH_FRAMES), frames - at);
-      this.refreshMorph();
+      // ⚠️ **The chunk grid is the engine's block clock, not the voice's and not
+      // this call's.** Taking a full `MORPH_FRAMES` from wherever the delay
+      // ended would put the boundaries at `delay + 256k`; measuring from `at`
+      // alone would put a live render's boundaries every 128 frames and an
+      // offline one's every 256. `gridPhase + at` is the absolute frame modulo
+      // the block, so both cross the same ones -- see `test/audio.test.ts`.
+      const off = (gridPhase + at) % MORPH_FRAMES;
+      const take = Math.min(MORPH_FRAMES - off, frames - at);
+      // ❗ A chunk that continues one already begun must NOT re-derive, or a
+      // live render would step the modulation twice as often as an offline one.
+      // ⚠️ `derived` is per VOICE and not per call, for exactly that reason: a
+      // live render enters here once per 128 frames and would otherwise treat
+      // every entry as a first chunk.
+      if (off === 0 || !this.derived) {
+        this.refreshMorph();
+        // ⚠️ Advanced by the whole remaining block, not by `take`: `take` is cut
+        // short when the caller's buffer ends first, and the oscillators must
+        // not notice how the caller chose to slice the audio.
+        this.stepLfos(MORPH_FRAMES - off);
+      }
+      this.derived = true;
       const span = this.renderChunk(
         outLeft.subarray(at),
         outRight.subarray(at),
@@ -762,6 +801,32 @@ class Voice {
       at += take;
     }
     return { begin: begin < 0 ? 0 : begin, end };
+  }
+
+  /**
+   * Advance the three oscillators one block and read them.
+   *
+   * ❗ **Once per block of the mixer's grid**, which is the engine's cadence
+   * (question 27) at the engine's length (`MORPH_FRAMES`). `frames` is the whole
+   * block, never the part of it one `render` call happens to cover -- that is
+   * what keeps a 128-frame live render and a whole-song offline one identical.
+   */
+  private stepLfos(frames: number): void {
+    const lfos = this.curLfos;
+    if (lfos === undefined) return;
+    const dt = frames * this.secondsPerFrame;
+    if (lfos[0].depth !== 0) {
+      this.lfo[0].advance(dt, lfos[0].rate * LFO_RATE_SCALE[0]);
+      this.curLfoRate = pitchFactor(this.lfo[0].value, lfos[0].depth);
+    }
+    if (lfos[1].depth !== 0) {
+      this.lfo[1].advance(dt, lfos[1].rate * LFO_RATE_SCALE[1]);
+      this.curLfoGain = gainFactor(this.lfo[1].value, lfos[1].depth);
+    }
+    if (lfos[2].depth !== 0) {
+      this.lfo[2].advance(dt, lfos[2].rate * LFO_RATE_SCALE[2]);
+      panGainsInto(panFold(this.lfo[2].value, lfos[2].depth, this.spec.pan * 2), this.panScratch);
+    }
   }
 
   private renderChunk(
@@ -861,26 +926,13 @@ class Voice {
       begin = skip;
     }
 
-    // ❗ **After the delay, so a voice that does not sound in this chunk does
-    // not modulate either** -- and so the advance is the same sequence whatever
-    // block size the mixer is driven at, which `test/audio.test.ts` pins.
-    let lfoRate = 1;
-    let lfoGain = 1;
-    if (lfo0) {
-      this.lfo[0].advance(frames * this.secondsPerFrame, lfos![0].rate * LFO_RATE_SCALE[0]);
-      lfoRate = pitchFactor(this.lfo[0].value, lfos![0].depth);
-    }
-    if (lfo1) {
-      this.lfo[1].advance(frames * this.secondsPerFrame, lfos![1].rate * LFO_RATE_SCALE[1]);
-      lfoGain = gainFactor(this.lfo[1].value, lfos![1].depth);
-    }
-    if (lfo2) {
-      this.lfo[2].advance(frames * this.secondsPerFrame, lfos![2].rate * LFO_RATE_SCALE[2]);
-      panGainsInto(
-        panFold(this.lfo[2].value, lfos![2].depth, this.spec.pan * 2),
-        this.panScratch,
-      );
-    }
+    // ⚠️ **The oscillators are advanced by `stepLfos`, not here.** They move
+    // once per block of the engine's grid, and a live render hands this function
+    // half a block at a time -- advancing per call would step them twice as
+    // often as an offline render and the two would stop being identical. What is
+    // left here is reading the values that call left behind.
+    const lfoRate = this.curLfoRate;
+    const lfoGain = this.curLfoGain;
     // The allocator's cut, by arithmetic rather than a per-frame test: it is
     // known before the loop and never moves.
     const last = Number.isFinite(this.cut) ? Math.min(frames, begin + this.cut) : frames;
@@ -1035,6 +1087,17 @@ export class Mixer {
   private voices: Voice[] = [];
   private interpolate: Interpolator;
   private engineSampler = true;
+  /**
+   * Frames rendered so far, modulo {@link MORPH_FRAMES}: the engine's DSP block
+   * clock.
+   *
+   * ❗ **It belongs to the mixer and not to a voice**, because the engine's
+   * blocks run from the moment the channel starts and every voice re-derives its
+   * modulation on the same boundaries. A per-voice counter would put a voice
+   * that began mid-block on its own grid, which the engine cannot do -- a voice
+   * there always starts at a block's first frame.
+   */
+  private clock = 0;
 
   constructor(
     outputRate: number,
@@ -1213,11 +1276,17 @@ export class Mixer {
     const spans: RenderedSpan[] = [];
     const total = this.voices.length;
     let done = 0;
+    // ❗ **The modulation grid belongs to the mixer, not to a render call.** The
+    // engine re-derives once per 256-frame DSP block and those blocks run from
+    // the moment playback starts, so a live render handing over 128 frames at a
+    // time has to know where in that block it is. Every voice gets the same
+    // phase, which is what keeps them stepping together.
+    const phase = this.clock;
     for (const voice of this.voices) {
       if (onVoice && (done & 0xff) === 0) onVoice(done, total);
       done += 1;
       if (!needsSends || !voice.maySend) {
-        voice.render(left, right, frames, this.interpolate, this.engineSampler);
+        voice.render(left, right, frames, this.interpolate, this.engineSampler, undefined, phase);
         continue;
       }
       // The scratch is left clean by whoever used it last, so only the spans
@@ -1225,7 +1294,7 @@ export class Mixer {
       // whose modulation moves reports one span per chunk, each with its own
       // echo send; every other voice reports exactly one.
       spans.length = 0;
-      voice.render(scratchL, scratchR, frames, this.interpolate, this.engineSampler, spans);
+      voice.render(scratchL, scratchR, frames, this.interpolate, this.engineSampler, spans, phase);
       for (const span of spans) {
         const { echo, reverb } = span;
         // ⚠️ **Both sends are hoisted out of the frame loop**, and that is worth
@@ -1255,6 +1324,9 @@ export class Mixer {
       }
     }
     onVoice?.(total, total);
+    // The engine's block clock advances with the audio, not with the caller's
+    // convenience. Wrapping keeps it exact for a render of any length.
+    this.clock = (this.clock + frames) % MORPH_FRAMES;
     // A voice that ran out mid-block has already written what it had.
     this.voices = this.voices.filter((v) => !v.finished);
   }

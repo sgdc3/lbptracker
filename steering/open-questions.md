@@ -44,10 +44,17 @@ three measured constants instead of a fit. Its entry is the one to read before a
 this binary: **the eboot has RTTI**, 322 vtables can be named outright, and a session was spent
 enumerating them by shape instead. `tools/ebvtable.py` is what came out of it.
 
+❗ **And question 3's last piece turned out to be the clock everything runs on.** The engine's DSP
+block is a fixed **256 frames** (`0x0170` calls the block function with `mov esi, 0x100` and refuses
+a length that is not a multiple of it), so the modulation staircase this project holds for a chunk
+was being stepped at the AudioWorklet's 128 rather than the engine's 256. Fixed 2026-09-05, worth
+−50.6 dB of difference at an unchanged RMS. The same read showed that **note onsets land on that
+block** rather than on the sample, which is now the one open *decision* in section 0.
+
 **Nothing about the engine's signal path is unread any more.** What is left in this file is two
-listening reports that need a capture from real hardware (15, 23), some semantics (0, 3), one
-question that is not about fidelity at all (24), and one about files this reader does not claim to
-support (28).
+listening reports that need a capture from real hardware (15, 23), two decisions with bounded error
+(section 0), one question that is not about fidelity at all (24), and one about files this reader
+does not claim to support (28).
 
 Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then working outward from it. That
 run closed questions 5 and 7 outright, the whole of 8's `Params`, and the triplet half of 3; it
@@ -88,10 +95,25 @@ anything; all are places where an answer stopped just short.
   because a placement with `echoSend == 0` mutes the instrument's send whatever the modulation
   does. Nothing outstanding.
 
-- **The `1/3` sub-step and `Swing`.** Triplets are settled and wired; `Swing` is a normalised 0..1
-  ratio clamped at 0.99 and what the engine does with it is still unknown. It stays under question 3.
-- **The voice pool did not explain the density report it was found chasing.** It cuts 248 of 1,684
-  notes over one window and a listener heard no difference.
+- ~~**The `1/3` sub-step and `Swing`.**~~ ✔ **CLOSED 2026-09-05, and the implementation was
+  right.** The block loop recomputes the step length from `floor(position) & 1`, which cannot change
+  inside a step, so the position advances linearly at that step's own swung rate and a note fires
+  when `frac(position)` passes `voice[+0x3e]/3`. A triplet inside a stretched step therefore
+  stretches with it, which is exactly what `swungFrame` does. See *3* in
+  [answered-questions.md](answered-questions.md).
+- ~~**The voice pool did not explain the density report it was found chasing.**~~ **RETIRED
+  2026-09-05.** The report was a listener's impression of one passage, never reproduced, and the
+  pool itself is measured and implemented (*13* and *33*). There is nothing here to measure: what is
+  left is a description of a session, and that belongs to the auto-memory rather than to steering.
+
+- ❗ **Note onsets land on the engine's 256-frame block, and this project renders them
+  sample-accurately.** Not an unknown — `0x1cd4` computes the in-block offset as
+  `trunc((start - frac(p)) / N)`, which is 0 for every block longer than a frame — but a *decision*,
+  like the release tail below. Reproducing it moves every onset later by 0 to 5.33 ms and rests on
+  the block grid being song-aligned, which is an inference. The anchor is a capture of a fast
+  unswung drum pattern: on a 256-frame grid the onset deviation is a sawtooth with a 5.33 ms range,
+  and sample-accurate onsets have none. Full reading in *3* in
+  [answered-questions.md](answered-questions.md).
 
 - **The release tail, question 29's residual.** The question itself is answered — the engine holds a
   record until the envelope reaches zero, measured six ways — and the model is a *decision*:
@@ -105,42 +127,6 @@ anything; all are places where an answer stopped just short.
   *structure*, and the voice pool lives in the game's own `fmodextinput.prx`, which the emulator
   executes — so unlike question 23 this experiment does not need real hardware. See *Provenance
   rule 2* in [lbp-modding-toolchain.md](lbp-modding-toolchain.md).
-
-## 3. Grid resolution, swing, and triplets
-
-The cell geometry is now **measured**: `gridX = floor(2*x/105 - 0.5)`, `gridY = floor(-y/105)` at
-`v0x1c4ad0`. What is still open:
-
-- ~~**Steps per grid unit.**~~ **Settled from the engine**: `v0x1c5cda` computes a step count as
-  `trunc(x * 32 / 105)`, i.e. **32 steps per 105 world units, 16 per 52.5-unit cell**. Matches both
-  `sequencerdump`'s constant and the corpus's step-31 ceiling.
-- ~~**`Swing` semantics.**~~ **Fully settled** — the ratio *and* what the engine does with it. See
-  *3b. Swing* in [answered-questions.md](answered-questions.md).
-- ~~**Triplet timing.**~~ **Settled from the engine, and WIRED UP 2026-09-01.** The finding below
-  sat in this file for a session without reaching the code: `decodeRecord` reduced the sub-step to a
-  boolean `triplet`, and `schedule` never read even that. Every one of the 39,000 corpus notes that
-  sits a third or two thirds of a step late was placed on the beat, which a listener reported as
-  triplet passages sounding swung. `NoteRecord.subStep` is now 0/1/2 and `Note` carries
-  `startPosition`/`endPosition` in fractional steps.
-
-  ⚠️ **Bit 30 is in the FOURTH byte** (`b3 & 0x40`), not the first. The first byte's `0x40` is step
-  bit 6 and 32,515 corpus records use it, so masking the step with `0x3f` — which looked right when
-  the two candidate bits came out near-equally common — moves every one of them by 64 steps. The
-  corpus decodes to sub-step 0 on 3,160,795 records, 1 on 21,582 and 2 on 17,411: the two thirds
-  balanced, which is what a triplet group looks like, and no fourth value, which `bit7 << bit30`
-  cannot produce.
-
-- ~~**Triplet timing.**~~ **Settled from the engine.** A note's position is
-  **`step + subStep/3`**, where `subStep = bit7 << bit30` of the note word, so it takes the values
-  0, 1 and 2 — thirds of a step, exactly. `sub_0x38e0` uses it for the ramp span (`v0x4558`,
-  `v0x455c = ±0.333333`) and the voice record carries the note's start and end in the same units at
-  `+0x3e`/`+0x3f`. `sequencerdump`'s `group*96 + pos*32` re-timing is not what the game does; it was
-  already disowned by its author, and this confirms it.
-
-All three feed the same conversion in the scheduler
-(`samplesPerStep = rate * 60 / (Tempo * stepsPerBeat)`). Answerable from the sequencer module, or
-empirically by recording the game's output and measuring inter-onset intervals at a known tempo —
-which has the advantage of validating the whole timing chain at once.
 
 ## 15. `robot` sounds thin, and the numbers say why — but not whether it should
 

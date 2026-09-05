@@ -839,9 +839,12 @@ test('a moving modulation moves what it feeds', async () => {
   mixer.render(left, right);
 
   // `panGains(0.5)` is the linear law's half and half, so the level shows up
-  // halved. Read at chunk starts: the morph is re-derived per 128 frames.
+  // halved. ❗ **Read at block starts: the morph is re-derived once per 256
+  // frames**, which is the engine's own DSP block (`0x0170` calls the block
+  // function with `mov esi, 0x100`). The value is held flat across the block, so
+  // frame 255 still carries what frame 0 was given.
   assert.ok(Math.abs(left[0] - 0.5) < 1e-6, `opening: ${left[0]}`);
-  assert.ok(Math.abs(left[128] - 0.5 * 1.75) < 1e-6, `quarter way: ${left[128]}`);
+  assert.ok(Math.abs(left[255] - 0.5) < 1e-6, `held to the block's end: ${left[255]}`);
   assert.ok(Math.abs(left[256] - 0.5 * 2.5) < 1e-6, `half way: ${left[256]}`);
   assert.ok(Math.abs(left[512] - 0.5 * 4) < 1e-6, `arrived: ${left[512]}`);
   assert.ok(Math.abs(left[639] - 0.5 * 4) < 1e-6, `and holds: ${left[639]}`);
@@ -915,9 +918,11 @@ test('a moving modulation moves the echo send too', async () => {
   // IS a dry signal, which is what the first assertion is for.
   assert.ok(left[256] > 0.4, `the voice sounds: ${left[256]}`);
   assert.ok(Math.abs(echo[0][0]) < 1e-6, `silent at the start: ${echo[0][0]}`);
+  // ❗ The send is a staircase on the engine's 256-frame block, so it is still
+  // at its opening value at frame 255 and steps at 256.
   assert.ok(
-    Math.abs(echo[0][128] - left[128] * 0.25) < 1e-6,
-    `a quarter of the way: ${echo[0][128]} against ${left[128]}`,
+    Math.abs(echo[0][255]) < 1e-6,
+    `still at the opening send at the block's end: ${echo[0][255]}`,
   );
   assert.ok(
     Math.abs(echo[0][256] - left[256] * 0.5) < 1e-6,

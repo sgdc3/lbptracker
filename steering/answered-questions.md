@@ -2896,3 +2896,111 @@ function start:
   randomisation exists to decorrelate stacked layers, and one layer has nothing to decorrelate" gave
   the correct answer for `Params[2]` and the wrong one for `Params[0..1]`, which is why the repair
   had to be split rather than kept.
+
+## 3. Grid resolution and the block clock — ANSWERED, 2026-09-05
+
+Question 3 asked for the grid, the swing and the triplets. The first two were settled earlier
+(`gridX = floor(2x/105 - 0.5)` at `v0x1c4ad0`, 32 steps per 105 world units at `v0x1c5cda`, and *3b*
+above for swing); this is the rest, and it turned out to be the clock the whole scheduler runs on.
+
+### ✔ The running position is in STEPS, confirmed from the other end
+
+`[state+0x1a4c]` was *called* a step position on the strength of `720000/tempo` being a step length.
+It is one, and the proof is in the scheduler rather than in the arithmetic. `0x0d11`-`0x0d1f`:
+
+```
+esi = [clip]                   ; the clip's cell index
+esi <<= 4                      ; * 16
+if (newPosition >= (float)esi) ...      ; and again at 0x0d5b with + [clip + 0x1c], its length
+```
+
+A clip starting at `cell * 16` in the same units as the position means **16 steps per board cell**,
+which is exactly the geometry question 3 already had from the world-space side. Two independent
+measurements, one number.
+
+### ✔ The engine's block is 256 frames, fixed
+
+`fmodextinput.prx`'s DSP read callback, the module's only export, at `0x0170`:
+
+```
+0x0184  assert inchannels == 4 && outchannels == 4    ; else int 0x41
+0x0194  memset(outbuffer, 0, length * 16)             ; 4 channels of float
+0x01a4  test r14b, r14b ; jne -> int 0x41             ; assert (length & 0xff) == 0
+0x01c4  mov esi, 0x100                                ; <- 256
+0x01cc  call 0xa90(outbuffer, 256, state)             ; the block function, in a loop
+```
+
+**256 frames per block**, and the callback refuses a length that is not a multiple of it. Everything
+the modulation feeds — the three LFOs, the ramped volume, pitch, pan and modulation, the drive, the
+sends — is re-derived once per that block (question 27 for the cadence; this is the length).
+
+⚠️ **`MORPH_FRAMES` was 128 and that was the AudioWorklet's render quantum, not the engine's block.**
+It is 256 now, and because 256 no longer divides a live render's call, the grid had to move from
+"the offset within this `render` call" to a **mixer-wide frame clock**. Three things follow, all in
+`src/audio/mixer.ts`:
+
+- `Mixer.clock` counts frames modulo the block and is handed to every voice, so a 128-frame live
+  call and a whole-song offline call cross the same boundaries;
+- a chunk that *continues* a block must not re-derive, so `Voice.derived` gates the first one per
+  voice rather than per call;
+- the oscillators moved out of `renderChunk` into `stepLfos`, advanced by the whole remaining block
+  and never by the part of it a caller happened to ask for. Advancing per call stepped them twice as
+  often as an offline render and broke the equality outright — it was the first thing to fail.
+
+Worth **−50.6 dB** of difference over 30 s of `Zero` at an unchanged RMS, which is what halving a
+staircase's rate looks like. `dev/live-sim.ts` still renders bit for bit against the direct path.
+
+### ✔ Swing and the `1/3` sub-step interact exactly as `swungFrame` assumes
+
+This was the last live bullet of the leftovers. The block loop recomputes the step length every
+chunk from `floor(position) & 1`, and inside one step `floor(position)` cannot change — so `L` is
+constant across a step and the position advances **linearly at `1/L(k)` steps per frame** for the
+whole of step `k`. A note fires when `frac(position)` passes `voice[+0x3e] / 3` (`0x1cb1`, the
+constant `0.333333343` at `v0x4558`).
+
+So a triplet at `k + s/3` sounds `L(k)·s/3` frames into step `k`, where `L(k)` is *that step's own
+swung length* — **a triplet inside a stretched step stretches with it**. `src/core/swing.ts` scales
+the fraction by `stepLength(step, …)` for exactly that reason, and it was right.
+
+### ❗ And note onsets land on the block grid, not on the sample
+
+Reading the onset offset was not the point of this session and it is the most consequential thing in
+it. `sub_0x1c60`, `0x1cc6`-`0x1cdc`:
+
+```
+0x1ca9  start = voice[+0x3e] / 3          ; the note's position within the step, in thirds
+0x1cb9  if (newFrac <= start) return      ; not in this chunk
+0x1cc6  if (start <= oldFrac) r10 = 0     ; already begun -> no offset
+        else
+0x1ccc    xmm5 = start - oldFrac          ; how far into the chunk, IN STEPS
+0x1cd0    xmm3 = (float)N                 ; the chunk length, IN FRAMES
+0x1cd4    r10  = trunc(xmm5 / xmm3)       ; <- a divide where a multiply belongs
+0x1cdc  N -= r10                          ; and r10 offsets the output pointer (0x2ee6, 0x2eee)
+```
+
+`start` is bounded by `newFrac < oldFrac + 1 < 2`, so `start - oldFrac` is under 2 and **`r10` is 0
+for every chunk longer than one frame**. The engine has the code to place a voice inside a block and
+it always computes zero: **a note begins at the first frame of the block it falls in.**
+
+The onset grid is therefore the block grid — 256 frames, 5.33 ms at 48 kHz, minus the occasional
+short chunk the bound at `0x0bf2`-`0x0c1f` produces:
+
+```
+L  = 720000/tempo, swung by the step's parity
+N  = min(trunc((1 - frac(4*position)) * L + 1), frames left in the block)
+position += N / L
+```
+
+⚠️ **That bound is not a musical boundary and reading it as one wastes an hour.** `frac(4p)` never
+lines up with steps or with thirds; what it guarantees is that a chunk advances **at most one step**,
+which is precisely the invariant the note window needs — `0x1c9b` handles a wrap by adding 1 to
+`newFrac` and could not handle two. Simulated over a second it gives chunk lengths of 1, 127, 129,
+255 and 256.
+
+**Not implemented, deliberately.** Reproducing it would move every note onset later by 0 to 5.33 ms
+and could only be right if the block grid's phase against the song is what it looks like — `p` is 0
+at the first block, so it should be song-aligned, but that is an inference and the renderer being
+degraded is not. The anchor for settling it is a capture: **record a fast unswung drum pattern from
+the game and measure inter-onset intervals against the exact step clock.** If the onsets sit on a
+256-frame grid the deviation is a sawtooth with a 5.33 ms range, which is unmistakable; if they are
+sample-accurate this reading is wrong somewhere.

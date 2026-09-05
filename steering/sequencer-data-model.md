@@ -1199,6 +1199,35 @@ follow from that shape and from the corpus, not from the consumer.
 
 **`sub_0x130` is `ZtjspkJQ+vw`, libc's sine/cosine — see the section below.**
 
+### The block clock: 256 frames, and the position is in steps
+
+Measured 2026-09-05. The module's only export is the DSP read callback at `0x0170`; it asserts 4 in
+and 4 out channels, zeroes the output, **asserts its length is a multiple of 256** (`test r14b, r14b`
+then `int 0x41`) and calls the block function `sub_0x0a90` with `mov esi, 0x100` in a loop. So the
+engine works in **fixed 256-frame blocks**, and that is the length of the chunk everything
+modulation-driven is held across (see question 27 for the cadence).
+
+Inside a block:
+
+```
+L         = 720000 / tempo, +- L*swing/2 by floor(position) & 1     ; frames per step
+N         = min(trunc((1 - frac(4*position)) * L + 1), frames left)  ; the sub-chunk
+position += N / L
+```
+
+⚠️ **The `frac(4*position)` bound is not a musical boundary.** It lines up with neither steps nor
+thirds; what it guarantees is that a chunk advances **at most one step**, which is the invariant the
+note window needs — `0x1c9b` handles a wrap by adding 1 to the new fraction and cannot handle two.
+
+`[state+0x1a4c]` is in **steps**, and the scheduler proves it independently of the tempo arithmetic:
+`0x0d13` shifts a clip's cell index left by 4 and compares `cell * 16` against the position, so a
+board cell is **16 steps** — the same number the world-space geometry gives.
+
+⚠️ **A note begins at the first frame of its block.** `0x1cd4` computes the in-chunk onset offset as
+`trunc((start - frac(position)) / N)` with `start = voice[+0x3e]/3 < 2` and `N` the chunk's frames,
+which is 0 for every chunk longer than one frame. See *3* in `answered-questions.md` for what that
+does and does not justify changing.
+
 ### `RAND_MAX` is `2^30 - 1`, and the `9.31323e-10` is `1/(RAND_MAX + 1)`
 
 Measured 2026-09-05, not assumed. The game **ships its own libc** at `sce_module/libc.prx`, and the
