@@ -131,6 +131,13 @@
             game&rsquo;s stereo output; the measured default is <code>2 &minus; &radic;2</code>, and
             1.00 plays the file&rsquo;s own pans. Notes already sounding keep the width they
             started with.
+            <br>&#9888; <strong>Narrow does get quieter, and that is the pan law rather than a
+            fault.</strong> The plugin pans linearly &mdash; <code>1&minus;p</code> and
+            <code>p</code> &mdash; so a voice at the centre carries half the power of a hard-panned
+            one. Collapsing a wide song to mono therefore costs up to 3&nbsp;dB: measured, 2.0 dB on
+            the widest song in the corpus and 0.1 dB on one that was written down the middle. The
+            <em>level</em> of the game&rsquo;s own fold is a constant and does not move with this
+            slider.
           </p>
         </div>
         <div class="group">

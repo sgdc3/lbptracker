@@ -145,7 +145,18 @@ export const PAN_WIDTH = 2 - Math.SQRT2;
  *
  * The game's fold is fixed — `k = 0.5` and `d = 1/sqrt2` are constants of FMOD
  * and of BS.775, not settings — so its gain is fixed too. `panWidth` stays what
- * it always was: a diagnostic on the **image**, at constant level.
+ * it always was: a diagnostic on the **image**.
+ *
+ * ⚠️ **"At constant level" is not quite true at the narrow end, and the reason
+ * is the pan law rather than this.** `panGains` is linear (`0x2d21`/`0x2d40`),
+ * so a voice at the centre carries `2 × 0.5² = 0.5` of the power a hard-panned
+ * one carries: collapsing a song toward mono costs up to **3 dB**, and how much
+ * depends on how wide the song was written. Measured over 30 s, width 1 → 0:
+ * `Orb` (the corpus's widest, mean per-voice power 0.887) loses **2.04 dB**,
+ * `Zero` loses **0.12 dB**, and a song written down the middle loses nothing.
+ * Compensating for it would need the program's own pan distribution and would
+ * make the knob stop modelling the law, so it is documented instead — on the
+ * live page's own hint, where the listener is.
  */
 export const FOLD_GAIN = 1 / PAN_WIDTH;
 
