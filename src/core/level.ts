@@ -166,7 +166,7 @@ function readStreamingManager(s: Serializer): void {
  * pins at 0x213 — so every branch below is the one that is always taken, and the
  * older ones are omitted rather than left as dead code.
  */
-function readWorld(s: Serializer, readers: ReadonlyMap<string, PartReader>): never {
+function readWorld(s: Serializer, readers: ReadonlyMap<string, PartReader>): Thing[] {
   const { subVersion } = s.revision;
   if (subVersion >= 0x6d) {
     s.f32(); // backdropOffsetX
@@ -182,7 +182,13 @@ function readWorld(s: Serializer, readers: ReadonlyMap<string, PartReader>): nev
   const count = s.i32();
   const things: (Thing | undefined)[] = [];
   for (let i = 0; i < count; i += 1) things.push(readThingRef(s, readers));
-  throw new StopParse(things);
+  // ⚠️ **It returns; only the OUTERMOST world stops the parse.** `readLevel`
+  // wraps this and throws `StopParse` the first time. A level can carry a second
+  // world Thing deeper in the graph -- one turned up inside a `CREATURE` in
+  // `5576f758` from the public archive, uid -1 with no parent, the same shape as
+  // the level's own world -- and throwing there would have returned that inner
+  // world's Things as if they were the level's.
+  return things.filter((t): t is Thing => t !== undefined);
 }
 
 export interface LevelParse {
@@ -380,8 +386,20 @@ export async function readLevel(
     for (let i = 0; i < count; i += 1) s.sha1();
   }
 
-  const worldReaders = new Map(readers);
-  worldReaders.set('WORLD', (self) => readWorld(self, worldReaders));
+  // ❗ **Installed on the map the part readers already captured, not on a copy.**
+  // `partReaders` binds every reader as `(s) => read(s, readers)`, closing over
+  // the map it built; a copy with `WORLD` added is a map nothing looks at, so a
+  // world Thing anywhere below the first one threw "no reader for part WORLD".
+  // That is one of the 43 archive levels, `5576f758`, and it is why this line
+  // does not say `new Map(readers)`.
+  let outermost = true;
+  const worldReaders = readers as Map<string, PartReader>;
+  worldReaders.set('WORLD', (self) => {
+    const things = readWorld(self, worldReaders);
+    if (!outermost) return things;
+    outermost = false;
+    throw new StopParse(things);
+  });
 
   try {
     readThingRef(s, worldReaders);

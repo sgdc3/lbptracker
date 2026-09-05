@@ -956,14 +956,15 @@ older branches field by field, not relaxing the check.
 zlib: it is our header layout being wrong for an LBP1 resource, so the chunk table is garbage. The
 message now names the revision.
 
-**Pile two — real bugs on files this reader claims to support.** There were four; **three are fixed**
-and the sweep now stands at **31 of 43**.
+**Pile two — real bugs on files this reader claims to support. It is now empty.** There were four
+and all four are fixed; the sweep stands at **32 of 43**, with every remaining failure a revision
+below the LBP3 range.
 
-| file | |
-|---|---|
-| `8b904be1` | ✔ fixed — `PStreamingHint.connected`, below |
-| `69318581`, `7c0f1a1d` | ✔ fixed — the **part mask lost a bit**, below |
-| `5576f758` | still fails: `no reader for part WORLD`, inside a `CREATURE` at byte 290542 |
+| file | was | |
+|---|---|---|
+| `8b904be1` | marker at 120328 | ✔ `PStreamingHint.connected` was a double reference |
+| `69318581`, `7c0f1a1d` | marker at 10633 / 158804 | ✔ the **part mask lost a bit above 2^53** |
+| `5576f758` | `no reader for part WORLD` | ✔ **`WORLD` was installed on a copy of the map** |
 
 ### ✔ `PStreamingHint.connected` was a double reference
 
@@ -1004,6 +1005,22 @@ part hit it, silently, and the symptom was a marker failure hundreds of bytes do
 fixture is unchanged (62,158 placements byte for byte), so no file in the ten-level corpus happened
 to carry that combination — which is the whole reason it lasted.
 
+### ✔ `WORLD` was set on a map nothing looked at
+
+`partReaders` binds every reader as `(s) => read(s, readers)`, closing over **the map it builds**.
+`readLevel` then did `new Map(readers)` and set `WORLD` on the copy — so the copy had a world
+reader and every part reader still consulted the original, which did not. A world Thing reached
+through any part therefore threw `no reader for part WORLD`.
+
+❗ **A level really can carry a second world Thing.** `5576f758` has one inside a `CREATURE` at byte
+290542: uid −1, no parent, `createdBy`/`changedBy` −1, guid 0 — the same shape as the level's own
+world at byte 2. So the fix is two things, not one:
+
+- install `WORLD` on the map the readers captured, and
+- **only the outermost world stops the parse.** `readWorld` threw `StopParse` unconditionally, which
+  is right for the level's own world and would have returned the *creature's* inner Things as if
+  they were the level's. It returns now, and `readLevel`'s wrapper throws the first time only.
+
 ### The anchor for what is left
 
 The technique that found both, in order: `setTrace` from `thing.ts` for the part spans; then patch
@@ -1016,8 +1033,23 @@ look for the one whose *size* breaks the pattern. Nineteen Things of 575-588 byt
 uid varint also locates the true next Thing — 11187, not 10633 — which turns "how far off are we"
 into a number.
 
-`5576f758` is the one left: the failure is inside a `CREATURE` (290542) around a nested Thing at
-290992, so it is `readCreature` or something it calls, and the same three steps apply.
+Nothing in scope is left to point it at. What remains of this entry is one decision and two
+unknowns, below.
+
+### What is left: one decision and two unknowns
+
+- **Revisions below `0x3b8`** — 11 of the 43, and a *decision* rather than a mystery: `0x23d`,
+  `0x26e`, `0x272` (branch `4c44/17`, LEERDAMMER) and one `0x3b7` that misses the bound by a single
+  revision. Widening means adding the older branches field by field.
+- **`YELLOWHEAD`** — one plan in the saves. `PYellowHead` is a player's poppet state and cwlib
+  itself throws on it in two subVersion ranges. Anchor: `cwlib/structs/things/parts/PYellowHead.java`.
+- **A quest of a type other than 5** — still never seen, in the saves or in 43 archive levels.
+  `readQuest` refuses rather than guessing; the other types carry a trailing block whose shape
+  depends on the type.
+- **Branch `0x4431`** — one level in the saves, `f331efa7`, version 0x3e2, a branch cwlib does not
+  know either. ⚠️ **Nothing in the archive is on it**: 43 levels and 86 further resources are all
+  branch `0/0` or `4c44` (LEERDAMMER). One file is still not enough to reverse a branch from, and
+  the archive does not supply a second.
 
 **None of this is in the way of music** — the 28 that parse yield 26 sequencers — but the archive is
 now where these get found, and it will keep finding them.
