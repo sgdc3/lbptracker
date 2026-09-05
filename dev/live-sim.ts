@@ -10,10 +10,19 @@
  * delay and `endFrame`/`cutFrame` rebased onto it. The result is compared
  * against the plain render of the same voices.
  *
- * ⚠️ **The two should be identical.** They are the same voices with the same
- * specs; only the moment each is handed over differs, and a delay the mixer
- * counts down is supposed to make that invisible. Any difference is the
- * scheduler's, and this is the smallest thing that can show it.
+ * ⚠️ **The two should be identical, and as of 2026-09-05 they are** -- all
+ * three variants render bit for bit against the direct one. They are the same
+ * voices with the same specs; only the moment each is handed over differs, and
+ * a delay the mixer counts down makes that invisible.
+ *
+ * ❗ **It took a year of -57 dB to notice the fault was here.** This file used
+ * to render `TICK * RATE` frames per call because that is how often it posts
+ * notes -- but the worklet posts on the tick and renders **128 frames** per
+ * `process()`, and 4,800 frames is 37.5 of the mixer's modulation chunks, so
+ * every other burst cut a chunk in half. That was question 34, and it was
+ * measuring something the live player never does. If this file and the renderer
+ * ever disagree again, suspect this file first: it is the one that has to
+ * imitate two cadences at once.
  */
 
 import { readFile, readdir } from 'node:fs/promises';
@@ -207,28 +216,51 @@ function renderDirect(): [Float32Array, Float32Array] {
 }
 
 /** The live path: bursts of voices, each with its frames rebased onto a delay. */
+/**
+ * What the audio thread actually renders in one go.
+ *
+ * ❗ **The scheduling tick and the render block are two different things, and
+ * conflating them was the whole of question 34.** `dev/live.ts` posts notes
+ * every `TICK`; the worklet renders **128 frames** per `process()` call
+ * whatever the tick is. This simulator used to render `TICK * RATE` -- 4,800
+ * frames -- which is 37.5 of the mixer's 128-frame modulation chunks, so every
+ * other burst cut a chunk in half and the modulation came out at a different
+ * frame. It measured -48 to -59 dB against the offline render and it was
+ * measuring something the live player never does.
+ *
+ * ⚠️ **The quanta have to be on the STREAM's grid, not restarted at each tick.**
+ * Rendering 128 frames at a time from a tick boundary is not the same thing:
+ * 4,800 is 64 past a multiple of 128, so quanta that restart at each tick are
+ * every one of them 64 frames off the grid, and the figure does not move. The
+ * loop below runs the quanta and posts *inside* it, which is the player.
+ */
+const QUANTUM = 128;
+
 function renderScheduled(): [Float32Array, Float32Array] {
   const mixer = new Mixer(RATE);
   const left = new Float32Array(frames);
   const right = new Float32Array(frames);
   const block = Math.round(TICK * RATE);
   let next = 0;
-  for (let start = 0; start < frames; start += block) {
-    const now = start;
-    const until = now + LOOKAHEAD * RATE;
-    while (next < plan.length && plan[next].at < until) {
-      const p = plan[next];
-      const delay = Math.max(0, Math.round(p.at - now));
-      mixer.play({
-        ...p.spec,
-        startFrame: delay,
-        endFrame: p.life === undefined ? undefined : delay + p.life,
-        cutFrame: p.cut === undefined ? undefined : delay + p.cut,
-      });
-      next += 1;
+  let nextTick = 0;
+  for (let now = 0; now < frames; now += QUANTUM) {
+    if (now >= nextTick) {
+      const until = now + LOOKAHEAD * RATE;
+      while (next < plan.length && plan[next].at < until) {
+        const p = plan[next];
+        const delay = Math.max(0, Math.round(p.at - now));
+        mixer.play({
+          ...p.spec,
+          startFrame: delay,
+          endFrame: p.life === undefined ? undefined : delay + p.life,
+          cutFrame: p.cut === undefined ? undefined : delay + p.cut,
+        });
+        next += 1;
+      }
+      nextTick += block;
     }
-    const size = Math.min(block, frames - start);
-    mixer.render(left.subarray(start, start + size), right.subarray(start, start + size));
+    const size = Math.min(QUANTUM, frames - now);
+    mixer.render(left.subarray(now, now + size), right.subarray(now, now + size));
   }
   return [left, right];
 }
@@ -275,7 +307,7 @@ if (process.env.LBP_DIFF !== undefined) {
     return left;
   };
   const whole = one(span);
-  const chunked = one(128);
+  const chunked = one(Number(process.env.LBP_DIFF_BLOCK ?? 128));
   let first = -1;
   for (let i = 0; i < span; i += 1) {
     if (Math.abs(whole[i] - chunked[i]) > 1e-7) {
@@ -302,7 +334,12 @@ if (process.env.LBP_DIFF !== undefined) {
 
 if (process.env.LBP_SCAN === '1') {
   const limit = Number(process.env.LBP_SCAN_VOICES ?? 400);
-  const block = 128;
+  // ⚠️ **The block size has to be settable, and 128 is the one size that hides
+  // things.** Every call the worklet makes is 128 frames and the offline render
+  // makes one call, so both sit on the modulation's chunk grid; the live
+  // scheduler's 0.1 s tick is 4,800 frames, which is 37.5 chunks. Scanning at
+  // 128 therefore reports nothing and scanning at 4800 reports question 34.
+  const block = Number(process.env.LBP_SCAN_BLOCK ?? 128);
   let bad = 0;
   for (let v = 0; v < Math.min(limit, plan.length); v += 1) {
     const p = plan[v];
@@ -366,8 +403,16 @@ function renderLivePool(): [Float32Array, Float32Array] {
   // exists to simulate. See question 17b.
   const noteEnd = new Map<number, number>();
   let next = 0;
-  for (let start = 0; start < frames; start += block) {
-    const now = start;
+  let nextTick = 0;
+  // Quanta on the stream's grid, posting on the tick -- the player exactly, and
+  // the reason question 34 was a simulator bug. See `QUANTUM`.
+  for (let now = 0; now < frames; now += QUANTUM) {
+    if (now < nextTick) {
+      const size = Math.min(QUANTUM, frames - now);
+      mixer.render(left.subarray(now, now + size), right.subarray(now, now + size));
+      continue;
+    }
+    nextTick += block;
     const until = now + LOOKAHEAD * RATE;
     while (next < plan.length && plan[next].at < until) {
       const p = plan[next];
@@ -410,8 +455,8 @@ function renderLivePool(): [Float32Array, Float32Array] {
       }
       next += 1;
     }
-    const size = Math.min(block, frames - start);
-    mixer.render(left.subarray(start, start + size), right.subarray(start, start + size));
+    const size = Math.min(QUANTUM, frames - now);
+    mixer.render(left.subarray(now, now + size), right.subarray(now, now + size));
   }
   return [left, right];
 }

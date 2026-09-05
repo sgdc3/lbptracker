@@ -956,32 +956,3 @@ which is the reader's growth path working rather than a silence to chase.
 
 **None of these is in the way of music.** They are listed so that a failure on screen can be
 recognised as one of them rather than investigated twice.
-
-## 34. The live scheduler differs from the direct render by -57 dB
-
-`dev/live-sim.ts` says the two should be identical: the same voices with the same specs, and only
-the moment each is handed to the mixer differs. Measured 2026-09-04 they are not, by a small
-constant amount:
-
-| song | scheduled vs direct |
-|---|---|
-| `C4K3 S0NG`, 40 s | **-56.8 dB**, worst at 30.038 s |
-| `Ascetic`, 30 s | **-59.1 dB**, worst at 13.183 s |
-
-✔ **It is not the voice pool.** The figure is the same with the pool off, and `Ascetic` steals
-nothing at all. ✔ **It is not the block size**: the "played once, rendered in 128-frame blocks"
-variant is bit-identical to the direct render (`-Infinity dB`), which is the invariant
-`test/audio.test.ts` pins.
-
-So it is the hand-over itself, and the obvious suspects do not survive a reading: `delay` is
-`round(at - now)` where `at` is already an integer frame and `now` is a block boundary, so it is
-exact; `endFrame` rebases to the same length; the LFO phases are frozen per plan row by the
-simulator on purpose.
-
-**0.14% of RMS is inaudible** and this has presumably been there since the scheduler was written,
-which is why nobody heard it. It is worth a name anyway: a live render that is not bit-identical to
-the offline one is a fact this project would rather know than discover later.
-
-**The anchor**: `LBP_DIFF=<index>` in `dev/live-sim.ts` already bisects one voice's two renders
-frame by frame. Find a voice near 30.038 s whose scheduled render differs, and it will be one spec
-small enough to put in a unit test.

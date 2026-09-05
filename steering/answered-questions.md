@@ -2449,3 +2449,87 @@ names is never the byte that is wrong. What located it:
 ✔ **The 32 chunks are now a `cf0` regression corpus**, which is a dimension the ten-level corpus
 never tested. Anything that reads a field width should be run against them.
 
+## 34. The live scheduler's -57 dB — ANSWERED: it was the simulator, 2026-09-05
+
+`dev/live-sim.ts` measured the scheduled path at **-56.8 dB** against the direct render on
+`C4K3 S0NG` and **-59.1 dB** on `Ascetic`, while its own header said the two should be identical.
+They are. **The fault was in the measuring instrument.**
+
+### The scheduling tick and the render block are two different cadences
+
+`dev/live.ts` posts notes every `TICK` (0.1 s). The worklet renders **128 frames** per `process()`
+call, whatever the tick is. The simulator rendered `TICK * RATE` = **4,800 frames** per call, which
+is **37.5** of the mixer's 128-frame modulation chunks — so every other burst cut a chunk in half,
+`refreshMorph` ran at a different `elapsed`, and the modulation came out at a different frame.
+
+✔ **Proved before it was fixed**: with `LBP_TICK=0.08` — 3,840 frames, exactly 30 chunks — the
+scheduled render went to **-Infinity dB**, bit for bit, with nothing else changed.
+
+⚠️ **Rendering 128 frames at a time is not by itself the fix, and this is the part that cost the
+extra hour.** Quanta restarted at each tick boundary are every one of them 64 frames off the grid,
+because `4800 % 128 = 64`, and the figure did not move: still -48.5 dB. The quanta have to run on
+the **stream's** grid with the posting happening inside that loop — which is what the player does,
+and is now what the simulator does.
+
+### What it measures now
+
+| | `C4K3 S0NG`, 40 s, pool 32 | `Ascetic`, 30 s |
+|---|---|---|
+| blocked, played once | -Infinity | -Infinity |
+| scheduled (live) | **-Infinity** (was -56.8) | **-Infinity** (was -59.1) |
+| live pool | **-Infinity** (was -56.9) | — |
+
+**All three paths are now bit-identical to the offline render**, with 1,318 of 13,091 notes stolen
+by the pool in the live path exactly as offline.
+
+### ❌ Two fixes to the mixer that were made and reverted
+
+Both looked right and neither was needed once the simulator was correct, and reverting them is the
+point: **the mixer was never wrong.**
+
+- Making the chunk grid the *stream's* (`(origin + at) % 128`, with the mixer counting frames
+  rendered) rather than the call's. It moved `C4K3 S0NG` from -56.8 to -63.8 dB and `Ascetic` from
+  -59.1 to -89.7 — an improvement that was really a different wrong answer.
+- Refreshing the morph once per grid chunk rather than once per `renderChunk`, for chunks split
+  across a call boundary. It changed nothing measurable on top of the first.
+
+⚠️ **A partial fix that improves the number is the most misleading result there is.** Both of those
+made the figure better while the actual cause was untouched, and either could have been committed as
+"the fix" with a 7 dB improvement to show for it.
+
+### The tool keeps what it learned
+
+`LBP_SCAN_BLOCK` and `LBP_DIFF_BLOCK` now take the block size, defaulting to 128. **128 is the one
+size that hides this**: every call the worklet makes is 128 frames and the offline render makes one
+call, so both sit on the grid. Scanning at 128 reports nothing; scanning at 4,800 reported 270 of
+600 voices differing on their own.
+
+### What it was, as it stood
+
+`dev/live-sim.ts` says the two should be identical: the same voices with the same specs, and only
+the moment each is handed to the mixer differs. Measured 2026-09-04 they are not, by a small
+constant amount:
+
+| song | scheduled vs direct |
+|---|---|
+| `C4K3 S0NG`, 40 s | **-56.8 dB**, worst at 30.038 s |
+| `Ascetic`, 30 s | **-59.1 dB**, worst at 13.183 s |
+
+✔ **It is not the voice pool.** The figure is the same with the pool off, and `Ascetic` steals
+nothing at all. ✔ **It is not the block size**: the "played once, rendered in 128-frame blocks"
+variant is bit-identical to the direct render (`-Infinity dB`), which is the invariant
+`test/audio.test.ts` pins.
+
+So it is the hand-over itself, and the obvious suspects do not survive a reading: `delay` is
+`round(at - now)` where `at` is already an integer frame and `now` is a block boundary, so it is
+exact; `endFrame` rebases to the same length; the LFO phases are frozen per plan row by the
+simulator on purpose.
+
+**0.14% of RMS is inaudible** and this has presumably been there since the scheduler was written,
+which is why nobody heard it. It is worth a name anyway: a live render that is not bit-identical to
+the offline one is a fact this project would rather know than discover later.
+
+**The anchor**: `LBP_DIFF=<index>` in `dev/live-sim.ts` already bisects one voice's two renders
+frame by frame. Find a voice near 30.038 s whose scheduled render differs, and it will be one spec
+small enough to put in a unit test.
+
