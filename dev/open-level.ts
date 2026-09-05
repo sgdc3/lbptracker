@@ -15,6 +15,7 @@
  * nothing about files at all. See `steering/game-assets.md`.
  */
 
+import { wireArchiveSearch } from './archive-panel.ts';
 import type { BackupFile, BackupResult } from '../src/core/backup.ts';
 
 /**
@@ -117,7 +118,7 @@ export function isZip(file: File | { name: string }): boolean {
 }
 
 /**
- * Wire a drop zone and its two buttons to one handler.
+ * Wire a drop zone and its buttons to one handler.
  *
  * ⚠️ **The zone itself takes drops and nothing else.** Making a click
  * anywhere on it open the file picker looked convenient and was a bug: pressing
@@ -125,6 +126,12 @@ export function isZip(file: File | { name: string }): boolean {
  * click on the input that bubbles straight back up to the zone, and the zone
  * cannot tell it from a click on its own background. Two buttons, one job each,
  * and the drag stays for a file or a folder.
+ *
+ * ❗ **The archive search is the third button and it lives here** rather than
+ * beside each page's own wiring. Three pages open levels; the last time two of
+ * them grew their own copy of something this small it cost a day. A page opts
+ * in by having the markup and passing `searchButton` and `searchHost`, and
+ * everything it then does ends in this same `onOpen`.
  */
 export function wireOpen(opts: {
   zone: HTMLElement;
@@ -132,9 +139,15 @@ export function wireOpen(opts: {
   folderInput?: HTMLInputElement;
   fileButton?: HTMLElement | null;
   folderButton?: HTMLElement | null;
+  /** The "search the archive" button and the empty box the panel is built in. */
+  searchButton?: HTMLElement | null;
+  searchHost?: HTMLElement | null;
   onOpen: (opened: Opened) => void | Promise<void>;
 }): void {
   const { zone, fileInput, folderInput, fileButton, folderButton, onOpen } = opts;
+  if (opts.searchButton && opts.searchHost) {
+    wireArchiveSearch({ button: opts.searchButton, host: opts.searchHost, onOpen });
+  }
   const give = async (from: Promise<Opened | undefined>) => {
     const opened = await from;
     if (opened && opened.files.length > 0) await onOpen(opened);

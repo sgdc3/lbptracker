@@ -580,6 +580,8 @@ wireOpen({
   folderInput: (document.getElementById('folder') as HTMLInputElement | null) ?? undefined,
   fileButton: document.getElementById('pickFile'),
   folderButton: document.getElementById('pickFolder'),
+  searchButton: document.getElementById('pickSearch'),
+  searchHost: document.getElementById('archive'),
   onOpen: (opened) => {
     // Cleared so that picking the *same* file again still fires `change`, which
     // is how you re-read a level you have just re-exported from the game.

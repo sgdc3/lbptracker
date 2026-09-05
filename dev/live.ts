@@ -1189,6 +1189,8 @@ wireOpen({
   folderInput: document.getElementById('folder') as HTMLInputElement | null ?? undefined,
   fileButton: document.getElementById('pickFile'),
   folderButton: document.getElementById('pickFolder'),
+  searchButton: document.getElementById('pickSearch'),
+  searchHost: document.getElementById('archive'),
   onOpen: openBackup,
 });
 void fromFiles;

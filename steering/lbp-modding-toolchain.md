@@ -455,6 +455,35 @@ reason, since displacing a glide has to be able to reach a note that was placed 
 which is MIDI's own ceiling. A fixed 48 clamped 1,026 of them, and a clamped bend is a note that
 arrives at the wrong pitch.
 
+## The public archive — where to get a level when you have no backup
+
+Measured 2026-09-05, when the live page grew a third way to open a song.
+
+The Mm servers closed in 2021 and their resource store survives as an Internet Archive dump
+(`@tamiya99/uploads`), indexed by Zaprit's **LBP Search Facility**, <https://zaprit.fish>
+(<https://github.com/Zaprit/LBPSearch>). Four facts about it, all read off the running site and its
+source:
+
+- **There is no API.** Every route renders Go `html/template`; the search result table has ten fixed
+  columns and the level page carries the root level's SHA-1 in a `<span class="code">`. That is what
+  `dev/lbpsearch.ts` reads, and `test/lbpsearch.test.ts` freezes the two shapes.
+- **`zaprit.fish` sends no CORS headers, `archive.org` does.** So the search has to go through
+  `dev/serve.mjs` and the level does not — which is the better split anyway, because it means no
+  level ever passes through our server.
+- **The download URL is a pure function of the hash**, from `SlotHandler` in `handlers.go`:
+  `archive.org/download/dry23r<h[0]>/dry<h[0:2]>.zip/<h[0:2]>%2F<h[2:4]>%2F<h>`. A page can build it
+  without asking anyone. The site also knows which hashes the archive never received and says so on
+  the level's page, which is worth passing on rather than letting the download 404.
+- ⚠️ **The site's own page number is not the page number.** `?page=` is zero-based (the offset is
+  `page * 50`), and the template prints `page + 1` except on a full page, where the handler
+  overwrites it with `page`. So a full first page renders "Page 0" and a short one renders "Page 1".
+  Read your own page number, never the site's.
+
+✔ **A root level on its own is enough.** Downloaded straight from archive.org, "Music Gallery #3"
+(`8febe1f9…`, LBP3 PS4/PS5, 339 KB) parses into **31 sequencers with zero problems** — and on
+**branch 0x218**, which the corpus did not contain. The Things a level's music lives on are in the
+level's own resource; the separate `.plan` resources matter for a creator's *backup*, not for this.
+
 ## The save archive — how a PS3 backup opens, and it does open
 
 A PS3 level backup is a save-game folder: `PARAM.SFO`, `PARAM.PFD`, `ICON0.PNG` and numbered files

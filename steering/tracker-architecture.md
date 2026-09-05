@@ -8,7 +8,9 @@ non-obvious choices, so a future session can disagree with the reasoning rather 
 A creator's backup is not a file, it is a **pile**: the game writes each
 resource under its own SHA-1, so "open your level" otherwise means "find the
 right extensionless file among forty and guess". All three pages that open
-levels take a folder, a zip of one, or a single file.
+levels take a folder, a zip of one, a single file, **or a search of the public
+archive** — and every one of those four ends in the same `onOpen` with the same
+`{ name, bytes }[]`.
 
 - `src/core/backup.ts` — the reading, over `{ name, bytes }[]`. It knows nothing
   about files, directories or archives, because the user's own game data is read
@@ -18,6 +20,10 @@ levels take a folder, a zip of one, or a single file.
   `inflateRawSync` in Node).
 - `dev/open-level.ts` — the one drop zone, shared. The three pages had grown
   three copies of the drag wiring already.
+- `dev/lbpsearch.ts` + `dev/archive-panel.ts` — the fourth route, for a listener
+  with no backup of their own: the LBP archive index, searched. Wired from
+  `wireOpen` rather than from each page, for the reason the drop zone is. See
+  *The public archive* in `lbp-modding-toolchain.md` and *The dev server* below.
 
 ❗ **A level is told from everything else by its first four bytes** — `LVLb` or
 `PLNb` — and never by its name. A backup is full of `ICON0.PNG`, `PARAM.SFO`,
@@ -421,8 +427,20 @@ AudioWorklet module scripts loaded this way **do** support static imports, so
 `audioWorklet.addModule('/src/audio/mixer-worklet.ts')` pulls in `mixer.ts` and `interpolate.ts`
 without bundling. That was the risky part of the design and it works.
 
-The server serves only files inside the repository. Game assets never pass through it — the page
-reads the user's bank through a file picker, in the tab, as the licensing story requires.
+The server serves only files inside the repository, and makes exactly one kind of outbound
+request: **`/zaprit/*` asks the LBP archive index for a level search**, because that site sends no
+CORS headers and a page therefore cannot ask it directly. Only the words a listener typed go out,
+the reply comes back as JSON parsed by `dev/lbpsearch.ts`, and the upstream URL is rebuilt here from
+parsed parameters rather than passed through — a dev server on a laptop must not become an open
+proxy by accident. See *The public archive* in `lbp-modding-toolchain.md`.
+
+Game assets never pass through it — the page reads the user's bank through a file picker, in the
+tab, as the licensing story requires — and **neither does a level**: one found by search is fetched
+by the page straight from archive.org, which does send CORS headers.
+
+⚠️ **The search therefore needs the dev server**, and a page opened from `file://` or a static host
+has no `/zaprit/` route. `dev/archive-panel.ts` says so in as many words rather than reporting it as
+the archive being down, which would send somebody looking in the wrong place entirely.
 
 ~~**The Thing walk is the big one.**~~ Done, and it was a real port rather than an afternoon:
 reaching a `PInstrument` means deserialising every Thing and every part that precedes it in the
