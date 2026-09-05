@@ -89,6 +89,91 @@ FMOD DSP units** — they are not a bespoke effect. That is good news for fideli
 a plain delay line with feedback and a wet/dry mix, and reproducing it in an AudioWorklet is
 arithmetic, not guesswork.
 
+## The end of the chain: SMS WaveHammer, and it is a COMPRESSOR
+
+✔ **Measured 2026-09-06.** The sequencer's channel carries three DSPs, and `Channel::addDSP` inserts
+at the head, so the last one added sits closest to the output:
+
+```
+System::createDSP(&desc)      v0x3e66cb   name "Sequencer",      channels = 4, handle v0x132aac8
+System::playDSP(FREE, …)      v0x3e6718   -> the Channel, at [rsp+0x18]
+Channel::addDSP(reverb)       v0x3e67f9   "SMS Reverb",          channels = 0
+Channel::addDSP(wavehammer)   v0x3e6976   "SMS WaveHammer",      channels = 0, handle v0x132aac0
+```
+
+**Sequencer → SMS Reverb → SMS WaveHammer → the mixer.** The description for the WaveHammer is
+built on the stack at `v0x3e62b0` (its name arrives as a `movabs` immediate, so it is not in the
+string table); `read` is loaded from `[v0x10cc3f8]`, the PRX's one export.
+
+⚠️ The hard clip this project models — `vmaxps`/`vminps` against ∓1 at `0x0889`/`0x0891` of
+`fmodextinput.prx` — is **inside the sequencer DSP**, two DSPs before the end. Reading it as "what
+the game does at the end of its chain" was an inference, and it was wrong.
+
+### The game configures it, and the limiter is switched OFF
+
+❗ **This is the opposite of what the name suggests, and it is the reason to read a DSP rather than
+recognise it.** The compressor section runs; the limiter section is bypassed.
+
+The game never calls `DSP::setParameter` on the handle — `ebxref.py calls 0xa23970` finds fifteen
+sites in the binary, nine of them `applyReverbPreset` and none of them this DSP, and `ebxref.py refs
+0x132aac0` finds the only four paths to the handle, all create/add/teardown. It configures the
+plugin one indirection further down instead: the create callback `v0x3fd6c0` ends with a
+`rep movsd` at `v0x3fd8cb` of a **static 0x44-byte template at `v0x1062850`** into the plugin's own
+parameter block, overriding eight of the sixteen declared defaults.
+
+| # | Parameter | Unit | Default | **Shipped** | |
+|---|---|---|---|---|---|
+| 0 | `CompBypass` | bool | 0 | **0** | compressor **ON** |
+| 1 | `LimitBypass` | bool | 0 | **1** | limiter **BYPASSED** |
+| 2 | `CompThresh` | 10th dB | −120 | **−180** | −18.0 dB |
+| 3 | `CompOutGain` | 10th dB | 0 | **−180** | −18.0 dB |
+| 4 | `CompRatio` | 10ths | 40 | **100** | 10.0 : 1 |
+| 5 | `CompAttack` | ms | 20 | **10** | |
+| 6 | `CompRel` | ms | 1000 | **250** | |
+| 7 | `CompRelMod` | % | 0 | 0 | |
+| 8–11 | `CompAutoGain`, `CompLongLook`, `CompCoeffSet`, `CompUsePeeks` | bool | 0 | 0, 0, **1**, 0 | |
+| 12–15 | `LimitThresh`, `LimitOutLevel`, `LimitRel`, `LimitLongLook` | | −60, −60, 1000, 0 | **−120**, **−120**, 1000, 0 | set, but bypassed |
+
+The parameter block is a plain C struct in declaration order — bools as bytes, numbers as **int32**,
+not float — at offsets `0x00, 0x01, 0x04, 0x08, 0x0c, 0x10, 0x14, 0x18, 0x1c, 0x1d, 0x1e, 0x1f,
+0x20, 0x24, 0x28, 0x2c`. Three independent readings agree on that layout: the offsets the
+`setparameter` callback (`v0x3fda80`) marshals from, the type sequence of the paramdescs at
+`v0x10783c0` (`numparameters` = 16, from `v0xbc10a0`), and the kernel's own arithmetic below.
+
+`setparameter` copies that block into a second, **kernel-facing** config laid out as
+`[compressor, limiter]` pairs — ratio at `+0x10/+0x14`, threshold at `+0x18/+0x1c`, output gain at
+`+0x20/+0x24` — inverts both bypasses into `enabled` flags at `+0x00` (limiter) and `+0x01`
+(compressor), and bumps two 16-bit dirty counters at `+0x40/+0x42`. The kernel compares those
+against its own copies at `+0x140..+0x146` to decide whether to recompute coefficients.
+
+### What the units mean, from the kernel rather than from the labels
+
+`fmodsmswavehammer.prx` is 11,870 bytes with eight functions. `0x19f0` is the exported read
+callback: it traps unless in- and out-channels are both **4** and the length is a multiple of
+**256**, then calls `0x1770` per 256-frame block, stepping 0x1000 bytes each time (256 × 4ch × f32,
+interleaved). `0x1770` memcpys the instance, the 0x180-byte state and the 0x80-byte config into
+static buffers and calls `0xa40`, the kernel — an SPU-DMA shape kept intact on a console with no
+SPU, which is why the module lives in `gamedata_orbis/spu/`.
+
+The arithmetic in `0xa40` and in the coefficient function `0x620` settles the units exactly:
+
+- `[cfg+0x18] × 0.1` → dB, so **"10th dB" is literal**: −180 is −18.0 dB (`0xb7c`).
+- `[cfg+0x10] × 0.1` → ratio, so 100 is **10.0 : 1** (`0xb92`).
+- `10^(x × 0.005)` for output gain, i.e. `10^(dB/20)` — a linear amplitude gain, and −180 gives
+  **0.1259** (`0x851`–`0x881`). It reaches the signal at `0x1194`, `vmulss` against `[state+0x104]`.
+- Thresholds carry a **6 dB soft knee**: the kernel builds `thresh + 3` and `thresh − 3` and
+  interpolates between them (`0xbc0`, `0xbfb`).
+- Attack and release become one-pole coefficients `0.1^(1/x)` with `x = round(rate × ms × 1e-4)/8 − 3`
+  (`0x6c8`–`0x733`) — note the **1e-4**, not 1e-3, and the /8.
+- The compressor is table-driven: a **4000-entry** gain curve in the 0x3e80-byte buffer, rebuilt
+  only when the dirty counters move (`0xc43`) and otherwise memcpy'd back from the cache (`0xb44`).
+
+⚠️ **What is not settled is the transfer curve**, and therefore what the −18 dB output gain nets out
+to. Do not read the table above as "the game is 18 dB quieter than us": the gain enters a
+level-domain computation at `0x1194` that also involves `[state+0xf0]`, `[state+0xf8]` and a
+per-channel envelope at `[state+0x108]`, none of which is traced yet. See question 37 in
+[open-questions.md](open-questions.md).
+
 ## The output stage: the game is a 7.1 renderer
 
 ✔ **Measured 2026-09-03**, `v0xa57770` -- the `GetDriverCaps` callback of the output description
@@ -131,6 +216,13 @@ capture the game's eight channels directly.
   combs plus two stereo comb pairs, an output delay, and three panned early-reflection taps. There
   is no Freeverb, no allpass and no `aSfxDsp` in the path. See *6 / 14. The reverb* in
   [answered-questions.md](answered-questions.md); `src/audio/effects.ts` implements it.
+- **Compressor**: **located and configured, not yet reproduced.** `SMS WaveHammer` sits last on the
+  sequencer's channel with its limiter bypassed and its compressor running at −18 dB / 10:1 / 10 ms
+  / 250 ms — see *The end of the chain* above. This project models none of it, and the hard clip it
+  does model belongs two DSPs earlier. ❗ It reframes every headroom argument: a chain ending in a
+  compressor can be driven hot on purpose, one ending in a hard clip cannot, and every judgement
+  made about level here — including "`FOLD_GAIN` leaves room, peak 0.934 on the busiest corpus song"
+  — assumed the clip was the end.
 - **Resampling**: FMOD Ex interpolates in `fmod_dsp_resampler.cpp` at a selectable quality. If we
   play samples through the browser's `AudioBufferSourceNode.playbackRate`, we get *the browser's*
   interpolator instead, which differs between engines and cannot be pinned. This is the single

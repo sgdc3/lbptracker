@@ -6,9 +6,12 @@
 `<module>` is `reverb` (fmodsmsreverb.prx), `input` (fmodextinput.prx), `hammer`
 (fmodsmswavehammer.prx) or **`libc`** (`sce_module/libc.prx`).
 
-❗ **`hammer` is the limiter at the end of the game's chain** and nothing in this project models it
-yet: `Channel::addDSP` puts it on the sequencer's own channel after the reverb (eboot `v0x3e6976`).
-Its block function is `0x1770`, 256 frames, 4 in and 4 out. See open question 37.
+❗ **`hammer` is the last DSP on the sequencer's channel and it is a COMPRESSOR, not a limiter** --
+the game ships it with `LimitBypass = 1` -- and nothing in this project models it yet.
+`Channel::addDSP` puts it after the reverb (eboot `v0x3e6976`). Eight functions, no more: `0x0`,
+`0x180`, `0x380`, `0x620` (coefficients), `0xa40` (the kernel), `0x1770` (256-frame block shim),
+`0x19f0` (the one export), `0x1a80`. See open question 37 and *The end of the chain* in
+`steering/lbp-audio-engine.md`.
 
 ❗ **`libc` is here because the game ships its own copy**, so the libc that `fmodextinput.prx`
 imports from is a file on this disk rather than an assumption about the console. That is how

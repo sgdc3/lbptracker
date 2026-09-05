@@ -260,63 +260,55 @@ belief:
   the old three-way split did not survive contact with a field-by-field diff. **Print them first,
   not before theorising — the theorising is what produced the buckets.**
 
-## 37. The game ends its chain in a LIMITER, and this project does not
+## 37. The compressor at the end of the chain, and what its curve actually is
 
-Found 2026-09-05, on a listener's hunch: *"a limiter at the end is enough, and I think the game does
-it too — check the code."* It does.
+Found 2026-09-05 on a listener's hunch — *"a limiter at the end is enough, and I think the game
+does it too — check the code"* — and half-answered 2026-09-06. The chain, the plugin and its
+entire configuration are now measured and written up in
+[lbp-audio-engine.md](lbp-audio-engine.md) under *The end of the chain*. What is left is the
+arithmetic.
 
-### What is in the chain
+### What the first half turned up, because it changes the question
 
-`Channel::addDSP` is called **twice** on the sequencer's own channel, and `addDSP` inserts at the
-head, so the last one added sits closest to the output:
+❗ **It is not a limiter.** `SMS WaveHammer` ships with `LimitBypass = 1` and `CompBypass = 0`: the
+limiter section is switched off and a **compressor** runs — threshold −18.0 dB, ratio 10.0 : 1,
+attack 10 ms, release 250 ms, output gain −18.0 dB, `CompCoeffSet = 1`. So "just put a limiter at
+the end" is not what the game does, and a limiter would not reproduce it.
 
-```
-System::createDSP("Sequencer", channels = 4)      eboot v0x3e66cb
-System::playDSP(FREE, dsp, …)                     eboot v0x3e6718   the DSP is the channel head
-Channel::addDSP(reverbDSP)                        eboot v0x3e67f9   "SMS Reverb",     channels = 0
-Channel::addDSP(wavehammerDSP)                    eboot v0x3e6976   "SMS Wavehammer", channels = 0
-```
+⚠️ **And the way it is configured is why this entry stalled.** The old anchor said to find whether
+the game calls `DSP::setParameter` on the handle. It does not — that was correct, and it was the
+wrong question, because *not called* was quietly read as *not configured*. The game seeds the
+plugin's parameter block from a static template with a `rep movsd` at create time, overriding eight
+of sixteen defaults. **An absent API call is not an absent effect**; `tools/ebxref.py` exists now so
+that the enumeration is cheap enough to do before the inference.
 
-So the signal path is **Sequencer → SMS Reverb → SMS Wavehammer → the mixer**, and `Wavehammer` is
-Sony's own compressor/limiter. `fmodsmswavehammer.prx` is 11,870 bytes in `gamedata_orbis/spu/`,
-exports one symbol (`-UZ0JwaglR8` at `0x19f0`, its read callback), asserts **4 in and 4 out**, and
-runs `0x1770` over **256-frame** blocks — the same shape as the reverb, right down to the block size.
+### What is left
 
-### What this project does instead
+**The transfer curve.** Everything above is which knobs are set; none of it says what the DSP does
+to a sample. Specifically:
 
-`clipToUnit`, a hard clip to ±1 on the finished mix. ⚠️ **That is a real measurement and it is the
-wrong one to have generalised**: `0x0889`/`0x0891` in `fmodextinput.prx` are `vmaxps`/`vminps`
-against ∓1 on all four channels, and they are **inside the sequencer DSP**, before the reverb and
-before the limiter. Reading them as "what the game does at the end" was an inference, and the end of
-the chain is two DSPs further on.
+- The **4000-entry gain table** built at `0xc43` of `0xa40`: input level → `_FLog` → dB → soft
+  knee against `thresh ± 3` → gain. Reading this loop is the bulk of the work and it is the part
+  that matters.
+- **How the table is applied.** `0x1194` multiplies the output gain into a value read from the
+  second scratch buffer and compares it against `[state+0xf0]` (1.0 at create) and `[state+0xf8]`
+  (the attack/release coefficient), with a per-channel envelope at `[state+0x108]`. Whether
+  −18.0 dB of output gain is a net −18 dB on the mix, or is absorbed by the curve, is decided here.
+- **The envelope's rate.** Coefficients come out as `0.1^(1/x)` with `x = round(rate * ms * 1e-4)/8
+  - 3` (`0x6c8`). The `1e-4` and the `/8` both want explaining — at 48 kHz a 10 ms attack gives
+  x = 3, which is not 10 ms of anything obvious.
 
-❗ **It reframes every headroom argument.** A chain that ends in a limiter can be driven hot on
-purpose; one that ends in a hard clip cannot. Every judgement this project has made about level —
-including whether `FOLD_GAIN` leaves enough room, measured at peak 0.934 on the busiest corpus
-song — assumed the second.
-
-### What is not known yet
-
-- **What the Wavehammer computes.** `0x1770` is a full DSP: a state block, a de-interleave, and
-  0x958 bytes of stack. Reading it is a session, of the same size the reverb was.
-- **Whether the game configures it.** Its description carries a `setparameter` callback at
-  `v0x3fda80` and a paramdesc from `v0x3fd6a0()`, but no `DSP::setParameter` call on the handle at
-  `v0x132aac0` has been found — the sites that reference it are creation and teardown. The reverb
-  has an obvious equivalent (`applyReverbPreset`, `v0x3fd4c0`, reached from `v0x3e7490`) and the
-  Wavehammer has no counterpart yet. **Find that first**: a limiter left at its defaults and one the
-  game drives are different questions.
+⚠️ **Do not implement it from the parameter table.** Knowing it is "10:1 at -18 dB with a 6 dB
+knee" is enough to write *a* compressor and not enough to write *this* one; the knee shape, the
+detector and the release modifier are all in the code. It is on disk: read it.
 
 ### The anchor
 
-`prxdis.py hammer 0x1770` — the module is registered in `tools/prxdis.py` and `tools/prxnid.py`
-already. Read it the way the reverb was read: the block function first, then the kernels it calls
-out to, then the parameter block the eboot fills. The reverb's entry in
-[answered-questions.md](answered-questions.md) is the template, including its table of wrong
-readings.
-
-⚠️ **Do not implement a limiter from the name.** "Wavehammer" is a Sony product with a known
-character, and guessing its curve from the brand is exactly the shape of mistake this file keeps
-recording. It is on disk; read it.
+`prxdis.py hammer 0xa40 700`, and disassemble from a **function start** — the module has exactly
+eight (`0x0`, `0x180`, `0x380`, `0x620`, `0xa40`, `0x1770`, `0x19f0`, `0x1a80`), so there is no
+excuse for a mid-function start here. `0x620` is the coefficient recompute, `0xa40` the kernel. The
+reverb's entry in [answered-questions.md](answered-questions.md) is the template for the write-up,
+including its table of wrong readings.
 
 ## 28. What still will not open — measured over 103 archive levels
 

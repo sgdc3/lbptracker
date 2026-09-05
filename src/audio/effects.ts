@@ -159,14 +159,17 @@ export class Echo {
  * ⚠️ **It is the plugin's own clip and NOT the end of the game's chain.** Read
  * 2026-09-05: the channel carries two more DSPs after this one —
  * `Channel::addDSP` is called at `v0x3e67f9` for "SMS Reverb" and at `v0x3e6976`
- * for **"SMS Wavehammer"**, Sony's compressor/limiter, and `addDSP` inserts at
- * the head so the limiter sits closest to the output. The signal path is
- * `Sequencer → Reverb → Wavehammer → mixer`; this function models the first
- * arrow and nothing models the third. See open question 37.
+ * for **"SMS WaveHammer"**, and `addDSP` inserts at the head, so the signal path
+ * is `Sequencer → Reverb → WaveHammer → mixer`. This function models the first
+ * arrow and nothing models the third.
  *
- * ❗ That distinction is not pedantry. A chain that ends in a limiter can be
- * driven hot on purpose and one that ends in a hard clip cannot, so every
- * headroom judgement this project has made assumed the wrong end.
+ * ❗ **The WaveHammer is a compressor, not a limiter** — measured 2026-09-06,
+ * the game ships it with `LimitBypass = 1` and the compressor section running at
+ * −18 dB / 10:1 / 10 ms / 250 ms. So the end of the chain is soft, not hard, and
+ * every headroom judgement this project has made assumed the wrong end: a chain
+ * ending in a compressor can be driven hot on purpose, one ending in a hard clip
+ * cannot. See open question 37 and *The end of the chain* in
+ * `steering/lbp-audio-engine.md`.
  *
  * Whether this clip engages also depends on our absolute level matching the
  * game's, which is not independently verified. `dev/render-level.ts` reports how

@@ -81,6 +81,13 @@ they are the ground truth the JavaScript has to reproduce:
   that can simply be named. The trap that hides them is in the docstring: the slots are **zero on
   disk** and the pointers live in `R_X86_64_RELATIVE` addends, so searching the data finds nothing
   and it reads as "there is no RTTI".
+- `ebxref.py` — **who references an address in the eboot**: `ebxref.py refs <vaddr>` finds every
+  rip-relative reference to it, `ebxref.py calls <vaddr>` every direct call, clustered by caller and
+  marked game-side or FMOD-internal. ⚠️ **Run `calls` before writing down that the game never does
+  something.** Question 37 spent a session on "no `DSP::setParameter` call on the WaveHammer handle
+  has been found" — true, and doing the work of a false sentence, because *not found* had not been
+  separated from *not there*. Two enumerations turn that into a measurement; its docstring has the
+  story, and the trap (the displacement is assumed to be the instruction's last field).
 - `ebdyn.py` — the eboot's dynamic imports: `ebdyn.py modules` lists the modules a NID's `#L#M`
   suffix indexes, `ebdyn.py <nid>` resolves one to its module, GOT slot and every reference to it.
   ⚠️ **Run this before building anything on a NID.** Matching a NID against the string table alone
