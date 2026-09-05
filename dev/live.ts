@@ -35,6 +35,7 @@ import { swungFrame } from '../src/core/swing.ts';
 import { samplesPerStep } from '../src/core/voice.ts';
 import { PAN_WIDTH, RATE, renderSequencer } from '../src/core/render.ts';
 import { webInflate } from '../src/platform/web.ts';
+import { mountFooter } from './footer.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const seqHost = $<HTMLDivElement>('seq');
@@ -1194,3 +1195,5 @@ wireOpen({
   onOpen: openBackup,
 });
 void fromFiles;
+
+mountFooter();

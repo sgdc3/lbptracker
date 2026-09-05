@@ -13,6 +13,7 @@ import { isZip, saveNote, wireOpen, type Opened } from './open-level.ts';
 import type { BackupResult } from '../src/core/backup.ts';
 import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
 import { PAN_WIDTH } from '../src/core/render.ts';
+import { mountFooter } from './footer.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const seqHost = $<HTMLDivElement>('seq');
@@ -596,3 +597,5 @@ wireOpen({
 // the thing `steering/game-assets.md` rules out. Ask, always.
 setStatus('open a level to begin');
 setBar(0);
+
+mountFooter();

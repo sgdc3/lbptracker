@@ -35,6 +35,7 @@ import { type LevelProject, type Sequencer } from '../src/core/project.ts';
 import { isZip, openedTitle, saveNote, wireOpen, type Opened } from './open-level.ts';
 import { webInflateRaw } from '../src/platform/web.ts';
 import { webInflate } from '../src/platform/web.ts';
+import { mountFooter } from './footer.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const dropZone = $<HTMLDivElement>('drop');
@@ -504,3 +505,5 @@ wireOpen({
   onOpen: openLevel,
 });
 wireDrop(midiDrop, midiInput, (file) => void openMidi(file));
+
+mountFooter();

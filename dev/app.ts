@@ -20,6 +20,7 @@ import { loadResource } from '../src/core/resource.ts';
 import { pitchRatio, velocityGain } from '../src/core/voice.ts';
 import { loopRegion, readWav, type WavData } from '../src/core/wav.ts';
 import { webInflate } from '../src/platform/web.ts';
+import { mountFooter } from './footer.ts';
 
 interface ManifestRow {
   guid: number;
@@ -1239,3 +1240,5 @@ async function init(): Promise<void> {
 }
 
 void init();
+
+mountFooter();
