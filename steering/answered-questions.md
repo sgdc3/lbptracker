@@ -2533,3 +2533,62 @@ the offline one is a fact this project would rather know than discover later.
 frame by frame. Find a voice near 30.038 s whose scheduled render differs, and it will be one spec
 small enough to put in a unit test.
 
+## 8. The remaining fields — ANSWERED: LFO 3 pans, read end to end, 2026-09-05
+
+All 27 `Params` were named on 2026-09-01 and implemented by 2026-09-02. What kept this open was one
+sentence: LFO 3's *fold* was measured instruction for instruction, but its **destination** was a
+reading — "`t` lands in 0..1 and `panGains` is this voice's only consumer of one". It is now read.
+
+### The chain, in the order the code walks it
+
+```
+0x2670  xmm0 = [voice + 0x18] + [voice + layer*4 + 0x7c]   ; clip pan + the layer's unison spread
+0x26c6  call 0x130                                          ; _FSin
+0x26cb  xmm0 = sin * depth
+0x26db  xmm0 = base + that
+0x262c..0x2649 / 0x26f9..0x270f   abs, x0.5, floor, frac, x2, and 2-t above 1   ; the fold
+0x2657  vpshufd xmm0, xmm0, 0                               ; broadcast to four lanes
+0x266b  [rax - 0x10] = xmm0                                 ; rax = rbp-0x160 -> buffer 1's VALUE
+0x274f  [r13]        = xmm0                                 ; ...and its INCREMENT, one block later
+```
+
+Two folds rather than one, because the block is evaluated at both ends and ramped across — the same
+shape the amplitude envelope uses.
+
+### And buffer 1 is the pan
+
+The per-sample loop reads it back and spends it:
+
+```
+0x2c04  xmm1 = [rbp + layer*32 - 0x170]     ; buffer 1's value
+0x2c40  [rbp - 0xa10] = xmm1
+0x2d19  xmm3 = [rbp - 0xa10]
+0x2d21  xmm1 = 1 - xmm3                     ; the left gain
+0x2d25  xmm1 = xmm1 * sample
+0x2d2e  [rbp + rax*4 - 0x9c0] += xmm1       ; into the output
+```
+
+`1 - p` then `p` at `0x2d40` is the **linear pan law** question 22 already measured and excluded as
+a suspect. So the field LFO 3 writes is the field the pan law consumes, with nothing in between.
+
+✔ **Three layers of pan compose, and all three are now read**: the clip's own pan (`voice + 0x18`,
+written per block by `sub_0x3930` from `[clip + 0x424]`), the unison stack's per-layer spread
+(`voice + layer*4 + 0x7c`, written from `Params[1]` at note start), and LFO 3's triangle on top.
+`src/audio/lfo.ts` and `src/audio/mixer.ts` already do exactly this — the reading was right, and it
+is now a measurement.
+
+⚠️ **Two buffers, and telling them apart is the whole trick.** The layer loop keeps two
+`{value, increment}` arrays on the stack, 32 bytes per layer: `rbp-0x170` and `rbp-0xd0`. LFO 2's
+gain ramp — `sin * depth`, then `+ 1`, then a multiply — goes to `rbp-0xd0` (`0x2511` value,
+`0x25a5` increment) and is spent at `0x2d0d` as a gain. LFO 3's goes to `rbp-0x170`. Reading either
+store without following its pointer to the sample loop names the wrong destination.
+
+### The rest of the question was already settled
+
+- `Numstack` is the per-instrument layer count, walked from layer 0 at `0x1a98`.
+- `Loops` is **1 in all 105,785 instruments of the corpus**, so no creator has used it.
+- The 27 `Params` are the unison stack, the ladder, two ADSRs, three LFOs and the output stage; the
+  table is in [sequencer-data-model.md](sequencer-data-model.md).
+- The oscillator at stub `0x130` is `_FSin`, named from the PRX's import table by `tools/prxnid.py`
+  rather than inferred — it takes an integer selector in `edi`, zero for sine.
+
