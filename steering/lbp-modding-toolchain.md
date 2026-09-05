@@ -62,6 +62,12 @@ pan width (settled on the **leak ratio between channels**, and the downmixer's o
 explain it) survive the caveat by construction. A per-band decibel difference does not: see
 question 23, which is now parked for exactly this reason.
 
+✔ **And question 22 no longer needs the capture at all.** As of 2026-09-05 the width is *derived*
+from three read constants — the plugin's pan law, FMOD's `k = 0.5` centre feed at `v0xa2599f`, and
+BS.775's `1/sqrt2` — and the capture is now a confirmation of a prediction rather than its
+foundation. That is the strongest position a capture-based finding can end in: **use the emulator to
+find the number, then go and read the code that produces it.**
+
 ⚠️ **Say which it is when you record a capture-based finding.** "Measured against the game" now
 means "measured against shadPS4 running the game", and the two are the same claim only for the top
 row of that table.

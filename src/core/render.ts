@@ -87,9 +87,26 @@ export const RATE = 48000;
  * So the centre must carry the mono average, and that part is the *game's*: the
  * sequencer itself cannot do it -- its pan law is exactly `1-p` / `p`
  * (`0x2d21`/`0x2d40`), the pan reaches the voice unmodified (`0x3b29`), and its
- * four output channels are one image plus a scaled copy. What has no reading yet
- * is why FMOD feeds the centre when it upmixes that 4-channel DSP into 7.1. See
- * question 22 in steering/open-questions.md.
+ * four output channels are one image plus a scaled copy.
+ *
+ * ✔ **And FMOD's side is read too, 2026-09-05, so this constant is a derivation
+ * rather than a fit.** `System::playDSP` makes the 4-channel Sequencer DSP the
+ * channel's own head (`v0x3e6718`), `ChannelSoftware::setPan` asks for a
+ * channel-to-speaker matrix (`v0xa243a0`), and the 7.1-by-4-channels case at
+ * **`v0xa2599f`** writes `levels[centre] = {k, k, 0, 0}` with **`k = 0.5`**
+ * (`v0xefc008`) -- the mono average of the front pair, in FMOD Ex's own code.
+ * Three read constants and no free parameter:
+ *
+ * ```
+ *   L = x[(1-p) + k*d],  R = x[p + k*d],   k = 0.5, d = 1/sqrt2
+ *   width = 1 / (1 + 2*k*d) = 1 / (1 + 1/sqrt2) = 2 - sqrt2
+ * ```
+ *
+ * The same matrix puts the DSP's channels 2-3 -- the reverb send -- on the four
+ * surrounds, which would bleed the send into the dry output. It does not: the
+ * reverb DSP shares the buffer and writes `(dry + wet, dry + wet, 0, 0)`,
+ * clearing those lanes (`fmodsmsreverb.prx` `0x2335`-`0x235d`). See *22* in
+ * steering/answered-questions.md.
  *
  * A stereo listener therefore hears this narrowing on hardware or emulator
  * alike, which is why the tracker reproduces it. It does mean the game's

@@ -72,6 +72,15 @@ they are the ground truth the JavaScript has to reproduce:
   other, with the residual that says whether a single number describes it at all. This is how the
   pan width was settled; use it on any new capture of the game.
 - `lbpdis.py`, `callgraph.py`, `fmodapi.py` — eboot RE helpers (see `eboot-re.md`).
+- `ebvtable.py` — **name a C++ class's vtable in the eboot, through RTTI**: `ebvtable.py
+  ChannelSoftware 24` dumps its slots, `ebvtable.py slot 0x98 Channel` compares one slot across
+  classes, `ebvtable.py who <vaddr>` says which vtable a function sits in. ⚠️ **Reach for this
+  before any structural vtable search.** Question 22 spent a session enumerating vtables by shape —
+  runs of relocation slots holding code addresses — and produced five wrong candidates plus a near
+  miss convincing enough to write up; the binary has 122 mangled `N4FMOD...E` names and 322 vtables
+  that can simply be named. The trap that hides them is in the docstring: the slots are **zero on
+  disk** and the pointers live in `R_X86_64_RELATIVE` addends, so searching the data finds nothing
+  and it reads as "there is no RTTI".
 - `ebdyn.py` — the eboot's dynamic imports: `ebdyn.py modules` lists the modules a NID's `#L#M`
   suffix indexes, `ebdyn.py <nid>` resolves one to its module, GOT slot and every reference to it.
   ⚠️ **Run this before building anything on a NID.** Matching a NID against the string table alone

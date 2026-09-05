@@ -81,6 +81,7 @@ delta and is therefore wrong for `eboot-v128.bin`.
 | `lbpdis.py <vaddr> [n]` | capstone disassembly by vaddr, resolving rip-relative targets to strings, tagging binding names and marking call targets that land inside FMOD |
 | `callgraph.py <vaddr> [depth]` | BFS the direct-call graph from a seed and report the shortest paths that reach FMOD code |
 | `fmodapi.py` | enumerate every game→FMOD call edge and attribute each callee to the FMOD `.cpp` it lives in |
+| `ebvtable.py <name> [n]` | **name a C++ class's vtable through RTTI** and dump its slots; `slot <off> <name>` compares one slot across classes, `who <vaddr>` says which vtable slot holds a function |
 
 They share one measurement trick worth understanding: **FMOD's code range is derived, not
 assumed.** FMOD's memory tracker passes `__FILE__` at every allocation site, so every rip-relative
@@ -109,6 +110,26 @@ file-offset space), `ebschema.py` (recover a serialised struct's field names and
   `(id << 48) | (version << 32) | name_offset`; the id maps to the symbol suffix through the same
   base64 alphabet as NIDs. That is how the `FMOD*` libraries and the 5 `libSceAudioOut` imports
   were found.
+- ❗ **RTTI names vtables, and this binary has it.** 122 Itanium-mangled `N4FMOD...E` strings and
+  **322 nameable vtables**. Three hops, each a lookup in the relocation map:
+  `name -> type_info + 8 -> type_info -> vtable - 8 -> vtable`. `ebvtable.py` does it in a third of
+  a second, and it is what closed question 22 after a session of structural vtable enumeration had
+  produced five wrong candidates and one very convincing near miss.
+
+  ⚠️ **Every vtable slot is ZERO on disk.** This is a PIE and the pointer lives in an
+  `R_X86_64_RELATIVE` addend, so searching the image for a pointer to a type_info returns nothing —
+  which reads as "no RTTI" rather than "look in the relocations". The relocations are plain 24-byte
+  `(r_offset, r_info, r_addend)` triples with `r_info == 8`, recoverable by a stride-8 sweep with no
+  section headers.
+
+  ⚠️ **A pointer to `X`'s type_info comes from `X`'s vtable *and* from every derived class's
+  `__si_class_type_info`** (at `type_info + 16`). Half the candidates a naive walk finds are
+  type_infos, and dumping one prints strings and small integers where functions should be. Require
+  slot 0 to be a code address.
+- **Naming the slot, once the class is named.** Nothing carries method names. Identify a slot from
+  the call site's *shape*: `v0xa0b539` calls `[vtable + 0x98]` with two floats and no integer, which
+  is `setPan(pan, spread)` on a `ChannelSoftware` and could not be the four-argument
+  `DSP::setDefaults` that a structural search had offered.
 
 ## Anchors already mapped
 

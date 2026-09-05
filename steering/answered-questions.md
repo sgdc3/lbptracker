@@ -777,9 +777,15 @@ And two more that were process errors rather than misreadings:
 - The engine works in **256-frame blocks** and rounds every delay buffer up to 1 KB, so a tap
   shorter than 256 samples cannot behave as a plain per-sample delay there. Tap set 10's shortest is
   5.019 ms = 241 samples, so preset 3 (`ReverbSetting` 0) is the one place this could show.
-- What gain, if any, the eboot puts on the connection from the sequencer DSP's channels 2-3 into the
-  reverb, and from the reverb's output into the master. `src/audio/effects.ts` assumes unity at both
-  ends. This is the last unknown in the reverb, and it is a constant.
+- ~~What gain, if any, the eboot puts on the connection from the sequencer DSP's channels 2-3 into
+  the reverb, and from the reverb's output into the master.~~ ✔ **ANSWERED 2026-09-05: there is no
+  connection and no gain.** `Channel::addDSP` (eboot `v0x3e67f9`) puts the reverb in the same
+  channel as the sequencer DSP, and its description declares `channels = 0`, so it inherits the
+  sequencer's **4**. Its read callback `0x23a0` asserts 4 in and 4 out; `0x20e0` de-interleaves
+  **channels 2-3 only** and writes `(dry + wet, dry + wet, 0, 0)` back into the same interleaved
+  buffer. The two DSPs share one buffer, the send lanes are read in place and then cleared, and
+  `src/audio/effects.ts`'s unity at both ends is right. See *22* for the write-back's instructions
+  and for why the cleared lanes matter (they are what stops the send reaching the surrounds).
 
 ---
 
@@ -1414,8 +1420,114 @@ average there when it upmixes the 4-channel DSP into 7.1 -- and the `1/sqrt2` fo
 *downmixer's*, and it is the ITU-R BS.775 coefficient that real hardware and a compliant emulator
 share. A stereo listener hears this narrowing either way, which is why the tracker reproduces it.
 
-What is left of question 22 in [open-questions.md](open-questions.md) is only *why* FMOD feeds the
-centre at all.
+### ✔ And the centre feed is now READ, 2026-09-05 -- the last link
+
+`FC = (L+R)/2` was the leading hypothesis for two days: a textbook quad->7.1 upmix computes exactly
+that, it fitted to six figures with no free parameter, and steering refused to write it down because
+*"nothing in the eboot has been read that does it"*. It is read now, and the hypothesis was right.
+
+The chain, every hop measured:
+
+```
+System::createDSP("Sequencer", channels = 4)      eboot v0x3e66cb
+DSP::setDefaults(freq, vol, pan = 0.0, prio = 0)  eboot v0x3e66f4
+System::playDSP(FREE, dsp, paused, &channel)      eboot v0x3e6718   <- the DSP IS the channel head
+Channel::setMode(FMOD_2D = 8)                     eboot v0x3e67cb
+Channel::addDSP(reverbDSP)                        eboot v0x3e67f9   <- "SMS Reverb", channels = 0,
+                                                                      so it inherits the 4
+ChannelSoftware::setPan(0.0, 1.0)                 vtable +0x98  -> v0xabdf30
+  -> pan 0 gives L = R = 1.0, and for a source of more than 2 channels it calls
+     setSpeakerMix(L, R, 1, 1, L, R, L, R)        vtable +0xa8  -> v0xabe160
+  -> which asks for the channel->speaker matrix   v0xa243a0(speakermode, nchannels, maptype, ...)
+     switch speakermode -> 7POINT1                jump table v0xa2664c[5]  -> v0xa24874
+     switch nchannels   -> 4                      jump table v0xa2670c[3]  -> v0xa2599f
+```
+
+**`v0xa2599f` is the answer.** It writes an 8x4 `levels[speaker][sourceChannel]` matrix, having
+first scaled every level except the two fronts by **`k = 0.5`** (`v0xefc008`):
+
+| speaker | ch0 | ch1 | ch2 | ch3 |
+|---|---|---|---|---|
+| front L | `fl` | 0 | 0 | 0 |
+| front R | 0 | `fr` | 0 | 0 |
+| **centre** | **`c·0.5`** | **`c·0.5`** | 0 | 0 |
+| LFE | `lfe·0.5` | `lfe·0.5` | 0 | 0 |
+| back L / side L | 0 | 0 | `·0.5` | 0 |
+| back R / side R | 0 | 0 | 0 | `·0.5` |
+
+The centre row is `0.5·(ch0 + ch1)` — **the mono average of the front pair, at 0.5, in FMOD's own
+code**. The stereo->7.1 case at `v0xa2579c` does the same thing, so this is FMOD Ex's general rule
+for feeding a centre a source does not have, not something about four channels.
+
+### The width is now derived rather than fitted
+
+Three read constants and no free parameter:
+
+```
+plugin pan law   ch0 = (1-p)x, ch1 = px            PRX 0x2d21 / 0x2d40
+FMOD upmix       FC = k(ch0 + ch1),   k = 0.5      eboot v0xa2599f, v0xefc008
+BS.775 downmix   L = FL + d·FC,       d = 1/sqrt2  shadPS4, and real hardware
+
+L = x[(1-p) + kd],  R = x[p + kd],  so the normalised pan spans 1/(1 + 2kd)
+                                                 = 1/(1 + 1/sqrt2) = 2 - sqrt2
+```
+
+**`PAN_WIDTH = 2 - Math.SQRT2` is a derivation now**, matching the measured 0.261202 to six figures
+from the other direction. Nothing in `src/core/render.ts` changes; what changes is that it is no
+longer a fit.
+
+### ✔ The send channels do NOT leak into the surrounds
+
+The matrix above puts source channels 2-3 on the four surrounds at 0.5, and those channels are the
+sequencer's **reverb send** — which would have meant the send bleeding into the dry stereo output at
+`0.7071` through the downmix, a real fidelity difference. It does not happen, and the reason is one
+instruction pair.
+
+`fmodsmsreverb.prx` exports exactly one symbol, `iO5jJEuFaSo` at `0x23a0`, its read callback. It
+**asserts 4 in and 4 out** (`cmp r8d, 4` / `cmp r9d, 4`, else `int 0x41`) and runs `0x20e0` over
+256-frame blocks. That function de-interleaves **channels 2 and 3 only** (`0x21f0`-`0x2216`, reading
+`in[4i+2]` and `in[4i+3]`), and its write-back at `0x2335`-`0x235d` is:
+
+```
+xmm0 = 0
+xmm2 = wet + in[ch0..ch1]           ; dry plus wet, two frames at a time
+[out] = vmovq(xmm2)                 ; low 8 bytes kept, HIGH 8 BYTES ZEROED
+[out+0x10] = vpalignr(xmm0, xmm2, 8)   ; the next frame, zeros shifted in
+```
+
+`vmovq` and `vpalignr` against a zero register are how you clear the upper two lanes. **The reverb
+writes `(dryL + wetL, dryR + wetR, 0, 0)`**, so the surrounds are silent and the only thing the
+7.1 bus carries is the front pair and the centre's average of it.
+
+That also closes the reverb's own last unknown, which entry *6 / 14* listed as *"what gain, if any,
+the eboot puts on the connection from the sequencer DSP's channels 2-3 into the reverb, and from the
+reverb's output into the master"*. **There is no connection and no gain**: the two DSPs share one
+4-channel buffer, the reverb reads the send lanes out of its own input and writes the sum back into
+the dry lanes. `src/audio/effects.ts` assumed unity at both ends and unity is what it is.
+
+### How it was found, after a session of failing to
+
+⚠️ **The eboot has RTTI, and one session was spent not using it.** The earlier attempt enumerated
+vtables *structurally* — runs of consecutive relocation slots holding code addresses, filtered on
+which slots looked plausible — and produced five wrong candidates plus a near miss
+(`v0xa287b0`, `DSP::setDefaults`) convincing enough to be written up. The binary carries 122
+Itanium-mangled `N4FMOD...E` names and **322 vtables can simply be named**:
+
+```
+"N4FMOD15ChannelSoftwareE"  -> type_info + 8 -> type_info -> vtable - 8 -> vtable
+```
+
+each hop a lookup in the `R_X86_64_RELATIVE` map. `tools/ebvtable.py` does it in a third of a
+second. The object at `[channel + 0x90]` is a `ChannelSoftware`, its `+0x98` is `setPan`, and from
+there the disassembly is a straight line.
+
+⚠️ **The trap that hides the RTTI**: this is a PIE, every vtable slot is **zero on disk**, and the
+pointer lives in a relocation addend. Searching the image for a pointer to a type_info returns
+nothing at all, which reads as "there is no RTTI" rather than "look in the relocations".
+
+⚠️ **And the trap inside the trap**: a pointer to `X`'s type_info comes from `X`'s vtable *and* from
+every derived class's `__si_class_type_info`. Half the candidates a naive walk produces are
+type_infos, and dumping one prints strings where functions should be. Require slot 0 to be code.
 
 ### What was implemented
 

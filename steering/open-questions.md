@@ -35,9 +35,19 @@ random start for every layer and the instruction after it clears layer 0's, whic
 kits can set the parameter to 1.000 harmlessly. That entry is worth reading for its method failure
 rather than its answer: **the measurement had been in
 [sequencer-data-model.md](sequencer-data-model.md) since the day the loop was first read, two lines
-above a summary table that contradicted it.** What is left in this file is one thing about the
-engine that is genuinely unread (22, inside FMOD) and two reports that need a capture from real
-hardware (15, 23).
+above a summary table that contradicted it.**
+
+❗ **And the output stage is closed, the same day.** Question 22 — why the game's centre speaker
+carries the mono average of the front pair — was the last hop of the signal chain that was inferred
+rather than read. It is read now, at `v0xa2599f`, and `PAN_WIDTH = 2 - sqrt2` is a derivation from
+three measured constants instead of a fit. Its entry is the one to read before any vtable hunt in
+this binary: **the eboot has RTTI**, 322 vtables can be named outright, and a session was spent
+enumerating them by shape instead. `tools/ebvtable.py` is what came out of it.
+
+**Nothing about the engine's signal path is unread any more.** What is left in this file is two
+listening reports that need a capture from real hardware (15, 23), some semantics (0, 3), one
+question that is not about fidelity at all (24), and one about files this reader does not claim to
+support (28).
 
 Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then working outward from it. That
 run closed questions 5 and 7 outright, the whole of 8's `Params`, and the triplet half of 3; it
@@ -195,173 +205,6 @@ only the current one lets a glide sweep.
 ⚠️ One thing was ruled out on the way: byte 3 of a note record only ever holds `0x00`, `0x40` or a
 low nibble — bits 4 and 5 are never set corpus-wide, and `0x40` is bit 30, which the engine already
 uses for the triplet sub-step. There is no unread per-note flag hiding there.
-
-## 22. Why FMOD feeds the centre speaker a mono sum -- everything downstream is now read
-
-⚠️ **Read [answered-questions.md](answered-questions.md) entry 22 first.** The narrowing is
-measured to six significant figures and implemented (`PAN_WIDTH = 2-sqrt2`). Both ends of the chain
-below the sequencer are now *read*, not fitted, and what is left is one step inside FMOD.
-
-### ✔ The game renders 7.1
-
-`v0xa57770`, the `GetDriverCaps` callback of the output description built at `v0x13e3c78` and named
-**"FMOD Orbis AudioOut Output"**:
-
-```
-0xa57775  [rdx] = 0x84      ; FMOD_CAPS_OUTPUT_MULTICHANNEL | FMOD_CAPS_OUTPUT_FORMAT_PCMFLOAT
-0xa57780  [rcx] = 0xbb80    ; 48000
-0xa5778b  [r8]  = 6         ; FMOD_SPEAKERMODE_7POINT1
-```
-
-Its neighbours confirm it is that table: `v0xa57720` writes one driver, `v0xa57730` copies
-`"Orbis AudioOut output"`. The game never calls `setSpeakerMode`, so this is the mode FMOD runs in,
-and `sceAudioOutOpen` gets `param = 5`, `FLOAT_8CH`. **Eight channels leave the game.**
-
-The Init callback was reached the direct way in the end: it is called once, from a C++ adjustor
-thunk at `v0xa574a0` (`add rax, -0x38`), whose address is taken at `v0xa57412` -- the description
-being built. Searching for the real function's address had failed because nothing takes it.
-
-### ✔ The fold to stereo, read from shadPS4's source
-
-The listener's captures were made under shadPS4, so the downmix is not inferred at all --
-`shared/src/core/libraries/audio/sdl_audio_out.cpp`, `DownmixF32_8CHToStereoPS4`:
-
-```c
-static constexpr float DOWNMIX_FRONT   = 1.0f;
-static constexpr float DOWNMIX_CENTER  = 0.7071f;
-static constexpr float DOWNMIX_SURROUND = 0.7071f;
-
-const float center = DOWNMIX_CENTER * s[o + FC];              // FC = 2
-d[i*2 + 0] = DOWNMIX_FRONT * s[o + FL] + center + DOWNMIX_SURROUND * (s[o+4] + s[o+6]);
-d[i*2 + 1] = DOWNMIX_FRONT * s[o + FR] + center + DOWNMIX_SURROUND * (s[o+5] + s[o+7]);
-```
-
-selected when `num_channels >= 6` and the host device reports 1 or 2 channels (`ps4_downmix`).
-**A 7.1 downmix cross-feeds only through the centre**: the surround terms go to their own side.
-
-### ✔ Therefore the centre carries `(L+R)/2` -- derived, not fitted
-
-With the fold read, the measurement forces the content. `0.7071 * FC = 0.3536 * (L+R)` gives
-`FC = (L+R)/2`, and the obvious alternative is **refuted by the recordings**: if FMOD mapped the
-DSP's four channels straight into the bus as FL, FR, FC, LFE, the centre would hold `L * send` and
-the result would be *asymmetric* -- ratio 0.2612 at pan 0 and **0** at pan 1. The two captures give
-the same 0.261202 at both. Any scheme feeding one side into the centre dies the same way.
-
-### What is left, and it is one step
-
-**Why does FMOD Ex put the mono average of a 4-channel 2D source into the centre speaker when it
-upmixes to 7.1?** That is the only unread link. The channel is created by `playDSP`, is `FMOD_2D`,
-has pan `0.0`, volume `1.0`, and no `setSpeakerMix` or `setSpeakerLevels` is ever called on it, so
-whatever does this is FMOD's default matrix -- `fmod_dspi.cpp` / `fmod_dsp_connectionpool.cpp`.
-
-⚠️ **This is now a curiosity, not a fidelity risk.** The centre feed is the *game's* (FMOD's), and
-the `1/sqrt2` fold is the *downmixer's* and is the ITU-R BS.775 coefficient, which real hardware and
-a compliant emulator share. So a stereo listener hears this narrowing either way, and the tracker is
-right to reproduce it.
-
-### Where the last link is, and the three dead ends already walked
-
-⚠️ **No experiment is available.** The listener has no multichannel host device, so the 8-channel
-stream cannot be captured, and no PS4 hardware, so the fold cannot be compared against another
-downmixer. This has to come out of FMOD's code in the eboot.
-
-The channel's own setup **is** read, `v0xa0b2e0`. `[channel+0x11c]` selects how its output is placed:
-
-| value | meaning | data |
-|---|---|---|
-| 1 | an explicit speaker **mix** | eight floats at `[channel+0x1a8]`..`[+0x1c4]` |
-| 2 | an explicit speaker **levels** array | `[channel+0x208]` |
-| 0 | a plain **pan** | `[channel+0x1a4]`, clamped to +-1 |
-
-The sequencer's channel is case **0**: `setDefaults` gave it pan `0.0` and nothing ever calls
-`setSpeakerMix` or `setSpeakerLevels` on it. At `v0xa0b4cf` that branch clamps the pan, writes
-`[channel+0x11c] = 0`, and forwards the value through a **virtual at `+0x98`** on the attached DSP
-unit and on each of the channel's others. **So the matrix is built per-DSP-unit behind a vtable, and
-that call is where the next attempt has to go** -- resolving the DSP unit's vtable, not searching for
-constants.
-
-### The vtable was attacked directly and did NOT resolve
-
-Attempted 2026-09-03 at the listener's request. It did not land, but the target is now boxed in and
-six routes are eliminated, so the next attempt starts much further along.
-
-**What is known about the object at `[channel+0x90]`:**
-
-- it is **created by a factory virtual at `+0x8`** of another object, called at `v0xa0a856` as
-  `(..., &out, ecx=1, r8d=1, r9d=0)`, then stored at `v0xa0a892` with `[channel+0x88] = 1`;
-- its vtable has **at least 38 entries** -- `v0xa0a7cc` calls `[vtable+0x128]`;
-- **`+0x88` takes one float** (the channel's volume, `[channel+0x19c]`, at `v0xa0b38f`);
-- **`+0x98` takes exactly two floats**: the clamped pan and the literal `1.0` (`v0xa0b539`).
-
-**The method that should have worked, and why it did not.** Vtables can be enumerated from the
-`R_X86_64_RELATIVE` relocations: 33,235 of them, of which 10,445 form runs of consecutive slots
-holding code addresses, 204 of length >= 20. Filtering those on `+0x88`, `+0x98` and `+0x128` all
-being FMOD code leaves **five**, and every one is an Event-system or `fmod_soundi.cpp` class -- no
-panner. Dropping the contiguity requirement (a pure-virtual stub or an out-of-range entry splits a
-run) widens it to 175 `+0x98` candidates, of which only two take a second float.
-
-⚠️ **The near miss, which will cost the next session an hour if it is not written down.**
-`v0xa287b0` is shared by **eight** vtables -- the right multiplicity for the DSP type hierarchy --
-and has exactly the right shape:
-
-```
-vminss/vmaxss xmm1        ; clamp volume to [0, 1]
-vmaxss/vminss xmm2        ; clamp pan to [-1, 1]
-cmp esi, 0x100            ; clamp priority
-[rdi+0x1a4] = xmm0   [rdi+0x1a0] = xmm1   [rdi+0x1a8] = xmm2   [rdi+0x1ac] = eax
-```
-
-That is `setDefaults(frequency, volume, pan, priority)`. **It is not the function being called**: the
-call site passes two floats and this one takes three plus an int, and the argument that would be the
-pan (`xmm2`) is never set by the caller. The offsets `+0x1a0`/`+0x1a4` matching the channel's own
-layout is a shared base class, not an identification.
-
-**Where to go next**, in order of promise: resolve `rax` at `v0xa0a856` and read the factory, which
-names the class outright; or enumerate vtables allowing interior non-code entries *and* accepting a
-`+0x98` whose body is a plain two-float store, which is what a `setPan(pan, spread)` would be.
-
-Six routes are dead; do not repeat them:
-
-- **`v0xa47400` is `SpeakerLevelsPool::free`, not the allocator.** Its two callers (`v0xa0af30`,
-  `v0xa0b454`) are both channel teardown, releasing `[channel+0x208]`. The pool is not a way in.
-- **The eight-element float rows at `v0xe46ae0`** (8x `0.5`, then 8x `0.70711`, then 8x `-0.0`) look
-  exactly like a speaker table and are not one: the `lea`s that reach that neighbourhood resolve to
-  the strings `"ID3"` and `"fLaC"`, so these are SIMD constants in the codec block. `v0xe1c440` is a
-  genuine cosine table at 30-degree steps, but nothing has tied it to this path.
-- **Searching for the address of the output plugin's `Init`** found nothing because nothing takes
-  it; it is called through a C++ adjustor thunk. Same trap will apply to any other FMOD callback.
-- **`System::createDSP` -> `v0xa52560` loads no vtable base** in its first 0x900 bytes, so the DSP
-  object's construction is deeper still; that path did not shortcut to the class.
-- **The sine table at `v0xe1c440`** (0, 0.5, 0.7071, 0.866, 0.9659, 1, ... -- sin at 15-degree steps)
-  is the obvious speaker-angle table and belongs to **the game, not FMOD**: all five references to it
-  come from `v0x22e9f8`, `v0x24c820`, `v0x24fb83`, `v0x519f96` and `v0x7ca340`, none in FMOD's range.
-
-### The leading hypothesis, and why it is not written down as fact
-
-A textbook quad->7.1 upmix computes `C = (FL + FR) / 2`, which is **exactly** what the measurement
-requires, to six figures, with no free parameter left over. It is the obvious thing for FMOD to do
-and it fits perfectly. ⚠️ **It is still a guess.** Nothing in the eboot has been read that does
-it, and this project has already been burnt once this week by an inference from architecture
-("a shared library cannot know about our types") that the disassembly then refuted.
-
-One observation does support an output-stage fold over a per-voice one: the captures' residual is
-0.0008 **over the whole file**, tails included, so every part of the signal gets the same treatment
-rather than the dry path alone. That is what a fold below the mix looks like.
-
-### What has been eliminated, with the address that eliminated it
-
-| hypothesis | verdict |
-|---|---|
-| the pan is compressed before reaching the voice | **no** — `0x3b20`/`0x3b29` copy it raw |
-| the pan law is not linear | **no** — `0x2d21`/`0x2d40` are `1-p` and `p` |
-| a constant in the plugin | **no** — no float between 0.35 and 0.5 is referenced anywhere in it |
-| a constant in the eboot's sequencer module | **no** — 39 functions, only 0.25/0.5/0.75/0.95 |
-| stereo samples | **no** — every kit sample is mono, 48 kHz |
-| the pan LFO or the unison spread | **no** — both kits leave every depth at 0, `Numstack` 1 |
-| a mono reverb send bleeding into the output | **no** — the two dominant placements have `reverbSend` **0.000** |
-| the mixer-channel records carrying a pan | **no** — `0x10b7`-`0x10cb` fill them `{0.75, 0, 0}` and `0x3adf`/`0x3ae9` read the second and third as **integer flags**, `or`-ed with a global |
-| the level position | **no** — the listener plays the game and says so |
-
 
 ## 23. ⚠️ PARKED — a flat ~1 dB deficit above 315 Hz, against an emulator
 
