@@ -983,8 +983,25 @@ And `[+0x14]` itself is a plain marker, written at note start by the same store 
 0x0a55  mov qword [r13 + 0x10], rax     ; [+0x10] = 0 (held), [+0x14] = 10000
 ```
 
-Nothing in `fmodextinput.prx` reads or decrements it again; the block driver zeroes `+0x10` and
-`+0x14` together when it frees a record (`0x10a0`-`0x10a3`). A constant 10000 and a dead branch.
+The block driver zeroes `+0x10` and `+0x14` together when it frees a record (`0x10a0`-`0x10a3`). A
+constant 10000 and a dead branch.
+
+⚠️ **Correction, 2026-09-05: it IS read again.** `sub_0x3930` opens with
+
+```
+0x3944  cmp dword [rsi + 0x1a44], 0     ; a state-block flag
+0x394b  jne 0x395f
+0x394d  cmp dword [rbx + 0x14], 0       ; <- the "never read again" field
+0x3951  jne 0x395f
+0x3953  test r14, r14
+0x3956  jne 0x395f
+0x3958  mov dword [rbx + 0x10], 1       ; release the voice
+```
+
+so a record whose `+0x14` is **zero** is released when that state flag is clear. On a claimed record
+`+0x14` is 10000 and the branch never fires, which is why this changes no number — but "nothing
+reads it" was wrong and the next person to look would have found the same instruction and wondered
+what else the note had missed.
 
 ### So the tail really is held, and the discrepancy is somewhere else
 
@@ -1094,6 +1111,57 @@ pool was full.
 releases of 0-70 ms and add under 10% to their occupancy. One (`129081`, 1,694 notes) has 305 ms
 against a 231 ms median gate and nearly doubles its own hold. That small a change in total occupancy
 moves **1,512 notes** between cut and not cut.
+
+### ❗ Re-derived from the binary, 2026-09-05 — and the framing was wrong
+
+Every link was disassembled again from scratch, and **all of them hold**:
+
+| | address | what it says |
+|---|---|---|
+| the allocator | `0x1620`-`0x1631` | score is `[rec+0x04] * [rec+0x0c]`, minimum wins; a free record (`byte == 0xff`) short-circuits first |
+| the score's factors | `0x3b12`, `0x3c3a` | `[+0x04] = channelVolume x clip Level`, `[+0x0c] = the control point's velocity` |
+| the free predicate | `0x20de`, `0x20e4`, `0x20f1` -> `0x3093` | freed when the envelope's level reaches **zero at both ends of the block**, or the score factor is zero |
+| the sample-end free | `0x3035`-`0x3069` | position past an unlooped sample's frame count |
+| the gate | `0x3a24`, `0x3a4b`, `0x3a5a` | the record walks its clip's note chain and releases at the note carrying bit 15 |
+| a released voice | `0x3963` -> `0x3f06` | **skips the score update entirely**, so it keeps the score it had — it does not fade into being a cheap victim |
+
+So the engine's side is not in doubt and there is no unexplored door in it.
+
+### ✔ What the numbers say instead, measured 2026-09-05
+
+Two censuses of `C4K3 S0NG`'s *uncapped* demand, taken from the plan the renderer builds.
+
+**At 25.85 s, the listener's own reproducer:**
+
+| | records held | of them releasing |
+|---|---|---|
+| tail off | **18** | 0 |
+| tail on | **35** | **17** |
+
+and the seventeen tails are three instruments — `synth_strings` (6), `choir` (6), `mime_artist` (5).
+All three have **decay 0 and sustain 1.0**, so a note reaches the gate at full level and its tail is
+the whole release: 0.176 s, 0.076 s, 0.058 s. It is a chord change: the outgoing chord is still
+decaying while the incoming one asks for records, and three instruments changing chord together is
+what puts 35 where 32 fit.
+
+**Over the whole song, and this is the part that reframes the question:**
+
+| | median | p95 | p99 | peak | over 32 |
+|---|---|---|---|---|---|
+| tail off | 21 | 42 | 51 | 61 | **16.0% of the song** |
+| tail on | 25 | 48 | 56 | 75 | **28.7% of the song** |
+
+❗ **The pool is not "tipped over" by the tail — it is saturated either way.** Our model already
+wants more than 32 records for a sixth of the song with the tail off, peaking at 61, and the
+listener accepts that render. So the tail is not the thing that turns a comfortable song into a
+crowded one; it roughly doubles the time already spent over the cap, and the ear rejects the
+difference between 16% and 29%.
+
+That moves the suspicion off the tail and onto the baseline: **if the engine's demand were lower
+than ours across the board, the correct tail on a correct baseline could still sit under 32.** What
+would make it lower is now the question worth asking, and nothing checked so far does it — one
+record per note-chain is what the engine walks (`+0x38` clip, `+0x3c` note index, `0x3a66` advances
+along the chain), which is exactly what `durationSteps` models.
 
 ### Where it has been left
 
