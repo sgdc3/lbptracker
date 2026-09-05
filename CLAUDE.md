@@ -77,6 +77,13 @@ they are the ground truth the JavaScript has to reproduce:
   ⚠️ **Run this before building anything on a NID.** Matching a NID against the string table alone
   once turned libc into "the sequencer plugin's only export"; the module suffix settles it in one
   query. Its docstring has the story.
+- `prxnid.py` — **the PRXs' imports, by NID**: `prxnid.py input imports` lists all nine of
+  `fmodextinput.prx`'s, `prxnid.py input 0x140` resolves one stub, `prxnid.py input guess rand`
+  confirms a name against them, `prxnid.py hash <name>` just prints a NID. ⚠️ `ebdyn.py` does this
+  for the eboot and **cannot** for a PRX: a PRX's `PT_DYNAMIC` has no data segment of its own, it
+  lives inside `SCE_DYNLIBDATA`, and half the SELF segment entries are 32-byte digests rather than
+  data. Both traps are in the docstring, with the addresses. It is how `0x140` in the unison stack
+  loop was settled as **`rand`** rather than assumed (open question 12).
 - `prxdis.py` — the same for the two audio PRXs: `prxdis.py reverb|input <vaddr> [count]`,
   resolving rip-relative operands to the float/double there. The whole reverb was read with it.
   Disassemble from a **function start**, not an arbitrary address: a mid-function start

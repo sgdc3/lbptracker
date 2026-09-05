@@ -281,12 +281,33 @@ ordinary `rand()` with `RAND_MAX = 2^31 - 1`, `r` reaches 2** — and then `Para
 half of every kit's hits *past the end of their own sample*, where `0x3056` kills them on the first
 block. That is a different prediction from "starts in a random place", and the game does neither.
 
-⚠️ **The import at `0x140` is NOT resolved**, and `CLAUDE.md`'s rule says resolve a NID before
-building on it. It is PLT entry **#6** (`push 6` at `0x0146`). `tools/ebdyn.py` does this for the
-eboot; **there is no equivalent for the PRXs**, and the obvious route does not work: the SELF
-segment table maps ELF index 3 (`PT_DYNAMIC`, `filesz 0x270`) to file offset `0x52f0`, and the 16
-bytes there are zero, so the dynamic table is not simply at its segment's file offset. That is the
-next concrete step and it is a tool, not a guess.
+✔ **The import at `0x140` is `rand`, resolved 2026-09-05** — by hash, not by guess. It needed a
+tool (`tools/prxnid.py`, written for it) because a PRX's dynamic tables are not where an ELF reader
+expects: `PT_DYNAMIC` has no data segment of its own and lives inside `SCE_DYNLIBDATA`, and half the
+SELF segment entries are 32-byte digests. All nine of this PRX's imports now have names, and two of
+them confirm readings steering already had from call shapes alone:
+
+```
+#0 memset   #2 ?  #4 __stack_chk_fail  #6 rand   #8 memcpy
+#1/#3 module_stop / module_start       #5 ?      #7 exp2f
+```
+
+**So the fork is sharp and it is about `RAND_MAX`.**
+
+- If the PS4's `rand()` returns `[0, 2^30)`, then `rand() * 2^-30` **is** `U(0, 1)`, the pitch and
+  pan lines are the symmetric `U(-d, +d)` they look like, and the steering's long-standing `U(0,1)`
+  was right for a reason at last. The contradiction in this question then stands exactly as it was.
+- If it returns `[0, 2^31)` — the FreeBSD `RAND_MAX`, and this libc is FreeBSD-derived — then the
+  product reaches **2**, the pitch spread is `U(-p0, +3p0)` rather than symmetric, and
+  `Params[2] = 1.000` puts **half of every kit's hits past the end of their own sample**, where
+  `0x3056` kills them on the first block. The game does not drop half its drums, so this arm
+  predicts something plainly false — which is itself evidence for the first arm.
+
+❗ **Three sites in one loop build a symmetric range out of this constant** — the start offset, the
+pitch and the pan, each `x + r*(y - x)` or `r*2d - d`. Three independent uses agreeing that
+`r ∈ [0, 1)` is the strongest argument available short of a `RAND_MAX` from the SDK, and it says the
+implementation's `U(0, 1)` is safe. **What it does not do is explain the kits**, which is still the
+whole question.
 
 **❌ "1.000 is just a default nobody changed" — dead.** Measured over all 68 instruments:
 
