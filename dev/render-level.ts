@@ -114,10 +114,10 @@ const seed = process.env.LBP_SEED ? Number(process.env.LBP_SEED) : undefined;
 const clip = process.env.LBP_NO_CLIP !== '1';
 /**
  * Whether `SMS WaveHammer`, the compressor the game's chain ends in, runs.
- * `LBP_NO_COMPRESSOR=1` removes it -- which is how the two were compared before
- * it was turned on by default.
+ * `LBP_COMPRESSOR=1` turns it on. ⚠️ Off by default, which is a deviation from
+ * the game -- see the `compressor` option in `src/core/render.ts`.
  */
-const compressor = process.env.LBP_NO_COMPRESSOR !== '1';
+const compressor = process.env.LBP_COMPRESSOR === '1';
 /**
  * How many voices the pool holds. `LBP_VOICES=off` (or 0) removes the cap.
  *

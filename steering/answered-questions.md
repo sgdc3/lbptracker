@@ -3173,8 +3173,12 @@ Two things the vectors caught that reading had not:
 ❗ **It costs a real render 6.94 dB of RMS and 6.93 dB of peak.** `level-seq723339` goes from
 0.134/0.934 to 0.060/0.420. Both fall by the same amount, so on this material the DSP is riding the
 level rather than catching transients — its closed-loop pole at the release coefficient is
-`2·b0·c + a1 = 0.99957`, about 48 ms of time constant. It is on by default because it is what the
-game does; `compressor: false`, or `LBP_NO_COMPRESSOR=1` for `dev/render-level.ts`, takes it out.
+`2·b0·c + a1 = 0.99957`, about 48 ms of time constant.
+
+⚠️ **It is off by default**, from the same day: the listener judged it wrong the first time it ran,
+and a listening report outranks a reading here. `LBP_COMPRESSOR=1` or `compressor: true` turns it
+on. That the *implementation* is right is not in question — the vectors say so; what is in question
+is the level reaching it, which is question 38 in [open-questions.md](open-questions.md).
 
 ### The harness, because it is reusable
 

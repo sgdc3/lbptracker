@@ -71,6 +71,7 @@ export type MixerMessage =
       echoOn: boolean;
       reverbOn: boolean;
       clip: boolean;
+      compressor?: boolean;
     }
   /** Close the gate on the voices carrying `tag`; see `Mixer.release`. */
   | { type: 'release'; tag: number }
@@ -145,11 +146,13 @@ export class MixerProcessor extends AudioWorkletProcessor {
    * are stateful across blocks; `src/core/render.ts` runs the same class over
    * the same signal at the same point, so the two paths agree.
    *
-   * ⚠️ Unconditional, where the offline path takes a `compressor` option. That
-   * option is a diagnostic — turning it off offline makes the two paths differ,
-   * which is exactly what it is for.
+   * ❗ **Off unless `compressor` is set, which mirrors the offline default and is
+   * a deviation from the game.** See the `compressor` option in
+   * `src/core/render.ts` for why, and question 38 in
+   * `steering/open-questions.md` for what would settle it.
    */
   private readonly hammer = new WaveHammer();
+  private compressor = false;
   /**
    * Frames since the last voice-count report.
    *
@@ -276,6 +279,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
         this.echoOn = message.echoOn;
         this.reverbOn = message.reverbOn;
         this.clip = message.clip;
+        this.compressor = message.compressor ?? false;
         this.echo = message.echoOn
           ? new Echo(
               sampleRate,
@@ -318,7 +322,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
     const left = output[0];
     const right = output.length > 1 ? output[1] : output[0];
 
-    if (!this.echo && !this.reverb && !this.clip) {
+    if (!this.echo && !this.reverb && !this.clip && !this.compressor) {
       this.mixer.render(left, right);
       if (output.length > 1 && right === left) right.set(left);
       this.report(left.length, began);
@@ -356,9 +360,11 @@ export class MixerProcessor extends AudioWorkletProcessor {
       left[i] = dryL + (r ? r.left : 0);
       right[i] = dryR + (r ? r.right : 0);
       // `Channel::addDSP` put the WaveHammer after the reverb, so it sees the sum.
-      const g = this.hammer.gainFor(left[i], right[i]);
-      left[i] *= g;
-      right[i] *= g;
+      if (this.compressor) {
+        const g = this.hammer.gainFor(left[i], right[i]);
+        left[i] *= g;
+        right[i] *= g;
+      }
     }
     if (output.length > 1 && right === left) right.set(left);
     this.report(left.length, began);

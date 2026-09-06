@@ -199,18 +199,21 @@ export interface RenderOptions {
   /** Whether the plugin's own hard clip to +-1 runs. Defaults to on. */
   readonly clip?: boolean;
   /**
-   * Run `SMS WaveHammer`, the compressor the game's chain ends in. Default true.
+   * Run `SMS WaveHammer`, the compressor the game's chain ends in.
    *
-   * ✔ Measured against the game's own binary executing: `tools/runhammer.py`
-   * loads `fmodsmswavehammer.prx` and runs it, and `test/compressor.test.ts`
-   * pins `src/audio/compressor.ts` against vectors from that. It is the last of
-   * the three DSPs on the sequencer's channel and nothing modelled it before
-   * 2026-09-06.
+   * ⚠️ **Default OFF, and that is a deviation from the measured chain.** The DSP
+   * itself is not in doubt: `tools/runhammer.py` loads `fmodsmswavehammer.prx`
+   * and executes it, and `test/compressor.test.ts` pins
+   * `src/audio/compressor.ts` against vectors from that run to better than 2e-5.
+   * It is switched off because the listener judged it wrong on 2026-09-06, and
+   * a listening report outranks a reading of the binary here.
    *
-   * ❗ **It changes every render's level**, by at least -1.84 dB and by up to
-   * -17 dB on material that reaches full scale. That is what the game does, so
-   * it is on by default; pass `false` (or `LBP_NO_COMPRESSOR=1` in
-   * `dev/render-level.ts`) to hear the chain without it.
+   * ❗ **The likeliest reason it sounds wrong is not the compressor.** It costs a
+   * real render 6.94 dB of RMS, and it only takes that much if the signal
+   * reaching it is well above the -21 dBFS knee. If our absolute level into the
+   * chain is too hot, a faithful compressor will squash a signal the game's own
+   * one would barely touch — so this switch is masking a level question, not
+   * settling one. See question 38 in `steering/open-questions.md`.
    */
   readonly compressor?: boolean;
   /** GUID -> playback-rate factor, for octave A/Bs. */
@@ -404,7 +407,7 @@ export async function renderSequencer(
     noKeyTrack = false,
     voiceLimit = VOICE_POOL_SIZE,
     clip = true,
-    compressor: withCompressor = true,
+    compressor: withCompressor = false,
     pitchShift = new Map<number, number>(),
     oneShot = 'gate',
     releaseTail: withReleaseTail = false,

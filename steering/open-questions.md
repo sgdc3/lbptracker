@@ -66,8 +66,13 @@ in *37* in [answered-questions.md](answered-questions.md), which is worth readin
 which is what settled it and is reusable on the other two plugins.
 
 **Nothing about the engine's signal path is unread any more.** What is left in this file is one
-listening report that needs a capture from real hardware (23), two decisions with bounded error (section 0), one question that is not about fidelity
+measured DSP deliberately switched off (38), one listening report that needs a capture from real
+hardware (23), two decisions with bounded error (section 0), one question that is not about fidelity
 at all (24), and one about files this reader does not claim to support (28).
+
+⚠️ **38 is the only place this project knowingly does something the game does not**, and it exists
+because the compressor is the first instrument here that is sensitive to *absolute* level. Read it
+before touching anything about gain.
 
 Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then working outward from it. That
 run closed questions 5 and 7 outright, the whole of 8's `Params`, and the triplet half of 3; it
@@ -266,6 +271,55 @@ belief:
 - ❌ **"Five are not diagnosed; print them before theorising."** There were never five of anything:
   the old three-way split did not survive contact with a field-by-field diff. **Print them first,
   not before theorising — the theorising is what produced the buckets.**
+
+## 38. ❗ The compressor is measured, implemented, and switched OFF
+
+Added 2026-09-06. `SMS WaveHammer` is read end to end, checked against the module executing
+(`tools/runhammer.py`), implemented in `src/audio/compressor.ts` and pinned by
+`test/compressor.test.ts` to better than 2e-5 against vectors from that run. It is nevertheless
+**off by default on both the offline and the live path**, because the listener judged it wrong the
+first time it was switched on.
+
+⚠️ **This is a deliberate deviation from the measured chain**, and it is the only one in the
+project. It is recorded here rather than quietly defaulted because a reader who finds
+`compressor = false` in `src/core/render.ts` deserves to know it is a judgement and not an oversight.
+
+### The diagnosis, which is that this is probably not about the compressor
+
+Turning it on costs `level-seq723339` **6.94 dB of RMS and 6.93 dB of peak**. It only takes that
+much from a signal sitting well above its knee, and ours does:
+
+| | our render | against the knee bottom at −21 dBFS |
+|---|---|---|
+| RMS | −17.5 dBFS | **+3.5 dB** |
+| peak | −0.6 dBFS | **+20.4 dB** |
+
+So the compressor is engaged nearly all the time and our peaks reach the very top of its table.
+If the game's own sequencer output sits *below* that knee, its WaveHammer barely touches it — and
+ours squashing the mix by 7 dB is then evidence that **our absolute level into the chain is too
+hot**, not that the DSP is modelled wrong. The DSP is not in doubt; the thing feeding it is.
+
+❗ That the compressor sounds wrong is therefore a *symptom worth keeping*, not a bug to fix. It is
+the first instrument this project has ever had that is sensitive to absolute level — everything
+else (pan ratios, spectra, envelopes) survives a level match and so could never have caught this.
+
+### What would settle it
+
+The same capture question that parks *23*, and now with a second use:
+
+1. **A capture with a known reference** — any song recorded from the game together with something
+   whose level we know, so the *ratio* is provenance-legal under rule 2 in
+   [lbp-modding-toolchain.md](lbp-modding-toolchain.md).
+2. **Our own render at several trims through the real DSP.** `tools/runhammer.py` will take any
+   audio; feeding it our render at −0, −6 and −12 dB says how much gain reduction each trim
+   provokes, and the trim whose reduction is small is the one our level should be near if the
+   game's mix is not being squashed. That needs no console at all and is the cheapest next step.
+
+### The anchor
+
+`LBP_COMPRESSOR=1 node --experimental-strip-types dev/render-level.ts` reproduces it in one
+command, and `compressor: true` does it from code. The measurement of the DSP itself is settled —
+see *37* in [answered-questions.md](answered-questions.md); nothing here reopens it.
 
 ## 28. What still will not open — measured over 103 archive levels
 

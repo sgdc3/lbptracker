@@ -356,11 +356,12 @@ capture the game's eight channels directly.
   64-sample sliding mean square. Measured by executing the module: **−17.2 dB of gain at −0.9 dBFS,
   −7.2 dB at −12 dBFS, and a floor of −1.84 dB below −21 dBFS.** `tools/wavehammer.py` reproduces
   that to 1e-4 dB and `tools/runhammer.py sweep` is the check. ✔ **Implemented 2026-09-06** in
-  `src/audio/compressor.ts`, on both the offline and live paths, and pinned by
-  `test/compressor.test.ts` against vectors taken from the running module. ❗ It costs a real
-  render **6.94 dB of RMS and 6.93 dB of peak** — `level-seq723339` goes from 0.134/0.934 to
-  0.060/0.420 — so the note elsewhere in this project that "`FOLD_GAIN` leaves room, peak 0.934 on
-  the busiest corpus song" was measuring a chain two DSPs short of the game's.
+  `src/audio/compressor.ts` and pinned by `test/compressor.test.ts` against vectors taken from the
+  running module — but ⚠️ **switched off by default**, on a listening judgement, which is the only
+  deliberate deviation from the measured chain in this project. It costs a real render **6.94 dB of
+  RMS and 6.93 dB of peak**, and it only costs that much because our mix sits 3.5 dB above its knee
+  in RMS and 20.4 dB above it in peak — so the switch is very likely masking our own level rather
+  than a fault in the DSP. See question 38 in [open-questions.md](open-questions.md).
 - **Resampling**: FMOD Ex interpolates in `fmod_dsp_resampler.cpp` at a selectable quality. If we
   play samples through the browser's `AudioBufferSourceNode.playbackRate`, we get *the browser's*
   interpolator instead, which differs between engines and cannot be pinned. This is the single
