@@ -202,6 +202,8 @@ input.picker-search {
 .picker-row:hover, .picker-row.at { background: var(--panel); }
 .picker-row.on { color: var(--accent); }
 .picker-none { color: var(--dimmer); font-size: .85rem; padding: .5rem; }
+/* The save button beside the field: the chosen song as this tracker's own file. */
+.picker-save { flex: 0 0 auto; white-space: nowrap; }
 
 /* ---------------------------------------------------- panel grid and cards */
 /* Four pages had grown their own copy of these three rules -- two of them

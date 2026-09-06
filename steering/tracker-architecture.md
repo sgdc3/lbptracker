@@ -241,9 +241,10 @@ and `defineExpose` unwraps refs, so `ui.busy.value = true` throws only when the 
 ## Opening a backup, not a level
 
 A creator's backup is a **pile**: the game writes each resource under its own SHA-1, so "open your
-level" otherwise means "find the right extensionless file among forty and guess". All three pages
-that open levels take a folder, a zip of one, a single file, **or a root level hash out of the
-public archive**, and every route ends in the same `onOpen` with the same `{ name, bytes }[]`.
+level" otherwise means "find the right extensionless file among forty and guess". All four pages
+that open levels take a folder, a zip of one, a single file, one of this tracker's own `.json`
+song files, **or a root level hash out of the public archive**, and every route ends in the same
+`onOpen` with the same `{ name, bytes }[]`, read by `readOpened` in `src/open-level.ts`.
 The formats are in [level-files.md](level-files.md); this is the behaviour around them.
 
 - `packages/cwlib-ts/src/backup.ts` reads over `{ name, bytes }[]` and knows nothing about files,

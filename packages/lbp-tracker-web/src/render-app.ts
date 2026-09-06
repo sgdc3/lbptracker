@@ -13,7 +13,9 @@ import Checks from './controls/Checks.vue';
 import { render } from './controls/render.ts';
 import { CONTROLS } from './controls/kit.ts';
 import { seqPicker } from './seq-picker.ts';
-import { isZip, saveNote, type Opened } from './open-level.ts';
+import { saveNote, type Opened } from './open-level.ts';
+import { saveSongFile } from './song-file.ts';
+import type { Sequencer } from '@lbptracker/cwlib/project.ts';
 import { mountOpen } from './widgets/open-panel.ts';
 import type { BackupResult } from '@lbptracker/cwlib/backup.ts';
 import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '@lbptracker/lib/polyphony.ts';
@@ -86,7 +88,9 @@ syncVoiceCap();
 
 // The renderer has nothing to do when a song is picked -- rendering waits for
 // the button -- so the picker only filters here.
-const picker = seqPicker(seqHost, () => {});
+const picker = seqPicker(seqHost, () => {}, (key) => {
+  worker.postMessage({ type: 'song', key });
+});
 
 const worker = new Worker(new URL('./render-worker.ts', import.meta.url), { type: 'module' });
 
@@ -367,6 +371,11 @@ worker.onmessage = (event: MessageEvent) => {
     return;
   }
 
+  if (message.type === 'song') {
+    setStatus(`saved ${saveSongFile(message.sequencer as Sequencer)}`);
+    return;
+  }
+
   if (message.type === 'loaded') {
     const list = message.list as {
       key: string; name: string; tracks: number; file?: string;
@@ -565,11 +574,9 @@ function loadFrom(opened: Opened) {
   setBusy(true);
   setBar(0);
   setStatus(`reading ${opened.label}…`);
-  const only = opened.files.length === 1 ? opened.files[0] : undefined;
   worker.postMessage({
     type: 'load',
     files: opened.files,
-    zip: Boolean(only && isZip(only)),
     label: opened.label,
   });
 }

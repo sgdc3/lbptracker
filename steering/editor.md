@@ -72,7 +72,13 @@ first reading of "four bars" was 64 steps**, a bar taken as a 16-step cell: on t
 
 The project file is JSON — `{ format: "lbptracker-song", version: 1, song }` — as decided at the
 start; `songFromJson` checks the shape rather than trusting it, because a file is the one input
-nobody on this side wrote.
+nobody on this side wrote. ❗ **Every page reads and writes it, not only the editor**: the drop
+zone of all four goes through `readOpened` in `open-level.ts`, where a single `.json` comes
+back as a level of one sequencer, and the song picker on each carries a "save .json" button
+(`saveSongFile` in `song-file.ts`) — so a sequencer found in a level on the renderer can be saved
+and opened in the editor, and a song from the editor plays on the live page. The editor alone
+opens the file as the song it holds, ids and grid lengths intact, rather than through the
+sequencer.
 
 ## The pages' player — `packages/lbp-tracker-web/src/player.ts`
 
@@ -150,9 +156,9 @@ bar 175 that nothing on screen showed as selected.
 
 ## Not there yet
 
-- **Writing back to a level.** The song leaves as JSON, as MIDI (`sequencerToMidi`), or by handoff
-  to the live player; `sequencerFromSong` produces exactly the records a `PInstrument` holds, so
-  the resource writer is what is missing, not the data.
+- **Writing back to a level.** The song leaves as a song file, as MIDI (`sequencerToMidi`), or by
+  handoff to the live player; `sequencerFromSong` produces exactly the records a `PInstrument`
+  holds, so the resource writer is what is missing, not the data.
 - **`Loop` and `StartPoint`** are carried and edited but not played: the player runs a song from
   the top to the end plus the tail, as the live page does.
 - Marquee selection is by points inside the box; there is no lasso across clips, no copy between

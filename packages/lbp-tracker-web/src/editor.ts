@@ -18,29 +18,27 @@
 import { createApp, h, shallowRef } from 'vue';
 import { HANDOFF_KEY, loaderFor, manifest, type Manifest } from './assets.ts';
 import { seqPicker } from './seq-picker.ts';
-import { readBackup, readBackupZip, sequencersOf, type BackupResult } from '@lbptracker/cwlib/backup.ts';
+import { sequencersOf, type BackupResult } from '@lbptracker/cwlib/backup.ts';
 import type { Sequencer } from '@lbptracker/cwlib/project.ts';
 import { STEPS_PER_CELL } from '@lbptracker/cwlib/project.ts';
-import { webInflate, webInflateRaw } from '@lbptracker/cwlib/platform/web.ts';
 import { RATE, type InstrumentLoader } from '@lbptracker/lib/render.ts';
 import { sequencerToMidi } from '@lbptracker/lib/midi.ts';
 import {
   addClip,
   addNote,
   duplicateClip,
-  looksLikeSongJson,
   newSong,
   removeClip,
   sequencerFromSong,
   songFromJson,
   songFromSequencer,
-  songToJson,
   trackFromClip,
   type Clip,
   type Song,
   type SongNote,
 } from '@lbptracker/lib/song.ts';
-import { isZip, openedTitle, saveNote, type Opened } from './open-level.ts';
+import { isSongFile, openedTitle, readOpened, saveNote, type Opened } from './open-level.ts';
+import { download, saveSongFile } from './song-file.ts';
 import { mountOpen } from './widgets/open-panel.ts';
 import { mountFooter } from './footer.ts';
 import { Player, type Health } from './player.ts';
@@ -553,6 +551,9 @@ function openSong(song: Song, how: string): void {
 const picker = seqPicker($<HTMLDivElement>('seq'), (key) => {
   const seq = songs.get(key);
   if (seq) openSong(songFromSequencer(seq), `opened "${seq.name}"`);
+}, (key) => {
+  const seq = songs.get(key);
+  if (seq) setStatus(`saved ${saveSongFile(seq)}`);
 });
 
 const drop = mountOpen('#open', { onOpen: (opened) => openLevel(opened) });
@@ -563,18 +564,19 @@ async function openLevel(opened: Opened): Promise<void> {
   setStatus(`reading ${opened.label}…`);
   try {
     const only = opened.files.length === 1 ? opened.files[0] : undefined;
-    // One of our own song files, dropped where a level goes: fine.
-    if (only && /\.json$/i.test(only.name)) {
+    // One of our own song files opens as the song it holds -- ids, names and
+    // grid lengths intact -- rather than through the sequencer every other
+    // page reads it as.
+    if (only && isSongFile(only)) {
       const text = new TextDecoder().decode(only.bytes);
-      if (!looksLikeSongJson(text)) throw new Error(`${only.name} is not an LBP Tracker song file`);
       openSong(songFromJson(text), `opened ${only.name}`);
       drop.loaded(true);
       drop.say(only.name);
+      songs = new Map();
+      picker.setRows([]);
       return;
     }
-    const result: BackupResult = only && isZip(only)
-      ? await readBackupZip(only.bytes, webInflate, webInflateRaw)
-      : await readBackup(opened.files, webInflate);
+    const result: BackupResult = await readOpened(opened.files);
     songs = new Map();
     for (const p of result.projects) {
       for (const sequencer of p.sequencers) songs.set(`${p.file}#${sequencer.uid}`, sequencer);
@@ -626,23 +628,13 @@ fileInput.addEventListener('change', () => {
   })();
 });
 
-function download(name: string, bytes: Uint8Array | string, type: string): void {
-  const blob = new Blob([bytes as BlobPart], { type });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 const safeName = () => (state.song.name.replace(/[^\w.-]+/g, '_') || 'song');
 
 function saveSong(): void {
-  download(`${safeName()}.lbptracker.json`, songToJson(state.song), 'application/json');
+  const name = saveSongFile(state.song);
   state.dirty = false;
   updateTitle();
-  saveNoteLine.textContent = `saved ${new Date().toLocaleTimeString()}`;
+  saveNoteLine.textContent = `saved ${name} at ${new Date().toLocaleTimeString()}`;
 }
 
 $('save').addEventListener('click', saveSong);

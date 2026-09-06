@@ -22,7 +22,11 @@
  * nothing about files at all. See `steering/game-assets.md`.
  */
 
-import type { BackupFile, BackupResult } from '@lbptracker/cwlib/backup.ts';
+import {
+  readBackup, readBackupZip, type BackupFile, type BackupResult,
+} from '@lbptracker/cwlib/backup.ts';
+import { webInflate, webInflateRaw } from '@lbptracker/cwlib/platform/web.ts';
+import { looksLikeSongJson, sequencerFromSong, songFromJson } from '@lbptracker/lib/song.ts';
 
 /**
  * Files bigger than this are skipped without being read.
@@ -121,6 +125,48 @@ export async function fromFiles(list: readonly File[]): Promise<Opened | undefin
 /** Whether this is an archive rather than a resource. Read by extension only. */
 export function isZip(file: File | { name: string }): boolean {
   return /\.zip$/i.test(file.name);
+}
+
+/** Whether this is one of this tracker's own song files. Read by extension only. */
+export function isSongFile(file: File | { name: string }): boolean {
+  return /\.json$/i.test(file.name);
+}
+
+/**
+ * Whatever was opened, as the pile of sequencers every page reads.
+ *
+ * ❗ **One reader for the four pages.** A zip is a backup to unpack; a single
+ * `.json` is one of this tracker's own song files, which comes back as a level
+ * of one sequencer so that the picker, the player, the renderer and the
+ * exporter need not know it was ever anything else; anything else is a pile
+ * of resources for `readBackup`. The three pages and the render worker each
+ * carried the zip-or-pile branch before the song file arrived, which is
+ * exactly the copy that would have learned about it one page at a time.
+ *
+ * A `.json` that is not a song file is reported in `failed`, like a level
+ * that would not open, rather than being tried as a resource.
+ */
+export async function readOpened(files: readonly BackupFile[]): Promise<BackupResult> {
+  const only = files.length === 1 ? files[0] : undefined;
+  if (only && isSongFile(only)) {
+    const text = new TextDecoder().decode(only.bytes);
+    const empty = { projects: [], quiet: 0, other: 0, saves: [] } as const;
+    if (!looksLikeSongJson(text)) {
+      return { ...empty, failed: [{ name: only.name, why: 'not an LBP Tracker song file' }] };
+    }
+    try {
+      const sequencer = sequencerFromSong(songFromJson(text));
+      return {
+        ...empty,
+        projects: [{ file: only.name, kind: 'level', sequencers: [sequencer] }],
+        failed: [],
+      };
+    } catch (error) {
+      return { ...empty, failed: [{ name: only.name, why: String((error as Error).message) }] };
+    }
+  }
+  if (only && isZip(only)) return readBackupZip(only.bytes, webInflate, webInflateRaw);
+  return readBackup(files, webInflate);
 }
 
 /**

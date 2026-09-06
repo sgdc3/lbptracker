@@ -32,14 +32,11 @@ import {
   type MidiSplit,
 } from '@lbptracker/lib/midi.ts';
 import { writeZip } from '@lbptracker/cwlib/zip.ts';
-import {
-  readBackup, readBackupZip, sequencersOf, type BackupResult,
-} from '@lbptracker/cwlib/backup.ts';
+import { sequencersOf, type BackupResult } from '@lbptracker/cwlib/backup.ts';
 import { type LevelProject, type Sequencer } from '@lbptracker/cwlib/project.ts';
-import { isZip, openedTitle, saveNote, type Opened } from './open-level.ts';
+import { openedTitle, readOpened, saveNote, type Opened } from './open-level.ts';
+import { saveSongFile } from './song-file.ts';
 import { mountOpen } from './widgets/open-panel.ts';
-import { webInflateRaw } from '@lbptracker/cwlib/platform/web.ts';
-import { webInflate } from '@lbptracker/cwlib/platform/web.ts';
 import { mountFooter } from './footer.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -93,7 +90,10 @@ const plural = (n: number, one: string) => `${n.toLocaleString()} ${one}${n === 
 
 /* ------------------------------------------------------------------- export */
 
-const picker = seqPicker($<HTMLDivElement>('seq'), () => convert());
+const picker = seqPicker($<HTMLDivElement>('seq'), () => convert(), (key) => {
+  const seq = songs.get(key);
+  if (seq) setStatus('status', `saved ${saveSongFile(seq)}`);
+});
 
 function options() {
   return {
@@ -289,10 +289,7 @@ async function openLevel(opened: Opened): Promise<void> {
   rinstIndex = rinstIndex ?? (await manifest('fixtures/rinst').catch(() => undefined));
   setStatus('status', `reading ${opened.label}…`);
   try {
-    const only = opened.files.length === 1 ? opened.files[0] : undefined;
-    const result: BackupResult = only && isZip(only)
-      ? await readBackupZip(only.bytes, webInflate, webInflateRaw)
-      : await readBackup(opened.files, webInflate);
+    const result: BackupResult = await readOpened(opened.files);
     songs = new Map();
     for (const p of result.projects) {
       for (const sequencer of p.sequencers) songs.set(`${p.file}#${sequencer.uid}`, sequencer);

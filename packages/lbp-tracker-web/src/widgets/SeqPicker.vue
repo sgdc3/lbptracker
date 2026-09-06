@@ -18,7 +18,12 @@
 import { computed, onMounted, onUnmounted, ref, useTemplateRef } from 'vue';
 import { detail, title, type PickerState, type SeqRow } from './picker-state.ts';
 
-const props = defineProps<{ state: PickerState; onPick: (key: string) => void }>();
+const props = defineProps<{
+  state: PickerState;
+  onPick: (key: string) => void;
+  /** Save the chosen song as a file; the button appears only when this is given. */
+  onSave?: (key: string) => void;
+}>();
 
 const open = ref(false);
 const needle = ref('');
@@ -128,4 +133,12 @@ onUnmounted(() => document.removeEventListener('pointerdown', away));
       <div class="picker-none" :hidden="shown.length > 0">nothing matches</div>
     </div>
   </div>
+  <button
+    v-if="onSave"
+    type="button"
+    class="picker-save"
+    title="Save this song as an LBP Tracker .json file, which any page here opens"
+    :disabled="!current"
+    @click="current && onSave(current.key)"
+  >save .json</button>
 </template>

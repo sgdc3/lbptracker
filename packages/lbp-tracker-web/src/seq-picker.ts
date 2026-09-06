@@ -33,7 +33,16 @@ export interface SeqPickerHandle {
  *
  * `onPick` fires for a real choice and never for filtering.
  */
-export function seqPicker(host: HTMLElement, onPick: (key: string) => void): SeqPickerHandle {
+/**
+ * `onSave`, when given, puts a "save .json" button beside the field: the
+ * chosen sequencer leaves as one of this tracker's song files, from whichever
+ * page it was found on. The page resolves the key and calls `saveSongFile`.
+ */
+export function seqPicker(
+  host: HTMLElement,
+  onPick: (key: string) => void,
+  onSave?: (key: string) => void,
+): SeqPickerHandle {
   const state = pickerState();
   // ⚠️ A **function** ref, not a string one: a string ref resolves against the
   // rendering component's `$refs`, and the root here is an anonymous render
@@ -45,6 +54,7 @@ export function seqPicker(host: HTMLElement, onPick: (key: string) => void): Seq
       h(SeqPicker, {
         state,
         onPick,
+        onSave,
         ref: (el: unknown) => {
           inner = el as { pick(key: string, quiet?: boolean): void } | null;
         },

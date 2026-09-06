@@ -15,17 +15,15 @@ import { live } from './controls/live.ts';
 import { CONTROLS } from './controls/kit.ts';
 import { HANDOFF_KEY, loaderFor, manifest, type Manifest } from './assets.ts';
 import { seqPicker } from './seq-picker.ts';
-import { readBackup, sequencersOf, type BackupResult } from '@lbptracker/cwlib/backup.ts';
+import { sequencersOf, type BackupResult } from '@lbptracker/cwlib/backup.ts';
 import {
   CHANNEL_COUNT, type LevelProject, type Sequencer,
 } from '@lbptracker/cwlib/project.ts';
-import { isZip, openedTitle, saveNote } from './open-level.ts';
+import { openedTitle, readOpened, saveNote } from './open-level.ts';
+import { saveSongFile } from './song-file.ts';
 import { mountOpen } from './widgets/open-panel.ts';
-import { readBackupZip } from '@lbptracker/cwlib/backup.ts';
-import { webInflateRaw } from '@lbptracker/cwlib/platform/web.ts';
 import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '@lbptracker/lib/polyphony.ts';
 import { RATE, type InstrumentLoader } from '@lbptracker/lib/render.ts';
-import { webInflate } from '@lbptracker/cwlib/platform/web.ts';
 import { mountFooter } from './footer.ts';
 import { Player, type Health } from './player.ts';
 
@@ -453,7 +451,10 @@ const prepareNow = () => {
     setError(String((error as Error).stack ?? error));
   });
 };
-const picker = seqPicker(seqHost, prepareNow);
+const picker = seqPicker(seqHost, prepareNow, (key) => {
+  const chosen = songs.get(key);
+  if (chosen) setStatus(`saved ${saveSongFile(chosen.sequencer)}`);
+});
 
 // ------------------------------------------------------------------ the file
 
@@ -477,10 +478,7 @@ async function openBackup(opened: {
   drop.busy(true);
   setStatus(`reading ${opened.label}…`);
   try {
-    const only = opened.files.length === 1 ? opened.files[0] : undefined;
-    const result: BackupResult = only && isZip(only)
-      ? await readBackupZip(only.bytes, webInflate, webInflateRaw)
-      : await readBackup(opened.files, webInflate);
+    const result: BackupResult = await readOpened(opened.files);
     [rinstIndex, smpIndex] = await Promise.all([
       manifest('fixtures/rinst'),
       manifest('fixtures/smp'),

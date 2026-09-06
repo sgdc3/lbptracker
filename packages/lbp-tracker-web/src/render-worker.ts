@@ -26,20 +26,16 @@
  */
 
 import { loaderFor, manifest, type Manifest } from './assets.ts';
-import { openedTitle } from './open-level.ts';
+import { openedTitle, readOpened } from './open-level.ts';
 import {
   RATE,
   renderSequencer,
   toPcm16,
   type LoadedInstrument,
 } from '@lbptracker/lib/render.ts';
-import {
-  readBackup, readBackupZip, sequencersOf, type BackupFile,
-} from '@lbptracker/cwlib/backup.ts';
+import { sequencersOf, type BackupFile } from '@lbptracker/cwlib/backup.ts';
 import { type LevelProject, type Sequencer } from '@lbptracker/cwlib/project.ts';
-import { webInflateRaw } from '@lbptracker/cwlib/platform/web.ts';
 import { writeWav } from '@lbptracker/lib/wav.ts';
-import { webInflate } from '@lbptracker/cwlib/platform/web.ts';
 
 let project: LevelProject | null = null;
 /**
@@ -63,7 +59,6 @@ self.onmessage = async (event: MessageEvent) => {
     /** The picker's key, `file#uid` -- not a uid; see `packages/cwlib-ts/src/backup.ts`. */
     key?: string;
     files?: BackupFile[];
-    zip?: boolean;
     label?: string;
     seconds?: number;
     from?: number;
@@ -94,11 +89,9 @@ self.onmessage = async (event: MessageEvent) => {
       say(`reading ${label}…`);
       post({ type: 'progress', phase: 'level', done: 0, total });
       // ❗ A backup is a pile of resources named after their SHA-1, so the
-      // worker reads the pile rather than one file. `readBackup` skips whatever
-      // is not a level by its magic and reports what would not open.
-      const result = message.zip
-        ? await readBackupZip(files[0].bytes, webInflate, webInflateRaw)
-        : await readBackup(files, webInflate);
+      // worker reads the pile rather than one file -- a zip, one of this
+      // tracker's song files, or the pile itself, the same way every page does.
+      const result = await readOpened(files);
       post({ type: 'progress', phase: 'level', done: total, total });
       songs = new Map();
       for (const p of result.projects) {
@@ -126,6 +119,15 @@ self.onmessage = async (event: MessageEvent) => {
         instruments: rinstIndex.size,
         samples: smpIndex.size,
       });
+      return;
+    }
+
+    if (message.type === 'song') {
+      // The page keeps no sequencers -- the worker does -- so saving one as a
+      // song file means asking for it back.
+      const seq = songs.get(message.key!);
+      if (!seq) throw new Error(`no sequencer ${message.key}`);
+      post({ type: 'song', key: message.key, sequencer: seq });
       return;
     }
 
