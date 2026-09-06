@@ -140,5 +140,5 @@ onUnmounted(() => document.removeEventListener('pointerdown', away));
     title="Save this song as an LBP Tracker .json file, which any page here opens"
     :disabled="!current"
     @click="current && onSave(current.key)"
-  >save .json</button>
+  >save</button>
 </template>

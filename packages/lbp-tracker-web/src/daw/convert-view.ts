@@ -1,5 +1,5 @@
 /**
- * The Convert view: the song out as a `.mid`, and any `.mid` in as the song.
+ * The Import/Export view: the song out as a `.mid`, and any `.mid` in as the song.
  *
  * The conversion itself is `packages/lbp-tracker-lib/src/midi.ts`, which is
  * where the interesting decisions and the corrected mistakes live. This is

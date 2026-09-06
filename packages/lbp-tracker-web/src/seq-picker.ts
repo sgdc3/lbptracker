@@ -34,7 +34,7 @@ export interface SeqPickerHandle {
  * `onPick` fires for a real choice and never for filtering.
  */
 /**
- * `onSave`, when given, puts a "save .json" button beside the field: the
+ * `onSave`, when given, puts a "save" button beside the field: the
  * chosen sequencer leaves as one of this tracker's song files, from whichever
  * page it was found on. The page resolves the key and calls `saveSongFile`.
  */

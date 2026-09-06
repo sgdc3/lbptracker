@@ -25,7 +25,7 @@ at a time, all reaching the same song through `src/daw/session.ts`:
 | Arrange | `daw/arrange.ts` | the board filling the page between the bar and the footer; the roll and the chip and point inspector in a panel that rises over the board's lower part when a chip is clicked or drawn (not when the playhead merely moves the selection), resizable by its top edge, closed by its button or Esc, with the help behind "?" |
 | Song/Mixer | `daw/mixer.ts`, `daw/MixerPanel.vue` | the song's name, tempo, swing, channels and faders, board rows, echo, reverb, loop — the song's own fields — in one card, and an "Engine" card with the switches that are not in the file (`controls/engine.ts`) and the meters; the name in the top bar is read-only |
 | Render | `daw/render-view.ts` | hands `sequencerFromSong(song)` to the render worker and plays the WAV back |
-| Convert | `daw/convert-view.ts` | exports it as MIDI, re-run while the view is shown; a MIDI file in *replaces* it, through `openSong` |
+| Import/Export | `daw/convert-view.ts` | exports it as MIDI, re-run while the view is shown; a MIDI file in *replaces* it, through `openSong` |
 | Keyboard | `daw/keyboard-view.ts` | the instrument bench, following the chip selected on the board |
 
 `session.ts` owns the `EditorState`, the one `Player`, the instruments and their loader, the

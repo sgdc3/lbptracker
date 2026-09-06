@@ -47,12 +47,13 @@ setErrorSink((text) => {
 export type ViewName = 'home' | 'arrange' | 'mixer' | 'render' | 'convert' | 'keyboard';
 const tabs = [...document.querySelectorAll<HTMLButtonElement>('.tabs [data-view]')];
 const viewListeners = new Set<(view: ViewName) => void>();
-let current: ViewName = 'arrange';
+let current: ViewName = 'home';
 
 export const activeView = (): ViewName => current;
 
 function showView(view: ViewName): void {
   current = view;
+  document.body.dataset.view = view;
   for (const tab of tabs) tab.setAttribute('aria-selected', String(tab.dataset.view === view));
   for (const section of document.querySelectorAll<HTMLElement>('.view')) {
     section.hidden = section.id !== `view-${view}`;
@@ -60,6 +61,8 @@ function showView(view: ViewName): void {
   for (const l of viewListeners) l(view);
 }
 for (const tab of tabs) tab.addEventListener('click', () => showView(tab.dataset.view as ViewName));
+/** A song just opened from the home view: show it. Any other view keeps its place. */
+const leaveHome = () => { if (current === 'home') showView('arrange'); };
 // The brand is the way to the home view: a presentation, over the song that
 // stays open -- not a reload, which would lose it.
 $('brand').addEventListener('click', (event) => {
@@ -212,6 +215,7 @@ async function openLevel(opened: Opened): Promise<void> {
     // grid lengths intact -- rather than through the sequencer it also is.
     if (only && isSongFile(only)) {
       openSong(songFromJson(new TextDecoder().decode(only.bytes)), `opened ${only.name}`);
+      leaveHome();
       drop.loaded(true);
       drop.say(only.name);
       songs = new Map();
@@ -237,6 +241,7 @@ async function openLevel(opened: Opened): Promise<void> {
     if (first) {
       const seq = songs.get(first)!;
       openSong(songFromSequencer(seq), `opened "${seq.name}"`);
+      leaveHome();
       // One song: nothing to choose, so the dialog can go. Several: leave the
       // picker in view, the choice is the point.
       if (rows.length === 1) fileDialog.close();
@@ -311,9 +316,9 @@ measureChrome();
 
 // ---------------------------------------------------------------- start up
 
-// The site opens on the arrange view of an empty song, as the owner asked;
-// the view is not remembered across loads.
-showView('arrange');
+// The site opens on the home view, over an empty song; opening or starting
+// one moves to the arranger. The view is not remembered across loads.
+showView('home');
 refreshHeader();
 void ensureAssets().catch((error: unknown) => {
   setStatus('the game\'s instruments are not available: extract them first', true);

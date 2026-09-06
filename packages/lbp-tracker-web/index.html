@@ -268,6 +268,8 @@
   #errorCard { display: none; margin: .8rem 1rem; }
   #errorCard.show { display: block; }
   .site-foot { padding-left: 1rem; padding-right: 1rem; max-width: none; }
+  /* Centred under the home view's presentation; left-aligned under the working views. */
+  body[data-view="home"] .site-foot { text-align: center; }
 </style>
 </head>
 <body>
@@ -277,7 +279,7 @@
     <button type="button" role="tab" data-view="arrange" aria-selected="true">Arrange</button>
     <button type="button" role="tab" data-view="mixer">Song/Mixer</button>
     <button type="button" role="tab" data-view="render">Render</button>
-    <button type="button" role="tab" data-view="convert">Convert</button>
+    <button type="button" role="tab" data-view="convert">Import/Export</button>
     <button type="button" role="tab" data-view="keyboard">Keyboard</button>
   </div>
   <span class="spacer"></span>
@@ -296,8 +298,8 @@
   <span id="dirty" title="unsaved changes"></span>
   <span id="songName" title="The song's name; change it under Song/Mixer">untitled</span>
   <button id="newSong" type="button">new</button>
-  <button id="openToggle" type="button">open&hellip;</button>
-  <button id="save" type="button" class="primary">save .json</button>
+  <button id="openToggle" type="button">open</button>
+  <button id="save" type="button" class="primary">save</button>
 </header>
 
 <dialog id="fileDialog" class="picker-dialog file-dialog">
@@ -337,7 +339,7 @@
       <div class="card"><h3>Arrange</h3><p>The board as the game lays it out &mdash; one instrument per chip, four bars to a tile &mdash; and inside each chip the note grid: points, glides, volume and timbre, whole steps or triplets.</p></div>
       <div class="card"><h3>Song/Mixer</h3><p>Tempo, swing, the mixer channels and their faders, the echo and the reverb, exactly the fields the game stores; and the engine&rsquo;s own voice pool and output stage.</p></div>
       <div class="card"><h3>Render</h3><p>The song to a 48&nbsp;kHz WAV through the same arithmetic the live player uses, with the numbers that say what the render did.</p></div>
-      <div class="card"><h3>Convert</h3><p>Out as MIDI, MPE so a bend stays with its note, with a tally of what could not be carried; in from any MIDI file, played by the game&rsquo;s instruments.</p></div>
+      <div class="card"><h3>Import/Export</h3><p>Out as MIDI, MPE so a bend stays with its note, with a tally of what could not be carried; in from any MIDI file, played by the game&rsquo;s instruments.</p></div>
       <div class="card"><h3>Keyboard</h3><p>The game&rsquo;s instruments under your fingers &mdash; mouse, computer keys or a MIDI controller &mdash; with every voice parameter to turn while it sounds.</p></div>
       <div class="card"><h3>Faithful</h3><p>Every number here was read out of the game&rsquo;s own binaries and checked against real levels; where the project knowingly departs from the engine, it says so.</p></div>
     </div>
@@ -508,7 +510,7 @@
     </section>
   </div>
 
-  <!-- ================================================================ Convert -->
+  <!-- ========================================================== Import/Export -->
   <div id="view-convert" class="view" hidden>
     <section>
       <p class="step"><b>1</b> The song out &mdash; as MIDI</p>
