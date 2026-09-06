@@ -72,8 +72,9 @@ fidelity at all (24), and one about files this reader does not claim to support 
 
 ⚠️ **38 and 39 are the only places this project knowingly does something the game does not**, both
 added 2026-09-06 on listening judgements, and they are entangled: 39 leaves `FOLD_GAIN` applied
-4.645 dB upstream of where the game folds, which is the biggest single lead on 38's "our level is
-too hot". Read both before touching anything about gain or pan.
+4.645 dB upstream of where the game folds. Read both before touching anything about gain or pan
+— and read 38's corrected diagnosis first, because "our level is too hot" was measured on the
+corpus's busiest song and does not hold on the other three.
 
 Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then working outward from it. That
 run closed questions 5 and 7 outright, the whole of 8's `Params`, and the triplet half of 3; it
@@ -285,24 +286,48 @@ first time it was switched on.
 project. It is recorded here rather than quietly defaulted because a reader who finds
 `compressor = false` in `src/core/render.ts` deserves to know it is a judgement and not an oversight.
 
-### The diagnosis, which is that this is probably not about the compressor
+### ❌ The diagnosis this entry first carried was generalised from one song
 
-Turning it on costs `level-seq723339` **6.94 dB of RMS and 6.93 dB of peak**. It only takes that
-much from a signal sitting well above its knee, and ours does:
+It said: turning the compressor on costs 6.94 dB, our RMS sits 3.5 dB above its knee, therefore our
+absolute level into the chain is too hot. **The first number is right and the inference is not.**
+Measured 2026-09-06 over four corpus sequencers, against the knee bottom at −21 dBFS (all figures
+after the pan-width removal of *39*, which raised every one of them by about 1 dB):
 
-| | our render | against the knee bottom at −21 dBFS |
-|---|---|---|
-| RMS | −17.5 dBFS | **+3.5 dB** |
-| peak | −0.6 dBFS | **+20.4 dB** |
+| sequencer | notes | RMS dBFS | vs knee | peak dBFS | vs knee |
+|---|---|---|---|---|---|
+| 723339 | 821 | −16.4 | **+4.6** | −0.3 | +20.7 |
+| 737099 | 280 | −29.3 | −8.3 | −13.8 | +7.2 |
+| 732985 | 566 | −22.6 | −1.6 | +0.4 | +21.4 |
+| 730116 | 765 | −22.4 | −1.4 | −2.0 | +19.0 |
 
-So the compressor is engaged nearly all the time and our peaks reach the very top of its table.
-If the game's own sequencer output sits *below* that knee, its WaveHammer barely touches it — and
-ours squashing the mix by 7 dB is then evidence that **our absolute level into the chain is too
-hot**, not that the DSP is modelled wrong. The DSP is not in doubt; the thing feeding it is.
+❗ **Three of the four sit at or below the knee in RMS.** 723339 is the busiest song in the corpus
+and it is the one the 6.94 dB was measured on; quoting it as "our level" was the same over-reach
+this project keeps catching itself in.
 
-❗ That the compressor sounds wrong is therefore a *symptom worth keeping*, not a bug to fix. It is
-the first instrument this project has ever had that is sensitive to absolute level — everything
-else (pan ratios, spectra, envelopes) survives a level match and so could never have caught this.
+### What the four songs actually say
+
+The detector's window is **64 samples, 1.33 ms** — far too short to follow an RMS and short enough
+to follow near-peaks. So the row that matters is the last one, and **every song's peaks sit 7 to
+21 dB above the knee**. The compressor is therefore doing what a compressor does: riding peaks,
+with a long-term cost that follows each song's crest factor rather than its loudness.
+
+That leaves the real question narrower and harder than "are we too loud":
+
+- If the game's own mixes have the same crest factor as ours, its WaveHammer takes the same 7 dB
+  off the dense ones, and our chain is simply missing that.
+- If ours are peakier — through the voice pool, the envelope, the onset grid, or the missing
+  release tail — the compressor is being fed transients the game never sends it.
+
+⚠️ **Neither can be told apart from a level match**, which is why *23*'s capture is level-matched
+and useless here, and why the crest factor is the thing to ask a new capture for.
+
+### The `FOLD_GAIN` lead, and what it is worth
+
+*39* leaves `FOLD_GAIN` (+4.645 dB) applied to each voice, where the game folds after the whole DSP
+chain — so it reaches our compressor 4.645 dB before the game's would. On 723339 removing it would
+land the RMS within 0.01 dB of the knee, which looked decisive for about a minute; on the other
+three it lands them 6 to 13 dB **below** it. ❗ **One song agreeing to two decimal places is a
+coincidence, and this file has been wrong before by treating one as a measurement.**
 
 ### What would settle it
 
