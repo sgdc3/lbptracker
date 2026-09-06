@@ -3110,3 +3110,53 @@ filter's key tracking is fed. It was the voice's *opening* rate, so a note that 
 cutoff it started with; `Northern Lights`'s `noise` riser swept 1.83× where the pitch swept 4.76×,
 and it is the current rate now. `LBP_NO_KEYTRACK` stays because the term may be inert altogether.
 None of this reaches `robot`, whose `keyTrack` is 0 at the modulation its notes carry.
+
+## 37. The WaveHammer — ANSWERED by RUNNING it, 2026-09-06, after three wrong readings
+
+The last DSP on the sequencer's channel. What it is and what it computes now live in
+[lbp-audio-engine.md](lbp-audio-engine.md) under *The end of the chain*; `tools/wavehammer.py` is
+the model and `tools/runhammer.py` loads the real module and checks it. **They agree to 1e-4 dB.**
+
+The answer in one line: a compressor at −18 dB / 10:1 over a 64-sample sliding mean square, giving
+−17.2 dB of gain at −0.9 dBFS, −7.2 dB at −12 dBFS, and a floor of −1.84 dB below −21 dBFS.
+
+### ❗ The value of this entry is the three wrong readings, not the answer
+
+Each was confidently written down, and two of them were committed.
+
+| # | The claim | Why it was believed | What was actually true |
+|---|---|---|---|
+| 1 | "It is a limiter." | The product is called Wave Hammer and the PRX is `fmodsmswavehammer`. | It ships with `LimitBypass = 1`. The **compressor** section runs. |
+| 2 | "The game never configures it." | `DSP::setParameter` is never called on the handle — verified by enumerating all fifteen call sites. | True, and irrelevant: `create` `rep movsd`s a static template over the parameter block, overriding 8 of 16 defaults. |
+| 3 | "It collapses to a constant −18.04 dB." | A **superset disassembly** of all 7,632 bytes found no store to `[reg + 0xc0]`, so the detector's window length looked uninitialised. | `[state+0xc0] = 64`. `0x380` writes it as `mov qword ptr [rbx + 0x3c], rax` through an interior pointer to `state+0x84`. |
+
+Reading 3 is the one to remember, because the technique was **sound and exhaustive** and the
+conclusion was still false. Decoding from every byte proves "no instruction stores to `[reg+0xc0]`";
+it does not prove "this field is never written", because a struct passed by interior pointer reaches
+the same field under a different offset — and here one 64-bit store wrote two fields at once.
+
+⚠️ **An absolute-offset search is only sound if every access uses the same base.** When a field
+looks uninitialised, the next question is not "did I miss an instruction" but "can this field be
+reached under another name" — and the cheapest way to answer that is to run the thing.
+
+One wrong field produced **four** self-consistent conclusions: the −18.04 dB constant, a `NaN` at
+table entry 0, a downward expander below the knee, and "the compressor never compresses". None
+looked wrong from inside the disassembler; all four died the moment the module printed its own
+state.
+
+### What survived the corrections
+
+The parts derived from the arithmetic rather than from the state were right throughout, and are
+worth trusting again: the parameter struct's layout (confirmed three ways), the units
+(`×0.1` for "10th dB", `10^(x·0.005)` for gain, `10·log₁₀` for level), `_FLog` = `log10f`, and the
+knee's closed form — the unique Hermite matching value and slope at both ends, which
+`wavehammer.py check` still agrees with the literal transcription to 2.1e-14 dB.
+
+### The harness, because it is reusable
+
+`tools/runhammer.py` loads a PS4 PRX into a Windows process: both segments at their own vaddrs in
+one RWX allocation so rip-relative references need no fixing, the five non-PLT relocations and ten
+GOT slots written by hand, `powf`/`_FLog` shimmed to the CRT, and a System V ← Windows thunk saving
+the registers the two ABIs disagree about (`rsi`, `rdi`, `xmm6`–`xmm15`). It took an afternoon and
+it is the strongest instrument this project has for any of the game's DSP plugins — `fmodsmsreverb`
+and `fmodextinput` are the same shape.

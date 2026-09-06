@@ -1,45 +1,45 @@
-r"""The static gain curve of `fmodsmswavehammer.prx`, and the check that it is that curve.
+r"""The gain curve of `fmodsmswavehammer.prx`, checked against the module actually running.
 
-    wavehammer.py                 the shipped configuration, its table and its constant
+    wavehammer.py                 the shipped configuration, its curve and its constant
     wavehammer.py <T> <R>         another threshold (dB) and ratio
     wavehammer.py check           the transcription against the closed form, all 3999 entries
 
-This is the reference implementation the TypeScript will have to reproduce, in the sense `fsb.py`
-and `lbpres.py` are. The whole chain is read: detector, lookup, envelope and application.
+The reference implementation the TypeScript will have to reproduce, in the sense `fsb.py` and
+`lbpres.py` are. ✔ `tools/runhammer.py sweep` loads the real PRX and agrees with this file to
+**1e-4 dB** across a DC sweep from -40 to -0.9 dBFS.
 
-## ❗ The headline: in the shipped configuration this DSP is a constant -18.04 dB
+## What the DSP is
 
-`0x330` is `out[i] = in[i] * gain[i]` and the gain comes from the table -- but the lookup at
-`0x10f0` divides the detector's *windowed sum of squares* by `[state+0xc0]`, the window length, to
-get a mean square, and **the game never sets that field**. A superset disassembly of all 7,632
-bytes of the module finds no store at all to `+0xc0`, `+0xc4` or `+0xc8`, and the eboot's create
-memsets the state block and afterwards writes only `+0x6c`, `+0xf0`, `+0x130`, `+0x138`.
+A working compressor, and on the shipped settings (-18 dB, 10:1) it reduces gain by 17.2 dB at
+-0.9 dBFS, 7.2 dB at -12 dBFS, and settles to a constant **-1.84 dB** below the knee.
 
-So `1/N` is `+inf`, every non-silent sample saturates the index, and the lookup returns
-`table[3999]` forever. Since the make-up at `0xd44` is `0.995 / table[3999]`, the product is
+Four passes per 256-frame block: a 64-sample sliding mean square per channel, `max` across
+channels (`0x1000`); a table lookup with linear interpolation (`0x10f0`); a one-pole on the gain
+with attack/release plus a second smoother (`0x1190`); `out = in * gain` (`0x330`).
 
-    table[3999] * [state+0x104]  ==  0.995 * 10^(CompOutGain/20)  ==  0.125263  ==  -18.04 dB
-
-`shipped_chain_gain()` computes it both ways. ⚠️ **This is a static reading and it makes a
-falsifiable prediction** -- the game's sequencer output should sit ~18 dB below an unattenuated
-render of the same song. Nobody has captured that yet; see question 37.
-
-## The static curve, which is what the rest of this file is
-
-`0xa40` fills 4000 floats at `scratch + 0x1000`, entry `i` being the gain for a mean-square level
-`x = i/3999` (the axis floor `[state+0xc8]` is that same never-written zero). `L = 10*log10(x)` --
-`_FLog(1, .)` is `log10f`, 21 bytes at libc `0x383e0` jumping to `0x37c20` -- so `L` is ordinary
-dBFS and the `10^(dL/20)` is the matching amplitude gain.
+`0xa40` fills the 4000-entry table, entry `i` being the gain for a mean-square level
+`x = F + (1-F)*i/3999`, with `F = 10^((T-3)/10)` — the knee bottom, so **entry 0 is unity** and
+`x <= F` short-circuits to 1.0. `L = 10*log10(x)` via `_FLog(1, .)`, which is `log10f`, 21 bytes at
+libc `0x383e0` jumping to `0x37c20`; `L` is therefore ordinary dBFS.
 
 `build()` is a literal transcription of `0xbb4`-`0xd31`, in the order the assembly does it.
 `closed_form_db()` is the algebra it reduces to, and `check` agrees them to 2.1e-14 dB. Keep both:
 the transcription is the evidence, the closed form is what an implementation would use.
 
-⚠️ **There is no lower clamp.** `0xc99` branches only on `L > T+3`, so the knee cubic is evaluated
-with `t < 0` all the way down and the curve is a **downward expander** below `T-3`: -2.7 dB at 9 dB
-under the threshold on the shipped settings. `table[0]` is NaN, because `log10(0)` is -inf and
-`out - L` is then inf - inf. Neither reaches the audio while the lookup saturates, but both would
-the moment `[state+0xc0]` were non-zero, so they stay modelled here.
+## ❌ What this file said before, and why
+
+For one commit this docstring led with *"the window length is never initialised, so the DSP
+collapses to a constant -18.04 dB"*. It was wrong. `[state+0xc0]` is 64, set by `0x380` as
+
+    mov qword ptr [rbx + 0x3c], rax      ; one 64-bit store: N at +0xc0 AND the mask at +0xc4
+
+through a pointer to a sub-struct at `state+0x84`. A superset disassembly looking for stores to
+`[reg + 0xc0]` found none, correctly, and the conclusion still did not follow: **an absolute-offset
+search is only sound if every access uses the same base.** The same mistake made `F` zero, which is
+what produced the phantom `table[0] = NaN` and the phantom downward expander below the knee — with
+the real `F` the cubic is never evaluated below `t = 0` at all.
+
+The lesson is why `runhammer.py` exists: when a field looks uninitialised, run the thing.
 """
 import math
 import sys
@@ -92,8 +92,10 @@ def closed_form_db(threshold_db, ratio, level_db):
 
 
 def table(threshold_db, ratio):
+    """The 4000 entries as `0xa40` writes them, on the real axis `[F, 1]`."""
     entry, _ = build(threshold_db, ratio)
-    return [entry(i / (ENTRIES - 1.0)) for i in range(ENTRIES)]
+    f = axis_floor(threshold_db)
+    return [entry(f + (1.0 - f) * i / (ENTRIES - 1.0)) for i in range(ENTRIES)]
 
 
 def output_constant(threshold_db, ratio, out_gain_tenths):
@@ -104,35 +106,44 @@ def output_constant(threshold_db, ratio, out_gain_tenths):
     return makeup * manual, makeup, manual
 
 
-def lookup(energy, window_length, floor, table_):
-    """`0x10f0`-`0x1153`: normalise the windowed sum, index the table, interpolate.
+def axis_floor(threshold_db):
+    """`[state+0xc8]`, the bottom of the table's level axis, from `0x380`.
 
-    ❗ `window_length` is `[state+0xc0]` and **the game leaves it at zero**, so `1/N` is `+inf` and
-    every non-silent sample saturates to the last entry. That is not a transcription slip -- a
-    superset disassembly of all 7,632 bytes of the module finds *no store at all* to `+0xc0`,
-    `+0xc4` or `+0xc8`, and the eboot's create memsets the state block and then writes only `+0x6c`,
-    `+0xf0`, `+0x130` and `+0x138`.
+    `0x380` turns the threshold into a power ratio (`0x3f7`: `powf(10, T/20)` squared) and takes
+    3 dB off it (`x 0.50118721` = `10^-0.3`), so the axis starts **exactly at the knee bottom** and
+    the table covers `[10^((T-3)/10), 1]`. That is why entry 0 is unity and why the cubic is never
+    evaluated below the knee.
     """
-    scale = float('inf') if window_length == 0 else 1.0 / window_length
-    x = scale * energy
-    if not (x > floor):                       # NaN (inf*0) lands here too, as `jbe` does
+    return 10.0 ** ((threshold_db - 3.0) / 10.0)
+
+
+def window_length(long_look=False):
+    """`[state+0xc0]` / `[state+0xc4]`: `0x482` stores 0x3f00000040, `0x476` stores 0x7f00000080."""
+    return 128 if long_look else 64
+
+
+def gain_for_mean_square(mean_square, threshold_db, ratio, out_gain_tenths):
+    """The gain the DSP multiplies a sample by, given the detector's mean-square level.
+
+    ✔ Agrees with the executing PRX to 1e-4 dB over a DC sweep -- see `tools/runhammer.py sweep`.
+    """
+    entry, _ = build(threshold_db, ratio)
+    floor = axis_floor(threshold_db)
+    tbl_gain = lookup_interpolated(mean_square, floor, entry)
+    return tbl_gain * output_constant(threshold_db, ratio, out_gain_tenths)[0]
+
+
+def lookup_interpolated(x, floor, entry):
+    """`0x10f0`-`0x1153` on the real axis: unity below the floor, linear interpolation above."""
+    if not (x > floor):                       # NaN lands here too, as the `jbe` does
         return 1.0
     index = (x - floor) * (3999.0 / (1.0 - floor))
     if index >= 3999.0:
-        return table_[3999]
+        return entry(1.0)
     lo = int(index)
-    return table_[lo] + (index - lo) * (table_[lo + 1] - table_[lo])
-
-
-def shipped_chain_gain():
-    """The gain the shipped WaveHammer actually multiplies the sequencer's samples by.
-
-    table lookup (saturated) x [state+0x104], which reduces to `0.995 * 10^(CompOutGain/20)`
-    because the make-up is `0.995 / table[3999]` and the lookup always returns `table[3999]`.
-    """
-    tbl = table(SHIPPED_THRESHOLD_DB, SHIPPED_RATIO)
-    net, _, manual = output_constant(SHIPPED_THRESHOLD_DB, SHIPPED_RATIO, SHIPPED_OUT_GAIN_TENTHS)
-    return lookup(0.25, 0, 0.0, tbl) * net, 0.995 * manual
+    a = entry(floor + (1.0 - floor) * lo / 3999.0)
+    b = entry(floor + (1.0 - floor) * (lo + 1) / 3999.0)
+    return a + (index - lo) * (b - a)
 
 
 def _check():
@@ -165,12 +176,15 @@ def _report(threshold_db, ratio):
     print('  manual   CompOutGain %d  = %.6f  (%+.3f dB)' % (SHIPPED_OUT_GAIN_TENTHS, manual, 20 * math.log10(manual)))
     print('  [state+0x104]           = %.6f  (%+.3f dB)' % (net, 20 * math.log10(net)))
     if (threshold_db, ratio) == (SHIPPED_THRESHOLD_DB, SHIPPED_RATIO):
-        chain, algebra = shipped_chain_gain()
         print()
-        print('  !! the detector never gets a window length, so the lookup saturates and the')
-        print('     whole DSP collapses to a constant:')
-        print('     table[3999] * [state+0x104] = %.6f  (%+.3f dB)' % (chain, 20 * math.log10(chain)))
-        print('     which is exactly 0.995 * 10^(CompOutGain/20) = %.6f' % algebra)
+        print('  detector window  = %d samples   axis floor F = %.8g  (= knee bottom)'
+              % (window_length(), axis_floor(threshold_db)))
+        print('  %-11s %-12s %s' % ('in dBFS', 'gain', 'gain dB'))
+        for amp in (0.9, 0.5, 0.25, 0.126, 0.05):
+            g = gain_for_mean_square(amp * amp, threshold_db, ratio, SHIPPED_OUT_GAIN_TENTHS)
+            print('  %-11.2f %-12.6f %+.2f' % (20 * math.log10(amp), g, 20 * math.log10(g)))
+        print()
+        print('  verify against the real thing:  tools/runhammer.py sweep')
 
 
 if __name__ == '__main__':

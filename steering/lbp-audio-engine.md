@@ -172,7 +172,7 @@ The arithmetic in `0xa40` and in the coefficient function `0x620` settles the un
 
 The compressor is table-driven. `0xa40` fills **4000 float entries** at `scratch + 0x1000`, indexed
 by a **linear sweep of the mean-square level**: entry `i` is the gain for `x = F + (1−F)·i/3999`,
-where `F = [state+0xc8]` — which `create` memsets to zero and **nothing ever writes**, so `x = i/3999`.
+where `F = [state+0xc8] = 10^((T−3)/10)` is the knee bottom as a power ratio, set by `0x380`.
 `L = 10·log₁₀(x)` via `_FLog(1, ·)`, and that is `log10f`: `_FLog` is 21 bytes at libc `0x383e0`
 and jumps to `0x37c20` for a positive first argument. Since `x` is a mean square, `L` is ordinary
 dBFS and the `10^(ΔL/20)` at `0x0d1a` is the matching amplitude gain.
@@ -206,14 +206,16 @@ how `tools/wavehammer.py check` caught it, so that case stays in the configurati
 ✔ `tools/wavehammer.py` holds both the literal transcription of `0xbb4`–`0xd31` and the closed form;
 `check` agrees them over five configurations × 3999 entries to **2.1e-14 dB**.
 
-⚠️ **There is no lower clamp, and that is not an oversight in the reading** — `0xc99` branches only
-on `L > T+3`, so the cubic is evaluated with `t < 0` all the way down. Below `T−3` the DSP is a
-**downward expander**: −2.7 dB at 9 dB under the threshold, −16.9 dB at entry 1. And `table[0]` is
-**NaN**, because `log10(0)` is −∞ and `out − L` is then ∞ − ∞. Entry 0 is exact digital silence.
+❗ **The table build has no lower clamp, and it does not need one.** `0xc99` branches only on
+`L > T+3`, so the cubic *would* be evaluated with `t < 0` — but the axis starts at `F`, which is
+`t = 0` exactly, so `t` is never negative and **entry 0 is unity**. The lookup clamps the other
+side: `x ≤ F` short-circuits to 1.0 at `0x10fc`. An earlier reading of this file had `F = 0` and
+therefore reported a downward expander below the knee and a `NaN` at entry 0; both were artefacts of
+that one wrong field. See below.
 
-⚠️ The axis is linear in *power*, so it is lopsided on purpose: with `T = −18 dB` the threshold
-lands at entry **63 of 4000**. Everything below the threshold gets 63 entries; the compressing
-region gets the other 3936.
+⚠️ The axis is linear in *power* over `[10^((T−3)/10), 1]`, so it is lopsided on purpose: the whole
+4000 entries cover only the 21 dB from the knee bottom to full scale, and half of them sit in the
+top 3 dB.
 
 ### The detector, the lookup, and what actually reaches the samples — measured 2026-09-06
 
@@ -236,37 +238,59 @@ input (`0x18b0` in the shim builds it: 2 channels × 256 floats):
    `2b₀/(1−a₁) = 0.9995`, so it is unity by design.
 4. **`0x330`** — `out[i] = in[i] · env[i]`, four at a time, per channel.
 
-### ❗ And in the shipped configuration it collapses to a constant −18.04 dB
+### ✔ And it was RUN, which is how two readings got corrected
 
-`[state+0xc0]`, `[state+0xc4]` and `[state+0xc8]` — the window length, its index mask and the axis
-floor — are **never written**. ✔ A superset disassembly of all 7,632 bytes of the module, decoding
-from every byte offset so no desync can hide a store, finds **zero** stores to any of the three; the
-eboot's `create` memsets the 0x180-byte state block and afterwards writes only `+0x6c`, `+0xf0`,
-`+0x130`, `+0x138`; and the description's `reset` callback is null.
+`tools/runhammer.py` loads the module into a Windows process — both segments at their own vaddrs in
+one RWX allocation so rip-relative references resolve untouched, the five non-PLT relocations and
+ten GOT slots written by hand, `powf`/`_FLog` shimmed to the CRT, and a System V ← Windows thunk that
+saves the registers the two ABIs disagree about. It runs. The measured transfer, DC input, settled:
 
-So `N = 0`, `1/N = +inf`, and step 2 saturates for every sample that is not exactly zero:
+| in dBFS | gain | gain dB |
+|---|---|---|
+| −0.92 | 0.1377 | **−17.2** |
+| −6.02 | 0.2338 | −12.6 |
+| −12.04 | 0.4362 | −7.2 |
+| −17.99 | 0.7480 | −2.5 |
+| ≤ −26 | 0.8088 | **−1.84** |
+
+✔ `tools/wavehammer.py` reproduces every one of those to **1e-4 dB**. So the DSP is a working
+compressor: it engages above the knee bottom at −21 dBFS and settles to a constant −1.84 dB below it.
+
+The state it computes for itself, which is the part reading got wrong:
 
 ```
-energy > 0   →  x = +inf   →  index ≥ 3999  →  gain = table[3999] = 0.154882
-energy = 0   →  inf·0 = NaN → the `jbe` at 0x10fc takes the unordered branch → gain = 1.0
+[state+0xc0] = 64        the detector's window, in samples  (128 if CompLongLook)
+[state+0xc4] = 63        the ring mask, N-1
+[state+0xc8] = 0.0079433 the axis floor F = 10^((T-3)/10), i.e. the knee bottom as a power ratio
+[state+0xe8] = 0.0158489 the threshold as a power ratio, 10^(T/10)
+[state+0x104]= 0.808766  the output constant, -1.844 dB
 ```
 
-Because the make-up at `0xd44` is *defined* as `0.995 / table[3999]`, the two cancel exactly:
+`0x380` sets all of them, from the threshold: `powf(10, T/20)` squared for the power ratio, then
+`× 0.50118721` (`10^-0.3`) for the floor and `× 1.9952623` (`10^+0.3`) for the top. So **the table's
+axis spans exactly the knee**, `[10^((T-3)/10), 1]`, which is why entry 0 is unity.
+
+### ❌ Two readings this file carried, and the single mistake under both
+
+For one commit this section said the DSP **collapsed to a constant −18.04 dB** because
+`[state+0xc0]` was never initialised. It is 64. The store is in `0x380`:
 
 ```
-table[3999] · [state+0x104]  =  0.995 · 10^(CompOutGain/20)  =  0.125263  =  −18.04 dB
+0x0482  movabs rax, 0x3f00000040          ; N = 64, mask = 63, packed in one register
+0x048c  mov qword ptr [rbx + 0x3c], rax   ; rbx = state+0x84, so this writes +0xc0 AND +0xc4
 ```
 
-**The WaveHammer on the sequencer's channel is an 18 dB trim.** The compressor never compresses:
-the mask being zero also makes the detector's window one sample, so even a working lookup would see
-the instantaneous `max_ch x²` rather than any average. `tools/wavehammer.py` computes the constant
-both ways.
+❗ A superset disassembly — decoding from every one of the 7,632 bytes so no desync could hide a
+store — found **no store to `[reg + 0xc0]`**, and that was *true*. The conclusion did not follow:
+**an absolute-offset search is only sound if every access uses the same base**, and this struct is
+passed to `0x380` by interior pointer, so the same field is written at `+0x3c` under another name.
+The technique was airtight about the wrong question.
 
-⚠️ **This is a static reading and it has not been heard.** It predicts that the game's sequencer
-output sits ~18 dB below an unattenuated render of the same song — a large, easily falsifiable
-claim, and no capture on this disk can test it (the one dry recording the project had was
-level-matched before it was handed over, and is no longer on disk anyway). Until someone captures
-it, treat the −18.04 dB as *what the code computes*, not as a licence to change our output level.
+The same mistake put `F` at zero, and everything else followed from it: the phantom `table[0] = NaN`
+(entry 0 is really the knee bottom, gain 1.0) and the phantom downward expander below the knee (with
+the real `F` the cubic is never evaluated below `t = 0`). One wrong field, four wrong conclusions,
+all of them self-consistent — which is exactly why none of them looked wrong from inside the
+disassembler.
 
 ### Where the make-up comes from, and the reading it corrected
 
@@ -275,12 +299,15 @@ unconditional on this path — and `0xd5e`–`0xdad` multiplies it by the manual
 `[state+0x104] = 6.4243 · 0.12589 = 0.8088`. `CompAutoGain = 0` does not disable it: that flag gates
 a *different* make-up in `0x620`, computed from `[state+0x100]`, which this path then overwrites.
 
-❌ **Read on its own, that number said the DSP was −1.84 dB, and this file said so for one commit.**
-It was wrong, and the way it was wrong is worth keeping: `[state+0x104]` is not a gain on the
-output, it is a factor applied to the *table's* gain, and the make-up's whole purpose is to cancel
-`table[3999]`. Quoting a normaliser without the thing it normalises inverts the answer — from
-−1.84 dB to −18.04 dB, a factor of eight in amplitude. The lesson is narrow and repeatable: **a
-constant that is defined as a ratio means nothing until you have read its denominator's fate.**
+✔ **That constant is the DSP's floor gain, and it is what the running module produces below the
+knee.** `[state+0x104] = 0.808766` multiplies the *table's* gain, so a signal under the knee gets
+`1.0 × 0.808766 = −1.84 dB` and a signal at full scale gets `0.154882 × 0.808766 = −17.2 dB`.
+
+❌ For one commit this section instead said the constant was −18.04 dB, reasoning that the lookup
+always returned `table[3999]` and cancelled the make-up. That followed from `F` and `N` being read
+as zero, and it is wrong. The correction is recorded above rather than deleted because the shape of
+it is worth keeping: **four self-consistent conclusions came out of one wrong field**, and running
+the module was the only thing that separated them from the truth.
 
 ## The output stage: the game is a 7.1 renderer
 
@@ -324,15 +351,14 @@ capture the game's eight channels directly.
   combs plus two stereo comb pairs, an output delay, and three panned early-reflection taps. There
   is no Freeverb, no allpass and no `aSfxDsp` in the path. See *6 / 14. The reverb* in
   [answered-questions.md](answered-questions.md); `src/audio/effects.ts` implements it.
-- **Compressor**: **read end to end, and it does not compress.** `SMS WaveHammer` sits last on the
-  sequencer's channel with its limiter bypassed and its compressor configured at −18 dB / 10:1 /
-  10 ms / 250 ms — but the window length its detector divides by is never initialised, so the gain
-  lookup saturates on every non-silent sample and the DSP collapses to a **constant −18.04 dB**. See
-  *The end of the chain* above; `tools/wavehammer.py` has the whole thing. ⚠️ Static reading, not
-  yet heard: it predicts the game's music sits ~18 dB below an unattenuated render, which no capture
-  on this disk can test. ❗ It still reframes the headroom argument — the hard clip this project
-  models is two DSPs before the end, so every judgement made about level here, including
-  "`FOLD_GAIN` leaves room, peak 0.934 on the busiest corpus song", assumed the clip was the end.
+- **Compressor**: **read end to end, and then run.** `SMS WaveHammer` sits last on the sequencer's
+  channel with its limiter bypassed and its compressor at −18 dB / 10:1 / 10 ms / 250 ms, over a
+  64-sample sliding mean square. Measured by executing the module: **−17.2 dB of gain at −0.9 dBFS,
+  −7.2 dB at −12 dBFS, and a floor of −1.84 dB below −21 dBFS.** `tools/wavehammer.py` reproduces
+  that to 1e-4 dB and `tools/runhammer.py sweep` is the check. This project models none of it, and
+  the hard clip it does model belongs two DSPs earlier. ❗ It reframes the headroom argument: every
+  judgement made about level here, including "`FOLD_GAIN` leaves room, peak 0.934 on the busiest
+  corpus song", assumed the clip was the end of the chain.
 - **Resampling**: FMOD Ex interpolates in `fmod_dsp_resampler.cpp` at a selectable quality. If we
   play samples through the browser's `AudioBufferSourceNode.playbackRate`, we get *the browser's*
   interpolator instead, which differs between engines and cannot be pinned. This is the single

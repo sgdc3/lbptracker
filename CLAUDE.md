@@ -68,12 +68,18 @@ they are the ground truth the JavaScript has to reproduce:
   ```
 
   Then `node dev/serve.mjs` and open http://127.0.0.1:8173/ to play them.
-- `wavehammer.py` — the static gain curve of the compressor the game ends its chain with:
-  `wavehammer.py` reports the shipped configuration, `wavehammer.py check` agrees a literal
-  transcription of the PRX against the two-line closed form over five configurations. ❗ Its headline
-  is that **`CompOutGain = −180` is not 18 dB of attenuation** — an unconditional make-up cancels it
-  to −1.84 dB. Only the *static* curve; the detector (`0x180`) and the application (`0x1190`) are
-  question 37.
+- `wavehammer.py` / `runhammer.py` — the compressor the game ends its chain with. `wavehammer.py`
+  is the model (a literal transcription of the PRX plus the two-line closed form its knee reduces
+  to; `check` agrees them to 2.1e-14 dB). **`runhammer.py` loads the actual PRX into this process
+  and runs it** — both segments at their own vaddrs in one RWX allocation, GOT written by hand,
+  `powf`/`_FLog` shimmed to the CRT, and a System V ← Windows thunk — and `runhammer.py sweep`
+  agrees the two to 1e-4 dB. ❗ **Reach for `runhammer.py` when a field looks uninitialised.** Three
+  readings of this DSP were written down wrong and two committed; the last one died the moment the
+  module printed `[state+0xc0] = 64`. Its docstring and *37* in `steering/answered-questions.md`
+  have the trap: a superset disassembly proved there was no store to `[reg+0xc0]`, correctly, and
+  the field was written all along as `[rbx+0x3c]` through an interior pointer. **An absolute-offset
+  search is only sound if every access uses the same base.** The harness is reusable on
+  `fmodsmsreverb` and `fmodextinput`, which are the same shape.
 - `panmeasure.py` — the stereo width of a recording: the least-squares leak of one channel into the
   other, with the residual that says whether a single number describes it at all. This is how the
   pan width was settled; use it on any new capture of the game.

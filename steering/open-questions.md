@@ -57,17 +57,16 @@ entry — the one systematic change that reaches `robot` is worth −33 dB and a
 −4.6 dB, so the biggest thing that happened to it was its vibrato phases being reshuffled. A
 difference smaller than a reseed is a difference a reshuffle could have produced.
 
-❗ **And the chain's last DSP is read, 2026-09-06 — it is a compressor that never compresses.**
-`SMS WaveHammer` sits after the reverb on the sequencer's own channel, configured at −18 dB / 10:1,
-and the window length its detector divides by is never initialised, so it collapses to a **constant
-−18.04 dB**. Question 37 is no longer a disassembly job; it needs somebody to *hear* it, because the
-reading predicts the game's music sits ~18 dB below an unattenuated render and nothing on this disk
-can check that. Its entry is also the one to read for how a normaliser quoted without its
-denominator inverted an answer by a factor of eight.
+❗ **And the chain's last DSP is closed, 2026-09-06 — by running it.** `SMS WaveHammer` turned out
+to be a compressor (not a limiter), configured by a static template (not by `DSP::setParameter`),
+and it does compress (an earlier reading said it collapsed to a constant). All three corrections are
+in *37* in [answered-questions.md](answered-questions.md), which is worth reading for the third:
+**a superset disassembly proved no store to `[reg+0xc0]`, correctly, and the field was still written
+— as `[rbx+0x3c]` through an interior pointer.** `tools/runhammer.py` loads the PRX and runs it,
+which is what settled it and is reusable on the other two plugins.
 
 **Nothing about the engine's signal path is unread any more.** What is left in this file is one
-static reading that needs a capture (37), one listening report that needs a capture from real
-hardware (23), two decisions with bounded error (section 0), one question that is not about fidelity
+listening report that needs a capture from real hardware (23), two decisions with bounded error (section 0), one question that is not about fidelity
 at all (24), and one about files this reader does not claim to support (28).
 
 Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then working outward from it. That
@@ -267,62 +266,6 @@ belief:
 - ❌ **"Five are not diagnosed; print them before theorising."** There were never five of anything:
   the old three-way split did not survive contact with a field-by-field diff. **Print them first,
   not before theorising — the theorising is what produced the buckets.**
-
-## 37. ⚠️ The compressor is read end to end — and nobody has heard it
-
-Read 2026-09-06, all four passes. The write-up is in [lbp-audio-engine.md](lbp-audio-engine.md)
-under *The end of the chain* and the arithmetic is in `tools/wavehammer.py`. What is left is not
-reverse engineering.
-
-### What it turned out to be
-
-`SMS WaveHammer` on the sequencer's channel is configured as a compressor — −18 dB, 10:1, 10 ms,
-250 ms, limiter bypassed — and **never compresses**. The lookup at `0x10f0` divides the detector's
-windowed sum of squares by `[state+0xc0]` to get a mean square, and that field is never written by
-anything: a superset disassembly of all 7,632 bytes finds no store to it, and the eboot's create
-memsets the state block and then writes only four other fields. So `1/N` is `+inf`, every non-silent
-sample saturates the gain index, and the table returns its last entry forever. The make-up is
-`0.995 / table[3999]`, so the two cancel and the DSP is a **constant −18.04 dB**.
-
-### ❌ Two readings this entry carried that were wrong
-
-- *"it is a limiter"* — it ships with `LimitBypass = 1`. Named from the product, not the code.
-- *"the constant is −1.84 dB"* — committed, and wrong by a factor of eight in amplitude.
-  `[state+0x104]` is a factor on the *table's* gain, not on the output, and its make-up exists
-  precisely to cancel `table[3999]`. **A constant defined as a ratio means nothing until you have
-  read what happens to its denominator.**
-
-And one that was right for the wrong reason: `0x180` was recorded here as "the detector, read it
-first". It is `memset(dest, 0, count*4)`, eight instructions. Reading it first was still the correct
-move — it cost two minutes and it redirected the whole session — but the anchor was a guess dressed
-as a fact, inferred from the call site rather than from the callee.
-
-### What is left — a capture, not a disassembly
-
-❗ **The reading predicts that the game's sequencer output sits ~18 dB below an unattenuated render
-of the same song.** That is large, cheap to test and would be embarrassing to be wrong about, and
-nothing on this disk can test it: the one dry recording the project ever had was level-matched
-before it was handed over (commit `80bc3ef`) and is no longer on disk.
-
-What would settle it, in order of preference:
-
-1. **A capture with a known reference.** Any song, recorded from the game together with something
-   whose absolute level we know — an SFX, a menu sound, anything not on the sequencer's channel.
-   The *ratio* between the two is provenance-legal under rule 2 in
-   [lbp-modding-toolchain.md](lbp-modding-toolchain.md), and 18 dB is far outside what an
-   emulator's output path can manufacture.
-2. **A level sweep**, if a capture is being made anyway: the same note at rising volume across the
-   −18 dB point. Under this reading the curve is a straight line of slope 1 — no knee anywhere —
-   which is a much stronger test than a level match, and it falsifies the whole thing in one plot
-   if a knee shows up.
-3. **Running the PRX.** One segment, four real imports (`memset`, `memcpy`, `powf`, `_FLog`), all of
-   them code on this disk. Needs a System V → MS x64 thunk and executable memory. It would settle
-   the constant without a console at all, and it is the only route that does not depend on someone
-   else recording something.
-
-⚠️ **Do not change this project's output level on the strength of the reading alone.** A static
-reading that says "everything is 18 dB down" is exactly the kind of claim that is either a real
-finding or a missed initialiser, and the two look identical from inside the disassembler.
 
 ## 28. What still will not open — measured over 103 archive levels
 
