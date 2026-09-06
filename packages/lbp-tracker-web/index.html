@@ -30,9 +30,8 @@
   .tabs button[aria-selected="true"] { color: var(--ink); background: var(--panel); border-color: var(--line); }
   .daw-top .spacer { flex: 1 1 0; min-width: 0; }
   #songName {
-    font: inherit; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line);
-    border-radius: 7px; padding: .35rem .6rem; min-width: 12rem; text-align: left;
-    font-family: inherit;
+    color: var(--ink); font-weight: 600; max-width: 18rem; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
   }
   #dirty { color: var(--warn); font-size: 1.1rem; width: .8rem; text-align: center; }
   .transport { display: flex; align-items: center; gap: .5rem; }
@@ -135,6 +134,12 @@
   .knob input[type="range"], .knob select, .knob input[type="text"] { width: 100%; min-width: 0; }
   .knob input[type="text"].wide, .knob select.wide { grid-column: 2 / 4; }
   .knob input[type="text"] { text-align: left; font-family: inherit; }
+  .knob textarea.wide {
+    grid-column: 2 / 4; font: inherit; color: var(--ink); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 7px; padding: .45rem .6rem; resize: vertical;
+  }
+  .knob textarea.wide:focus { border-color: var(--accent); outline: none; }
+  .song-group { grid-column: 1 / -1; }
   .knob output { font: .78rem/1 ui-monospace, Consolas, monospace; color: var(--dim); text-align: right; }
   .group.off { opacity: .55; }
   .group.off .knob { opacity: .6; }
@@ -262,7 +267,7 @@
   <a class="brand" href="./">LBP Tracker</a>
   <div class="tabs" role="tablist" aria-label="Views">
     <button type="button" role="tab" data-view="arrange" aria-selected="true">Arrange</button>
-    <button type="button" role="tab" data-view="mixer">Mixer</button>
+    <button type="button" role="tab" data-view="mixer">Song/Mixer</button>
     <button type="button" role="tab" data-view="render">Render</button>
     <button type="button" role="tab" data-view="convert">Convert</button>
     <button type="button" role="tab" data-view="keyboard">Keyboard</button>
@@ -281,7 +286,7 @@
   </div>
   <span class="spacer"></span>
   <span id="dirty" title="unsaved changes"></span>
-  <input id="songName" type="text" placeholder="untitled" aria-label="Song name" autocomplete="off">
+  <span id="songName" title="The song's name; change it under Song/Mixer">untitled</span>
   <button id="newSong" type="button">new</button>
   <button id="openToggle" type="button">open&hellip;</button>
   <button id="save" type="button" class="primary">save .json</button>
@@ -380,7 +385,7 @@
 
   <div id="view-mixer" class="view" hidden>
     <section>
-      <p class="step">The song&rsquo;s own settings, and the engine</p>
+      <p class="step">The song, its own settings, and the engine</p>
       <div id="mixer"></div>
     </section>
   </div>

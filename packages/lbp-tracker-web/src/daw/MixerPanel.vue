@@ -39,6 +39,7 @@ const perChannel = computed(() => {
 });
 
 const num = (event: Event) => Number((event.target as HTMLInputElement).value);
+const text = (event: Event) => (event.target as HTMLInputElement | HTMLTextAreaElement).value;
 const set = (kind: ChangeKind, key: string, fn: (value: number, s: Song) => void) => (event: Event) => {
   const value = num(event);
   if (!Number.isFinite(value)) return;
@@ -49,6 +50,26 @@ const fmt = (v: number) => v.toFixed(2);
 
 <template>
   <div class="live">
+    <div class="group song-group">
+      <h3>song</h3>
+      <div class="knob">
+        <label for="mx-name">name</label>
+        <input id="mx-name" type="text" class="wide" :value="song.name" placeholder="untitled" autocomplete="off"
+               @input="state.edit('selection', (s) => { s.name = text($event); }, 'name')">
+        <output></output>
+      </div>
+      <div class="knob">
+        <label for="mx-description">description</label>
+        <textarea id="mx-description" class="wide" rows="4" :value="song.description" placeholder="a note to keep with the song" autocomplete="off"
+                  @input="state.edit('selection', (s) => { s.description = text($event); }, 'description')"></textarea>
+        <output></output>
+      </div>
+      <p class="hintline">
+        Both are kept in the song file. The name is what a level calls its sequencer; the
+        description is ours, the game has nowhere to keep one.
+      </p>
+    </div>
+
     <div class="group">
       <h3>timing</h3>
       <div class="knob">

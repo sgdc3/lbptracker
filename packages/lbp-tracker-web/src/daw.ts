@@ -156,13 +156,11 @@ tempoBox.addEventListener('change', () => {
 
 // ---------------------------------------------------------------- the title
 
-const songName = $<HTMLInputElement>('songName');
+const songName = $<HTMLSpanElement>('songName');
 const dirty = $<HTMLSpanElement>('dirty');
-songName.addEventListener('input', () => {
-  state.edit('selection', (s) => { s.name = songName.value; }, 'name');
-});
 function refreshHeader(): void {
-  if (document.activeElement !== songName) songName.value = state.song.name;
+  // Read-only here: the name is edited under Song/Mixer with the description.
+  songName.textContent = state.song.name || 'untitled';
   if (document.activeElement !== tempoBox) tempoBox.value = String(state.song.tempo);
   dirty.textContent = state.dirty ? '•' : '';
   document.title = `LBP Tracker${state.dirty ? ' •' : ''} — ${state.song.name || 'untitled'}`;
