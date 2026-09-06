@@ -57,10 +57,18 @@ entry — the one systematic change that reaches `robot` is worth −33 dB and a
 −4.6 dB, so the biggest thing that happened to it was its vibrato phases being reshuffled. A
 difference smaller than a reseed is a difference a reshuffle could have produced.
 
+❗ **And the chain's last DSP is read, 2026-09-06 — it is a compressor that never compresses.**
+`SMS WaveHammer` sits after the reverb on the sequencer's own channel, configured at −18 dB / 10:1,
+and the window length its detector divides by is never initialised, so it collapses to a **constant
+−18.04 dB**. Question 37 is no longer a disassembly job; it needs somebody to *hear* it, because the
+reading predicts the game's music sits ~18 dB below an unattenuated render and nothing on this disk
+can check that. Its entry is also the one to read for how a normaliser quoted without its
+denominator inverted an answer by a factor of eight.
+
 **Nothing about the engine's signal path is unread any more.** What is left in this file is one
-listening report that needs a capture from real hardware (23), two decisions with bounded error
-(section 0), one question that is not about fidelity at all (24), and one about files this reader
-does not claim to support (28).
+static reading that needs a capture (37), one listening report that needs a capture from real
+hardware (23), two decisions with bounded error (section 0), one question that is not about fidelity
+at all (24), and one about files this reader does not claim to support (28).
 
 Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then working outward from it. That
 run closed questions 5 and 7 outright, the whole of 8's `Params`, and the triplet half of 3; it
@@ -260,75 +268,61 @@ belief:
   the old three-way split did not survive contact with a field-by-field diff. **Print them first,
   not before theorising — the theorising is what produced the buckets.**
 
-## 37. The compressor at the end of the chain, and what its curve actually is
+## 37. ⚠️ The compressor is read end to end — and nobody has heard it
 
-Found 2026-09-05 on a listener's hunch — *"a limiter at the end is enough, and I think the game
-does it too — check the code"* — and half-answered 2026-09-06. The chain, the plugin and its
-entire configuration are now measured and written up in
-[lbp-audio-engine.md](lbp-audio-engine.md) under *The end of the chain*. What is left is the
-arithmetic.
+Read 2026-09-06, all four passes. The write-up is in [lbp-audio-engine.md](lbp-audio-engine.md)
+under *The end of the chain* and the arithmetic is in `tools/wavehammer.py`. What is left is not
+reverse engineering.
 
-### What the first half turned up, because it changes the question
+### What it turned out to be
 
-❗ **It is not a limiter.** `SMS WaveHammer` ships with `LimitBypass = 1` and `CompBypass = 0`: the
-limiter section is switched off and a **compressor** runs — threshold −18.0 dB, ratio 10.0 : 1,
-attack 10 ms, release 250 ms, output gain −18.0 dB, `CompCoeffSet = 1`. So "just put a limiter at
-the end" is not what the game does, and a limiter would not reproduce it.
+`SMS WaveHammer` on the sequencer's channel is configured as a compressor — −18 dB, 10:1, 10 ms,
+250 ms, limiter bypassed — and **never compresses**. The lookup at `0x10f0` divides the detector's
+windowed sum of squares by `[state+0xc0]` to get a mean square, and that field is never written by
+anything: a superset disassembly of all 7,632 bytes finds no store to it, and the eboot's create
+memsets the state block and then writes only four other fields. So `1/N` is `+inf`, every non-silent
+sample saturates the gain index, and the table returns its last entry forever. The make-up is
+`0.995 / table[3999]`, so the two cancel and the DSP is a **constant −18.04 dB**.
 
-⚠️ **And the way it is configured is why this entry stalled.** The old anchor said to find whether
-the game calls `DSP::setParameter` on the handle. It does not — that was correct, and it was the
-wrong question, because *not called* was quietly read as *not configured*. The game seeds the
-plugin's parameter block from a static template with a `rep movsd` at create time, overriding eight
-of sixteen defaults. **An absent API call is not an absent effect**; `tools/ebxref.py` exists now so
-that the enumeration is cheap enough to do before the inference.
+### ❌ Two readings this entry carried that were wrong
 
-### What is left
+- *"it is a limiter"* — it ships with `LimitBypass = 1`. Named from the product, not the code.
+- *"the constant is −1.84 dB"* — committed, and wrong by a factor of eight in amplitude.
+  `[state+0x104]` is a factor on the *table's* gain, not on the output, and its make-up exists
+  precisely to cancel `table[3999]`. **A constant defined as a ratio means nothing until you have
+  read what happens to its denominator.**
 
-**The detector and the application.** The *static curve* is settled — measured 2026-09-06 from the
-table build at `0xc43`, in closed form, in `tools/wavehammer.py`, and written up in
-[lbp-audio-engine.md](lbp-audio-engine.md). Two pieces remain, and they are what turn a curve into
-an effect on a signal:
+And one that was right for the wrong reason: `0x180` was recorded here as "the detector, read it
+first". It is `memset(dest, 0, count*4)`, eight instructions. Reading it first was still the correct
+move — it cost two minutes and it redirected the whole session — but the anchor was a guess dressed
+as a fact, inferred from the call site rather than from the callee.
 
-- **`0x180` — the detector.** Called at `0x0e1a` with `(dest = the second scratch buffer, count)`
-  and gated on `[cfg+1]`. It fills the array that everything downstream indexes. Until it is read we
-  do not know what quantity the 4000-entry table is being indexed *by* — mean square over what
-  window, per channel or summed, with or without the look-ahead the 0x1000 and 0x3e80 buffers imply.
-- **`0x1190` — the application.** `0x1194` multiplies `[state+0x104]` into a value from that buffer
-  and compares it against `[state+0xf0]` (1.0), then branches on `[state+0xf8]` (the attack/release
-  coefficient) and a per-channel envelope at `[state+0x108]`. It is a level-domain test, not an
-  output scaling, so the constant is **not** simply a gain on the mix.
-- **The envelope's rate**, still. Coefficients are `0.1^(1/x)` with
-  `x = round(rate * ms * 1e-4)/8 - 3` (`0x6c8`). At 48 kHz a 10 ms attack gives x = 3, which is not
-  10 ms of anything obvious; the `1e-4` and the `/8` both want explaining, and `0x180` may explain
-  them by running the detector at one eighth of the sample rate.
+### What is left — a capture, not a disassembly
 
-❌ **Two things this entry used to say that are now wrong, kept so they are not re-derived:**
+❗ **The reading predicts that the game's sequencer output sits ~18 dB below an unattenuated render
+of the same song.** That is large, cheap to test and would be embarrassing to be wrong about, and
+nothing on this disk can test it: the one dry recording the project ever had was level-matched
+before it was handed over (commit `80bc3ef`) and is no longer on disk.
 
-- *"the -18 dB output gain might mean the game runs 18 dB down."* It does not. `0xd44` divides
-  0.995 by the last table entry as an unconditional make-up, and `[state+0x104]` comes out at
-  **0.8088, -1.84 dB**. `CompAutoGain = 0` does not disable it — that flag gates a *different*
-  make-up in `0x620` which this path overwrites.
-- *"read the table loop and hope."* The loop is 30 instructions and the curve is a two-line closed
-  form. The expensive part was never the arithmetic, it was not knowing `_FLog` — which is
-  `log10f`, 21 bytes at libc `0x383e0`, and could have been resolved on day one with
-  `prxnid.py libc export _FLog`.
+What would settle it, in order of preference:
 
-### The anchor
+1. **A capture with a known reference.** Any song, recorded from the game together with something
+   whose absolute level we know — an SFX, a menu sound, anything not on the sequencer's channel.
+   The *ratio* between the two is provenance-legal under rule 2 in
+   [lbp-modding-toolchain.md](lbp-modding-toolchain.md), and 18 dB is far outside what an
+   emulator's output path can manufacture.
+2. **A level sweep**, if a capture is being made anyway: the same note at rising volume across the
+   −18 dB point. Under this reading the curve is a straight line of slope 1 — no knee anywhere —
+   which is a much stronger test than a level match, and it falsifies the whole thing in one plot
+   if a knee shows up.
+3. **Running the PRX.** One segment, four real imports (`memset`, `memcpy`, `powf`, `_FLog`), all of
+   them code on this disk. Needs a System V → MS x64 thunk and executable memory. It would settle
+   the constant without a console at all, and it is the only route that does not depend on someone
+   else recording something.
 
-**`prxdis.py hammer 0x180`** — the detector, and read it before `0x1190`, because what the
-application does only means something once you know what it is applying it *to*.
-
-Disassemble from a **function start**: the module has exactly eight (`0x0`, `0x180`, `0x380`,
-`0x620`, `0xa40`, `0x1770`, `0x19f0`, `0x1a80`), so there is no excuse for a mid-function start
-here. `0x620` is the coefficient recompute, `0xa40` the kernel, and `tools/wavehammer.py` already
-holds the part of `0xa40` that is settled. The reverb's entry in
-[answered-questions.md](answered-questions.md) is the template for the write-up, including its table
-of wrong readings.
-
-⚠️ **Transcribe, then reduce, then check the reduction against the transcription.** The closed form
-above was wrong for `R ≥ 50` on the first pass and `wavehammer.py check` caught it in one run;
-without the transcription to check against, a plausible two-line formula would have gone into
-steering as a measured fact.
+⚠️ **Do not change this project's output level on the strength of the reading alone.** A static
+reading that says "everything is 18 dB down" is exactly the kind of claim that is either a real
+finding or a missed initialiser, and the two look identical from inside the disassembler.
 
 ## 28. What still will not open — measured over 103 archive levels
 

@@ -215,28 +215,72 @@ on `L > T+3`, so the cubic is evaluated with `t < 0` all the way down. Below `T�
 lands at entry **63 of 4000**. Everything below the threshold gets 63 entries; the compressing
 region gets the other 3936.
 
-### ❗ The −18 dB output gain is not an attenuation
+### The detector, the lookup, and what actually reaches the samples — measured 2026-09-06
 
-After the loop, `0xd44` computes `0.995 / table[3999]` — an **automatic make-up**, unconditional in
-this path — and `0xd5e`–`0xdad` multiplies it by the manual gain. So
+The block function runs four passes over each 256-frame chunk, on a **de-interleaved** copy of the
+input (`0x18b0` in the shim builds it: 2 channels × 256 floats):
+
+1. **`0x1000` — the detector.** Per channel, a sliding sum of squares kept incrementally against a
+   ring at `scratch + ch·0x200 + 0xc00`: `sum += x[i]² − x[i−N]²`, index masked by `[state+0xc4]`.
+   The result is `max` across channels into the second scratch. (`0x180`, which the shim calls
+   first, is **not** the detector — it is `memset(dest, 0, count·4)`, eight instructions, and it
+   only zeroes that scratch so the `max` has an identity.)
+2. **`0x10f0` — the lookup.** `x = energy/N` with `N = [state+0xc0]`, then index
+   `(x − F)·3999/(1 − F)` into the gain table with **linear interpolation** between neighbours;
+   `x ≤ F` gives unity, `index ≥ 3999` clamps to the last entry.
+3. **`0x1190` — the envelope.** A one-pole on the *gain* — `g·[state+0x104]` against the running
+   value, attack coefficient when it falls and release when it rises, the release coefficient
+   scaled by how many samples it has been falling (`[state+0x114]`, clamped to 30…1000) — followed
+   by a second one-pole, `s ← b₀·u + a₁·s`, `env ← s_prev + s_new`, with `(b₀, a₁)` from the
+   `CompCoeffSet` pair: `(0.014048381, 0.97189)` set, `(0.066605777, 0.96715)` clear. Its DC gain is
+   `2b₀/(1−a₁) = 0.9995`, so it is unity by design.
+4. **`0x330`** — `out[i] = in[i] · env[i]`, four at a time, per channel.
+
+### ❗ And in the shipped configuration it collapses to a constant −18.04 dB
+
+`[state+0xc0]`, `[state+0xc4]` and `[state+0xc8]` — the window length, its index mask and the axis
+floor — are **never written**. ✔ A superset disassembly of all 7,632 bytes of the module, decoding
+from every byte offset so no desync can hide a store, finds **zero** stores to any of the three; the
+eboot's `create` memsets the 0x180-byte state block and afterwards writes only `+0x6c`, `+0xf0`,
+`+0x130`, `+0x138`; and the description's `reset` callback is null.
+
+So `N = 0`, `1/N = +inf`, and step 2 saturates for every sample that is not exactly zero:
 
 ```
-[state+0x104] = (0.995 / table[3999]) · 10^(CompOutGain/20)
-              = 6.4243 · 0.12589
-              = 0.8088                      = −1.84 dB
+energy > 0   →  x = +inf   →  index ≥ 3999  →  gain = table[3999] = 0.154882
+energy = 0   →  inf·0 = NaN → the `jbe` at 0x10fc takes the unordered branch → gain = 1.0
 ```
 
-The +16.16 dB of make-up all but cancels the −18.0 dB the parameter table shows. **Do not read
-`CompOutGain = −180` as the game running 18 dB down**; the constant in the shipped configuration is
-−1.84 dB. (`CompAutoGain = 0` does not disable this — that flag gates a *different* make-up in
-`0x620`, computed from `[state+0x100]`, which the table-rebuild path here then overwrites.)
+Because the make-up at `0xd44` is *defined* as `0.995 / table[3999]`, the two cancel exactly:
 
-⚠️ **What is still not settled is how the table and that constant reach the samples.** `0x1194`
-multiplies `[state+0x104]` into a value read from the second scratch buffer and compares it against
-`[state+0xf0]` (1.0) — a level-domain test, not an output scaling. The buffer is filled by
-**`0x180`**, the detector, called at `0x0e1a` and gated on `[cfg+1]`. Until that is read, the static
-curve above is the DSP's shape and not yet its effect on a signal. See question 37 in
-[open-questions.md](open-questions.md).
+```
+table[3999] · [state+0x104]  =  0.995 · 10^(CompOutGain/20)  =  0.125263  =  −18.04 dB
+```
+
+**The WaveHammer on the sequencer's channel is an 18 dB trim.** The compressor never compresses:
+the mask being zero also makes the detector's window one sample, so even a working lookup would see
+the instantaneous `max_ch x²` rather than any average. `tools/wavehammer.py` computes the constant
+both ways.
+
+⚠️ **This is a static reading and it has not been heard.** It predicts that the game's sequencer
+output sits ~18 dB below an unattenuated render of the same song — a large, easily falsifiable
+claim, and no capture on this disk can test it (the one dry recording the project had was
+level-matched before it was handed over, and is no longer on disk anyway). Until someone captures
+it, treat the −18.04 dB as *what the code computes*, not as a licence to change our output level.
+
+### Where the make-up comes from, and the reading it corrected
+
+After the table loop, `0xd44` computes `0.995 / table[3999]` — an **automatic make-up**,
+unconditional on this path — and `0xd5e`–`0xdad` multiplies it by the manual gain, giving
+`[state+0x104] = 6.4243 · 0.12589 = 0.8088`. `CompAutoGain = 0` does not disable it: that flag gates
+a *different* make-up in `0x620`, computed from `[state+0x100]`, which this path then overwrites.
+
+❌ **Read on its own, that number said the DSP was −1.84 dB, and this file said so for one commit.**
+It was wrong, and the way it was wrong is worth keeping: `[state+0x104]` is not a gain on the
+output, it is a factor applied to the *table's* gain, and the make-up's whole purpose is to cancel
+`table[3999]`. Quoting a normaliser without the thing it normalises inverts the answer — from
+−1.84 dB to −18.04 dB, a factor of eight in amplitude. The lesson is narrow and repeatable: **a
+constant that is defined as a ratio means nothing until you have read its denominator's fate.**
 
 ## The output stage: the game is a 7.1 renderer
 
@@ -280,15 +324,15 @@ capture the game's eight channels directly.
   combs plus two stereo comb pairs, an output delay, and three panned early-reflection taps. There
   is no Freeverb, no allpass and no `aSfxDsp` in the path. See *6 / 14. The reverb* in
   [answered-questions.md](answered-questions.md); `src/audio/effects.ts` implements it.
-- **Compressor**: **static curve settled, detector and application not.** `SMS WaveHammer` sits last
-  on the sequencer's channel with its limiter bypassed and its compressor running at −18 dB / 10:1 /
-  10 ms / 250 ms; its 4000-entry gain table is a closed form in `tools/wavehammer.py`, and its
-  output constant is **−1.84 dB**, not the −18 dB the parameter table shows. See *The end of the
-  chain* above. This project models none of it, and the hard clip it does model belongs two DSPs
-  earlier. ❗ It reframes every headroom argument: a chain ending in a compressor can be driven hot
-  on purpose, one ending in a hard clip cannot, and every judgement made about level here —
-  including "`FOLD_GAIN` leaves room, peak 0.934 on the busiest corpus song" — assumed the clip was
-  the end.
+- **Compressor**: **read end to end, and it does not compress.** `SMS WaveHammer` sits last on the
+  sequencer's channel with its limiter bypassed and its compressor configured at −18 dB / 10:1 /
+  10 ms / 250 ms — but the window length its detector divides by is never initialised, so the gain
+  lookup saturates on every non-silent sample and the DSP collapses to a **constant −18.04 dB**. See
+  *The end of the chain* above; `tools/wavehammer.py` has the whole thing. ⚠️ Static reading, not
+  yet heard: it predicts the game's music sits ~18 dB below an unattenuated render, which no capture
+  on this disk can test. ❗ It still reframes the headroom argument — the hard clip this project
+  models is two DSPs before the end, so every judgement made about level here, including
+  "`FOLD_GAIN` leaves room, peak 0.934 on the busiest corpus song", assumed the clip was the end.
 - **Resampling**: FMOD Ex interpolates in `fmod_dsp_resampler.cpp` at a selectable quality. If we
   play samples through the browser's `AudioBufferSourceNode.playbackRate`, we get *the browser's*
   interpolator instead, which differs between engines and cannot be pinned. This is the single

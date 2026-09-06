@@ -163,13 +163,16 @@ export class Echo {
  * is `Sequencer → Reverb → WaveHammer → mixer`. This function models the first
  * arrow and nothing models the third.
  *
- * ❗ **The WaveHammer is a compressor, not a limiter** — measured 2026-09-06,
- * the game ships it with `LimitBypass = 1` and the compressor section running at
- * −18 dB / 10:1 / 10 ms / 250 ms. So the end of the chain is soft, not hard, and
- * every headroom judgement this project has made assumed the wrong end: a chain
- * ending in a compressor can be driven hot on purpose, one ending in a hard clip
- * cannot. See open question 37 and *The end of the chain* in
- * `steering/lbp-audio-engine.md`.
+ * ❗ **The WaveHammer is a compressor that never compresses** — read end to end
+ * on 2026-09-06. It ships with `LimitBypass = 1` and the compressor configured
+ * at −18 dB / 10:1, but the window length its detector divides by is never
+ * initialised, so the gain lookup saturates on every non-silent sample and the
+ * DSP collapses to a **constant −18.04 dB**. So the end of the chain is neither
+ * soft nor hard — it is a trim. ⚠️ That is a static reading nobody has heard; it
+ * predicts the game's music sits ~18 dB below an unattenuated render, and no
+ * capture on this disk can test it, so it is **not** a reason to change our
+ * output level. See open question 37, *The end of the chain* in
+ * `steering/lbp-audio-engine.md`, and `tools/wavehammer.py`.
  *
  * Whether this clip engages also depends on our absolute level matching the
  * game's, which is not independently verified. `dev/render-level.ts` reports how
