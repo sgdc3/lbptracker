@@ -1,6 +1,7 @@
 /**
- * The footer every page carries: what this is, whose work it stands on, and
- * whose it is not.
+ * The text footer: whose work this stands on, and whose it is not. The credit
+ * line -- name, version, author, licence -- lives in the fixed status bar
+ * instead (`index.html`, filled by `daw.ts`), where every view shows it.
  *
  * ⚠️ **Injected rather than copied into four HTML files.** The nav is
  * duplicated markup already and it is the thing that goes stale — the same
@@ -19,8 +20,6 @@
  * (`dev/stage-site.ts`), so the two agree.
  */
 
-import { APP_VERSION } from './version.ts';
-
 /** A link that never leaks the referrer and never gets window access. */
 const link = (href: string, text: string): string =>
   `<a href="${href}" target="_blank" rel="noreferrer noopener">${text}</a>`;
@@ -35,12 +34,10 @@ export function mountFooter(): void {
   if (document.querySelector('.site-foot')) return;
   const foot = document.createElement('footer');
   foot.className = 'site-foot';
+  // ⚠️ No "everything runs in your browser" here: the home view already says
+  // it, and the same claim twice on one screen reads as a slogan rather than
+  // as the fact it is.
   foot.innerHTML =
-    `<p class="site-foot-line"><b>LBP Tracker</b> <span class="site-foot-v">v${APP_VERSION}</span>` +
-    // ⚠️ No "everything runs in your browser" here: the nav already says
-    // "everything runs on your machine", and the same claim twice on one screen
-    // reads as a slogan rather than as the fact it is.
-    ' · by <b>sgdc3</b> · MIT licensed</p>' +
     '<p class="site-foot-line">Standing on ' +
     link('https://github.com/ennuo/toolkit', 'ennuo’s craftworld toolkit') +
     ', which is the reference this project checks its resource reading against; ' +

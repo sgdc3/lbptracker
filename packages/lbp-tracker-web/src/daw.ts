@@ -11,6 +11,7 @@ import { sequencersOf, type BackupResult } from '@lbptracker/cwlib/backup.ts';
 import type { Sequencer } from '@lbptracker/cwlib/project.ts';
 import { songFromJson, songFromSequencer, newSong } from '@lbptracker/lib/song.ts';
 import { mountFooter } from './footer.ts';
+import { APP_VERSION } from './version.ts';
 import { isSongFile, openedTitle, readOpened, saveNote, type Opened } from './open-level.ts';
 import { seqPicker } from './seq-picker.ts';
 import { saveSongFile } from './song-file.ts';
@@ -325,6 +326,7 @@ void ensureAssets().catch((error: unknown) => {
   setError(String((error as Error).stack ?? error));
 });
 mountFooter();
+$('version').textContent = `v${APP_VERSION}`;
 
 // Everything a console session needs to poke the app, as the bench does.
 (window as unknown as { __lbpEditor: unknown }).__lbpEditor = {

@@ -60,9 +60,13 @@
   .daw-foot {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: var(--bg);
     border-top: 1px solid var(--line); padding: .4rem 1rem;
-    display: flex; align-items: center; gap: 1rem; font-size: .85rem;
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 1rem; font-size: .85rem;
   }
-  .daw-foot .spacer { flex: 1 1 0; min-width: 0; }
+  /* The status on the left, the credit in the middle, the load on the right. */
+  .daw-foot .credit { text-align: center; color: var(--dimmer); font-size: .82rem; white-space: nowrap; }
+  .daw-foot .credit b { color: var(--dim); font-weight: 600; }
+  .daw-foot .credit .v { font-family: ui-monospace, Consolas, monospace; }
+  #load { justify-self: end; }
   #status { margin: 0; min-height: 1.4em; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #status.bad { color: var(--bad); }
   #load { color: var(--dimmer); font: .82rem/1.4 ui-monospace, Consolas, monospace; white-space: nowrap; }
@@ -267,9 +271,10 @@
 
   #errorCard { display: none; margin: .8rem 1rem; }
   #errorCard.show { display: block; }
-  .site-foot { padding-left: 1rem; padding-right: 1rem; max-width: none; }
-  /* Centred under the home view's presentation; left-aligned under the working views. */
-  body[data-view="home"] .site-foot { text-align: center; }
+  /* The text footer belongs to the home view only, centred under the presentation;
+     the working views end at the status bar. */
+  .site-foot { display: none; padding-left: 1rem; padding-right: 1rem; max-width: none; text-align: center; }
+  body[data-view="home"] .site-foot { display: block; }
 </style>
 </head>
 <body>
@@ -706,7 +711,7 @@
 </main>
 <footer class="daw-foot">
   <div id="status">start a new song, or open a level</div>
-  <span class="spacer"></span>
+  <span class="credit"><b>LBP Tracker</b> <span class="v" id="version"></span> · by <b>sgdc3</b> · MIT licensed</span>
   <span id="load">idle</span>
 </footer>
 <script type="module" src="./src/daw.ts"></script>
