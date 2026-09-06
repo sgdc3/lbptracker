@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- The logo's right-hand tile, the note in its square, on its own. The
+       colours, the gradient and the note's path are the brand's in ui.css.
+       No double dash in here: an XML comment may not hold one, and the
+       browser then refuses the file as an image while still drawing it inline. -->
+  <defs>
+    <linearGradient id="s" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a1150"/>
+      <stop offset="1" stop-color="#140a26"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="30" height="30" rx="6.5" fill="#57309b"/>
+  <rect x="2.6" y="2.6" width="26.8" height="26.8" rx="5.2" fill="url(#s)"/>
+  <path d="M2.6 7.8a5.2 5.2 0 0 1 5.2-5.2h16.4a5.2 5.2 0 0 1 5.2 5.2v5.4H2.6z" fill="#fff" opacity=".06"/>
+  <g transform="translate(16 16.6) scale(1.42) translate(-31.3 -15.997)">
+    <path fill="#ffd63d" d="M30.29 20.60A3.5 2.45 -20 1 1 23.71 23.00A3.5 2.45 -20 1 1 30.29 20.60ZM38.89 19.20A3.5 2.45 -20 1 1 32.31 21.60A3.5 2.45 -20 1 1 38.89 19.20ZM28.594 21.208V9.0h1.8V21.208ZM37.194 19.808V7.842L38.994 7.6V19.808ZM28.594 9.0 38.994 7.6v3.9L28.594 12.9Z"/>
+  </g>
+</svg>

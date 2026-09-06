@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LBP Tracker</title>
+<link rel="icon" type="image/svg+xml" href="./favicon.svg">
 <link rel="stylesheet" href="./ui.css">
 <style>
   /* The one page: a DAW shell around one song. Page-level rules are in ui.css. */
@@ -94,7 +95,7 @@
   .step .help-btn { margin-left: auto; }
   .board-help { position: absolute; right: 1.2rem; top: .55rem; z-index: 5; }
   .help-dialog .picker-title { font-size: 1.05rem; color: var(--ink); font-weight: 600; }
-  .help-body { max-height: min(60vh, 34rem); overflow: auto; color: var(--dim); font-size: .9rem; }
+  .help-body { max-height: min(70vh, 40rem); overflow: auto; overscroll-behavior: contain; color: var(--dim); font-size: .9rem; }
   .help-body p { margin: 0 0 .7rem; }
   .help-body h4 {
     margin: 1rem 0 .4rem; font-size: .74rem; letter-spacing: .07em; text-transform: uppercase; color: var(--dimmer);
@@ -143,7 +144,9 @@
   .panel-side { overflow: auto; border-left: 1px solid var(--line); padding: .6rem .7rem; }
   .panel-side .group { border: 0; padding: 0; }
   .panel-side .group + .group { margin-top: .9rem; }
-  .help-dialog { width: min(40rem, 94vw); }
+  .picker-dialog.help-dialog { width: min(58rem, 94vw); }
+  /* The wheel over an open dialog scrolls the dialog, never the page under it. */
+  body:has(dialog[open]) { overflow: hidden; }
 
   /* The "which instrument?" dialog. */
   .picker-dialog {
