@@ -338,7 +338,8 @@ reorder 1 and 2 — you want the asset pipeline proven before anything depends o
    anything" — so the tool was right and the inference drawn from its output was not. Two
    sessions of planning were done against a number that was answering a different question.
 
-   Done, 2026-09-02, in 30 part readers. `packages/cwlib-ts/dev/walk-levels.ts` was the loop — it names the next
+   Done, 2026-09-02, in 30 part readers — ⚠️ **50 today**, question 28 having added twenty more
+   to reach LBP1; `partReaders().size` is the number, this sentence is the date. `packages/cwlib-ts/dev/walk-levels.ts` was the loop — it names the next
    missing part rather than throwing a stack trace — and `packages/cwlib-ts/dev/verify-levels.ts` is the check against
    the Java dump:
 
@@ -663,7 +664,7 @@ removed* in `lbp-modding-toolchain.md`.
 ~~**The Thing walk is the big one.**~~ Done, and it was a real port rather than an afternoon:
 reaching a `PInstrument` means deserialising every Thing and every part that precedes it in the
 stream, because parts are variable-length and cannot be skipped without being understood. The Java
-tool sidestepped that by borrowing the toolkit's ~55 part serialisers; `packages/cwlib-ts/src/parts.ts` has 30
+tool sidestepped that by borrowing the toolkit's ~55 part serialisers; `packages/cwlib-ts/src/parts.ts` has 50
 of its own, and the tool's JSONL output stayed the golden reference the whole time it was being
 written — which is exactly how to do the next port of this kind.
 

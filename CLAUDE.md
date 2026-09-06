@@ -77,16 +77,17 @@ fidelity argument rests on. The bundler stops at the web package's edge.
 to remember before moving anything into `audio/mixer-worklet.ts`'s import graph: a bare specifier in
 there fails to load and the page goes silent with nothing on the main thread to say why.
 
-`tools/` holds the reference implementations. They are Python, deliberately dependency-light, and
-they are the ground truth the JavaScript has to reproduce:
+`tools/` holds the reference implementations — fourteen Python scripts and four Java ones,
+deliberately dependency-light, and the ground truth the JavaScript has to reproduce:
 - `fsb.py` — FSB4 bank reader + IMA ADPCM decoder + WAV writer. **Verified working.**
 - `lbpres.py` — LBP serialised-resource container reader (`LVLb`/`PLNb`: revision, branch, zlib
   chunk table). **Verified working** on 18 real levels.
 - `PartCensus.java` — which Thing parts a level corpus actually uses, overall and on the Things
   carrying a `SEQUENCER` or an `INSTRUMENT`. Its `INSTRUMENT` count for the ten-level corpus,
   62,158, is what `packages/cwlib-ts/test/project.test.ts` pins the TypeScript walk against. ⚠️ The "eight part
-  readers" its output was once read as scoping the walk down to was a misreading — 30 were needed;
-  see `steering/tracker-architecture.md`.
+  readers" its output was once read as scoping the walk down to was a misreading: 30 were needed
+  to open the corpus and **`partReaders()` returns 50** today, question 28 having added twenty
+  more to reach LBP1. Count it, do not quote it. See `steering/tracker-architecture.md`.
 - `CwlibTrace.java` — **ask cwlib what it reads from a level, and where.** `CwlibTrace parts <level>`
   gives the Thing count and each Thing's decoded part list; `CwlibTrace spans <level>` turns on
   cwlib's own serialiser log and prints every part boundary **with its byte offset**, which
@@ -124,6 +125,11 @@ they are the ground truth the JavaScript has to reproduce:
   other, with the residual that says whether a single number describes it at all. This is how the
   pan width was settled; use it on any new capture of the game.
 - `lbpdis.py`, `callgraph.py`, `fmodapi.py` — eboot RE helpers (see `eboot-re.md`).
+- `ebconf.py` — **not a command; it is where every eboot tool gets its binary.** ⚠️ Three
+  environment variables override its defaults and nothing else in this file mentions them:
+  `LBP_EBOOT` (the dump, default `shadPS4\lbp3-ebins\eboot-v128.bin`), `LBP_BINDINGS` (the
+  script-binding table) and `LBP_DELTA` (the file↔vaddr delta, `0x4000`). Point these at another
+  version rather than editing a tool.
 - `ebvtable.py` — **name a C++ class's vtable in the eboot, through RTTI**: `ebvtable.py
   ChannelSoftware 24` dumps its slots, `ebvtable.py slot 0x98 Channel` compares one slot across
   classes, `ebvtable.py who <vaddr>` says which vtable a function sits in. ⚠️ **Reach for this
@@ -153,7 +159,8 @@ they are the ground truth the JavaScript has to reproduce:
   lives inside `SCE_DYNLIBDATA`, and half the SELF segment entries are 32-byte digests rather than
   data. Both traps are in the docstring, with the addresses. It is how `0x140` in the unison stack
   loop was settled as **`rand`** rather than assumed. ✔ It reads shadPS4's
-  `aerolib.inl` when that checkout is present — 171,520 `STUB("nid", name)` lines — so every import
+  `aerolib.inl` when that checkout is present — 171,520 lines carrying **94,276** `STUB("nid", name)`
+  entries — so every import
   resolves rather than being guessed at, and Sony's own table agrees with the hash on `rand`.
 - `prxdis.py` — the same for the PRXs' code: `prxdis.py reverb|input|libc <vaddr> [count]`,
   resolving rip-relative operands to the float/double there, and `prxdis.py <module> map` for the
@@ -180,7 +187,8 @@ file no PS3 save here contains. `LBP_DRY_DB` points at the index.
 ⚠️ **`RawDump.java` is gone**, deleted 2026-09-02. It walked a level's Thing graph through the
 external toolkit jar and dumped every music sequencer's note records; `packages/cwlib-ts/src/level.ts` does
 that now, in TypeScript, and nothing in the pipeline needs Java. What it leaves behind is
-`fixtures/levels/sequencers.jsonl` — 129,696 rows over 22 levels, produced by cwlib rather than
+`fixtures/levels/sequencers.jsonl` — 129,696 rows over **19 files** (⚠️ its `level` field is a
+float, not a name; the source file is `file`), produced by cwlib rather than
 by us, and the golden fixture `packages/cwlib-ts/dev/verify-levels.ts` still checks the walk against. **That file
 can no longer be regenerated**, so it covers its own corpus and nothing newer, and it still
 contains the 23,911 duplicate rows the tool used to emit — see *The `RawDump` duplication* in

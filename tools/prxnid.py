@@ -65,7 +65,7 @@ with `(record, 0, 0xd0)` and its result discarded.
 second makes the first almost unnecessary:
 
 - the handful seeded below, kept so this works with nothing else installed;
-- ⚠️ **shadPS4's `aerolib.inl`**, 171,520 lines of `STUB("nid", name)` covering
+- ⚠️ **shadPS4's `aerolib.inl`**, 171,520 lines carrying 94,276 `STUB("nid", name)` entries, covering
   every symbol Sony ships. If the checkout is where `AEROLIB` points, everything
   resolves and `guess` becomes a curiosity.
 
