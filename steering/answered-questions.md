@@ -3190,3 +3190,46 @@ GOT slots written by hand, `powf`/`_FLog` shimmed to the CRT, and a System V ←
 the registers the two ABIs disagree about (`rsi`, `rdi`, `xmm6`–`xmm15`). It took an afternoon and
 it is the strongest instrument this project has for any of the game's DSP plugins — `fmodsmsreverb`
 and `fmodextinput` are the same shape.
+
+## 23. The ~1 dB deficit above 315 Hz — WITHDRAWN 2026-09-06, and NOT attributed
+
+Raised 2026-09-03 from a dry capture, parked 2026-09-05 when the listener said the reference was
+shadPS4 and not reliable, and **withdrawn by the listener on 2026-09-06**. Nothing replaced it and
+nothing was fixed: it is gone because its evidence was never admissible, not because it was
+explained.
+
+⚠️ **The reason it could never have been settled from that capture is the one worth keeping.**
+*Provenance rule 2* in [lbp-modding-toolchain.md](lbp-modding-toolchain.md): an emulator capture is
+evidence about **structure** — how many voices sound, whether a note is gated, the ratio between two
+channels — because the DSP is the game's own code being executed. It is not evidence about
+**absolute level or spectrum**, because between the plugin's output and the .wav sit the emulator's
+mixer, its 7.1→stereo downmix, SDL's resampler and the host device. A per-band decibel table is the
+second kind, and a *flat* deficit across five octaves with exact bass is exactly the shape an output
+path manufactures.
+
+The numbers as they were taken, kept only so a capture from real hardware has something to compare
+against and nobody re-derives them:
+
+| band | ours − game |
+|---|---|
+| 20-40 Hz | −0.39 dB |
+| 40-80 | −0.54 |
+| 80-160 | **+0.27** |
+| 160-315 | **+0.07** |
+| 315-630 | **−1.43** |
+| 630-1250 | −0.99 |
+| 1250-2500 | −0.89 |
+| 2500-5000 | −0.75 |
+| 5000-10000 | −0.79 |
+| 10000-20000 | −1.41 |
+
+
+**The bass was exact** — within 0.5 dB, and 0.07 dB at 160-315 Hz. Everything from 315 Hz up was
+quiet by roughly a decibel, worst at either end of that range.
+
+The candidates it listed, none ever checked and none now worth checking without a real reference:
+the mipmap chain's crossover, the interpolator, the ladder's coefficient solve at low cutoffs, or
+the capture chain again. ❗ It is suspiciously **flat** for a filter — a resampling error tilts with
+frequency rather than sitting at −1 dB across five octaves — which always argued for something
+gain-like, and the largest gain-like thing in this renderer turned out to be `FOLD_GAIN`, whose
+placement is now question 39's problem rather than this one's.

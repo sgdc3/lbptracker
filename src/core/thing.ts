@@ -218,9 +218,22 @@ function fillThing(
     }
   }
 
-  // version >= 0x27f puts the UID first; older files put the parent first.
-  thing.uid = s.i32();
-  thing.parent = readThingRef(s, readers);
+  // ❗ **The UID and the parent swap at 0x27f, and this used to read the 0x27f
+  // order for every file while a comment above it described the rule.** cwlib
+  // `Thing.java:96` is the authority: below 0x27f the parent comes first.
+  // Measured 2026-09-06 with `LBP3_MIN_VERSION` lowered to 0x100, over the 21
+  // LBP1 levels in `fixtures/archive`: **3 files got past the Thing header, then
+  // 10 did.** It changes nothing at the bound this reader actually enforces --
+  // 0x3b7 is far above 0x27f -- so it is latent correctness for a range that is
+  // still refused, and the measurement only exists because the bound can be
+  // lowered by hand. See question 28.
+  if (version >= 0x27f) {
+    thing.uid = s.i32();
+    thing.parent = readThingRef(s, readers);
+  } else {
+    thing.parent = readThingRef(s, readers);
+    thing.uid = s.i32();
+  }
   thing.groupHead = readThingRef(s, readers);
   if (version >= 0x1c7) readThingRef(s, readers); // oldEmitter
 

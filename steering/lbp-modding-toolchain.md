@@ -1,5 +1,14 @@
 # The LBP modding toolchain — what exists, what it covers, how to use it
 
+❗ **cwlib's Java source is on this disk, not just its jar.**
+`C:\Users\sgdc3\Desktop\LBP\toolkit\lib\cwlib\src\main\java\cwlib\` — `structs/things/`
+for `Thing.java` and the `parts/`, `enums/Part.java` for the mask semantics, `enums/Revisions.java`
+and `enums/Branch.java` for every gate constant. **Read it before tracing bytes.** Question 28 spent
+a session on a byte-level trace and then found its bug in ten minutes by opening `Thing.java`; the
+provenance rule below still applies to what it says — it is somebody's reading, not the game — but
+it is a far cheaper hypothesis generator than a hex dump.
+
+
 Read before writing any parser for an LBP resource or archive, and before attacking an open
 question that touches the **save format** (as opposed to the runtime engine). Someone has already
 done a large part of this work in the open.
@@ -60,7 +69,8 @@ is sharp:
 So question 10 (the one-shot gate, settled on **envelope correlation** — a shape) and question 22's
 pan width (settled on the **leak ratio between channels**, and the downmixer's own source read to
 explain it) survive the caveat by construction. A per-band decibel difference does not: see
-question 23, which is now parked for exactly this reason.
+question 23, which was withdrawn for exactly this reason -- see it in
+`answered-questions.md`.
 
 ✔ **And question 22 no longer needs the capture at all.** As of 2026-09-05 the width is *derived*
 from three read constants — the plugin's pan law, FMOD's `k = 0.5` centre feed at `v0xa2599f`, and

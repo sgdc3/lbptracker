@@ -66,9 +66,9 @@ in *37* in [answered-questions.md](answered-questions.md), which is worth readin
 which is what settled it and is reusable on the other two plugins.
 
 **Nothing about the engine's signal path is unread any more.** What is left in this file is two
-measured things deliberately not applied (38, 39), one listening report that needs a capture from
-real hardware (23), two decisions with bounded error (section 0), one question that is not about
-fidelity at all (24), and one about files this reader does not claim to support (28).
+measured things deliberately not applied (38, 39), two decisions with bounded error (section 0),
+one question that is not about fidelity at all (24), and one about files this reader does not
+claim to support (28).
 
 ⚠️ **38 and 39 are the only places this project knowingly does something the game does not**, both
 added 2026-09-06 on listening judgements, and they are entangled: 39 leaves `FOLD_GAIN` applied
@@ -145,51 +145,8 @@ anything; all are places where an answer stopped just short.
   [answered-questions.md](answered-questions.md).
   ✔ **A shadPS4 capture settles this one.** Counting voices in a chord is a question about
   *structure*, and the voice pool lives in the game's own `fmodextinput.prx`, which the emulator
-  executes — so unlike question 23 this experiment does not need real hardware. See *Provenance
+  executes — so unlike the withdrawn question 23 this experiment does not need real hardware. See *Provenance
   rule 2* in [lbp-modding-toolchain.md](lbp-modding-toolchain.md).
-
-## 23. ⚠️ PARKED — a flat ~1 dB deficit above 315 Hz, against an emulator
-
-❗ **The reference was shadPS4, not a PS4, and the listener who made the capture does not consider it
-reliable** (2026-09-05). That retires this as a finding until a capture from real hardware exists.
-
-The reason it retires *this* one and not the others is in *Provenance rule 2* in
-[lbp-modding-toolchain.md](lbp-modding-toolchain.md): a capture under an emulator is evidence about
-**structure** — how many voices sound, whether a note is gated, the ratio between two channels —
-because the DSP is the game's own code being executed. It is not evidence about **absolute level or
-spectrum**, because between the plugin's output and the .wav sit the emulator's mixer, its 7.1→stereo
-downmix, SDL's resampler and the host device. A per-band decibel table is the second kind, and a
-**flat** deficit across five octaves with exact bass is exactly the shape an output path
-manufactures.
-
-⚠️ **Do not chase the candidates below until the reference is real hardware.** They are still the
-right list if the deficit survives one; the numbers under them are not evidence today.
-
-The numbers as they were taken, kept because they cost a session and will be the thing to compare a
-real capture against:
-
-| band | ours − game |
-|---|---|
-| 20-40 Hz | −0.39 dB |
-| 40-80 | −0.54 |
-| 80-160 | **+0.27** |
-| 160-315 | **+0.07** |
-| 315-630 | **−1.43** |
-| 630-1250 | −0.99 |
-| 1250-2500 | −0.89 |
-| 2500-5000 | −0.75 |
-| 5000-10000 | −0.79 |
-| 10000-20000 | −1.41 |
-
-**The bass is exact** — within 0.5 dB, and 0.07 dB at 160-315. Everything from 315 Hz up is quiet by
-roughly a decibel, with the worst at either end of that range.
-
-Candidates, none checked: the mipmap chain's crossover (a mip taken too early loses highs); the
-interpolator (linear interpolation is a lowpass whose loss grows with frequency, and the engine's
-own is measured, so this would have to be a bug rather than a difference); the ladder's coefficient
-solve at low cutoffs; or the capture chain again. ⚠️ It is suspiciously *flat* for a filter — a
-resampling or interpolation error would tilt with frequency rather than sit at −1 dB across five
-octaves, which argues for something gain-like that this project applies to part of the signal.
 
 ## 24. The last 54 clips that need a verbatim record patch
 
@@ -318,8 +275,8 @@ That leaves the real question narrower and harder than "are we too loud":
 - If ours are peakier — through the voice pool, the envelope, the onset grid, or the missing
   release tail — the compressor is being fed transients the game never sends it.
 
-⚠️ **Neither can be told apart from a level match**, which is why *23*'s capture is level-matched
-and useless here, and why the crest factor is the thing to ask a new capture for.
+⚠️ **Neither can be told apart from a level match**, which is why the level-matched capture behind the
+withdrawn *23* is useless here, and why the crest factor is the thing to ask a new capture for.
 
 ### The `FOLD_GAIN` lead, and what it is worth
 
@@ -331,7 +288,7 @@ coincidence, and this file has been wrong before by treating one as a measuremen
 
 ### What would settle it
 
-The same capture question that parks *23*, and now with a second use:
+A capture, and this is now the only thing in this file that wants one it cannot get:
 
 1. **A capture with a known reference** — any song recorded from the game together with something
    whose level we know, so the *ratio* is provenance-legal under rule 2 in
@@ -406,7 +363,7 @@ them is an even spread over the game's life, which is what puts old revisions in
 |---|---|---|
 | `0x3b7` | `0/0` | **4 of 4** |
 | `0x3b8`–`0x3f9` | `0/0` | **78 of 78** |
-| `0x272` | `4c44` (LEERDAMMER) | **5 of 19**, and no failure is a missing part any more |
+| `0x272` | `4c44` (LEERDAMMER) | **0 of 21** at the shipped bound; 10 of 21 past the Thing header with it lowered, all reading zero Things |
 | `0x26e` | — | 0 of 1, the chunk table is not where this reader looks |
 | — | — | 1 file the archive stores truncated |
 
@@ -439,32 +396,69 @@ enough to take one.
 field" — it is "find out which of the branches already ported are wrong". The 2-of-19 says at least
 some are.
 
-### What is left
+### ❗ Worked 2026-09-06: the wall moved once and then stopped
 
-- **LBP1, `0x272` and below** — 19 of the 103, now **5 of 19 parsing** where it was 2, and
-  ❗ **not one failure left is a missing part.** Every remaining one is the stream genuinely
-  diverging: negative string lengths, a read past the end. That is the honest wall, and it is where
-  a byte-level trace has to start rather than a part list.
+**Nothing shipped changes.** `LBP3_MIN_VERSION` is still `0x3b7` and all 21 LBP1 files are still
+refused at the bound; everything below was measured by lowering it to `0x100` by hand, and the
+golden fixture (`dev/verify-levels.ts`, 62,158 placements byte for byte) is unmoved.
 
-  ⚠️ **What moved it was not the part it looked like.** 13 of the 19 said `no reader for part
-  EFFECTOR`, so `PEffector` was ported — nine fields, no version gates, 46 bytes. Then the span
-  tracer said `EFFECTOR 1B x13`: **all 13 are a null reference**, and the reader has never run. The
-  walk was refusing on the mask *bit*, before reading the id that says whether the field holds
-  anything. Moving the refusal inside `s.reference` is what freed them, and it is a real bug in the
-  walk rather than an LBP1 nicety — `UnimplementedPartError` now means "this file has data for a
-  part nothing here can read" instead of "this file mentions one".
+✔ **One real bug, found by reading cwlib rather than the bytes.** `fillThing` read the UID before
+the parent for every file, with a comment directly above it saying *"version >= 0x27f puts the UID
+first; older files put the parent first"*. cwlib's `Thing.java:96` is explicit and the code simply
+did not implement its own comment. Fixed:
 
-  ❗ **`readEffector` is therefore untested and is documented as such.** A faithful port of a
-  gate-free struct is a good guess and nothing more; 103 archive levels do not contain a single
-  effector with a body.
-- **A quest of a type other than 5** — still never seen, now in 103 archive levels as well as the
-  saves. `readQuest` refuses rather than guessing.
-- **Branch `0x4431`** — one level in the saves, `f331efa7`, version 0x3e2. ⚠️ **Nothing in the
-  archive is on it**: every sampled level is branch `0/0` or `4c44`. One file is not enough to
-  reverse a branch from, and a 103-level sample did not supply a second.
+| | LBP1 files past the Thing header |
+|---|---|
+| before | **3** of 21 |
+| after | **10** of 21 |
 
-**None of this is in the way of music**, and the sampler is now the way to find the next one: every
-real reader bug since 2026-09-05 came out of a file no PS3 save on this machine contains.
+⚠️ **And all ten then read `PWorld` and get a thing count of zero.** That is the wall now, and it
+is a different one: they are no longer diverging in the stream, they are reading a plausible-looking
+zero where hundreds of Things should be. `readWorld` matches cwlib's `PWorld.serialize` field for
+field at subVersion 0 -- none of the four gated fields is read, then the array -- so the count is
+landing in the wrong place because something in the Thing header before it is *still* short or long,
+not because `PWorld` is wrong.
+
+### ❌ What was tried and made it worse, which is the useful half
+
+cwlib's `Thing.serialize` computes `isCompressed = version >= 0x297 || revision.has(LEERDAMMER,
+LD_RESOURCES)`, and **every LBP1 file in the sample is LEERDAMMER `0x4c44` revision `0x17`**, so by
+that rule the parts mask *is* present and this reader is not reading it — it uses `mask = -1`, every
+declared part treated as present. Implementing it, together with `Part.hasPart`'s two index
+exclusions and its `subVersion < 0x107` bit shift, took the count from **10 down to 2**.
+
+❗ That is evidence, not a dead end: if a rule taken verbatim from the reference implementation makes
+a reader worse, the misalignment is **upstream of it**. The mask is read at the right place only if
+everything before it consumed the right bytes, and the zero thing count says it did not. So the
+order is fixed: find the header field that is still wrong, *then* re-apply `isCompressed`.
+
+### The anchor, and it is better than it was
+
+❗ **cwlib's source is on this disk**, not just its jar:
+`C:\Users\sgdc3\Desktop\LBP\toolkit\lib\cwlib\src\main\java\cwlib\`. The whole of the
+above came out of `structs/things/Thing.java`, `structs/things/parts/PWorld.java` and
+`enums/Part.java` in about ten minutes. **Read those before tracing bytes** — this entry spent a
+session on a byte-level trace it did not need.
+
+The reproduction is two commands: lower `LBP3_MIN_VERSION` to `0x100` in `src/core/serializer.ts`,
+then `node --experimental-strip-types dev/walk-levels.ts fixtures/archive`. The LBP1 lines are the
+ones matching `v2[0-9a-f]{2}/`. `setTrace` in `src/core/thing.ts` gives the per-part spans when a
+single file needs following.
+
+### What is left after that
+
+- **The zero thing count**, above. This is the next thing to do and it is a header field, not a part.
+- **A quest of a type other than 5** — still never seen in 103 archive levels or the saves.
+  `readQuest` refuses rather than guessing.
+- **Branch `0x4431`** — one level in the saves, `f331efa7`, version 0x3e2. ⚠️ Nothing in the archive
+  is on it: every sampled level is branch `0/0` or `4c44`. One file is not enough to reverse a
+  branch from, and a 103-level sample did not supply a second.
+- **`0x26e` and one truncated file** — one level whose chunk table is not where this reader looks,
+  and one the archive itself stores short. Neither is an LBP1 layout question.
+
+**None of this is in the way of music**, and the archive sampler is still how the next one gets
+found: every real reader bug since 2026-09-05 came out of a file no PS3 save on this machine
+contains.
 
 ### How the four fixed bugs were found — the technique, kept
 
