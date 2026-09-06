@@ -3152,6 +3152,30 @@ worth trusting again: the parameter struct's layout (confirmed three ways), the 
 knee's closed form — the unique Hermite matching value and slope at both ends, which
 `wavehammer.py check` still agrees with the literal transcription to 2.1e-14 dB.
 
+### ✔ Implemented 2026-09-06, the same day
+
+`src/audio/compressor.ts` runs it on both the offline and the live path, after the reverb sum where
+`Channel::addDSP` put it. `test/compressor.test.ts` pins it against **vectors taken from the running
+module**, not against itself: a deterministic LCG signal under a raised cosine, driven through the
+real PRX by `runhammer.py`, with seventeen sampled gains reproduced to better than 2e-5.
+
+Two things the vectors caught that reading had not:
+
+- **`[state+0x12c]` is not zero at reset.** `0x901` seeds the second smoother with `(1 − b0)/(1 + a1)`,
+  which is 0.5 for either coefficient pair — its own fixed point for a gain of 1. Starting it at zero
+  makes the first sample read 0.0126 where the module reads 0.998561: an 18 dB hole at the top of
+  every render, lasting about 50 ms.
+- **`a1` for `CompCoeffSet` clear is 0.8667884, not 0.96715366.** The second number is what `prxdis`
+  prints as the `f64` beside the operand — the qword read as a double rather than as the next float.
+  ⚠️ The `f32`/`u32`/`f64` triple that tool prints is a convenience, and two of the three are
+  usually wrong; take the one the instruction's operand size asks for.
+
+❗ **It costs a real render 6.94 dB of RMS and 6.93 dB of peak.** `level-seq723339` goes from
+0.134/0.934 to 0.060/0.420. Both fall by the same amount, so on this material the DSP is riding the
+level rather than catching transients — its closed-loop pole at the release coefficient is
+`2·b0·c + a1 = 0.99957`, about 48 ms of time constant. It is on by default because it is what the
+game does; `compressor: false`, or `LBP_NO_COMPRESSOR=1` for `dev/render-level.ts`, takes it out.
+
 ### The harness, because it is reusable
 
 `tools/runhammer.py` loads a PS4 PRX into a Windows process: both segments at their own vaddrs in

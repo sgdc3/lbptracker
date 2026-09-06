@@ -25,6 +25,7 @@
  * the pipeline is deterministic and depends on its seed and nothing else.
  */
 
+import { WaveHammer } from '../audio/compressor.ts';
 import { Echo, Reverb, clipToUnit, reverbPreset } from '../audio/effects.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from '../audio/mixer.ts';
 import { FILTER_PARAMS } from '../audio/moog.ts';
@@ -197,6 +198,21 @@ export interface RenderOptions {
   readonly voiceLimit?: number;
   /** Whether the plugin's own hard clip to +-1 runs. Defaults to on. */
   readonly clip?: boolean;
+  /**
+   * Run `SMS WaveHammer`, the compressor the game's chain ends in. Default true.
+   *
+   * ✔ Measured against the game's own binary executing: `tools/runhammer.py`
+   * loads `fmodsmswavehammer.prx` and runs it, and `test/compressor.test.ts`
+   * pins `src/audio/compressor.ts` against vectors from that. It is the last of
+   * the three DSPs on the sequencer's channel and nothing modelled it before
+   * 2026-09-06.
+   *
+   * ❗ **It changes every render's level**, by at least -1.84 dB and by up to
+   * -17 dB on material that reaches full scale. That is what the game does, so
+   * it is on by default; pass `false` (or `LBP_NO_COMPRESSOR=1` in
+   * `dev/render-level.ts`) to hear the chain without it.
+   */
+  readonly compressor?: boolean;
   /** GUID -> playback-rate factor, for octave A/Bs. */
   readonly pitchShift?: ReadonlyMap<number, number>;
   /** The PRNG seed. Fixed by default, so a render is reproducible. */
@@ -356,6 +372,8 @@ export interface RenderResult {
   readonly echoRel: number;
   readonly reverbRel: number;
   readonly clippedFrames: number;
+  /** The deepest gain reduction `SMS WaveHammer` applied, or 1 when it is off. */
+  readonly compressorGain: number;
   readonly peak: number;
   readonly rms: number;
   readonly echo: Echo;
@@ -386,6 +404,7 @@ export async function renderSequencer(
     noKeyTrack = false,
     voiceLimit = VOICE_POOL_SIZE,
     clip = true,
+    compressor: withCompressor = true,
     pitchShift = new Map<number, number>(),
     oneShot = 'gate',
     releaseTail: withReleaseTail = false,
@@ -930,6 +949,7 @@ export async function renderSequencer(
       echoRel: 0,
       reverbRel: 0,
       clippedFrames: 0,
+      compressorGain: 1,
       peak: 0,
       rms: 0,
       echo: new Echo(RATE, seq.echoTime, framesPerStep, seq.echoFeedback, seq.echoMix),
@@ -969,6 +989,8 @@ export async function renderSequencer(
   let echoEnergy = 0;
   let reverbEnergy = 0;
   let clipped = 0;
+  const hammer = new WaveHammer();
+  let compressorGain = 1;
   const effectsStarted = now();
   for (let i = 0; i < frames; i += 1) {
     if (onProgress && (i & 0x3ffff) === 0) void onProgress('effects', i, frames);
@@ -995,6 +1017,15 @@ export async function renderSequencer(
     reverbEnergy += r.left ** 2 + r.right ** 2;
     left[i] = dryL + r.left;
     right[i] = dryR + r.right;
+    // `Channel::addDSP` put the WaveHammer after the reverb, so it sees the sum.
+    // Its detector is causal, so applying the gain as it is computed is the same
+    // thing the engine does in three passes over a 256-frame block.
+    if (withCompressor) {
+      const g = hammer.gainFor(left[i], right[i]);
+      left[i] *= g;
+      right[i] *= g;
+      compressorGain = Math.min(compressorGain, g);
+    }
   }
 
   let peak = 0;
@@ -1017,6 +1048,7 @@ export async function renderSequencer(
     echoRel: Math.sqrt(echoEnergy / dryEnergy),
     reverbRel: Math.sqrt(reverbEnergy / dryEnergy),
     clippedFrames: clipped,
+    compressorGain,
     peak,
     rms: Math.sqrt(energy / (2 * frames)),
     echo,

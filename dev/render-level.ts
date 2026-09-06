@@ -113,6 +113,12 @@ const seed = process.env.LBP_SEED ? Number(process.env.LBP_SEED) : undefined;
  */
 const clip = process.env.LBP_NO_CLIP !== '1';
 /**
+ * Whether `SMS WaveHammer`, the compressor the game's chain ends in, runs.
+ * `LBP_NO_COMPRESSOR=1` removes it -- which is how the two were compared before
+ * it was turned on by default.
+ */
+const compressor = process.env.LBP_NO_COMPRESSOR !== '1';
+/**
  * How many voices the pool holds. `LBP_VOICES=off` (or 0) removes the cap.
  *
  * 📝 To be exposed in the UI -- see `VOICES_UNLIMITED` in `src/core/polyphony.ts`.
@@ -267,6 +273,7 @@ const result = await renderSequencer(seq, loadInstrument, {
   seed,
   voiceLimit,
   clip,
+  compressor,
   pitchShift,
   oneShot,
   releaseTail,
@@ -305,7 +312,10 @@ console.log(
     `early ${result.reverb.earlyLevel.toFixed(5)}` +
     (clip
       ? `; output clip touched ${((100 * result.clippedFrames) / result.frames).toFixed(2)}% of frames`
-      : '; output clip OFF'),
+      : '; output clip OFF')
+    + (compressor
+      ? `; WaveHammer down to ${(20 * Math.log10(result.compressorGain)).toFixed(2)} dB`
+      : '; WaveHammer OFF'),
 );
 console.log(`pre-normalisation RMS ${result.rms.toFixed(5)}`);
 

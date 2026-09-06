@@ -355,10 +355,12 @@ capture the game's eight channels directly.
   channel with its limiter bypassed and its compressor at −18 dB / 10:1 / 10 ms / 250 ms, over a
   64-sample sliding mean square. Measured by executing the module: **−17.2 dB of gain at −0.9 dBFS,
   −7.2 dB at −12 dBFS, and a floor of −1.84 dB below −21 dBFS.** `tools/wavehammer.py` reproduces
-  that to 1e-4 dB and `tools/runhammer.py sweep` is the check. This project models none of it, and
-  the hard clip it does model belongs two DSPs earlier. ❗ It reframes the headroom argument: every
-  judgement made about level here, including "`FOLD_GAIN` leaves room, peak 0.934 on the busiest
-  corpus song", assumed the clip was the end of the chain.
+  that to 1e-4 dB and `tools/runhammer.py sweep` is the check. ✔ **Implemented 2026-09-06** in
+  `src/audio/compressor.ts`, on both the offline and live paths, and pinned by
+  `test/compressor.test.ts` against vectors taken from the running module. ❗ It costs a real
+  render **6.94 dB of RMS and 6.93 dB of peak** — `level-seq723339` goes from 0.134/0.934 to
+  0.060/0.420 — so the note elsewhere in this project that "`FOLD_GAIN` leaves room, peak 0.934 on
+  the busiest corpus song" was measuring a chain two DSPs short of the game's.
 - **Resampling**: FMOD Ex interpolates in `fmod_dsp_resampler.cpp` at a selectable quality. If we
   play samples through the browser's `AudioBufferSourceNode.playbackRate`, we get *the browser's*
   interpolator instead, which differs between engines and cannot be pinned. This is the single

@@ -11,6 +11,7 @@
  * AudioWorkletGlobalScope and cannot import anything platform-specific.
  */
 
+import { WaveHammer } from './compressor.ts';
 import { Echo, Reverb, clipToUnit, reverbPreset } from './effects.ts';
 import { INTERPOLATORS, type InterpolatorName } from './interpolate.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from './mixer.ts';
@@ -137,6 +138,18 @@ export class MixerProcessor extends AudioWorkletProcessor {
   private echoOn = false;
   private reverbOn = false;
   private clip = true;
+  /**
+   * `SMS WaveHammer`, the compressor the game's chain ends in.
+   *
+   * It lives here rather than in the caller because its detector and envelope
+   * are stateful across blocks; `src/core/render.ts` runs the same class over
+   * the same signal at the same point, so the two paths agree.
+   *
+   * ⚠️ Unconditional, where the offline path takes a `compressor` option. That
+   * option is a diagnostic — turning it off offline makes the two paths differ,
+   * which is exactly what it is for.
+   */
+  private readonly hammer = new WaveHammer();
   /**
    * Frames since the last voice-count report.
    *
@@ -342,6 +355,10 @@ export class MixerProcessor extends AudioWorkletProcessor {
       const r = this.reverb?.process(sendL, sendR);
       left[i] = dryL + (r ? r.left : 0);
       right[i] = dryR + (r ? r.right : 0);
+      // `Channel::addDSP` put the WaveHammer after the reverb, so it sees the sum.
+      const g = this.hammer.gainFor(left[i], right[i]);
+      left[i] *= g;
+      right[i] *= g;
     }
     if (output.length > 1 && right === left) right.set(left);
     this.report(left.length, began);
