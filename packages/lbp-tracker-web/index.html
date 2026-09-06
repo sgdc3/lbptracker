@@ -81,6 +81,8 @@
   .view { margin-top: .8rem; }
   .view[hidden] { display: none; }
   .view > section { margin-bottom: .8rem; }
+  .view .notes { display: grid; gap: .6rem; }
+  .view .notes .hintline { margin: 0; }
 
   /* The file dialog: the drop zone and the song picker, opened on demand. */
   .picker-dialog.file-dialog { width: min(44rem, 94vw); }
@@ -560,8 +562,8 @@
     </section>
 
     <section>
-      <details>
-        <summary>What survives the trip, and what cannot</summary>
+      <p class="step">What survives the trip, and what cannot</p>
+      <div class="notes">
         <p class="hintline">
           <strong>The grid.</strong> A step is a sixteenth and a note can sit a third of one late, so
           the file is written at 480 ticks per quarter: a step is 120 ticks and a third of one is
@@ -584,7 +586,7 @@
           channel loses its own glide, and the count is always shown. Key and scale are folded into
           the note numbers on the way out, so an import comes back chromatic, sounding the same.
         </p>
-      </details>
+      </div>
     </section>
 
     <section>
