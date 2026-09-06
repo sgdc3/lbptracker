@@ -363,7 +363,7 @@ them is an even spread over the game's life, which is what puts old revisions in
 |---|---|---|
 | `0x3b7` | `0/0` | **4 of 4** |
 | `0x3b8`–`0x3f9` | `0/0` | **78 of 78** |
-| `0x272` | `4c44` (LEERDAMMER) | **0 of 19** at the shipped bound; **14 of 19 identical to cwlib** with it lowered by hand |
+| `0x272` | `4c44` (LEERDAMMER) | **0 of 19** at the shipped bound; ✔ **19 of 19 identical to cwlib** with it lowered by hand |
 | `0x26e` | — | 0 of 1, the chunk table is not where this reader looks |
 | — | — | 1 file the archive stores truncated |
 
@@ -455,70 +455,61 @@ three more: below 0x341 there is no flags byte and `COPYRIGHT`, `EDITABLE` and `
 are separate bools at three separate gates. And `PMetadata` was written from scratch — it had no
 reader at all, because nothing above `LBP3_MIN_VERSION` ever reaches one.
 
-### Where it stands: **14 of 19 LBP1 levels read identically to cwlib**
-
-Thing for Thing, on the archive sample, with `LBP3_MIN_VERSION` lowered by hand:
+### ✔ **All 19 LBP1 levels read identically to cwlib**, Thing for Thing
 
 ```
-0-011f09  521    0-9320a8 1472    0-cad1b2   36    1-248258 2359
-0-4e5a15   86    0-935f66   55    0-d8ce66 1856    1-3a66ec 1684
-0-8a38f8  507    0-beda44   87    0-ea18ed   23    1-68e357  510
-1-139f11  156                                      1-dc0925  278
+0-011f09  521   0-8a38f8  507   0-935f66   55   0-c33a7e  228   1-139f11  156   1-68e357  510
+0-3edc39  665   0-9320a8 1472   0-99167e  653   0-cad1b2   36   1-248258 2359   1-c8b731 1529
+0-4e5a15   86   0-a0e15f  321   0-beda44   87   0-d8ce66 1856   1-3a66ec 1684   1-dc0925  278
+0-ea18ed   23
 ```
 
-⚠️ **Compare the NON-NULL count.** cwlib's `things` list holds null entries and `readWorld`
-filters them, so `CwlibTrace parts` prints both — `825 things (278 non-null)`. Comparing against the
-total is what produced a bogus "0 of 21" in an earlier pass of this entry.
+⚠️ **Compare the NON-NULL count.** cwlib's `things` list holds nulls and `readWorld` filters them,
+so `CwlibTrace parts` prints both — `825 things (278 non-null)`. Comparing against the total is what
+produced a bogus "0 of 21" in an earlier pass of this entry.
 
-Ten readers are now fixed. Every one of them diverged the same way and none needed a hex dump:
+Twelve readers were wrong and are fixed. Every one was found the same way and none needed a hex dump:
 
-| reader | what was wrong at 0x272 |
+| reader | what was wrong below LBP3 |
 |---|---|
-| `fillThing` | UID before parent below **0x27f**; the `0xAA` marker also gated on LEERDAMMER rev 5; the parts mask also on LEERDAMMER rev 2 |
+| `fillThing` | UID before parent below **0x27f**; the `0xAA` marker also on LEERDAMMER rev 5; the parts mask also on LEERDAMMER rev 2 |
 | `readPos` | the local matrix is stored too below **0x341** — 64 bytes |
-| `Polygon` | `requiresZ` arrives at **0x341**; below it there is no flag and every vertex is a v3 |
-| `readShape` | five gates: colour as v4 below 0x389, no `brightness` below 0x301, no `behavior`/`colorOff` below 0x303, `interactPlayMode`/`EditMode` at or below 0x306, `lethalType` an enum32 at or below 0x345, three bools for the flags word below 0x2b5 |
-| `readRef` | `childrenSelectable` and `stripChildren`, both gone at **0x321** |
-| `readGroup` | no flags byte below **0x341**; `COPYRIGHT`, `EDITABLE`, `PICKUP_ALL_MEMBERS` are separate bools |
-| `readMetadata` | did not exist |
-| `readRenderMesh` | `editorColor` as v4 at or below **0x31a** — 15 bytes |
-| `readTrigger` | `zOffset` arrives at **0x322** and was read always — 4 bytes |
+| `Polygon` | `requiresZ` arrives at **0x341**; below it there is no flag byte and every vertex is a v3 |
+| `readShape` | six gates, including the colour as a v4 below **0x389** and three bools standing in for the flags word below 0x2b5 |
+| `readRef` | `childrenSelectable`, `stripChildren` — both gone at **0x321** |
+| `readGroup` | no flags byte below **0x341**; three separate flag bools instead |
+| `readMetadata` | did not exist. Both branches now: LAMS keys, and the four **translation-tag strings** below LEERDAMMER rev 8 |
+| `readRenderMesh` | `editorColor` as a v4 at or below **0x31a** — 15 bytes |
+| `readTrigger` | `zOffset` only from **0x322**, read always — 4 bytes |
 | `readJoint` | `modDriven`, `interactPlayMode`/`EditMode`, `modScaleActive`; `tweakTarget*` are **ints** at or below 0x280; `behaviour` only from 0x2c4 |
-| `readSwitch` | `oldActivation` below 0x2a0, and the whole **connector block** (`> 0x1fa && < 0x327`) — about fifty bytes that nothing above LBP3's bound has |
+| `readSwitch` | `oldActivation` below 0x2a0, and the whole **connector block** (`> 0x1fa && < 0x327`), fifty-odd bytes |
+| `readCreature` | the submerged pair, `hasScubaGear` and `outOfWaterJumpBoost` are `version >= X` **or LEERDAMMER** — ten bytes, and fixing them closed the last four files at once |
 
-❗ **The last one is the one to remember**: `connectorPos` is a `vectorarray`, and cwlib's
-`vectorarray` returns `Vector4f[]`. Reading it as v3 was the final thirteen bytes. **A helper's name
-does not say its element width — open it.**
+❗ **Two lessons, and the second is the one that keeps paying.**
 
-### What is still failing
+`connectorPos` is a `vectorarray`, and cwlib's `vectorarray` returns `Vector4f[]`. Reading it as v3
+was thirteen bytes. **A helper's name does not say its element width.**
 
-- `0-3edc39`, `0-99167e`, `0-a0e15f`, `0-c33a7e` — the marker, at bytes 15,649 to 250,677. Same
-  shape as the ten already fixed; run the loop again.
-- `1-c8b731` — `PMetadata`'s **translation-tag** branch, four strings rather than four LAMS keys,
-  which cwlib takes below LEERDAMMER revision 8. Every other file in the sample is at 0x17 and takes
-  the key branch, so nothing here can check the tag branch and `readMetadata` refuses.
+And nine of the fifteen divergences were a version gate that exists in the reader's own **comment**
+and not in its code. These parts were ported with their gates documented and then written for the
+LBP3 branch only, so a grep for "at or below", "above 0x" and "regenerated" in `src/core/parts.ts`
+is a work list for anything still unported.
 
-### ⚠️ The bound has NOT been lowered, and that is a decision, not an oversight
+### ⚠️ The bound has NOT been lowered, and that is now a decision to take
 
-`LBP3_MIN_VERSION` is still `0x3b7` and every LBP1 file is still refused. Two reasons:
+`LBP3_MIN_VERSION` is still `0x3b7` and all nineteen files are still refused. The reason is no longer
+"we cannot read them":
 
-- **LBP1 has no Music Sequencer**, so opening these levels buys the tracker nothing musical. This
-  work is reader correctness, not a feature.
-- Five files still fail, and the bound is what keeps "we do not support this" from becoming "we
-  read it and produced something".
+- **LBP1 has no Music Sequencer**, so opening these buys the tracker nothing musical. This is reader
+  correctness, not a feature.
+- ❗ **The range between 0x272 and 0x3b7 has zero coverage.** No file in the 103-level archive
+  sample sits there. Lowering the bound to `0x272` would admit that whole untested span, which is
+  exactly the "reading an older layout with newer rules and producing plausible nonsense" the bound
+  exists to prevent — and 2-of-19 at the start of this work is what that looks like.
 
-Lowering it is a one-line change whenever the remaining five are done and somebody wants it.
-
-### The loop, which is now the whole method
-
-1. `node --experimental-strip-types dev/trace-level.ts <prefix>` for our spans.
-2. `CwlibTrace spans <level>` for the reference's.
-3. Diff. The first part that disagrees names the file in cwlib's `structs/things/parts/`.
-
-❗ **Nine of the eleven divergences were a version gate that exists in the reader's own comment and
-not in its code.** These parts were ported with their gates documented and then written for the LBP3
-branch only, so a grep for "at or below", "above 0x" and "regenerated" in `src/core/parts.ts` is a
-work list for the rest.
+So the right change is not a lower bound but an **allowed set**: `0x272` plus `0x3b7..0x3ff`, with
+anything between still refused until a file turns up to test it. That is a design decision rather
+than a fix, and it is left to be taken deliberately.
 
 ### What is left after that
 

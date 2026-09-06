@@ -25,7 +25,15 @@
  */
 
 import { Serializer, SerializerError } from './serializer.ts';
-import { readThing, readThingRef, type PartReader, type Thing } from './thing.ts';
+import {
+  LD_ANY,
+  LD_SUBMERGED,
+  onLeerdammer,
+  readThing,
+  readThingRef,
+  type PartReader,
+  type Thing,
+} from './thing.ts';
 
 /** An array of Thing references — cwlib's `thingarray`. */
 function things(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
@@ -1884,13 +1892,22 @@ export function readCreature(s: Serializer, readers: ReadonlyMap<string, PartRea
     s.i32(); // lastGunTriggerUID
   }
   if (version >= 0x272) s.i32(); // airTimeLeft
-  if (version >= 0x2c9) {
+  // ❗ **Three branch gates wearing version gates' clothes.** LEERDAMMER got the
+  // submerged pair at its revision 15 and the two water bools at any revision at
+  // all, so a 0x272 file on that branch carries ten bytes this reader used to
+  // skip. `headPiece` is the mirror image: LEERDAMMER *removed* it at revision
+  // 12, so a 0x17 file does not have it either way.
+  if (version >= 0x2c9 || onLeerdammer(s.revision, LD_SUBMERGED)) {
     s.f32(); // amountBodySubmerged
     s.f32(); // amountHeadSubmerged
   }
-  if (version >= 0x289) s.bool(); // hasScubaGear
-  if (version >= 0x289 && version < 0x2c8) s.resource(); // headPiece
-  if (version >= 0x289) s.bool(); // outOfWaterJumpBoost
+  if (version >= 0x289 || onLeerdammer(s.revision, LD_ANY)) s.bool(); // hasScubaGear
+  // cwlib `before(LEERDAMMER, LD_REMOVED_HEAD_PIECE)`: on the branch and older than 12.
+  const headPieceGone = onLeerdammer(s.revision, LD_ANY) && s.revision.branchRevision >= 0xc;
+  if ((version >= 0x289 && version < 0x2c8) || (onLeerdammer(s.revision, LD_ANY) && !headPieceGone)) {
+    s.resource(); // headPiece
+  }
+  if (version >= 0x289 || onLeerdammer(s.revision, LD_ANY)) s.bool(); // outOfWaterJumpBoost
   if (version >= 0x2a9) s.resource(); // handPiece
   if (version >= 0x273) {
     thing(); // head
@@ -2095,13 +2112,20 @@ function readMetadata(s: Serializer): void {
   if (deprecatedValue) {
     throw new SerializerError('PMetadata with the deprecated CValue has no reader');
   }
-  if (!((leerdammer && branchRevision >= 0x8) || version > 0x2ba)) {
-    throw new SerializerError('PMetadata with translation tags rather than LAMS keys has no reader');
+  if ((leerdammer && branchRevision >= 0x8) || version > 0x2ba) {
+    s.u32(); // titleKey
+    s.u32(); // descriptionKey
+    s.u32(); // location
+    s.u32(); // category
+  } else {
+    // ❗ The older files carry LAMS **tags** — strings — rather than the four
+    // hashed keys. `descTranslationTag` is only stored below 0x159; above it
+    // cwlib derives it as `name + "_DESC"` and reads nothing.
+    s.str(); // nameTranslationTag
+    if (version < 0x159) s.str(); // descTranslationTag
+    s.str(); // locationTag
+    s.str(); // categoryTag
   }
-  s.u32(); // titleKey
-  s.u32(); // descriptionKey
-  s.u32(); // location
-  s.u32(); // category
   if (version >= 0x195) s.i32(); // primaryIndex
   s.i32(); // fluffCost
   s.i32(); // type, a flags word

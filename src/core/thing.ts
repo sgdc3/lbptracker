@@ -63,9 +63,13 @@ import { Serializer, SerializerError } from './serializer.ts';
 const LEERDAMMER = 0x4c44;
 const LD_RESOURCES = 0x2;
 const LD_TEST_MARKER = 0x5;
+/** `PCreature` gains the submerged pair here; the branch is on 0x17, so it has them. */
+export const LD_SUBMERGED = 0xf;
+/** Any LEERDAMMER revision at all. `isLeerdammer()` in cwlib. */
+export const LD_ANY = 0x0;
 
 /** cwlib `Revision.has(branch, revision)`. */
-function onLeerdammer(
+export function onLeerdammer(
   revision: { branchId: number; branchRevision: number },
   since: number,
 ): boolean {
