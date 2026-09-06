@@ -10,21 +10,9 @@
 import { createControls, type Check, type Fader, type Group, type Spec } from './kit.ts';
 
 const GROUP_SPECS = [
-  {
-    key: 'pool',
-    title: 'voice pool',
-    note:
-      'Live. The engine’s is 32, and its stealing is decided over the whole song, so a new size ' +
-      'replays the pool up to the playhead without stopping anything. Uncapping it plays every ' +
-      'note, which is not the game.',
-  },
-  {
-    key: 'stage',
-    title: 'output stage',
-    note:
-      'Take an effect off to hear the voices alone; each removes the effect’s return, not its ' +
-      'send. The clip is the plugin’s own hard limit at ±1.',
-  },
+  // What each does is in the help (src/help.ts, 'engine'), not beside the faders.
+  { key: 'pool', title: 'voice pool' },
+  { key: 'stage', title: 'output stage' },
 ] as const satisfies readonly Group[];
 
 const FADER_SPECS = [

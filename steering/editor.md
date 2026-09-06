@@ -13,16 +13,19 @@ the end.
 pages — a bench, a live player, a renderer, a MIDI bridge and the editor — each opening its own
 level and handing a song to another through `sessionStorage`, and the owner asked for a DAW
 instead of disjoint menus. `index.html` is now the one page: a sticky top bar with the views'
-tabs, the song's name, the transport (play, rewind, clock, tempo, volume, the health readout)
-and the file actions (new, open, save .json); "open" is a modal dialog holding the shared drop
-zone and the picker for a level holding several sequencers; a fixed footer carries the status
-line and the audio thread's readout (idle, notes sounding, dropouts); and five views, one shown
-at a time, all reaching the same song through `src/daw/session.ts`:
+tabs, the song's name, the transport (play, stop, loop, clock, tempo, volume and a VU meter)
+and the file actions (new, open, save); "open" is a modal dialog holding the shared drop zone
+and the picker for a level holding several sequencers; a fixed footer carries the status line,
+the credit and the audio thread's readout (idle, notes sounding, audio load, dropouts); and six
+views, one shown at a time, all reaching the same song through `src/daw/session.ts`. Every card
+has a "?" opening the one help dialog on its topic (`src/help.ts`): the views carry as little
+prose as they can, and what they do carry is for the person using the app, never a measurement.
+The views are:
 
 | view | file | what it does with the song |
 |---|---|---|
 | Home | `index.html` only | a presentation of the app, reached by the brand in the top bar; a view like the others, so the song and the transport stay as they are |
-| Arrange | `daw/arrange.ts` | the board filling the page between the bar and the footer; the roll and the chip and point inspector in a panel that rises over the board's lower part when a chip is clicked or drawn (not when the playhead merely moves the selection), resizable by its top edge, closed by its button or Esc, with the help behind "?" |
+| Arrange | `daw/arrange.ts` | the board filling the page between the bar and the footer; the roll and the chip and point inspector in a panel that rises over the board's lower part when a chip is clicked or drawn (not when the playhead merely moves the selection), resizable by its top edge, closed by its button or Esc |
 | Song/Mixer | `daw/mixer.ts`, `daw/MixerPanel.vue` | the song's name, tempo, swing, channels and faders, board rows, echo, reverb, loop — the song's own fields — in one card, and an "Engine" card with the switches that are not in the file (`controls/engine.ts`) and the meters; the name in the top bar is read-only |
 | Render | `daw/render-view.ts` | hands `sequencerFromSong(song)` to the render worker and plays the WAV back |
 | Import/Export | `daw/convert-view.ts` | exports it as MIDI, re-run while the view is shown; a MIDI file in *replaces* it, through `openSong` |

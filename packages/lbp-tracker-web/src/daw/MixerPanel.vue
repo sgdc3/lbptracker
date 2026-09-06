@@ -61,7 +61,6 @@ const fmt = (v: number) => v.toFixed(2);
                @input="state.edit('selection', (s) => { s.name = text($event); }, 'name')">
         <output></output>
       </div>
-      <p class="hintline">The name is what a level calls its sequencer, and what the song file is saved as.</p>
     </div>
 
   <div class="live">
@@ -85,11 +84,6 @@ const fmt = (v: number) => v.toFixed(2);
                  @change="state.edit('selection', (s) => { s.loop = ($event.target as HTMLInputElement).checked; })"> loop
         </label>
       </div>
-      <p class="hintline">
-        Both move every note and neither rebuilds anything: the plan holds musical positions, so
-        the next note played uses them and your place is kept in the music. Loop is stored with
-        the song; the player here runs to the end.
-      </p>
     </div>
 
     <div class="group">
@@ -112,11 +106,6 @@ const fmt = (v: number) => v.toFixed(2);
                @input="set('settings', 'rows', (v, s) => { s.boardRows = v; })($event)">
         <output>{{ song.boardRows }}</output>
       </div>
-      <p class="hintline">
-        The board is cut into as many bands as there are channels, top to bottom; a row's band is
-        its mixer channel, and the count beside each fader is how many chips land on it. Every
-        channel carries the engine's own 0.75 headroom on top of its fader.
-      </p>
     </div>
 
     <div class="group">
@@ -145,10 +134,6 @@ const fmt = (v: number) => v.toFixed(2);
                @input="set('effects', 'reverb', (v, s) => { s.reverb = v; })($event)">
         <output>{{ song.reverb }}</output>
       </div>
-      <p class="hintline">
-        The sequencer's own output stage, as the game stores it: the echo's delay is in beats and
-        follows the tempo. Each instrument sends its own amount to both, in its chip's settings.
-      </p>
     </div>
   </div>
   </div>

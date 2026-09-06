@@ -727,6 +727,9 @@ export class Player {
     return swungFrame(step, this.stepFrames, this.swing);
   }
 
+  /** Start over at the end instead of stopping: the song's own loop flag, mirrored here. */
+  loop = false;
+
   seek(frames: number): void {
     const was = this.playing;
     if (was) this.stop(false);
@@ -859,6 +862,12 @@ export class Player {
       this.nextIndex += 1;
     }
     if (now >= this.songFrames) {
+      if (this.loop && this.songFrames > 0) {
+        // Round again: the seek stops and restarts the clock and schedules
+        // its own pump, so this one is done. What is ringing rings on.
+        this.seek(0);
+        return;
+      }
       // The end: stop the clock but not the audio, so releases, the echo and
       // the reverb ring on as they would in the game.
       this.stop(false);

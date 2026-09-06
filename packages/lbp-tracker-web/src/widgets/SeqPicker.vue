@@ -137,7 +137,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', away));
     v-if="onSave"
     type="button"
     class="picker-save"
-    title="Save this song as an LBP Tracker .json file, which any page here opens"
+    title="Save as a song file"
     :disabled="!current"
     @click="current && onSave(current.key)"
   >save</button>

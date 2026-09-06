@@ -59,12 +59,6 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     insetBoard();
   };
   $('panelClose').addEventListener('click', closePanel);
-  const helpDialog = $<HTMLDialogElement>('helpDialog');
-  $('help').addEventListener('click', () => helpDialog.showModal());
-  $('helpClose').addEventListener('click', () => helpDialog.close());
-  helpDialog.addEventListener('click', (event) => {
-    if (event.target === helpDialog) helpDialog.close();
-  });
   try {
     const stored = localStorage.getItem('lbp.panel-h');
     if (stored) view.style.setProperty('--panel-h', stored);

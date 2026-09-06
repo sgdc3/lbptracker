@@ -25,13 +25,7 @@ const GROUP_SPECS = [
   { key: 'filter', title: 'ladder filter', override: 'ovFilter' },
   { key: 'lfo', title: 'LFOs', override: 'ovLfo' },
   { key: 'echo', title: 'echo' },
-  {
-    key: 'reverb',
-    title: 'reverb & output',
-    note:
-      'The plugin hard-clips its own output to ±1 before the reverb send — the one ' +
-      'nonlinearity in the output stage.',
-  },
+  { key: 'reverb', title: 'reverb & output' },
 ] as const satisfies readonly Group[];
 
 const FADER_SPECS = [
@@ -104,10 +98,8 @@ const CHECK_SPECS = [
 
   // What the page listens to on an MPE controller. Not overrides — they only
   // say whether the dimension is read at all.
-  { id: 'mpePress', group: 'mpe', label: 'press → volume', start: true,
-    title: "MPE's Z: channel pressure, per note" },
-  { id: 'mpeSlide', group: 'mpe', label: 'slide → cutoff', start: true,
-    title: "MPE's Y: CC 74, per note" },
+  { id: 'mpePress', group: 'mpe', label: 'press → volume', start: true },
+  { id: 'mpeSlide', group: 'mpe', label: 'slide → cutoff', start: true },
 
   // The instrument's own stages, switched in and out to compare them with the
   // stand-ins above. These sit in the bench section rather than in the panel.

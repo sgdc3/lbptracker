@@ -148,7 +148,7 @@ const fmt = (v: number, dp = 2) => v.toFixed(dp);
           <span class="hintline" style="margin:0">bar {{ barOfCell(clip.cell) }}, row {{ clip.row }} · {{ clip.notes.length }} note{{ clip.notes.length === 1 ? '' : 's' }}</span>
           <span class="spacer"></span>
           <button type="button" @click="emit('duplicate')" title="Ctrl+D">duplicate</button>
-          <button type="button" @click="emit('remove')" title="Delete, with the board focused">remove</button>
+          <button type="button" @click="emit('remove')" title="Delete">remove</button>
         </div>
       </template>
       <p v-else class="hintline">Select an instrument on the board.</p>
@@ -177,8 +177,6 @@ const fmt = (v: number, dp = 2) => v.toFixed(dp);
         </div>
         <p class="hintline">
           At {{ positionLabel(point.point.thirds) }}, point {{ point.index + 1 }} of {{ point.note.points.length }}.
-          The size of a point is its volume, its colour its timbre: blue at 0, orange at 15. The
-          engine glides pitch and volume between points, and reads the timbre once, at the note-on.
         </p>
       </template>
       <p v-else class="hintline">Click a point on the grid.</p>

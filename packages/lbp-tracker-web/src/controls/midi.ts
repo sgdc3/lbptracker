@@ -18,22 +18,9 @@ import {
 } from './kit.ts';
 
 const GROUP_SPECS = [
-  {
-    key: 'write',
-    title: 'how to write it',
-    stack: true,
-    note:
-      'A track is named row 4 - saw_wave, because the board row and the instrument are the two ' +
-      'things MIDI has no message for — so the name is where they live, and editing it is how ' +
-      'you move a part.',
-  },
-  {
-    key: 'bend',
-    title: 'bend range',
-    note:
-      'How far a full pitch bend reaches. MPE’s own default is ±48, and this corpus needs more: ' +
-      '582 of its 1,448,224 control points glide further.',
-  },
+  // What each option does is in the help (src/help.ts, 'export'), not beside it.
+  { key: 'write', title: 'how to write it', stack: true },
+  { key: 'bend', title: 'bend range' },
 ] as const satisfies readonly Group[];
 
 const FADER_SPECS = [
@@ -43,12 +30,9 @@ const FADER_SPECS = [
 ] as const satisfies readonly Fader[];
 
 const CHECK_SPECS = [
-  { id: 'bakeSwing', group: 'write', label: 'bake the swing into the timing', start: false,
-    title: 'Write the swung positions instead of the straight grid' },
-  { id: 'exact', group: 'write', label: 'carry what MIDI cannot say', start: true,
-    title: 'Carry the records MIDI cannot express, so a round trip returns the same file' },
-  { id: 'mergeRows', group: 'write', label: 'one track per row, not per placement', start: true,
-    title: 'One track per board row and instrument, with the mixer as CC automation' },
+  { id: 'bakeSwing', group: 'write', label: 'bake the swing into the timing', start: false },
+  { id: 'exact', group: 'write', label: 'carry what MIDI cannot say', start: true },
+  { id: 'mergeRows', group: 'write', label: 'one track per row, not per placement', start: true },
   { id: 'autoBend', group: 'bend', label: 'pick it from the music', start: true },
 ] as const satisfies readonly Check[];
 

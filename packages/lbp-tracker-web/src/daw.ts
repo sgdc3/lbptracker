@@ -11,6 +11,7 @@ import { sequencersOf, type BackupResult } from '@lbptracker/cwlib/backup.ts';
 import type { Sequencer } from '@lbptracker/cwlib/project.ts';
 import { songFromJson, songFromSequencer, newSong } from '@lbptracker/lib/song.ts';
 import { mountFooter } from './footer.ts';
+import { mountHelp } from './help.ts';
 import { APP_VERSION } from './version.ts';
 import { isSongFile, openedTitle, readOpened, saveNote, type Opened } from './open-level.ts';
 import { seqPicker } from './seq-picker.ts';
@@ -77,6 +78,7 @@ $('homeOpen').addEventListener('click', () => $<HTMLDialogElement>('fileDialog')
 
 const playButton = $<HTMLButtonElement>('play');
 const stopButton = $<HTMLButtonElement>('stop');
+const loopButton = $<HTMLButtonElement>('loop');
 const clockLabel = $<HTMLSpanElement>('clock');
 const loadLabel = $<HTMLSpanElement>('load');
 const volSlider = $<HTMLInputElement>('vol');
@@ -84,7 +86,7 @@ const tempoBox = $<HTMLInputElement>('tempoBox');
 
 let health: Health = { sounding: 0, notes: 0, queued: 0, audioLoad: null, dropouts: 0, lostMs: 0 };
 function showLoad(): void {
-  const { sounding, notes, queued, dropouts, lostMs } = health;
+  const { sounding, notes, queued, audioLoad, dropouts, lostMs } = health;
   if (!player.playing && sounding === 0 && queued === 0) {
     loadLabel.textContent = player.hasPlan ? 'ready' : 'idle';
     return;
@@ -92,7 +94,10 @@ function showLoad(): void {
   const dropped = dropouts === 0
     ? 'no dropouts'
     : `${dropouts} dropout${dropouts === 1 ? '' : 's'}${lostMs >= 1 ? ` (${lostMs.toFixed(0)} ms lost)` : ''}`;
-  loadLabel.textContent = `${notes} notes · ${dropped}`;
+  // The audio thread's worst block as a share of realtime -- the CPU figure
+  // the old page showed; null when the worklet has no clock to measure with.
+  const busy = audioLoad === null ? '' : ` · audio ${(audioLoad * 100).toFixed(1)}%`;
+  loadLabel.textContent = `${notes} notes${busy} · ${dropped}`;
 }
 function paintClock(): void {
   clockLabel.textContent = `${clock(player.position() / RATE)} / ${clock(player.songSeconds)}`;
@@ -121,6 +126,11 @@ playButton.addEventListener('click', () => (player.playing ? player.stop() : pla
 stopButton.addEventListener('click', () => {
   player.stop();
   player.seek(0);
+});
+// Loop is the song's own flag -- the same one the Song/Mixer view ticks -- so
+// the button edits the song, and the header pass mirrors it into the player.
+loopButton.addEventListener('click', () => {
+  state.edit('selection', (s) => { s.loop = !s.loop; });
 });
 volSlider.addEventListener('input', () => player.setVolume(Number(volSlider.value)));
 player.setVolume(Number(volSlider.value));
@@ -176,6 +186,8 @@ tempoBox.addEventListener('change', () => {
 const songName = $<HTMLSpanElement>('songName');
 const dirty = $<HTMLSpanElement>('dirty');
 function refreshHeader(): void {
+  loopButton.setAttribute('aria-pressed', String(state.song.loop));
+  player.loop = state.song.loop;
   // Read-only here: the name is edited under Song/Mixer with the description.
   songName.textContent = state.song.name || 'untitled';
   if (document.activeElement !== tempoBox) tempoBox.value = String(state.song.tempo);
@@ -326,6 +338,7 @@ void ensureAssets().catch((error: unknown) => {
   setError(String((error as Error).stack ?? error));
 });
 mountFooter();
+mountHelp();
 $('version').textContent = `v${APP_VERSION}`;
 
 // Everything a console session needs to poke the app, as the bench does.
