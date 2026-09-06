@@ -155,7 +155,11 @@ fixtures 404 with no other symptom.
 
 `npm run deploy` is `vite build`, then `packages/lbp-tracker-web/dev/stage-site.ts`, then
 `wrangler deploy` on `packages/lbp-tracker-web/wrangler.jsonc` — an assets-only Worker, no script,
-`send_metrics` off. `wrangler login` once before the first deploy.
+`send_metrics` off. `wrangler login` once before the first deploy. Live at
+<https://lbptracker.gabriele-c-7428.workers.dev> since 2026-09-06 (313 files uploaded, the
+sourcemaps included). ⚠️ Cloudflare canonicalises `/render.html` to `/render` with a 307 — the
+nav's `./render.html` links still work, one redirect each; `html_handling` is the default
+`auto-trailing-slash` and this is what it means.
 
 ❗ **The staging step is the one place game data enters `dist/`.** It copies exactly what
 `fixtures/rinst/manifest.json` and `fixtures/smp/manifest.json` name — 286 files, 6.7 MB on
