@@ -134,7 +134,8 @@
   .knob input[type="range"], .knob select, .knob input[type="text"] { width: 100%; min-width: 0; }
   .knob input[type="text"].wide, .knob select.wide { grid-column: 2 / 4; }
   .knob input[type="text"] { text-align: left; font-family: inherit; }
-  .song-group { grid-column: 1 / -1; }
+  .song-group { margin-bottom: 1rem; }
+  #mixer .live { grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); }
   .knob output { font: .78rem/1 ui-monospace, Consolas, monospace; color: var(--dim); text-align: right; }
   .group.off { opacity: .55; }
   .group.off .knob { opacity: .6; }

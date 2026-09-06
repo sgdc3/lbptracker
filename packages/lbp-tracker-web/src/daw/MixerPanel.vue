@@ -49,7 +49,10 @@ const fmt = (v: number) => v.toFixed(2);
 </script>
 
 <template>
-  <div class="live">
+  <div>
+    <!-- Outside the grid: an item spanning every column would keep the
+         auto-fit grid's empty tracks from collapsing, and the three groups
+         below would each get one narrow track of eight. -->
     <div class="group song-group">
       <h3>song</h3>
       <div class="knob">
@@ -61,6 +64,7 @@ const fmt = (v: number) => v.toFixed(2);
       <p class="hintline">The name is what a level calls its sequencer, and what the song file is saved as.</p>
     </div>
 
+  <div class="live">
     <div class="group">
       <h3>timing</h3>
       <div class="knob">
@@ -146,5 +150,6 @@ const fmt = (v: number) => v.toFixed(2);
         follows the tempo. Each instrument sends its own amount to both, in its chip's settings.
       </p>
     </div>
+  </div>
   </div>
 </template>
