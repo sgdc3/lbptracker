@@ -65,24 +65,44 @@
   .file-dialog .drop { padding: 1.2rem 1rem; }
 
   /* ---------------------------------------------------------------- arrange */
+  /* The board takes the whole page between the bar and the footer; the chip
+     panel rises over its lower part. `--top-h` and `--foot-h` are measured. */
+  .view.arrange {
+    position: fixed; left: 0; right: 0; top: var(--top-h, 3.2rem); bottom: var(--foot-h, 2.2rem);
+    margin: 0; overflow: hidden;
+  }
+  .view.arrange[hidden] { display: none; }
   .board-scroller {
-    position: relative; overflow: auto; height: 30rem; min-height: 8rem; resize: vertical;
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    position: absolute; inset: 0; overflow: auto; background: var(--panel-2);
   }
   .board-scroller canvas { position: sticky; top: 0; left: 0; display: block; z-index: 1; }
   .board-scroller:focus-visible, .roll-scroller:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .roll-scroller {
-    position: relative; overflow: auto; height: 26rem; min-height: 8rem; resize: vertical;
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  .chip-panel {
+    position: absolute; left: 0; right: 0; bottom: 0; height: var(--panel-h, 46%);
+    min-height: 10rem; max-height: 92%; display: flex; flex-direction: column;
+    background: var(--panel); border-top: 1px solid var(--line);
+    box-shadow: 0 -12px 34px rgb(0 0 0 / .45); z-index: 5;
   }
+  .chip-panel[hidden] { display: none; }
+  .panel-grip { height: 7px; cursor: ns-resize; background: linear-gradient(var(--line), transparent); flex: 0 0 auto; }
+  .panel-grip:hover { background: var(--accent); }
+  .panel-head {
+    display: flex; align-items: center; gap: .6rem; padding: .25rem .8rem .35rem; flex: 0 0 auto;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .panel-head .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .panel-head .title small { color: var(--dimmer); font-weight: 400; margin-left: .4rem; }
+  .panel-head button { padding: .25rem .6rem; }
+  .panel-body { flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr) 21rem; min-height: 0; }
+  @media (max-width: 52rem) { .panel-body { grid-template-columns: minmax(0, 1fr); } .panel-side { display: none; } }
+  .panel-roll { display: flex; flex-direction: column; min-height: 0; }
+  .roll-scroller { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--panel-2); }
   .roll-scroller canvas { position: sticky; top: 0; left: 0; display: block; z-index: 1; }
-  .roll-toolbar { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; margin-bottom: .6rem; }
-  .roll-toolbar .title { font-weight: 600; }
-  .roll-toolbar .title small { color: var(--dimmer); font-weight: 400; margin-left: .4rem; }
-  #hover { color: var(--dim); font: .8rem/1.5 ui-monospace, Consolas, monospace; min-height: 1.4em; margin-top: .4rem; }
-  .arrange-grid { display: grid; grid-template-columns: minmax(0, 1fr) 21rem; gap: .8rem; align-items: start; }
-  @media (max-width: 64rem) { .arrange-grid { grid-template-columns: minmax(0, 1fr); } }
-  .arrange-grid > section { margin: 0; }
+  #hover { color: var(--dim); font: .78rem/1.4 ui-monospace, Consolas, monospace; min-height: 1.3em; padding: .15rem .8rem; flex: 0 0 auto; }
+  .panel-side { overflow: auto; border-left: 1px solid var(--line); padding: .6rem .7rem; }
+  .panel-side .group { border: 0; padding: 0; }
+  .panel-side .group + .group { margin-top: .9rem; }
+  .help-dialog { width: min(40rem, 94vw); }
 
   /* The "which instrument?" dialog. */
   .picker-dialog {
@@ -281,42 +301,55 @@
 
 <main>
   <!-- ================================================================ Arrange -->
-  <div id="view-arrange" class="view">
-    <section>
-      <p class="step"><b>1</b> The board &mdash; four bars to a tile, one instrument per chip</p>
-      <div id="boardScroller" class="board-scroller" tabindex="0" aria-label="The board">
-        <canvas id="board"></canvas>
-        <div id="boardSpacer"></div>
-      </div>
-      <p class="hintline">
-        One row is selected at a time &mdash; click its number, a chip on it, or a cell &mdash; and
-        as the song plays the grid below follows the chip the playhead is inside on that row.
-        <strong>Drag across empty cells to draw a new chip</strong> as long as the drag &mdash; four
-        bars at least, then two at a time &mdash; and pick its instrument when you let go; a
-        double-click draws a four-bar one. Click a chip to edit its notes below; drag it to another
-        cell. Click the bar numbers to seek; drag the board&rsquo;s bottom-right corner to make it
-        taller. <kbd>Delete</kbd> removes the selected chip when the board has the focus,
-        <kbd>Ctrl+D</kbd> duplicates it into the cursor cell. A chip is as long as its note grid and
-        chips may overlap in time, though the game&rsquo;s composers rarely let them; the selected
-        one is drawn on top.
-      </p>
-    </section>
+  <div id="view-arrange" class="view arrange">
+    <div id="boardScroller" class="board-scroller" tabindex="0" aria-label="The board">
+      <canvas id="board"></canvas>
+      <div id="boardSpacer"></div>
+    </div>
 
-    <div class="arrange-grid">
-      <section>
-        <div class="roll-toolbar">
-          <span class="title" id="rollTitle">no instrument selected</span>
-          <span class="spacer"></span>
-          <label class="check" title="Three cells to the beat instead of four: each is four thirds of a step, which is what the record's thirds are for">
-            <input id="triplets" type="checkbox" autocomplete="off"> triplet grid
-          </label>
-          <button id="fitNotes" type="button" title="Scroll the grid to the notes">find the notes</button>
+    <!-- The chip panel: the selected instrument's notes and settings, up from the
+         bottom over the board. Its top edge drags to resize. -->
+    <div id="chipPanel" class="chip-panel" hidden>
+      <div id="panelGrip" class="panel-grip" title="Drag to resize"></div>
+      <div class="panel-head">
+        <span class="title" id="rollTitle">no instrument selected</span>
+        <span class="spacer"></span>
+        <label class="check" title="Three cells to the beat instead of four: each is four thirds of a step, which is what the record's thirds are for">
+          <input id="triplets" type="checkbox" autocomplete="off"> triplet grid
+        </label>
+        <button id="fitNotes" type="button" title="Scroll the grid to the notes">find the notes</button>
+        <button id="help" type="button" title="What the mouse and the keys do">?</button>
+        <button id="panelClose" type="button" aria-label="Close the panel" title="Close (Esc)">&times;</button>
+      </div>
+      <div class="panel-body">
+        <div class="panel-roll">
+          <div id="rollScroller" class="roll-scroller" tabindex="0" aria-label="The note grid">
+            <canvas id="roll"></canvas>
+            <div id="rollSpacer"></div>
+          </div>
+          <div id="hover"></div>
         </div>
-        <div id="rollScroller" class="roll-scroller" tabindex="0" aria-label="The note grid">
-          <canvas id="roll"></canvas>
-          <div id="rollSpacer"></div>
+        <div class="panel-side">
+          <div id="inspector"></div>
         </div>
-        <div id="hover"></div>
+      </div>
+    </div>
+
+    <dialog id="helpDialog" class="picker-dialog help-dialog">
+      <div class="picker-box">
+        <p class="picker-title">The board</p>
+        <p class="hintline">
+          One row is selected at a time &mdash; click its number, a chip on it, or a cell &mdash; and
+          as the song plays the grid follows the chip the playhead is inside on that row.
+          <strong>Drag across empty cells to draw a new chip</strong> as long as the drag &mdash; four
+          bars at least, then two at a time &mdash; and pick its instrument when you let go; a
+          double-click draws a four-bar one. Click a chip to open its notes; drag it to another
+          cell. Click the bar numbers to seek. <kbd>Delete</kbd> removes the selected chip when the
+          board has the focus, <kbd>Ctrl+D</kbd> duplicates it into the cursor cell. A chip is as
+          long as its note grid and chips may overlap in time, though the game&rsquo;s composers
+          rarely let them; the selected one is drawn on top.
+        </p>
+        <p class="picker-title">The notes</p>
         <p class="hintline">
           Click to place a note, drag to give it an end &mdash; sideways for a held note, diagonally
           for a glide. Drag a point to move it; <kbd>Shift</kbd>+drag up or down for its volume,
@@ -325,18 +358,19 @@
           <kbd>Shift</kbd>+drag on empty space selects; <kbd>Ctrl</kbd>+click adds to the selection.
           Arrow keys nudge the selection, <kbd>+</kbd>/<kbd>-</kbd> its volume, <kbd>[</kbd>/<kbd>]</kbd>
           its timbre, <kbd>Delete</kbd> removes it, <kbd>Ctrl+C</kbd>/<kbd>V</kbd> copy and paste,
-          <kbd>Ctrl+Z</kbd>/<kbd>Y</kbd> undo and redo, <kbd>Space</kbd> plays. The keyboard on the
-          left plays the instrument.
+          <kbd>Ctrl+Z</kbd>/<kbd>Y</kbd> undo and redo, <kbd>T</kbd> toggles the triplet grid,
+          <kbd>Space</kbd> plays. The keyboard on the left plays the instrument. Drag the
+          panel&rsquo;s top edge to resize it; <kbd>Esc</kbd> closes it.
         </p>
-      </section>
-      <section>
-        <p class="step">Selected</p>
-        <div id="inspector"></div>
-      </section>
-    </div>
+        <div class="row picker-foot">
+          <span class="spacer"></span>
+          <button id="helpClose" type="button">close</button>
+        </div>
+      </div>
+    </dialog>
   </div>
 
-  <!-- ================================================================== Mixer -->
+
   <div id="view-mixer" class="view" hidden>
     <section>
       <p class="step">The song&rsquo;s own settings, and the engine</p>

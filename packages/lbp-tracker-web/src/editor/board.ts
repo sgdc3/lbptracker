@@ -50,6 +50,8 @@ export interface BoardCallbacks {
   onCreate(at: { cell: number; row: number; steps: number }): void;
   /** Which instrument a GUID is, for the colour and the glyph. */
   instrument(guid: number): InstrumentInfo | undefined;
+  /** A chip was clicked -- not merely selected by the playhead. The page opens its panel. */
+  onPick?(clip: Clip): void;
 }
 
 const CELL_W = 44;
@@ -452,12 +454,16 @@ export class BoardView {
     if (!at) return;
     const clip = this.clipAt(at.cell, at.row);
     if (event.button === 2) {
-      if (clip) this.state.selectClip(clip.id);
+      if (clip) {
+        this.state.selectClip(clip.id);
+        this.cb.onPick?.(clip);
+      }
       return;
     }
     if (clip) {
       this.state.selection.cursor = null;
       this.state.selectClip(clip.id);
+      this.cb.onPick?.(clip);
       // Grabbed some cells into the chip: keep that offset while it is dragged.
       this.drag = { kind: 'move', clip, startX: x, startY: y, at: { cell: clip.cell, row: clip.row }, grab: at.cell - clip.cell, moved: false };
       capture(this.canvas, event);

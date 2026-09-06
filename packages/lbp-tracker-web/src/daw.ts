@@ -244,6 +244,18 @@ window.addEventListener('keydown', (event) => {
   else player.play();
 });
 
+// The arrange view is fixed between the bar and the footer, whose heights
+// depend on wrapping; measure them and hand them to the CSS.
+const measureChrome = () => {
+  const top = document.querySelector<HTMLElement>('.daw-top')?.offsetHeight ?? 0;
+  const foot = document.querySelector<HTMLElement>('.daw-foot')?.offsetHeight ?? 0;
+  document.documentElement.style.setProperty('--top-h', `${top}px`);
+  document.documentElement.style.setProperty('--foot-h', `${foot}px`);
+};
+new ResizeObserver(measureChrome).observe(document.querySelector('.daw-top')!);
+new ResizeObserver(measureChrome).observe(document.querySelector('.daw-foot')!);
+measureChrome();
+
 // ---------------------------------------------------------------- start up
 
 // The site opens on the arrange view of an empty song, as the owner asked;

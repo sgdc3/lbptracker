@@ -25,6 +25,8 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 export interface ArrangeHandle {
   readonly board: BoardView;
   readonly roll: RollView;
+  openPanel(): void;
+  closePanel(): void;
 }
 
 export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
@@ -33,6 +35,58 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
   const rollTitle = $<HTMLSpanElement>('rollTitle');
   const hoverLine = $<HTMLDivElement>('hover');
   const tripletsBox = $<HTMLInputElement>('triplets');
+  const view = $<HTMLDivElement>('view-arrange');
+  const panel = $<HTMLDivElement>('chipPanel');
+  const grip = $<HTMLDivElement>('panelGrip');
+
+  // ----------------------------------------------------------- the panel
+  // The selected chip's notes and settings, up from the bottom over the board.
+  // It opens when a chip is clicked or drawn, not when the playhead merely
+  // moves the selection, and stays where it was dragged to.
+
+  const openPanel = () => {
+    if (!panel.hidden) return;
+    panel.hidden = false;
+    roll.schedule();
+  };
+  const closePanel = () => {
+    panel.hidden = true;
+  };
+  $('panelClose').addEventListener('click', closePanel);
+  const helpDialog = $<HTMLDialogElement>('helpDialog');
+  $('help').addEventListener('click', () => helpDialog.showModal());
+  $('helpClose').addEventListener('click', () => helpDialog.close());
+  helpDialog.addEventListener('click', (event) => {
+    if (event.target === helpDialog) helpDialog.close();
+  });
+  try {
+    const stored = localStorage.getItem('lbp.panel-h');
+    if (stored) view.style.setProperty('--panel-h', stored);
+  } catch {
+    // no storage: the default height
+  }
+  grip.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startH = panel.getBoundingClientRect().height;
+    const total = view.getBoundingClientRect().height;
+    const move = (e: PointerEvent) => {
+      const h = Math.max(160, Math.min(total * 0.92, startH + (startY - e.clientY)));
+      view.style.setProperty('--panel-h', `${h}px`);
+      roll.schedule();
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      try {
+        localStorage.setItem('lbp.panel-h', view.style.getPropertyValue('--panel-h'));
+      } catch {
+        // no storage
+      }
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
 
   const board = new BoardView($<HTMLCanvasElement>('board'), boardScroller, $<HTMLDivElement>('boardSpacer'), state, {
     onSeek: (step) => player.hasPlan && player.seek(player.frameAt(Math.max(0, step))),
@@ -44,6 +98,7 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     },
     onCreate: (at) => void createChip(at),
     instrument: (guid) => byGuid.get(guid),
+    onPick: () => openPanel(),
   });
 
   const roll = new RollView(
@@ -81,6 +136,7 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     });
     state.selection.cursor = null;
     state.selectClip(added!.id);
+    openPanel();
     rollScroller.focus({ preventScroll: true });
   }
 
@@ -209,6 +265,11 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     const onBoard = target instanceof Node && boardScroller.contains(target);
     switch (event.code) {
       case 'Escape':
+        // Once to drop the selection, again to close the panel.
+        if (state.selection.noteIds.size === 0 && state.selection.point === null && !panel.hidden) {
+          closePanel();
+          return;
+        }
         state.selection.cursor = null;
         state.selectNotes([]);
         return;
@@ -295,5 +356,5 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     }
   });
 
-  return { board, roll };
+  return { board, roll, openPanel, closePanel };
 }
