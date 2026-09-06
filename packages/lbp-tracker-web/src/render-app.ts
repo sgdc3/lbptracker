@@ -53,7 +53,6 @@ const player = $<HTMLAudioElement>('player');
 const canvas = $<HTMLCanvasElement>('wave');
 const playPause = $<HTMLButtonElement>('playPause');
 const timesLabel = $<HTMLSpanElement>('times');
-const muteButton = $<HTMLButtonElement>('mute');
 const volSlider = $<HTMLInputElement>('vol');
 const drop = mountOpen('#open', { onOpen: (opened) => loadFrom(opened) });
 
@@ -155,7 +154,7 @@ function resetResults() {
   setError('');
   peaks = null;
   canvas.classList.add('empty');
-  for (const el of [playPause, muteButton, volSlider]) el.disabled = true;
+  for (const el of [playPause, volSlider]) el.disabled = true;
   paint();
   syncTransport();
 }
@@ -193,8 +192,6 @@ let scrubbing = false;
 
 const PLAY = '\u25b6';
 const PAUSE = '\u23f8';
-const LOUD = '\ud83d\udd0a';
-const MUTED = '\ud83d\udd07';
 
 /** `0:00` / `5:39`, and `-` before anything is loaded. */
 const clock = (seconds: number): string => {
@@ -231,8 +228,6 @@ function syncTransport() {
   timesLabel.textContent = `${clock(player.currentTime)} / ${clock(duration)}`;
   playPause.textContent = player.paused ? PLAY : PAUSE;
   playPause.setAttribute('aria-label', player.paused ? 'Play' : 'Pause');
-  muteButton.textContent = player.muted || player.volume === 0 ? MUTED : LOUD;
-  muteButton.setAttribute('aria-label', player.muted ? 'Unmute' : 'Mute');
   canvas.setAttribute('aria-valuemax', duration.toFixed(1));
   canvas.setAttribute('aria-valuenow', player.currentTime.toFixed(1));
   canvas.setAttribute(
@@ -320,11 +315,6 @@ volSlider.addEventListener('input', () => {
   syncTransport();
 });
 
-muteButton.addEventListener('click', () => {
-  player.muted = !player.muted;
-  syncTransport();
-});
-
 player.addEventListener('play', frame);
 player.addEventListener('pause', () => { paint(); syncTransport(); });
 player.addEventListener('ended', () => { paint(); syncTransport(); });
@@ -347,7 +337,7 @@ function drawWave(left: Float32Array, right: Float32Array) {
   }
   peaks = envelope;
   canvas.classList.remove('empty');
-  for (const el of [playPause, muteButton, volSlider]) el.disabled = false;
+  for (const el of [playPause, volSlider]) el.disabled = false;
   paint();
   syncTransport();
 }
@@ -432,26 +422,65 @@ worker.onmessage = (event: MessageEvent) => {
     goButton.disabled = false;
 
     const seconds = Number(stats.seconds);
-    const rows: [string, string][] = [
-      ['sequencer', `${String(message.name)} — ${message.tracks} tracks, ${message.tempo} BPM`],
-      ['rendered', `${seconds.toFixed(1)} s, ${Number(stats.frames).toLocaleString()} frames`],
-      ['notes', `${stats.played} played, ${stats.skipped} skipped, ${stats.stolen} cut by the voice pool`],
-      ['effects', `echo ${(Number(stats.echoRel) * 100).toFixed(1)}%, reverb ${(Number(stats.reverbRel) * 100).toFixed(1)}% of the dry mix`],
-      ['echo delay', `${Number(stats.echoSeconds).toFixed(3)} s`],
-      ['reverb preset', `[${(stats.reverbPreset as number[]).join(', ')}]`],
-      ['output clip', `${((100 * Number(stats.clippedFrames)) / Number(stats.frames)).toFixed(2)}% of frames`],
-      ['peak / RMS', `${Number(stats.peak).toFixed(3)} / ${Number(stats.rms).toFixed(5)}` +
-        (Number(stats.norm) !== 1 ? ` (normalised by ${Number(stats.norm).toFixed(3)})` : '')],
-      ['render time', `${Number(stats.elapsed).toFixed(2)} s — ${(seconds / Number(stats.elapsed)).toFixed(1)}x realtime`],
-      ['  of which', `voices ${(Number(stats.voicesMs) / 1000).toFixed(2)} s, mix ${(Number(stats.mixMs) / 1000).toFixed(2)} s, effects ${(Number(stats.effectsMs) / 1000).toFixed(2)} s`],
+    const frames = Number(stats.frames);
+    const elapsed = Number(stats.elapsed);
+    const pct = (x: unknown) => `${(Number(x) * 100).toFixed(1)}%`;
+    const secs = (ms: unknown) => `${(Number(ms) / 1000).toFixed(2)} s`;
+    const esc = (x: unknown) =>
+      String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // One card per topic: the number a listener asks about first, large; what
+    // qualifies it, as label/value rows underneath. The order is the order the
+    // questions come in — what was rendered, what happened to the notes, what
+    // the effects added, what came out, and how long it took.
+    type Card = { title: string; big: string; unit?: string; rows: [string, string][]; span?: boolean };
+    const cards: Card[] = [
+      {
+        title: 'Sequencer', big: esc(message.name), span: true,
+        rows: [
+          ['tracks', String(message.tracks)],
+          ['tempo', `${message.tempo} BPM`],
+          ['rendered', `${seconds.toFixed(1)} s, ${frames.toLocaleString()} frames`],
+        ],
+      },
+      {
+        title: 'Notes', big: String(stats.played), unit: 'played',
+        rows: [
+          ['skipped', String(stats.skipped)],
+          ['cut by the voice pool', String(stats.stolen)],
+        ],
+      },
+      {
+        title: 'Effects', big: pct(stats.echoRel), unit: 'echo, of the dry mix',
+        rows: [
+          ['echo delay', `${Number(stats.echoSeconds).toFixed(3)} s`],
+          ['reverb', pct(stats.reverbRel)],
+          ['reverb preset', `[${(stats.reverbPreset as number[]).join(', ')}]`],
+        ],
+      },
+      {
+        title: 'Output', big: Number(stats.peak).toFixed(3), unit: 'peak',
+        rows: [
+          ['RMS', Number(stats.rms).toFixed(5)],
+          ['clipped', `${((100 * Number(stats.clippedFrames)) / frames).toFixed(2)}% of frames`],
+          ...(Number(stats.norm) !== 1 ? [['normalised by', Number(stats.norm).toFixed(3)] as [string, string]] : []),
+        ],
+      },
+      {
+        title: 'Render time', big: `${elapsed.toFixed(2)} s`, unit: `${(seconds / elapsed).toFixed(1)}x realtime`,
+        rows: [
+          ['voices', secs(stats.voicesMs)],
+          ['mix', secs(stats.mixMs)],
+          ['effects', secs(stats.effectsMs)],
+        ],
+      },
     ];
-    // A row whose value is long gets the full width rather than being squeezed
-    // into a column; everything measured still shows, which is the point.
-    statsGrid.innerHTML = rows
-      .map(([k, v]) => {
-        const wide = v.length > 44 ? ' wide' : '';
-        return `<div class="stat${wide}"><span class="k">${k}</span><span class="v">${v}</span></div>`;
-      })
+    statsGrid.innerHTML = cards
+      .map(
+        (c) =>
+          `<div class="stat-card${c.span ? ' span' : ''}"><h3>${c.title}</h3>` +
+          `<div class="big">${c.big}${c.unit ? `<small>${c.unit}</small>` : ''}</div>` +
+          `<dl>${c.rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`,
+      )
       .join('');
     setBar(1);
     setBusy(false);

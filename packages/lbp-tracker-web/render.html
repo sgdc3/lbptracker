@@ -40,26 +40,35 @@
   #hint { color: var(--dimmer); font-size: .8rem; }
   #vol { width: 7rem; }
 
+  /* "What the render did": one card per topic, the headline number large,
+     the rest as label/value rows underneath. */
   #stats {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
-    gap: 0 1.5rem;
-    /* A long value takes the whole width; `dense` then backfills the cell it
-       would otherwise have left empty, so the list has no holes in it. */
-    grid-auto-flow: dense;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: .8rem;
   }
   #stats:empty { display: none; }
   .note-empty { display: none; color: var(--dimmer); font-size: .9rem; margin: 0; }
   #stats:empty + .note-empty { display: block; }
-  .stat {
-    display: flex; gap: .8rem; justify-content: space-between; align-items: baseline;
-    padding: .42rem 0; border-bottom: 1px solid var(--line-soft); min-width: 0;
+  .stat-card {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: .7rem .9rem; min-width: 0;
   }
-  .stat .k { color: var(--dim); font-size: .88rem; white-space: nowrap; }
-  .stat .v {
-    font-family: ui-monospace, Consolas, monospace; font-size: .86rem;
+  .stat-card h3 {
+    margin: 0 0 .35rem; font-size: .72rem; font-weight: 600; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--dimmer);
+  }
+  .stat-card .big {
+    font-family: ui-monospace, Consolas, monospace; font-size: 1.35rem; line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+  .stat-card .big small { font-size: .8rem; color: var(--dim); font-family: inherit; margin-left: .3rem; }
+  .stat-card dl { margin: .5rem 0 0; display: grid; grid-template-columns: auto 1fr; gap: .2rem .8rem; }
+  .stat-card dt { color: var(--dim); font-size: .82rem; white-space: nowrap; }
+  .stat-card dd {
+    margin: 0; font-family: ui-monospace, Consolas, monospace; font-size: .82rem;
     text-align: right; overflow-wrap: anywhere;
   }
-  .stat.wide { grid-column: 1 / -1; }
+  .stat-card.span { grid-column: 1 / -1; }
 
   #errorCard { display: none; }
   #errorCard.show { display: block; }
@@ -173,7 +182,6 @@
         <span id="times" class="mono">0:00 / 0:00</span>
         <span class="spacer"></span>
         <span id="hint">click to seek &middot; space to play &middot; arrows to scrub</span>
-        <button id="mute" type="button" aria-label="Mute" disabled>&#128266;</button>
         <input id="vol" type="range" min="0" max="1" step="0.01" value="1"
                aria-label="Volume" disabled>
       </div>
