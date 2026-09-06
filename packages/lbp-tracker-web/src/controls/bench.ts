@@ -1,5 +1,5 @@
 /**
- * The instrument bench's controls — `index.html`.
+ * The instrument bench's controls — `keyboard.html`.
  *
  * See `kit.ts` for what this table replaced and why the shape is what it is.
  * ⚠️ **`as const satisfies` narrows away the optional fields**: it is what makes

@@ -111,8 +111,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: path.join(HERE, 'index.html'),
+        keyboard: path.join(HERE, 'keyboard.html'),
         live: path.join(HERE, 'live.html'),
-        editor: path.join(HERE, 'editor.html'),
         render: path.join(HERE, 'render.html'),
         midi: path.join(HERE, 'midi.html'),
       },

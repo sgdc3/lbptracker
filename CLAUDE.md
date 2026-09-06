@@ -53,7 +53,7 @@ Steering files (read on demand, per the hints):
   implementation: the three packages and where the seam runs, why the mixer is ours and lives in
   an AudioWorklet, why the web layer has a bundler and Vue and the libraries have neither, the
   live player's invariants, the build order and what exists.
-- [steering/editor.md](steering/editor.md) — **read before touching `editor.html`, `src/editor/`,
+- [steering/editor.md](steering/editor.md) — **read before touching `index.html` (the editor), `src/editor/`,
   `src/player.ts` or `lib/src/song.ts`**: what the editor draws and why it matches the game's two
   grids, the editable model and its boundary through the record encoder, the shared player and
   which edits rebuild the plan, the two canvases, how to check it, and what is not there yet.

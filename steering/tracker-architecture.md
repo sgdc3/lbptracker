@@ -278,7 +278,7 @@ The formats are in [level-files.md](level-files.md); this is the behaviour aroun
 ## The live player — settings are applied, not re-planned
 
 ❗ **The player is `packages/lbp-tracker-web/src/player.ts`, one class shared by `live.html` and
-`editor.html`** since 2026-09-06; the invariants below are its, and the pages own only the DOM
+`index.html`, the editor** since 2026-09-06; the invariants below are its, and the pages own only the DOM
 around it. ⚠️ While the scheduler lived in `live.ts` its gain read `channelVolume` without the
 board's height, so rows were re-banded by the modulo fallback on the way back in — the plan's gain
 having been divided out under the bands — and every multi-channel song was mixed on the wrong
@@ -363,7 +363,7 @@ the quietest (`polyphony.ts`).
    cells 0–334, rows 0–24), and `dev/verify-levels.ts` matches cwlib's dump on 149 sequencers and
    62,158 placements byte for byte.
 5. ~~**Echo, reverb, compressor**~~ — done and measured (`audio/effects.ts`, `audio/compressor.ts`).
-6. **The editor.** Started 2026-09-06 — `editor.html`: the board and the piano roll as canvases,
+6. **The editor.** Started 2026-09-06 — `index.html`, the front page: the board and the piano roll as canvases,
    an editable song model whose boundary is the game's own record encoder, undo, a project file,
    and playback of every edit through the shared player. [editor.md](editor.md) has it, including
    what is not there yet.
@@ -375,7 +375,7 @@ the quietest (`polyphony.ts`).
 |---|---|
 | `packages/cwlib-ts/src/` | `stream.ts` (big-endian reader, varints, `Revision` gates), `serializer.ts`, `resource.ts` (container, dependency table), `thing.ts` + `parts.ts` (the walk, 50 readers), `level.ts` (worlds, plans, chunks, `boardCell`), `project.ts` + `notes.ts` (the sequencer as data), `savearchive.ts`, `psf.ts`, `zip.ts`, `backup.ts`, `platform/` |
 | `packages/lbp-tracker-lib/src/` | `render.ts` (the pipeline), `audio/mixer.ts` (voices, resampling, panning, looping, per-chunk re-derivation), `audio/interpolate.ts` + `mipmap.ts` (default `linear`; `sinc8` kept for A/B), `audio/moog.ts`, `audio/lfo.ts`, `audio/effects.ts` (echo, reverb, fold constants), `audio/compressor.ts`, `audio/mixer-worklet.ts`, `rinstrument.ts` + `instrument.ts` + `voice.ts`, `envelope.ts`, `params.ts`, `polyphony.ts`, `scale.ts`, `swing.ts`, `fsb.ts` + `ima.ts` + `wav.ts`, `midi.ts` + `smf.ts`, `song.ts` (the editable song and its boundary with the records) |
-| `packages/lbp-tracker-web/` | `index.html` the instrument bench; `live.html` the live player; `editor.html` the editor; `render.html` the offline renderer, in a worker; `midi.html` the MIDI bridge; `src/player.ts` the scheduler the live page and the editor share; `src/editor/` the board, the roll, the state and the panels; `src/controls/`, `src/widgets/`, `src/assets.ts`, `src/lbparchive.ts`, `src/footer.ts` |
+| `packages/lbp-tracker-web/` | `index.html` the editor, the front page; `live.html` the live player; `render.html` the offline renderer, in a worker ("Render" in the nav); `midi.html` the MIDI bridge ("Converter" in the nav); `keyboard.html` the instrument bench; `src/player.ts` the scheduler the live page and the editor share; `src/editor/` the board, the roll, the state and the panels; `src/controls/`, `src/widgets/`, `src/assets.ts`, `src/lbparchive.ts`, `src/footer.ts` |
 
 ## Testing against the corpus
 

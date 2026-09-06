@@ -1,6 +1,7 @@
 # The editor — the sequencer as a thing you compose in
 
-Read before touching `packages/lbp-tracker-web/editor.html`, `src/editor.ts`, `src/editor/*`,
+Read before touching `packages/lbp-tracker-web/index.html` (the editor is the site's front page since
+2026-09-06; the instrument bench moved to `keyboard.html`), `src/editor.ts`, `src/editor/*`,
 `src/player.ts` or `packages/lbp-tracker-lib/src/song.ts`. This is how the editor is built and why;
 what the game's data means is in [sequencer-data-model.md](sequencer-data-model.md) and the
 architecture it sits in is [tracker-architecture.md](tracker-architecture.md). Started 2026-09-06;

@@ -3,240 +3,202 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LBP Tracker — keyboard</title>
+<title>LBP Tracker — editor</title>
 <link rel="stylesheet" href="./ui.css">
 <style>
-  /* Only what is particular to the keyboard; the rest is in ui.css. */
+  /* Only what is particular to the editor; the rest is in ui.css. */
+  main { max-width: 96rem; }
 
-  /* ------------------------------------------------------------------ piano */
-  #piano {
-    position: relative; height: 148px; margin: 0; user-select: none;
+  /* The board: a viewport-sized sticky canvas over a spacer, like the roll's;
+     resizable in height by its corner handle, never in width. */
+  .board-scroller {
+    position: relative; overflow: auto; height: 32rem; min-height: 8rem; resize: vertical;
     background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
-    overflow: hidden; touch-action: none; display: flex;
   }
-  #piano:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .wkey {
-    position: relative; flex: 1 1 0; min-width: 0; height: 100%;
-    background: linear-gradient(#eef1f4, #cdd3da);
-    border-right: 1px solid #9aa3ad; cursor: pointer;
-    display: flex; flex-direction: column; justify-content: flex-end;
-    align-items: center; padding-bottom: .3rem; gap: .15rem;
-  }
-  .wkey:last-child { border-right: 0; }
-  .wkey.down { background: linear-gradient(#9fe3c1, #6fd3a0); }
-  .bkey {
-    position: absolute; top: 0; height: 62%; width: 1.9%; z-index: 2;
-    background: linear-gradient(#2a3138, #12161b);
-    border: 1px solid #05070a; border-top: 0; border-radius: 0 0 3px 3px;
-    cursor: pointer; display: flex; flex-direction: column; justify-content: flex-end;
-    align-items: center; padding-bottom: .25rem; gap: .15rem;
-  }
-  .bkey.down { background: linear-gradient(#4e9c78, #2f7d59); }
-  /* The slot a note resolves to, painted on the key: the key-split zones are
-     visible while you play them, which is what the bench is for. */
-  .zone { width: 62%; height: 4px; border-radius: 2px; }
-  .caps { max-width: 100%; overflow: hidden; white-space: nowrap; }
-  .wkey .caps { font: 600 .62rem/1 ui-monospace, Consolas, monospace; color: #4a525c; }
-  .bkey .caps { font: 600 .58rem/1 ui-monospace, Consolas, monospace; color: #93a0ad; }
-  .wkey .lbl { font: .58rem/1 ui-monospace, Consolas, monospace; color: #78828e; }
+  .board-scroller canvas { position: sticky; top: 0; left: 0; display: block; z-index: 1; }
+  .board-scroller:focus-visible, .roll-scroller:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-  /* ----------------------------------------------------------------- params */
+  /* The transport sits over the board: play, rewind, the clock, the volume. */
+  #transport {
+    display: flex; align-items: center; gap: .6rem; padding: .5rem .65rem; margin-bottom: .6rem;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  }
+  #transport button { padding: .3rem .7rem; line-height: 1.2; min-width: 2.4rem; }
+  #clock { color: var(--dim); font-size: .9rem; }
+  #load { color: var(--dimmer); font-size: .8rem; }
+  #vol { width: 7rem; }
+
+  /* The piano roll: a viewport-sized sticky canvas over a spacer. */
+  .roll-scroller {
+    position: relative; overflow: auto; height: 30rem; background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 8px;
+  }
+  .roll-scroller canvas { position: sticky; top: 0; left: 0; display: block; z-index: 1; }
+  .roll-toolbar { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; margin-bottom: .6rem; }
+  .roll-toolbar .title { font-weight: 600; }
+  .roll-toolbar .title small { color: var(--dimmer); font-weight: 400; margin-left: .4rem; }
+  #hover { color: var(--dim); font: .8rem/1.5 ui-monospace, Consolas, monospace; min-height: 1.4em; margin-top: .4rem; }
+
+  /* The inspector reuses the live page's knob layout. */
   .group > h3 {
     margin: 0 0 .55rem; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase;
-    color: var(--dimmer); display: flex; align-items: center; gap: .5rem;
+    color: var(--dimmer);
   }
-  .group > h3 .check { font-size: .72rem; margin-left: auto; letter-spacing: 0; text-transform: none; }
-  .knob { display: grid; grid-template-columns: 5.4rem 1fr 3.4rem; gap: .5rem; align-items: center; }
+  .knob { display: grid; grid-template-columns: 5.6rem 1fr 5.2rem; gap: .5rem; align-items: center; }
   .knob + .knob { margin-top: .3rem; }
   .knob label { font-size: .84rem; }
-  .knob input[type="range"] { width: 100%; min-width: 0; }
-  .knob output {
-    font: .78rem/1 ui-monospace, Consolas, monospace; color: var(--dim); text-align: right;
-  }
-  .group.off .knob { opacity: .4; }
+  .knob input[type="range"], .knob select, .knob input[type="text"] { width: 100%; min-width: 0; }
+  .knob input[type="text"].wide, .knob select.wide { grid-column: 2 / 4; }
+  .knob input[type="text"] { text-align: left; font-family: inherit; }
+  .knob output { font: .78rem/1 ui-monospace, Consolas, monospace; color: var(--dim); text-align: right; }
+  .group.off { opacity: .55; }
 
-  /* ------------------------------------------------------------ diagnostics */
-  #splits, #octave, #meter, #detail {
-    font-family: ui-monospace, Consolas, monospace; font-size: .85rem; min-height: 1.4em;
+  /* The "which instrument?" dialog. */
+  .picker-dialog {
+    background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 0; width: min(26rem, 92vw);
+    box-shadow: 0 18px 50px rgb(0 0 0 / .55);
   }
-  #splits, #meter { color: var(--dim); }
-  #meter.bad { color: var(--bad); font-weight: 600; }
-  #octave { color: var(--ink); }
-  #detail { color: var(--accent); }
-  #log {
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
-    padding: .75rem; max-height: 14rem; overflow: auto;
-    font-family: ui-monospace, Consolas, monospace; font-size: .8rem; color: var(--dim);
+  .picker-dialog::backdrop { background: rgb(0 0 0 / .55); }
+  .picker-box { padding: 1rem 1.1rem 1rem; }
+  .picker-title { margin: 0 0 .6rem; font-size: .95rem; color: var(--dim); }
+  .picker-list.picker-tall { max-height: 20rem; }
+  .picker-family {
+    font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--dimmer);
+    padding: .45rem .5rem .2rem;
   }
-  #log .bad { color: var(--bad); }
-  #midiState { color: var(--dimmer); font-size: .85rem; }
-  #midiState.on { color: var(--accent); }
-  #mpeLive {
-    font: .78rem/1.5 ui-monospace, Consolas, monospace; color: var(--accent);
-    margin-left: auto; white-space: nowrap;
+  .picker-swatch { width: .7rem; height: .7rem; border-radius: 3px; flex: 0 0 auto; }
+  .picker-foot { margin-top: .6rem; }
+
+  kbd {
+    font: .78rem ui-monospace, Consolas, monospace; background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 4px; padding: 0 .3rem;
   }
-  .hintline kbd {
-    font: .78rem/1 ui-monospace, Consolas, monospace; color: var(--ink);
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px;
-    padding: .1rem .3rem;
-  }
+  #errorCard { display: none; }
+  #errorCard.show { display: block; }
+  #file { display: none; }
 </style>
 </head>
 <body>
 <nav class="nav">
   <a class="brand" href="./index.html">LBP Tracker</a>
-  <a class="tab" href="./index.html" aria-current="page">Keyboard</a>
+  <a class="tab" href="./index.html" aria-current="page">Editor</a>
   <a class="tab" href="./live.html">Live</a>
-  <a class="tab" href="./editor.html">Editor</a>
-  <a class="tab" href="./render.html">Renderer</a>
-  <a class="tab" href="./midi.html">MIDI</a>
+  <a class="tab" href="./render.html">Render</a>
+  <a class="tab" href="./midi.html">Converter</a>
+  <a class="tab" href="./keyboard.html">Keyboard</a>
   <span class="spacer"></span>
   <span class="where">everything runs on your machine</span>
 </nav>
 <main>
   <header>
-    <h1>Play the game&rsquo;s instruments</h1>
+    <h1>Compose on the game&rsquo;s own grid</h1>
     <p class="sub">
-      LittleBigPlanet&nbsp;3&rsquo;s own sequencer instruments, live, through this project&rsquo;s
-      reader, key splits, pitch formula, mixer and output stage. Play them with the mouse, the
-      computer keyboard or a MIDI controller, and turn every voice and effect parameter while it
-      sounds. <strong>Assets come from your own install</strong> and nothing leaves this machine.
+      The Music Sequencer as an editor: a board of instruments, eight steps to a bar, and inside
+      each one a note grid where a note is a chain of points &mdash; the size of a point its volume,
+      its colour its timbre, and a straight line between two points the glide the engine plays.
+      Every change is heard through the same engine as the renderer, at once.
+      <strong>Everything happens on your own computer.</strong>
     </p>
   </header>
 
   <section>
-    <p class="step"><b>1</b> Pick an instrument</p>
-    <div class="row">
-      <label for="instrument">instrument</label>
-      <select id="instrument">
-        <option value="" selected disabled>pick one&hellip;</option>
-      </select>
+    <p class="step"><b>1</b> Start from a level, a saved song, or nothing</p>
+    <div id="open"></div>
+    <div class="row" style="margin-top:.7rem">
+      <button id="newSong" type="button">new empty song</button>
+      <button id="openSong" type="button">open a saved song (.json)…</button>
+      <input id="file" type="file" accept=".json,application/json" autocomplete="off">
       <span class="spacer"></span>
-      <label for="midiIn">MIDI in</label>
-      <select id="midiIn"><option value="">none</option></select>
-      <span id="midiState">not requested</span>
+      <label for="seq">sequencer</label>
+      <div id="seq"></div>
     </div>
-    <div class="row">
-      <label for="mpeMode">MPE</label>
-      <select id="mpeMode">
-        <option value="auto" selected>auto &mdash; take the zone the controller announces</option>
-        <option value="lower">lower zone &mdash; master ch 1, notes on 2&ndash;16</option>
-        <option value="upper">upper zone &mdash; master ch 16, notes on 1&ndash;15</option>
-        <option value="off">off &mdash; plain MIDI, one channel</option>
-      </select>
-      <label for="bendRange">bend range</label>
-      <select id="bendRange">
-        <option value="1">&plusmn;1</option>
-        <option value="2" selected>&plusmn;2 &mdash; a plain wheel</option>
-        <option value="7">&plusmn;7</option>
-        <option value="12">&plusmn;12</option>
-        <option value="24">&plusmn;24</option>
-        <option value="48">&plusmn;48 &mdash; the MPE default</option>
-        <option value="96">&plusmn;96</option>
-      </select>
-      <span id="mpe-toggles" style="display:contents"></span>
-    </div>
-    <div class="row" style="margin-top:.5rem">
-      <span class="hintline" id="mpeState" style="margin:0"></span>
-      <span id="mpeLive"></span>
-    </div>
-    <p class="hintline">
-      MPE gives every sounding note its own MIDI channel, so a bend, a press or a slide belongs to
-      one finger instead of to the whole keyboard &mdash; which is what a Seaboard, a LinnStrument
-      or an Osmose needs to play at all. Bend and press reach the engine where its own written
-      glides do, the rate and the gain; <strong>slide&rsquo;s landing on the cutoff is this
-      page&rsquo;s convention, not the game&rsquo;s</strong> &mdash; LBP3 has no MIDI to be faithful
-      to. Instruments that leave their filter wide open will not answer it.
-    </p>
-    <div id="status"></div>
-    <div id="splits"></div>
+    <div id="status">start a new song, or open a level</div>
   </section>
 
-  <div id="controls" hidden>
-    <section>
-      <p class="step"><b>2</b> Play</p>
-      <div id="piano" tabindex="0" role="group" aria-label="Keyboard"></div>
-      <p class="hintline">
-        <kbd>Z S X D C V G B H N J M</kbd> is one octave with its sharps,
-        <kbd>Q 2 W 3 E R 5 T 6 Y 7 U</kbd> the octave above,
-        <kbd>&larr;</kbd> <kbd>&rarr;</kbd> shift octave, <kbd>Esc</kbd> panics.
-        A note lasts as long as the key is down.
-      </p>
-      <div class="row" style="margin-top:.7rem">
-        <div id="octave"></div>
-        <span class="spacer"></span>
-        <div id="meter"></div>
-      </div>
-      <div id="detail"></div>
-    </section>
+  <section>
+    <p class="step"><b>2</b> The board &mdash; four bars to a tile, one instrument per chip</p>
+    <div id="transport">
+      <button id="play" aria-label="Play" disabled>&#9654;</button>
+      <button id="rewind" aria-label="Back to the start" disabled>&#9198;</button>
+      <span id="clock" class="mono">0:00 / 0:00</span>
+      <span class="spacer"></span>
+      <span id="load">idle</span>
+      <input id="vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" autocomplete="off">
+    </div>
+    <div id="boardScroller" class="board-scroller" tabindex="0" aria-label="The board">
+      <canvas id="board"></canvas>
+      <div id="boardSpacer"></div>
+    </div>
+    <p class="hintline">
+      One row is selected at a time &mdash; click its number, a chip on it, or a cell &mdash; and
+      as the song plays the grid below follows the chip the playhead is inside on that row.
+      <strong>Drag across empty cells to draw a new chip</strong> as long as the drag &mdash; four
+      bars at least, then two at a time &mdash; and pick its instrument when you let go; a
+      double-click draws a four-bar one. Click a chip to edit its notes below; drag it to another
+      cell. Click the bar numbers to seek; drag the board&rsquo;s bottom-right corner to make it
+      taller. <kbd>Delete</kbd> removes the selected chip when the board has the focus,
+      <kbd>Ctrl+D</kbd> duplicates it into the cursor cell. A chip is as long as its note grid
+      &mdash; four bars, then two more at a time &mdash; and chips may overlap in time, though the
+      game&rsquo;s composers rarely let them; the selected one is drawn on top.
+    </p>
+  </section>
 
-    <section>
-      <p class="step"><b>3</b> Turn things while it sounds</p>
-      <p class="hintline" style="margin-top:-.2rem">
-        Double-click any fader to put it back where it started.
-      </p>
-      <!-- packages/lbp-tracker-web/src/controls/ControlPanel.vue -->
-      <div id="control-panel"></div>
-    </section>
+  <section>
+    <p class="step"><b>3</b> The notes</p>
+    <div class="roll-toolbar">
+      <span class="title" id="rollTitle">no instrument selected</span>
+      <span class="spacer"></span>
+      <label class="check" title="Three cells to the beat instead of four: each is four thirds of a step, which is what the record's thirds are for">
+        <input id="triplets" type="checkbox" autocomplete="off"> triplet grid
+      </label>
+      <button id="fitNotes" type="button" title="Scroll the grid to the notes">find the notes</button>
+    </div>
+    <div id="rollScroller" class="roll-scroller" tabindex="0" aria-label="The note grid">
+      <canvas id="roll"></canvas>
+      <div id="rollSpacer"></div>
+    </div>
+    <div id="hover"></div>
+    <p class="hintline">
+      Click to place a note, drag to give it an end &mdash; sideways for a held note, diagonally
+      for a glide. Drag a point to move it; <kbd>Shift</kbd>+drag up or down for its volume,
+      <kbd>Alt</kbd>+drag for its timbre. Double-click a line to add a point, double-click a point
+      to remove it; right-click removes a point or, on the line, the whole note.
+      <kbd>Shift</kbd>+drag on empty space selects; <kbd>Ctrl</kbd>+click adds to the selection.
+      Arrow keys nudge the selection, <kbd>+</kbd>/<kbd>-</kbd> its volume, <kbd>[</kbd>/<kbd>]</kbd>
+      its timbre, <kbd>Delete</kbd> removes it, <kbd>Ctrl+C</kbd>/<kbd>V</kbd> copy and paste,
+      <kbd>Ctrl+Z</kbd>/<kbd>Y</kbd> undo and redo, <kbd>Space</kbd> plays. The keyboard on the
+      left plays the instrument.
+    </p>
+  </section>
 
-    <section>
-      <p class="step"><b>4</b> Bench</p>
-      <div class="row">
-        <button id="octaves">Every slot at its base note</button>
-        <button id="scale">C major, five octaves</button>
-        <button id="chromatic">Chromatic C1&rarr;C7</button>
-        <button id="stop">Stop</button>
-      </div>
-      <div class="row">
-        <div id="note-length" style="flex:1 1 19rem; max-width:24rem"></div>
-        <p class="hintline" style="margin:0; flex:1 1 15rem">
-          How long each note of those sequences is held. The keyboard above ignores it &mdash; a
-          key sounds for as long as you hold it.
-        </p>
-      </div>
-      <div class="row">
-        <label for="engine">engine</label>
-        <select id="engine">
-          <option value="ours" selected>our mixer</option>
-          <option value="browser">browser resampler (control)</option>
-        </select>
-        <label for="interp">sampler</label>
-        <select id="interp">
-          <option value="engine" selected>the game's (linear + mipmaps)</option>
-          <option value="sinc8">windowed sinc</option>
-          <option value="cubic">cubic</option>
-          <option value="linear">linear</option>
-          <option value="nearest">nearest</option>
-        </select>
-        <span id="stage-toggles" style="display:contents"></span>
-      </div>
+  <section>
+    <p class="step"><b>4</b> Settings</p>
+    <div id="inspector"></div>
+  </section>
 
-      <details>
-        <summary>What this bench is for</summary>
-        <p class="hintline">
-          <strong>Every slot at its base note</strong> plays each sample at ratio exactly 1.0 &mdash;
-          they should sound like one instrument, and a timbre step between them means the splits or
-          the pitch formula are wrong. The coloured bar on each key shows which slot it resolves to,
-          so the key-split zones are visible while you play them. Every pitched sample carries a loop
-          point in its <code>smpl</code> chunk and the mixer honours it, so a note&rsquo;s length
-          follows the <em>note</em>, not the sample divided by the playback rate.
-        </p>
-        <p class="hintline">
-          <strong>The control.</strong> Switching <em>engine</em> to &ldquo;browser resampler&rdquo;
-          plays the identical sample at the identical pitch through the browser&rsquo;s own
-          resampler. Clean there and dirty here means the fault is ours. That control is what proved
-          an earlier distortion was the wrong source material &mdash; the 4-bit SFX-bank copies
-          &mdash; rather than anything in this pipeline.
-        </p>
-      </details>
-    </section>
+  <section>
+    <p class="step"><b>5</b> Keep it</p>
+    <div class="row">
+      <button id="save" type="button" class="primary">save the song (.json)</button>
+      <button id="toLive" type="button">open in the live player</button>
+      <button id="toMidi" type="button">download as MIDI</button>
+      <span class="spacer"></span>
+      <span id="saveNote" class="hintline" style="margin:0"></span>
+    </div>
+    <p class="hintline">
+      The song file is this tracker&rsquo;s own format &mdash; JSON, every note as you placed it.
+      Writing it back into a level the game can load is the next thing to build; until then the
+      MIDI carries the placements and the live player and the renderer play the song as the game
+      would.
+    </p>
+  </section>
 
-    <section>
-      <p class="step">Log</p>
-      <div id="log"></div>
-    </section>
-  </div>
+  <section id="errorCard">
+    <p class="step">Error</p>
+    <pre id="error"></pre>
+  </section>
 </main>
-<script type="module" src="./src/app.ts"></script>
+<script type="module" src="./src/editor.ts"></script>
 </body>
 </html>
