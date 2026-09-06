@@ -141,7 +141,8 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
         'volume and position; the two <strong>sends</strong> say how much of it goes to the song\'s echo and reverb. ' +
         '<strong>Loop this chip</strong> cuts the song off and goes round the chip\'s bars with every other row at a ' +
         'fifth of its volume, to hear the part in place while you edit it. It follows the chip you select; pressing ' +
-        'it again plays the song on from the chip\'s start, and stop, or closing the panel, ends it too. ' +
+        'it again leaves the song at the chip\'s start, playing on from there if it was playing before, and stop, ' +
+        'or closing the panel, ends it too. ' +
         'Drag the panel\'s top edge to resize it; <kbd>Esc</kbd> closes it.'),
   },
   song: {

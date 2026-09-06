@@ -39,8 +39,8 @@ not before, never how it was done. No `--` or em dash in here; the site's text d
 - Editing inside a chip while the song plays is heard at once, without a stutter: only that chip
   is re-planned, and nothing already on its way to the speakers is played twice.
 - "Loop this chip" in the note panel cuts the song off and goes round the chip's bars with every
-  other row at a fifth of its volume, to work on one part in place; pressing it again plays the
-  song on from the chip's start.
+  other row at a fifth of its volume, to work on one part in place; pressing it again leaves the
+  song at the chip's start, playing on from there if it was playing before.
 - The chip's own settings beside the grid: its length in bars (four, then two at a time), key and
   scale, level, pan, and its sends to the echo and the reverb; and the selected point's pitch,
   volume and timbre as sliders.

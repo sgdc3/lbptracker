@@ -135,6 +135,8 @@
   .panel-head .title small { color: var(--dimmer); font-weight: 400; margin-left: .4rem; }
   .panel-head button { padding: .25rem .6rem; }
   .panel-head button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+  /* The "?" keeps its round shape here: `.panel-head button` above would pad it off-centre. */
+  .panel-head .help-btn { padding: 0; }
   .panel-body { flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr) 21rem; min-height: 0; }
   @media (max-width: 52rem) { .panel-body { grid-template-columns: minmax(0, 1fr); } .panel-side { display: none; } }
   .panel-roll { display: flex; flex-direction: column; min-height: 0; }

@@ -286,11 +286,14 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
   // every other row at a fifth: hearing one part in place while editing it.
   // Arming it cuts the song off -- whatever was ringing goes, so the loop
   // begins clean -- and starts the loop from the chip's start; disarming it
-  // cuts the loop off the same way and plays the song on from the chip's
-  // start. It follows the selection to another chip, and it is dropped when
-  // the panel closes, the transport is stopped, or the song goes.
+  // cuts the loop off the same way and leaves the song at the chip's start,
+  // playing on from there only if it was playing when the loop was armed. It
+  // follows the selection to another chip, and it is dropped when the panel
+  // closes, the transport is stopped, or the song goes.
   const loopButton = $<HTMLButtonElement>('loopChip');
   let loopingClip: number | null = null;
+  /** Whether the song was playing when the loop was armed: what disarming goes back to. */
+  let playingBefore = false;
   const aimChipLoop = (clip: Clip, seekToStart: boolean) => {
     const start = clip.cell * STEPS_PER_CELL;
     loopingClip = clip.id;
@@ -310,7 +313,7 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     if (resume && clip && player.hasPlan) {
       player.stop();
       player.seek(player.frameAt(clip.cell * STEPS_PER_CELL));
-      player.play();
+      if (playingBefore) player.play();
     }
   };
   loopButton.addEventListener('click', () => {
@@ -318,6 +321,7 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     if (loopingClip !== null) {
       dropChipLoop(true);
     } else if (clip) {
+      playingBefore = player.playing;
       player.stop();
       aimChipLoop(clip, true);
       if (player.hasPlan) player.play();
