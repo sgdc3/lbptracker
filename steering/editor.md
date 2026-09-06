@@ -32,8 +32,10 @@ The editor draws both, as faithfully as the data allows and no further:
   own resolution; the switch does not change what can be stored.
 - The volume is the dot's radius (`pointRadius`, 0..127 → 0.18..0.5 of a row) and the timbre
   nibble its colour (`timbreColour`, a straight RGB blend from blue at 0 to orange at 15).
-- The gate closes one step after the last point (`duration = lastStep − firstStep + 1`), so a
-  faint tail of one step is drawn past it.
+- A note's end is its last point and nothing more: a one-record note is one point, a held note
+  two joined by a line, as the game draws them. ⚠️ A faint one-step tail past the last point --
+  where the gate does close (`duration = lastStep − firstStep + 1`) -- was drawn for a day and
+  read as a second point that was not in the data; the owner had it removed.
 
 ## The model — `packages/lbp-tracker-lib/src/song.ts`
 

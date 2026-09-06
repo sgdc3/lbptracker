@@ -298,14 +298,10 @@ export class RollView {
         ctx.lineTo(px(b.thirds), py(b.pitch));
         ctx.stroke();
       }
-      // The gate closes one step after the last point: a faint tail says so.
-      const last = pts[pts.length - 1];
-      ctx.strokeStyle = timbreColour(last.timbre, 0.3);
-      ctx.lineWidth = on ? 3.5 : 2.5;
-      ctx.beginPath();
-      ctx.moveTo(px(last.thirds), py(last.pitch));
-      ctx.lineTo(px(last.thirds + 3), py(last.pitch));
-      ctx.stroke();
+      // ⚠️ Nothing past the last point. The gate closes a step after it, but
+      // the game draws no tail: a note's end IS its last point, and a note of
+      // one record is one point. A faint tail drawn here read as a second
+      // point that was not there, and the owner had it removed.
     }
     for (const note of clip.notes) {
       const on = selected.has(note.id);
@@ -436,14 +432,6 @@ export class RollView {
         );
         if (d <= HIT + 1) return { note, segment: i };
       }
-      // The gate tail counts as the note too.
-      const last = pts[pts.length - 1];
-      const d = segmentDistance(
-        x, y,
-        rollX(this.layout, last.thirds), rollY(this.layout, last.pitch),
-        rollX(this.layout, last.thirds + 3), rollY(this.layout, last.pitch),
-      );
-      if (d <= HIT + 1) return { note, segment: pts.length - 1 };
     }
     return null;
   }
