@@ -18,9 +18,11 @@ linearly between consecutive points, so the straight line is what sounds.
 
 The editor draws both, as faithfully as the data allows and no further:
 
-- A chip is **one cell wide whatever its grid's length**, because that is how the board is laid
-  out — clips of one part overlap on the timeline every two cells in `Ascetic`, each holding 128
-  steps — and the grid's extent is a faint bar to the chip's right so the overlap can be seen.
+- A chip is **a rectangle as long as its grid** — four, six or eight cells — with a translucent
+  body, because chips overlap in time (clips of one part sit every two cells in `Ascetic`) and
+  the one underneath has to stay visible; the selected chip is drawn last. A chip is grabbed by
+  any cell it covers and keeps that offset while dragged; a double-click adds a chip wherever none
+  is *anchored*, under another's tail included.
 - The chip's colour and glyph are **ours**, by instrument family (`src/editor/instruments.ts`).
   The game's icon is a texture this project cannot ship ([game-assets.md](game-assets.md)).
 - A point sits at the **centre of the third of a step it names** (`rollX`), so the three thirds
@@ -55,8 +57,8 @@ time — 6, then 8, the ceiling `x`'s seven bits allow — reported by the proje
 game, 2026-09-06, not read out of bytes; `clipStepsFor` derives the smallest of 64, 96 and 128
 that holds the notes. Over the corpus the highest `x` used is 31 in 60,318 of 105,785 clips, 63 in
 the rest and never above 63: 4-bar grids filled half or all of the way, and none extended. On the
-board the extent bar therefore runs four cells past a chip, and chips of one part placed every two
-cells overlap in time, which is what `Ascetic` does. `resizeClip` refuses to shrink under a note.
+board a chip is therefore four cells long at least, and chips of one part placed every two cells
+overlap, which is what `Ascetic` does. `resizeClip` refuses to shrink under a note.
 
 The project file is JSON — `{ format: "lbptracker-song", version: 1, song }` — as decided at the
 start; `songFromJson` checks the shape rather than trusting it, because a file is the one input

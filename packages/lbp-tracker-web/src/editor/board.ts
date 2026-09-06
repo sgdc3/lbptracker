@@ -8,10 +8,10 @@
  * This class owns the drawing and the pointer; the page owns what a click
  * means for the rest of the screen, through the callbacks.
  *
- * A cell is a bar: 16 steps, four beats. A chip sits in one cell whatever its
- * grid's length, because that is how the game lays a board out -- clips of one
- * part overlap on the timeline every two cells in `Ascetic` -- and the extent
- * of its grid is drawn as a faint bar to its right so the overlap is visible.
+ * A cell is a bar: 16 steps, four beats. A chip is a rectangle from its cell
+ * to the end of its grid -- four bars, six or eight -- and chips may overlap
+ * in time, as clips of one part do every two cells in `Ascetic`; a translucent
+ * body keeps the one underneath visible, and the selected one is drawn last.
  */
 
 import { STEPS_PER_CELL } from '@lbptracker/cwlib/project.ts';
@@ -53,7 +53,9 @@ export class BoardView {
   /** The playhead, in timeline steps, or null when there is nothing to show. */
   private playStep: number | null = null;
   private drag: {
-    clip: Clip; startX: number; startY: number; at: { cell: number; row: number }; moved: boolean;
+    clip: Clip; startX: number; startY: number; at: { cell: number; row: number };
+    /** Cells between the chip's own cell and the one it was grabbed by. */
+    grab: number; moved: boolean;
   } | null = null;
   private hover: { cell: number; row: number } | null = null;
   private frame = 0;
@@ -187,24 +189,18 @@ export class BoardView {
       }
     }
 
-    // The grid extents first, so chips sit on top of them.
-    for (const clip of song.clips) {
-      const cells = clip.steps / STEPS_PER_CELL;
-      if (cells <= 1) continue;
-      const r = boardRect(layout, clip.cell, clip.row);
-      const info = this.cb.instrument(clip.guid) ?? MISSING_INSTRUMENT;
-      ctx.fillStyle = info.colour;
-      ctx.globalAlpha = 0.16;
-      ctx.fillRect(r.x + r.w, r.y + r.h * 0.35, (cells - 1) * layout.cellW - 2, r.h * 0.3);
-      ctx.globalAlpha = 1;
-    }
-
-    // The chips.
+    // The chips: each a rectangle as long as its grid. The selected one is
+    // drawn last so it sits on top of whatever it overlaps.
+    const selectedClip = state.clip();
     for (const clip of song.clips) {
       if (this.drag?.clip === clip && this.drag.moved) continue;
-      this.drawChip(clip, clip.cell, clip.row, clip.id === state.selection.clipId, 1);
+      if (clip === selectedClip) continue;
+      this.drawChip(clip, clip.cell, clip.row, false, 1);
     }
-    // The one being dragged, at the cell under the pointer.
+    if (selectedClip && !(this.drag?.clip === selectedClip && this.drag.moved)) {
+      this.drawChip(selectedClip, selectedClip.cell, selectedClip.row, true, 1);
+    }
+    // The one being dragged, where it would land.
     if (this.drag?.moved) {
       this.drawChip(this.drag.clip, this.drag.at.cell, this.drag.at.row, true, 0.85);
     }
@@ -237,34 +233,54 @@ export class BoardView {
     }
   }
 
+  /**
+   * One chip: a rectangle from its cell to the end of its grid, the family's
+   * colour as a translucent body so that chips overlapping in time -- which
+   * the game allows and `Ascetic` does every two cells -- read as stacked
+   * rather than hidden, with the glyph and the name at the cell it sits in.
+   */
   private drawChip(clip: Clip, cell: number, row: number, selected: boolean, alpha: number): void {
     const { ctx, layout } = this;
     const r = boardRect(layout, cell, row);
+    const cells = Math.max(1, clip.steps / STEPS_PER_CELL);
+    const w = cells * layout.cellW;
     const info = this.cb.instrument(clip.guid) ?? MISSING_INSTRUMENT;
     const pad = 2;
     ctx.globalAlpha = alpha;
-    // Body.
-    ctx.fillStyle = '#1b2027';
+    // Body: the family's colour, translucent, over a dark base.
+    roundRect(ctx, r.x + pad, r.y + pad, w - pad * 2, r.h - pad * 2, 5);
+    ctx.fillStyle = 'rgba(27,32,39,0.85)';
+    ctx.fill();
+    ctx.fillStyle = info.colour;
+    ctx.globalAlpha = alpha * (selected ? 0.34 : 0.2);
+    ctx.fill();
+    ctx.globalAlpha = alpha;
     ctx.strokeStyle = selected ? '#ffffff' : info.colour;
     ctx.lineWidth = selected ? 2 : 1.2;
-    roundRect(ctx, r.x + pad, r.y + pad, r.w - pad * 2, r.h - pad * 2, 5);
-    ctx.fill();
     ctx.stroke();
-    // A colour bar at the top edge, the family's colour.
-    ctx.fillStyle = info.colour;
-    ctx.fillRect(r.x + pad + 3, r.y + pad + 2, r.w - pad * 2 - 6, 3);
-    // The glyph.
+    // The glyph, in the first cell.
     ctx.fillStyle = info.colour;
     ctx.strokeStyle = info.colour;
-    const size = Math.min(r.w, r.h) * 0.62;
-    drawGlyph(ctx, info.family, r.x + (r.w - size) / 2, r.y + pad + 6 + (r.h - pad * 2 - 9 - size) / 2 + 2, size);
+    const size = r.h * 0.6;
+    drawGlyph(ctx, info.family, r.x + pad + 5, r.y + (r.h - size) / 2, size);
+    // The name after it, clipped to the chip.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(r.x + pad, r.y + pad, w - pad * 2 - 14, r.h - pad * 2);
+    ctx.clip();
+    ctx.fillStyle = 'rgba(232,234,238,0.9)';
+    ctx.font = '10px ui-sans-serif, system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(clip.name || info.name, r.x + pad + 5 + size + 5, r.y + r.h / 2);
+    ctx.restore();
     // A note count in the corner, when there is anything in the grid.
     if (clip.notes.length > 0) {
       ctx.fillStyle = 'rgba(232,234,238,0.75)';
       ctx.font = '8px ui-monospace, Consolas, monospace';
       ctx.textAlign = 'right';
       ctx.textBaseline = 'alphabetic';
-      ctx.fillText(String(clip.notes.length), r.x + r.w - pad - 3, r.y + r.h - pad - 3);
+      ctx.fillText(String(clip.notes.length), r.x + w - pad - 3, r.y + r.h - pad - 3);
     }
     ctx.globalAlpha = 1;
   }
@@ -276,10 +292,26 @@ export class BoardView {
     return { x: event.clientX - box.left, y: event.clientY - box.top };
   }
 
-  private clipAt(cell: number, row: number): Clip | undefined {
-    // The last one drawn is on top, so the last one found wins.
+  /** The chip anchored at a cell, if any. */
+  private anchoredAt(cell: number, row: number): Clip | undefined {
     let found: Clip | undefined;
     for (const clip of this.state.song.clips) if (clip.cell === cell && clip.row === row) found = clip;
+    return found;
+  }
+
+  /**
+   * The chip under a cell: the one anchored there first, then the selected
+   * one if it covers the cell (it is drawn on top), then the topmost cover.
+   */
+  private clipAt(cell: number, row: number): Clip | undefined {
+    const anchored = this.anchoredAt(cell, row);
+    if (anchored) return anchored;
+    const covers = (clip: Clip) =>
+      clip.row === row && cell >= clip.cell && cell < clip.cell + clip.steps / STEPS_PER_CELL;
+    const selected = this.state.clip();
+    if (selected && covers(selected)) return selected;
+    let found: Clip | undefined;
+    for (const clip of this.state.song.clips) if (covers(clip)) found = clip;
     return found;
   }
 
@@ -299,7 +331,8 @@ export class BoardView {
     if (clip) {
       this.state.selection.cursor = null;
       this.state.selectClip(clip.id);
-      this.drag = { clip, startX: x, startY: y, at, moved: false };
+      // Grabbed some cells into the chip: keep that offset while it is dragged.
+      this.drag = { clip, startX: x, startY: y, at: { cell: clip.cell, row: clip.row }, grab: at.cell - clip.cell, moved: false };
       capture(this.canvas, event);
     } else {
       this.state.selection.cursor = at;
@@ -313,7 +346,7 @@ export class BoardView {
     const at = boardCellAt(this.layout, x, y);
     if (this.drag) {
       if (!this.drag.moved && Math.hypot(x - this.drag.startX, y - this.drag.startY) > 4) this.drag.moved = true;
-      if (at) this.drag.at = at;
+      if (at) this.drag.at = { cell: Math.max(0, at.cell - this.drag.grab), row: at.row };
       this.schedule();
       return;
     }
@@ -336,7 +369,9 @@ export class BoardView {
   private onDouble = (event: MouseEvent): void => {
     const { x, y } = this.at(event);
     const at = boardCellAt(this.layout, x, y);
-    if (!at || this.clipAt(at.cell, at.row)) return;
+    // Anchored, not covered: a chip may start under another's tail, as the
+    // game's boards do.
+    if (!at || this.anchoredAt(at.cell, at.row)) return;
     this.cb.onAddAt(at);
   };
 }
