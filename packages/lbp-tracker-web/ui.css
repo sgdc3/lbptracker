@@ -167,21 +167,10 @@ pre { white-space: pre-wrap; color: var(--bad); font-size: .85rem; margin: 0; }
 }
 
 /* --------------------------------------------------------------- the picker */
-/* One control for one choice: a field that opens a searchable list.
+/* The song list: a search box over the rows, in the open dialog.
    `packages/lbp-tracker-web/src/seq-picker.ts` supplies the markup. */
-.picker { position: relative; flex: 1 1 22rem; min-width: 0; max-width: 34rem; }
-.picker-field {
-  display: flex; align-items: baseline; gap: .6rem; width: 100%; text-align: left;
-  padding: .45rem .8rem;
-}
-.picker-field::after { content: "\25be"; margin-left: auto; color: var(--dimmer); }
-.picker-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker { min-width: 0; }
 .picker-detail { color: var(--dimmer); font-size: .82rem; white-space: nowrap; }
-.picker-pop {
-  position: absolute; z-index: 40; top: calc(100% + .35rem); left: 0; right: 0;
-  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
-  box-shadow: 0 12px 30px rgb(0 0 0 / .45); padding: .4rem; overflow: hidden;
-}
 /* `input[type="text"]` above centres its text and is more specific than a bare
    class, so this one has to name the element to win. */
 input.picker-search {
@@ -190,7 +179,10 @@ input.picker-search {
   text-align: left; font-family: inherit;
 }
 .picker-search:focus { border-color: var(--accent); outline: none; }
-.picker-list { max-height: 15rem; overflow-y: auto; margin-top: .35rem; }
+.picker-list {
+  max-height: 15rem; overflow-y: auto; margin-top: .5rem; padding: .3rem;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+}
 .picker-row {
   display: flex; align-items: baseline; gap: .6rem; width: 100%; text-align: left;
   background: none; border: 0; border-radius: 6px; padding: .35rem .5rem; color: var(--ink);
