@@ -436,6 +436,7 @@ export class Player {
     // Where we are in the music, not in seconds: a tempo change moves one and
     // not the other, and the music is what a listener is following.
     const stepBefore = !restart && this.stepFrames > 0 ? this.position() / this.stepFrames : 0;
+    if (!restart) this.rebasePass();
     const wasPlaying = this.playing;
 
     const node = await this.ensureAudio();
@@ -590,11 +591,11 @@ export class Player {
    * there so it holds what it would have been holding.
    */
   private repoint(): void {
-    const now = this.position();
-    const byFrame = this.plan.findIndex((p) => this.frameOf(p) >= now);
+    const now = this.rawPosition();
+    const byFrame = this.plan.findIndex((p) => this.passFrame(p) >= now);
     let next = byFrame < 0 ? this.plan.length : byFrame;
     if (this.handedUntilStep >= 0) {
-      const byStep = this.plan.findIndex((p) => p.startStep > this.handedUntilStep);
+      const byStep = this.plan.findIndex((p) => this.passStep(p) > this.handedUntilStep);
       next = Math.max(next, byStep < 0 ? this.plan.length : byStep);
     }
     this.nextIndex = next;
@@ -608,6 +609,7 @@ export class Player {
     this.stop();
     this.region = null;
     this.focusRow = null;
+    this.pass = 0;
     this.plan = [];
     this.songFrames = 0;
     this.songSeconds = 0;
@@ -713,6 +715,7 @@ export class Player {
     // Where we are in the music, not in seconds: a tempo change moves one and
     // not the other, and the music is what a listener is following.
     const stepNow = this.stepFrames > 0 ? this.position() / this.stepFrames : 0;
+    this.rebasePass();
     if (settings.tempo !== undefined) this.stepFrames = samplesPerStep(RATE, settings.tempo);
     this.songFrames = Math.round(this.songSteps * this.stepFrames) + this.tailFrames;
     this.songSeconds = this.songFrames / RATE;
@@ -793,8 +796,57 @@ export class Player {
 
   /** The playhead, in song frames. */
   position(): number {
+    const raw = this.rawPosition();
+    const rg = this.regionFrames();
+    if (!rg || raw < rg.startF) return raw;
+    return rg.startF + ((raw - rg.startF) % rg.len);
+  }
+
+  /** The clock as it runs: past the end of a looped section, not folded. */
+  private rawPosition(): number {
     if (!this.playing || !this.context) return this.cursorFrames;
     return this.cursorFrames + (this.context.currentTime - this.startedAt) * RATE;
+  }
+
+  /** The section being gone round: the chip's, else the song when its loop is on. */
+  private activeRegion(): { start: number; end: number } | null {
+    if (this.region) return this.region;
+    if (this.loop && this.songSteps > 0) return { start: 0, end: this.songSteps };
+    return null;
+  }
+
+  private regionFrames(): { startF: number; endF: number; len: number; steps: number } | null {
+    const r = this.activeRegion();
+    if (!r) return null;
+    const startF = this.frameAt(r.start);
+    const endF = this.frameAt(r.end);
+    if (endF <= startF) return null;
+    return { startF, endF, len: endF - startF, steps: r.end - r.start };
+  }
+
+  private passFrame(p: Planned): number {
+    const rg = this.pass > 0 ? this.regionFrames() : null;
+    return this.frameOf(p) + (rg ? this.pass * rg.len : 0);
+  }
+
+  private passStep(p: Planned): number {
+    const r = this.pass > 0 ? this.activeRegion() : null;
+    return p.startStep + (r ? this.pass * (r.end - r.start) : 0);
+  }
+
+  private tagOf(p: Planned): number {
+    return p.note + this.pass * Player.PASS_SPAN;
+  }
+
+  /**
+   * The cursor is about to be set from the folded position: the pass goes
+   * back to zero, and the frontier of handed-over steps comes down with it.
+   */
+  private rebasePass(): void {
+    if (this.pass === 0) return;
+    const r = this.activeRegion();
+    if (r && this.handedUntilStep >= 0) this.handedUntilStep -= this.pass * (r.end - r.start);
+    this.pass = 0;
   }
 
   /** The playhead in steps, undoing the swing: the inverse of `swungFrame`. */
@@ -831,6 +883,23 @@ export class Player {
   private region: { start: number; end: number } | null = null;
   private focusRow: number | null = null;
   private focusOthers = 0.2;
+  /**
+   * Which time round a looped section the scheduler is posting, and the
+   * timeline that goes with it.
+   *
+   * ❗ **A loop is not a seek at the end.** The pump ticks every 100 ms and
+   * posts 350 ms ahead, so a loop done as "seek when the playhead is past the
+   * end" restarted up to a tick late every time round and had already posted
+   * the next bars' first notes -- heard as a limp and a spill at each turn.
+   * Instead the clock runs on unwrapped, the playhead shown is the position
+   * folded into the section, and voices are posted with the pass's offset:
+   * frame + pass * length, pool step + pass * steps, tag + pass * span. A
+   * section is whole cells, so its length in steps is even and the swing
+   * pattern lines up from one pass to the next (`cutFrameAt` relies on it).
+   * The song's own loop is the same thing over [0, songSteps].
+   */
+  private pass = 0;
+  private static readonly PASS_SPAN = 1 << 24;
 
   setRegion(start: number, end: number): void {
     this.region = end > start ? { start, end } : null;
@@ -861,6 +930,7 @@ export class Player {
     this.handed.clear();
     this.noteStart.clear();
     this.handedUntilStep = -1;
+    this.pass = 0;
     this.rebuildPool(this.cursorFrames);
     this.stolen = 0;
     this.events.stolen?.(0);
@@ -905,9 +975,25 @@ export class Player {
   private pump = (): void => {
     const node = this.node;
     if (!this.playing || !node) return;
-    const now = this.position();
+    const now = this.rawPosition();
     const until = now + LOOKAHEAD * RATE;
-    while (this.nextIndex < this.plan.length && this.frameOf(this.plan[this.nextIndex]) < until) {
+    const rg = this.regionFrames();
+    for (;;) {
+      const atEnd = this.nextIndex >= this.plan.length
+        || (rg !== null && this.frameOf(this.plan[this.nextIndex]) >= rg.endF);
+      if (atEnd) {
+        if (!rg) break;
+        // The section's next time round, once the window reaches it. The
+        // indices are revisited, so `handed` starts over; the tags and the
+        // pool's steps carry the pass, so nothing collides with what still rings.
+        const wrapAt = rg.endF + this.pass * rg.len;
+        if (wrapAt >= until) break;
+        this.pass += 1;
+        const first = this.plan.findIndex((q) => this.frameOf(q) >= rg.startF);
+        this.nextIndex = first < 0 ? this.plan.length : first;
+        this.handed.clear();
+        continue;
+      }
       const p = this.plan[this.nextIndex];
       // ❗ **Never twice.** The index arithmetic is supposed to guarantee this
       // and once did not: a settings change re-pointed the playhead into the
@@ -922,28 +1008,32 @@ export class Player {
       // ❗ Frames and gain derived HERE, from the tempo, swing and faders as
       // they stand this instant. Everything else about the voice was decided
       // once.
-      const at = this.frameOf(p);
+      const at = this.passFrame(p);
+      if (at >= until) break;
       const life = this.lifeOf(p);
       // The delay this voice waits before it starts, and its own end rebased
       // onto that delay so the mixer's `endFrame - startFrame` is still its
       // length.
       const delay = Math.max(0, Math.round(at - now));
+      const tag = this.tagOf(p);
+      const passSteps = this.passStep(p) - p.startStep;
+      const poolEnd = p.poolEnd + passSteps;
       // ❗ One call per NOTE. The other layers of a stacked note share its
       // record and therefore its answer; see `Planned.note`.
       let end: number;
       let stole: { index: number; at: number } | undefined;
       if (p.layer === 0) {
-        ({ end, stole } = this.pool.add(p.note, {
-          start: p.poolStart,
-          end: p.poolEnd,
+        ({ end, stole } = this.pool.add(tag, {
+          start: p.poolStart + passSteps,
+          end: poolEnd,
           score: this.scoreOf(p),
         }));
-        this.noteEnd.set(p.note, end);
+        this.noteEnd.set(tag, end);
       } else {
-        end = this.noteEnd.get(p.note) ?? p.poolEnd;
+        end = this.noteEnd.get(tag) ?? poolEnd;
       }
-      if (!this.noteStart.has(p.note)) this.noteStart.set(p.note, p.startStep);
-      const cut = end < p.poolEnd ? this.cutFrameAt(end) - at : undefined;
+      if (!this.noteStart.has(tag)) this.noteStart.set(tag, this.passStep(p));
+      const cut = end < poolEnd ? this.cutFrameAt(end) - at : undefined;
       node.port.postMessage({
         type: 'play',
         sampleId: p.sampleId,
@@ -954,14 +1044,14 @@ export class Player {
           // all came out of one of the engine's records, so they are taken away
           // together, expressed together, and counted together -- which is also
           // what lets the worklet report notes beside voices.
-          tag: p.note,
+          tag,
           startFrame: delay,
           endFrame: life === undefined ? undefined : delay + life,
           cutFrame: cut === undefined ? undefined : delay + cut,
         },
       });
       this.handed.set(p.index, p.startStep);
-      this.handedUntilStep = Math.max(this.handedUntilStep, p.startStep);
+      this.handedUntilStep = Math.max(this.handedUntilStep, this.passStep(p));
       if (stole) {
         this.stolen += 1;
         this.events.stolen?.(this.stolen);
@@ -982,18 +1072,7 @@ export class Player {
       }
       this.nextIndex += 1;
     }
-    if (this.region && now >= this.frameAt(this.region.end)) {
-      // Round the section again; as with the song's loop, this pump is done.
-      this.seek(this.frameAt(this.region.start));
-      return;
-    }
-    if (now >= this.songFrames) {
-      if (this.loop && this.songFrames > 0) {
-        // Round again: the seek stops and restarts the clock and schedules
-        // its own pump, so this one is done. What is ringing rings on.
-        this.seek(0);
-        return;
-      }
+    if (!rg && now >= this.songFrames) {
       // The end: stop the clock but not the audio, so releases, the echo and
       // the reverb ring on as they would in the game.
       this.stop(false);

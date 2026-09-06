@@ -131,6 +131,7 @@ calls it three ways:
 | a chip added, removed, muted or soloed | `Player.load(sequencerFromSong(song), restart = false)` — the plan is rebuilt through `renderSequencer`'s voice pass and swapped in under the running transport, debounced 180 ms; `nextIndex` lands after the furthest step already handed over (`handedUntilStep`), never at the playhead, so nothing in the look-ahead window is posted twice | yes |
 | tempo, swing, channel count, a fader, the board's rows | `Player.setSettings` — the plan holds musical positions and a gain with the channel factor divided out | no |
 | echo, reverb | `Player.setEffects` — one message to the worklet | no |
+| a loop: the song's own, or a chip's section from the note panel | neither is a seek at the end (the pump ticks every 100 ms and posts 350 ms ahead, so that restarted late and spilt the next bars at every turn): the clock runs on unwrapped, `position()` folds it into the section, and each pass posts its voices at frame + pass × length, pool step + pass × steps, tag + pass × 2²⁴. Measured 2026-09-07 on Ascetic: every voice at its expected frame to the sample, passes exactly 96,000 frames apart, none outside the section. A section is whole cells, so its step count is even and the swing lines up between passes | no |
 
 ❗ **`boardRows` travels with the mixer settings.** `channelVolume` bands rows into channels only
 when it is given the board's height and falls back to a modulo without it; the plan's gain was
