@@ -127,7 +127,8 @@ calls it three ways:
 
 | change | what happens | rebuilds the plan |
 |---|---|---|
-| a note, a placement, an instrument, a key, a scale, a send | `Player.load(sequencerFromSong(song), restart = false)` — the plan is rebuilt through `renderSequencer`'s voice pass and swapped in under the running transport, debounced 180 ms | yes |
+| a note, a placement, an instrument, a key, a scale, a send, inside chips the plan already has | `Player.retrack(index, trackFromClip(clip), …)` — the changed chips are found by a print of each audible chip kept since the last plan (`session.ts`), each is planned alone as a one-track sequencer and its voices swapped into the plan past the look-ahead frontier, debounced 60 ms; measured 2026-09-07 on Ascetic: 5 ms and no voice posted twice, against 50–100 ms and the window's voices doubled for the whole plan. More than six chips at once, or an audible chip added or removed, is the whole plan again | one track |
+| a chip added, removed, muted or soloed | `Player.load(sequencerFromSong(song), restart = false)` — the plan is rebuilt through `renderSequencer`'s voice pass and swapped in under the running transport, debounced 180 ms; `nextIndex` lands after the furthest step already handed over (`handedUntilStep`), never at the playhead, so nothing in the look-ahead window is posted twice | yes |
 | tempo, swing, channel count, a fader, the board's rows | `Player.setSettings` — the plan holds musical positions and a gain with the channel factor divided out | no |
 | echo, reverb | `Player.setEffects` — one message to the worklet | no |
 

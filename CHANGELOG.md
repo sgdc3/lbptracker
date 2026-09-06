@@ -36,6 +36,8 @@ not before, never how it was done. No `--` or em dash in here; the site's text d
   ending at its last point. Triplet grid at three cells to the beat, with the other grid's notes
   drawn faded. Undo and redo, copy and paste, a selection box, the arrow keys to nudge, and a
   keyboard on the left to try the instrument.
+- Editing inside a chip while the song plays is heard at once, without a stutter: only that chip
+  is re-planned, and nothing already on its way to the speakers is played twice.
 - The chip's own settings beside the grid: its length in bars (four, then two at a time), key and
   scale, level, pan, and its sends to the echo and the reverb; and the selected point's pitch,
   volume and timbre as sliders.

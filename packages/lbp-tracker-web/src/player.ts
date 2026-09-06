@@ -41,7 +41,7 @@
  */
 import MIXER_WORKLET_URL from '@lbptracker/lib/audio/mixer-worklet.ts?worker&url';
 import { type VoiceSpec } from '@lbptracker/lib/audio/mixer.ts';
-import { channelVolume, type Sequencer } from '@lbptracker/cwlib/project.ts';
+import { channelVolume, type Sequencer, type Track } from '@lbptracker/cwlib/project.ts';
 import { LiveVoicePool, VOICES_UNLIMITED, VOICE_POOL_SIZE } from '@lbptracker/lib/polyphony.ts';
 import { stepLength, swungFrame } from '@lbptracker/lib/swing.ts';
 import { samplesPerStep } from '@lbptracker/lib/voice.ts';
@@ -125,6 +125,8 @@ export interface Planned {
   readonly poolEnd: number;
   readonly score: number;
   readonly index: number;
+  /** The track (the chip) the voice belongs to, so one track's voices can be swapped out. */
+  readonly track: number;
 }
 
 /**
@@ -267,6 +269,20 @@ export class Player {
    * is loudness nobody asked for.
    */
   private readonly handed = new Map<number, number>();
+  /**
+   * The furthest step handed to the worklet, or -1 after a seek.
+   *
+   * ❗ **A re-plan while playing must start AFTER this, not at the playhead.**
+   * The plan is rebuilt and re-indexed, so `handed` cannot say which of the new
+   * voices are the ones already posted; but every voice up to this step was,
+   * and posting them again is the doubled-notes flam that editing a chip while
+   * the song played used to produce (measured: 5 voices re-posted per edit on
+   * Ascetic at 240 BPM, the look-ahead window's worth). An edit inside the
+   * window is therefore heard on the next pass, not this one.
+   */
+  private handedUntilStep = -1;
+  /** Note ids handed out to re-planned tracks, past every id the full plan used. */
+  private noteBase = 0;
   /** Voices the pool has taken back since the last seek, counted as it goes. */
   stolen = 0;
   private health: Health = {
@@ -427,55 +443,8 @@ export class Player {
     const sent = this.sent;
     let samples = 0;
 
-    const result = await renderSequencer(seq, loader, {
-      planOnly: true,
-      // ❗ And no cap: the pool is applied live, per note. See `Planned`.
-      voiceLimit: VOICES_UNLIMITED,
-      onVoice: (voice, where) => {
-        const sampleId = `g${where.guid}z${where.zone}`;
-        if (!sent.has(sampleId)) {
-          sent.add(sampleId);
-          const sample = voice.sample;
-          node.port.postMessage({
-            type: 'load',
-            sample: {
-              id: sampleId,
-              // Copies, because the worklet keeps them and this thread replays
-              // the same buffers for every later voice on the same slot.
-              channels: sample.channels.map((c) => new Float32Array(c)),
-              sampleRate: sample.sampleRate,
-              loop: sample.loop,
-            },
-          });
-        }
-        samples += 1;
-        const {
-          sample: _s, random: _r, startFrame: _f, endFrame: _e, cutFrame: _c, ...rest
-        } = voice;
-        built.push({
-          startStep: where.startStep,
-          endStep: where.endStep,
-          row: where.row,
-          // ❗ Divided out so the faders can put a different one back. It is
-          // never zero: `CHANNEL_HEADROOM` is 0.75 and a volume of 0 would have
-          // made the voice silent in the render too.
-          baseGain: where.channelGain === 0 ? rest.gain : rest.gain / where.channelGain,
-          baseScore: where.channelGain === 0 ? where.score : where.score / where.channelGain,
-          pointSteps: where.pointSteps,
-          sampleId,
-          voice: rest,
-          poolStart: where.poolStart,
-          note: where.note,
-          layer: where.layer,
-          poolEnd: where.poolEnd,
-          score: where.score,
-          index: built.length,
-        });
-      },
-      onProgress: (phase, done, total) => {
-        if ((done & 0xfff) === 0) this.events.progress?.(phase, done, total);
-      },
-    });
+    const result = await this.collect(seq, loader, node, built, 0);
+    this.noteBase = built.reduce((m, v) => Math.max(m, v.note + 1), 0);
 
     // Sorted by musical position, which is the order they will be posted in at
     // any tempo: swing is monotonic in the step.
@@ -498,12 +467,7 @@ export class Player {
       this.cursorFrames = Math.min(this.songFrames, stepBefore * this.stepFrames);
       if (this.context) this.startedAt = this.context.currentTime;
       this.playing = wasPlaying;
-      const now = this.position();
-      this.nextIndex = this.plan.findIndex((p) => this.frameOf(p) >= now);
-      if (this.nextIndex < 0) this.nextIndex = this.plan.length;
-      this.handed.clear();
-      this.noteStart.clear();
-      this.rebuildPool(now);
+      this.repoint();
       this.events.tick?.();
     }
     return {
@@ -513,6 +477,130 @@ export class Player {
       samples: new Set(built.map((p) => p.sampleId)).size,
       seconds: this.songSeconds,
     };
+  }
+
+  /**
+   * Plan a sequencer's voices into `built`, loading any sample the worklet
+   * does not hold yet. `trackAs` names the track the entries belong to when
+   * `seq` is a one-track copy; `noteBase` keeps their note ids clear of
+   * the plan's.
+   */
+  private async collect(
+    seq: Sequencer,
+    loader: InstrumentLoader,
+    node: AudioWorkletNode,
+    built: Planned[],
+    noteBase: number,
+    trackAs?: number,
+  ): Promise<{ played: number; skipped: number; framesPerStep: number }> {
+    const sent = this.sent;
+    const result = await renderSequencer(seq, loader, {
+      planOnly: true,
+      // ❗ And no cap: the pool is applied live, per note. See `Planned`.
+      voiceLimit: VOICES_UNLIMITED,
+      onVoice: (voice, where) => {
+        const sampleId = `g${where.guid}z${where.zone}`;
+        if (!sent.has(sampleId)) {
+          sent.add(sampleId);
+          const sample = voice.sample;
+          node.port.postMessage({
+            type: 'load',
+            sample: {
+              id: sampleId,
+              // Copies, because the worklet keeps them and this thread replays
+              // the same buffers for every later voice on the same slot.
+              channels: sample.channels.map((c) => new Float32Array(c)),
+              sampleRate: sample.sampleRate,
+              loop: sample.loop,
+            },
+          });
+        }
+        const {
+          sample: _s, random: _r, startFrame: _f, endFrame: _e, cutFrame: _c, ...rest
+        } = voice;
+        built.push({
+          startStep: where.startStep,
+          endStep: where.endStep,
+          row: where.row,
+          // ❗ Divided out so the faders can put a different one back. It is
+          // never zero: `CHANNEL_HEADROOM` is 0.75 and a volume of 0 would have
+          // made the voice silent in the render too.
+          baseGain: where.channelGain === 0 ? rest.gain : rest.gain / where.channelGain,
+          baseScore: where.channelGain === 0 ? where.score : where.score / where.channelGain,
+          pointSteps: where.pointSteps,
+          sampleId,
+          voice: rest,
+          poolStart: where.poolStart,
+          note: where.note + noteBase,
+          layer: where.layer,
+          poolEnd: where.poolEnd,
+          score: where.score,
+          index: built.length,
+          track: trackAs ?? where.track,
+        });
+      },
+      onProgress: (phase, done, total) => {
+        if ((done & 0xfff) === 0) this.events.progress?.(phase, done, total);
+      },
+    });
+    return { played: result.played, skipped: result.skipped, framesPerStep: result.framesPerStep };
+  }
+
+  /**
+   * Swap one track's voices for a fresh plan of it, without stopping: what an
+   * edit inside a chip costs while the song plays -- one track's voice pass
+   * rather than the whole song's (Ascetic: 1,150 tracks, 50-100 ms, and every
+   * one of the look-ahead window's voices posted twice).
+   *
+   * Voices of that track already handed to the worklet stay as they were,
+   * old notes and all, and the new plan of it takes over past the frontier.
+   */
+  async retrack(
+    index: number,
+    track: Track,
+    seq: Sequencer,
+    loader: InstrumentLoader,
+    endStep = seq.lengthSteps,
+  ): Promise<void> {
+    const node = await this.ensureAudio();
+    const fresh: Planned[] = [];
+    // ❗ The renderer plans nothing past `lengthSteps`, and a one-track copy of
+    // an empty sequencer has none: give it the song's end, which is never
+    // before this track's.
+    const one: Sequencer = { ...seq, tracks: [track], lengthSteps: Math.max(seq.lengthSteps, endStep) };
+    await this.collect(one, loader, node, fresh, this.noteBase, index);
+    this.noteBase = fresh.reduce((m, v) => Math.max(m, v.note + 1), this.noteBase);
+    const frontier = this.handedUntilStep;
+    const kept = this.plan.filter((p) => p.track !== index || p.startStep <= frontier);
+    const added = fresh.filter((p) => p.startStep > frontier);
+    const merged = kept.concat(added);
+    merged.sort((a, b) => a.startStep - b.startStep);
+    this.plan = merged.map((p, i) => ({ ...p, index: i }));
+    this.songSteps = Math.max(endStep, seq.lengthSteps);
+    this.songFrames = Math.round(swungFrame(this.songSteps, this.stepFrames, this.swing));
+    this.songSeconds = this.songFrames / RATE;
+    this.repoint();
+    this.events.tick?.();
+  }
+
+  /**
+   * Point `nextIndex` at the first voice still to hand over after the plan
+   * changed under a running clock: at the playhead, and never inside the
+   * window already posted (see `handedUntilStep`). The pool is replayed up to
+   * there so it holds what it would have been holding.
+   */
+  private repoint(): void {
+    const now = this.position();
+    const byFrame = this.plan.findIndex((p) => this.frameOf(p) >= now);
+    let next = byFrame < 0 ? this.plan.length : byFrame;
+    if (this.handedUntilStep >= 0) {
+      const byStep = this.plan.findIndex((p) => p.startStep > this.handedUntilStep);
+      next = Math.max(next, byStep < 0 ? this.plan.length : byStep);
+    }
+    this.nextIndex = next;
+    this.handed.clear();
+    this.noteStart.clear();
+    this.rebuildPoolTo(next);
   }
 
   /** Forget the song: the page is opening another. */
@@ -741,6 +829,7 @@ export class Player {
     if (this.nextIndex < 0) this.nextIndex = this.plan.length;
     this.handed.clear();
     this.noteStart.clear();
+    this.handedUntilStep = -1;
     this.rebuildPool(this.cursorFrames);
     this.stolen = 0;
     this.events.stolen?.(0);
@@ -841,6 +930,7 @@ export class Player {
         },
       });
       this.handed.set(p.index, p.startStep);
+      this.handedUntilStep = Math.max(this.handedUntilStep, p.startStep);
       if (stole) {
         this.stolen += 1;
         this.events.stolen?.(this.stolen);

@@ -177,6 +177,8 @@ export interface RenderOptions {
     where: {
       guid: number;
       zone: number;
+      /** Which of `seq.tracks` the voice came from, so a player can replace one track's voices. */
+      track: number;
       startFrame: number;
       /**
        * What the voice pool sees: the note's occupancy in STEPS, and its score.
@@ -788,6 +790,7 @@ export async function renderSequencer(
       onVoice?.(voice, {
         guid: event.guid,
         zone,
+        track: event.track,
         startFrame: voice.startFrame ?? 0,
         poolStart: event.step,
         poolEnd: event.step + (prep.occupancySteps ?? event.durationSteps),
