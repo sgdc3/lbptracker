@@ -100,7 +100,7 @@ offset by the scroll, with the keyboard and the ruler painted over the content a
 edges. The geometry is pure (`src/editor/geometry.ts`, held by `test/editor-geometry.test.ts`).
 
 `EditorState` (`src/editor/state.ts`) holds the song as a **plain object** and ticks a `version`
-ref on every change; the Vue panels (`Inspector.vue`, `Palette.vue`) read through the counter and
+ref on every change; the Vue panel (`Inspector.vue`) reads through the counter and
 write through `state.edit`. Undo is a structured clone per edit, coalesced by key so a slider drag
 is one step; a drag is one entry taken at `beginDrag`.
 
@@ -118,8 +118,15 @@ serves only `fixtures/rinst` and `fixtures/smp`, so anything else 404s into the 
 `window.__lbpEditor` exposes `state`, `player`, `board` and `roll`. Verified in Chrome 2026-09-06:
 Ascetic's 1,150 clips open and plan; a chip click selects; a drag on empty space draws a two-point
 glide and the plan rebuilds to 14,500 notes; play advances 32 steps in two seconds at 240 BPM;
-Ctrl+Z restores the count; the palette places a piano at the cursor, the inspector's key select
+Ctrl+Z restores the count; "add an instrument" places a chip at the cursor, the inspector's key select
 writes `Key`, Ctrl+D duplicates into the next free cell, Delete on the board removes the chip.
+
+⚠️ **There is no instrument palette.** One existed for a day — a filtered list with a "most
+used" group beside the board — and the owner had it removed: the inspector's sound select is where
+a sound is chosen, a new chip takes the last one chosen, and the board is the whole width. The
+roll always shows the selected chip, and opening a song selects the chip nearest its start
+(`EditorState.replace`) rather than the first in file order, which on `Ascetic` was a chip at
+bar 175 that nothing on screen showed as selected.
 
 ## Not there yet
 

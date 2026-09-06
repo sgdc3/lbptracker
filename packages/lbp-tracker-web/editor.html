@@ -9,10 +9,6 @@
   /* Only what is particular to the editor; the rest is in ui.css. */
   main { max-width: 96rem; }
 
-  /* The board and the palette side by side; the palette folds under on a narrow page. */
-  .workbench { display: grid; grid-template-columns: minmax(0, 1fr) 15rem; gap: 1rem; }
-  @media (max-width: 52rem) { .workbench { grid-template-columns: minmax(0, 1fr); } }
-
   .board-scroller {
     overflow: auto; max-height: 24rem; background: var(--panel-2);
     border: 1px solid var(--line); border-radius: 8px;
@@ -29,25 +25,6 @@
   #clock { color: var(--dim); font-size: .9rem; }
   #load { color: var(--dimmer); font-size: .8rem; }
   #vol { width: 7rem; }
-
-  /* The palette. */
-  .palette { display: flex; flex-direction: column; gap: .4rem; min-height: 0; }
-  input.palette-q { width: 100%; text-align: left; font-family: inherit; }
-  .palette-list {
-    overflow-y: auto; max-height: 21rem; border: 1px solid var(--line); border-radius: 8px;
-    background: var(--panel-2); padding: .3rem;
-  }
-  .palette-family {
-    font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--dimmer);
-    padding: .45rem .5rem .2rem;
-  }
-  .palette-row {
-    display: flex; align-items: center; gap: .5rem; width: 100%; text-align: left;
-    background: none; border: 0; border-radius: 6px; padding: .28rem .5rem; color: var(--ink);
-    font-size: .9rem;
-  }
-  .palette-row:hover { background: var(--panel); }
-  .palette-swatch { width: .7rem; height: .7rem; border-radius: 3px; flex: 0 0 auto; }
 
   /* The piano roll: a viewport-sized sticky canvas over a spacer. */
   .roll-scroller {
@@ -129,24 +106,20 @@
       <span class="spacer"></span>
       <span id="load">idle</span>
       <input id="vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" autocomplete="off">
+      <button id="addChip" type="button" title="A new instrument at the cursor, or at the first free cell">add an instrument</button>
     </div>
-    <div class="workbench">
-      <div>
-        <div id="boardScroller" class="board-scroller" tabindex="0" aria-label="The board">
-          <canvas id="board"></canvas>
-        </div>
-        <p class="hintline">
-          Click a chip to edit its notes; drag it to another cell. Click an empty cell to put the
-          cursor there, then pick an instrument on the right &mdash; or double-click the cell to add
-          the last one used. Click the bar numbers to seek. <kbd>Delete</kbd> removes the selected
-          chip when the board has the focus, <kbd>Ctrl+D</kbd> duplicates it into the cursor cell.
-          A chip is as long as its note grid &mdash; four bars, then two more at a time &mdash; and
-          chips may overlap in time, though the game&rsquo;s composers rarely let them; the selected
-          one is drawn on top.
-        </p>
-      </div>
-      <div id="palette"></div>
+    <div id="boardScroller" class="board-scroller" tabindex="0" aria-label="The board">
+      <canvas id="board"></canvas>
     </div>
+    <p class="hintline">
+      Click a chip to edit its notes below; drag it to another cell. Click an empty cell to put
+      the cursor there, then &ldquo;add an instrument&rdquo; &mdash; or double-click the cell. A new
+      chip takes the sound last chosen; change it in the settings below. Click the bar numbers to
+      seek. <kbd>Delete</kbd> removes the selected chip when the board has the focus,
+      <kbd>Ctrl+D</kbd> duplicates it into the cursor cell. A chip is as long as its note grid
+      &mdash; four bars, then two more at a time &mdash; and chips may overlap in time, though the
+      game&rsquo;s composers rarely let them; the selected one is drawn on top.
+    </p>
   </section>
 
   <section>

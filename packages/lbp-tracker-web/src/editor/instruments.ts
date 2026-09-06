@@ -36,9 +36,6 @@ const FAMILY_COLOURS: Record<string, string> = {
 
 const UNKNOWN_COLOUR = '#7c8592';
 
-/** The most-used instruments in the corpus, first in the palette. */
-export const POPULAR_GUIDS = [129085, 129081, 148321, 129031, 129084, 129089, 129083, 186897, 132205, 129080];
-
 export function familyOf(file: string, path?: string): string {
   const m = path?.match(/instruments\/([^/]+)\//);
   if (m) return m[1];

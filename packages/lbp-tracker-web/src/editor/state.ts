@@ -149,7 +149,10 @@ export class EditorState {
     this.redoStack = [];
     this.lastKey = undefined;
     this.dirty = false;
-    this.selection.clipId = song.clips[0]?.id ?? null;
+    // The chip nearest the start of the song, so the roll opens on something
+    // the board is showing rather than on whatever the file listed first.
+    const first = [...song.clips].sort((a, b) => a.cell - b.cell || a.row - b.row)[0];
+    this.selection.clipId = first?.id ?? null;
     this.selection.noteIds = new Set();
     this.selection.point = null;
     this.selection.cursor = null;

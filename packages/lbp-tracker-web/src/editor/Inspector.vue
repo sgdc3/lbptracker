@@ -50,6 +50,9 @@ const setSong = (kind: ChangeKindLike, key: string, fn: (value: number) => void)
 };
 
 const setClip = (kind: ChangeKindLike, key: string, fn: (value: number) => void) => (event: Event) => {
+  // A select with no matching option reports '' -- which `Number` reads as 0,
+  // and 0 is a real value for the sound (no instrument). Not a change.
+  if ((event.target as HTMLInputElement).value === '') return;
   const value = num(event);
   if (!Number.isFinite(value) || !clip.value) return;
   props.state.edit(kind, () => fn(value), key);

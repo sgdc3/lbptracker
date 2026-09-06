@@ -15,7 +15,7 @@
  * owns the keyboard.
  */
 
-import { createApp, h } from 'vue';
+import { createApp, h, shallowRef } from 'vue';
 import { HANDOFF_KEY, loaderFor, manifest, type Manifest } from './assets.ts';
 import { seqPicker } from './seq-picker.ts';
 import { readBackup, readBackupZip, sequencersOf, type BackupResult } from '@lbptracker/cwlib/backup.ts';
@@ -50,7 +50,6 @@ import { EditorState } from './editor/state.ts';
 import { instrumentsFrom, type InstrumentInfo } from './editor/instruments.ts';
 import { STEPS_PER_BAR, barOfCell } from './editor/geometry.ts';
 import Inspector from './editor/Inspector.vue';
-import Palette from './editor/Palette.vue';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const statusLine = $<HTMLDivElement>('status');
@@ -86,13 +85,20 @@ const clock = (seconds: number) => {
 // --------------------------------------------------------------------- state
 
 const state = new EditorState(newSong());
-let instruments: InstrumentInfo[] = [];
+/**
+ * The game's instruments, once the manifest is in.
+ *
+ * ⚠️ A `shallowRef`, not a plain array: the inspector is mounted before the
+ * manifest arrives and its render reads this, so a plain variable reassigned
+ * later left the sound select with one option -- the chip's own -- for good.
+ */
+const instruments = shallowRef<InstrumentInfo[]>([]);
 const byGuid = new Map<number, InstrumentInfo>();
 let rinstIndex: Manifest | null = null;
 let smpIndex: Manifest | null = null;
 let loader: InstrumentLoader | null = null;
-/** The instrument the palette last placed, for a double-click on the board. */
-let lastGuid = 129085; // Square Wave, the corpus's most used
+/** The sound a new chip gets: the last one chosen in the inspector, Square Wave to begin with. */
+let lastGuid = 129085; // the corpus's most used instrument
 /** What a level gave us, by the picker's key. */
 let songs = new Map<string, Sequencer>();
 
@@ -131,10 +137,9 @@ function showLoad(): void {
 async function ensureAssets(): Promise<InstrumentLoader> {
   if (loader) return loader;
   [rinstIndex, smpIndex] = await Promise.all([manifest('fixtures/rinst'), manifest('fixtures/smp')]);
-  instruments = instrumentsFrom(rinstIndex.values() as Iterable<{ guid: number; file: string; path?: string }>);
+  instruments.value = instrumentsFrom(rinstIndex.values() as Iterable<{ guid: number; file: string; path?: string }>);
   byGuid.clear();
-  for (const info of instruments) byGuid.set(info.guid, info);
-  mountPalette();
+  for (const info of instruments.value) byGuid.set(info.guid, info);
   loader = await loaderFor(rinstIndex, smpIndex);
   return loader;
 }
@@ -215,6 +220,8 @@ function pushSettings(): void {
 
 state.onChange((kind) => {
   updateTitle();
+  const chosen = state.clip();
+  if (chosen && chosen.guid) lastGuid = chosen.guid;
   if (kind === 'notes') replanSoon();
   else if (kind === 'settings') {
     pushSettings();
@@ -342,18 +349,10 @@ function removeSelectedClip(): void {
   state.selectClip(null);
 }
 
-function mountPalette(): void {
-  const host = $<HTMLDivElement>('palette');
-  host.innerHTML = '';
-  createApp({
-    render: () => h(Palette, { instruments, onPick: (guid: number) => addInstrument(guid) }),
-  }).mount(host);
-}
-
 createApp({
   render: () => h(Inspector, {
     state,
-    instruments,
+    instruments: instruments.value,
     onDuplicate: duplicateSelected,
     onRemove: removeSelectedClip,
     onStatus: (text: string) => setStatus(text, true),
@@ -412,6 +411,7 @@ tripletsBox.addEventListener('change', () => {
   state.touch('selection');
 });
 $('fitNotes').addEventListener('click', () => roll.scrollToNotes());
+$('addChip').addEventListener('click', () => addInstrument(lastGuid));
 
 // ----------------------------------------------------------------- keyboard
 
@@ -524,7 +524,6 @@ function openSong(song: Song, how: string): void {
   player.clear();
   restartNext = true;
   state.replace(song);
-  state.selection.clipId = song.clips[0]?.id ?? null;
   updateTitle();
   setStatus(`${how} — ${song.clips.length} instrument${song.clips.length === 1 ? '' : 's'}`);
   replanSoon();
