@@ -124,7 +124,7 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
    */
   async function createChip(at: { cell: number; row: number; steps: number }): Promise<void> {
     if (state.song.clips.some((c) => c.cell === at.cell && c.row === at.row)) {
-      setStatus('that cell already holds an instrument — start from an empty one', true);
+      setStatus('that cell already holds an instrument; start from an empty one', true);
       return;
     }
     const bars = at.steps / STEPS_PER_BAR;

@@ -158,7 +158,7 @@ async function fetchManifest(dir: string): Promise<ManifestRow[]> {
   const response = await fetch(`/fixtures/${dir}/manifest.json`);
   if (!response.ok) {
     throw new Error(
-      `no ${dir}/manifest.json — extract the game's data first with tools/ExtractGuid.java`,
+      `no ${dir}/manifest.json: extract the game's data first with tools/ExtractGuid.java`,
     );
   }
   return response.json();
@@ -217,7 +217,7 @@ async function loadInstrument(row: ManifestRow): Promise<void> {
   );
   for (const s of slots) {
     log(
-      `   ${s.name} — base ${noteName(s.baseNote)} (${s.baseNote}), ` +
+      `   ${s.name}: base ${noteName(s.baseNote)} (${s.baseNote}), ` +
         `${s.wav.sampleRate} Hz, ${s.wav.channels[0].length} frames` +
         (s.wav.loop ? `, loop ${s.wav.loop.start}..${s.wav.loop.end}` : ', no loop'),
     );
@@ -225,7 +225,7 @@ async function loadInstrument(row: ManifestRow): Promise<void> {
   {
     const a = evaluateAdsr(instrument.params, ADSR_PARAMS, 0);
     log(
-      `   ADSR — attack ${a.attack.toFixed(3)}s, decay ${a.decay.toFixed(3)}s, ` +
+      `   ADSR: attack ${a.attack.toFixed(3)}s, decay ${a.decay.toFixed(3)}s, ` +
         `sustain ${a.sustain.toFixed(3)}, release ${a.release.toFixed(3)}s ` +
         `(Params[11..14])`,
     );
@@ -237,24 +237,23 @@ async function loadInstrument(row: ManifestRow): Promise<void> {
         : null,
     ).filter(Boolean);
     log(
-      `   output — level ${p[OUTPUT_PARAMS.level].x.toFixed(3)}, ` +
+      `   output: level ${p[OUTPUT_PARAMS.level].x.toFixed(3)}, ` +
         `send ${p[OUTPUT_PARAMS.send].x.toFixed(3)}, ` +
         `drive ${p[OUTPUT_PARAMS.drive].x.toFixed(3)}; ` +
         (lfos.length ? lfos.join(', ') : 'no LFO'),
     );
     log(
-      `   filter — cutoff ${p[3].x.toFixed(2)}, resonance ${p[4].x.toFixed(2)}, ` +
+      `   filter: cutoff ${p[3].x.toFixed(2)}, resonance ${p[4].x.toFixed(2)}, ` +
         `keytrack ${p[5].x.toFixed(2)}, env amount ${p[6].x.toFixed(2)}; ` +
         `its ADSR ${b.attack.toFixed(2)}/${b.decay.toFixed(2)}/` +
         `${b.sustain.toFixed(2)}/${b.release.toFixed(2)} (Params[3..10])`,
     );
   }
-  $('kb-splits').textContent =
-    `splitNotes ${instrument.splitNotes.slice(0, slots.length + 1).join(', ')}`;
+  log(`   splitNotes ${instrument.splitNotes.slice(0, slots.length + 1).join(', ')}`);
 
   buildKeyboard();
   $('kb-octave').textContent = `octave: ${noteName(octaveBase)}`;
-  $('kb-status').textContent = `${row.path.replace(/^gamedata\/audio\/music\/instruments\//, '')}`;
+  $('kb-status').textContent = `${row.file.replace(/\.rinst$/, '')} · ${slots.length} sample${slots.length === 1 ? '' : 's'}`;
   $('kb-controls').hidden = false;
   // Everything a console session needs to tap either engine. `master` matters:
   // it is where the worklet path and the AudioBufferSource path converge, so it
@@ -451,7 +450,7 @@ function playNote(note: number, atSeconds = 0): void {
     if (Boolean(v.s.wav.loop) !== source.loop) {
       log(
         `control mismatch: sample ${v.s.name} ${v.s.wav.loop ? 'has' : 'has no'} loop ` +
-          `but the browser source has loop=${source.loop} — the A/B is not comparing like with like`,
+          `but the browser source has loop=${source.loop}; the A/B is not comparing like with like`,
         'bad',
       );
     }
@@ -800,7 +799,7 @@ function setBendRange(semitones: number): void {
   if (![...select.options].some((o) => Number(o.value) === bendRange)) {
     const option = document.createElement('option');
     option.value = String(bendRange);
-    option.textContent = `±${bendRange} — from the controller`;
+    option.textContent = `±${bendRange} (from the controller)`;
     select.append(option);
   }
   select.value = String(bendRange);
@@ -865,14 +864,14 @@ function showMpe(): void {
   if (zone === undefined) {
     state.textContent =
       mpeMode() === 'auto'
-        ? `plain MIDI — listening for a zone message. Bend ±${bendRange} st, whole channel.`
-        : `plain MIDI — one bend for the whole channel, ±${bendRange} st.`;
+        ? `plain MIDI, listening for a zone message. Bend ±${bendRange} st, whole channel.`
+        : `plain MIDI, one bend for the whole channel, ±${bendRange} st.`;
     return;
   }
   const first = zone.members[0] + 1;
   const last = zone.members[zone.members.length - 1] + 1;
   state.textContent =
-    `${zone.master === 0 ? 'lower' : 'upper'} zone — master ch ${zone.master + 1}, ` +
+    `${zone.master === 0 ? 'lower' : 'upper'} zone: master ch ${zone.master + 1}, ` +
     `notes on ch ${Math.min(first, last)}–${Math.max(first, last)}. ` +
     `Bend ±${bendRange} st per note, ±${masterBendRange} st for the whole zone.`;
 }
@@ -948,7 +947,7 @@ async function enableMidi(): Promise<void> {
     select.append(option);
   }
   state.textContent = listed.length
-    ? `${listed.length} input${listed.length === 1 ? '' : 's'} — pick one`
+    ? `${listed.length} input${listed.length === 1 ? '' : 's'}; pick one`
     : 'no inputs found';
   state.classList.toggle('on', listed.length > 0);
   if (listed.length === 1) {
@@ -1062,7 +1061,7 @@ function bindKeyboard(): void {
 function playSequence(notes: number[], step: number): void {
   notes.forEach((n, i) => playNote(n, i * step));
   $('kb-detail').textContent =
-    `${notes.length} notes — ${engine === 'ours' ? 'our mixer' : "the browser's resampler"}`;
+    `${notes.length} notes, ${engine === 'ours' ? 'our mixer' : "the browser's resampler"}`;
 }
 
 let instruments: ManifestRow[] = [];
@@ -1105,7 +1104,7 @@ async function init(): Promise<void> {
       void loadInstrument(row).catch((e) => log(String(e), 'bad'));
     });
     $('kb-status').textContent =
-      `${instruments.length} instruments and ${samples.length} samples ready — pick one`;
+      `${instruments.length} instruments and ${samples.length} samples ready; pick one`;
     log(`manifest: ${instruments.length} instruments, ${samples.length} samples`);
     // The piano is loaded to begin with, so the page plays the moment it opens
     // rather than after a choice; the first instrument otherwise, should the
@@ -1152,7 +1151,7 @@ async function init(): Promise<void> {
     node?.port.postMessage({ type: 'interpolator', name });
     log(
       name === 'engine'
-        ? "sampler: the game's — linear, with the /2 and /4 copies above rate 2 and 4"
+        ? "sampler: the game's, linear, with the /2 and /4 copies above rate 2 and 4"
         : `sampler: ${name} over the full-rate sample (not what the game does)`,
     );
   });

@@ -74,7 +74,8 @@
   /* The status on the left, the credit in the middle, the load on the right. */
   .daw-foot .credit { text-align: center; color: var(--dimmer); font-size: .82rem; white-space: nowrap; }
   .daw-foot .credit b { color: var(--dim); font-weight: 600; }
-  .daw-foot .credit .v { font-family: ui-monospace, Consolas, monospace; }
+  .daw-foot .credit .v { font-family: ui-monospace, Consolas, monospace; cursor: pointer; border-bottom: 1px dotted var(--dimmer); }
+  .daw-foot .credit .v:hover { color: var(--ink); border-bottom-color: currentColor; }
   #load { justify-self: end; }
   #status { margin: 0; min-height: 1.4em; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #status.bad { color: var(--bad); }
@@ -145,8 +146,6 @@
   .panel-side .group { border: 0; padding: 0; }
   .panel-side .group + .group { margin-top: .9rem; }
   .picker-dialog.help-dialog { width: min(58rem, 94vw); }
-  /* The wheel over an open dialog scrolls the dialog, never the page under it. */
-  body:has(dialog[open]) { overflow: hidden; }
 
   /* The "which instrument?" dialog. */
   .picker-dialog {
@@ -229,6 +228,7 @@
   .stat-card dd { margin: 0; font-family: ui-monospace, Consolas, monospace; font-size: .82rem; text-align: right; overflow-wrap: anywhere; }
   .stat-card.span { grid-column: 1 / -1; }
   #rd-status, #cv-status, #cv-midiStatus, #kb-status { color: var(--accent); min-height: 1.4em; font-size: .92rem; margin-top: .6rem; }
+  #kb-status { font-size: .85rem; }
   #rd-status.bad, #cv-status.bad, #cv-midiStatus.bad { color: var(--bad); }
 
   /* ---------------------------------------------------------------- convert */
@@ -278,16 +278,18 @@
   .wkey .caps { font: 600 .62rem/1 ui-monospace, Consolas, monospace; color: #4a525c; }
   .bkey .caps { font: 600 .58rem/1 ui-monospace, Consolas, monospace; color: #93a0ad; }
   .wkey .lbl { font: .58rem/1 ui-monospace, Consolas, monospace; color: #78828e; }
-  #kb-splits, #kb-octave, #kb-meter, #kb-detail {
+  #kb-octave, #kb-meter, #kb-detail {
     font-family: ui-monospace, Consolas, monospace; font-size: .85rem; min-height: 1.4em;
   }
-  #kb-splits, #kb-meter { color: var(--dim); }
+  #kb-meter { color: var(--dim); }
+  .kb-setup { grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); }
+  .kb-setup .knob { grid-template-columns: 5.6rem 1fr auto; }
+  .kb-setup .knob output { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #kb-meter.bad { color: var(--bad); font-weight: 600; }
   #kb-octave { color: var(--ink); }
   #kb-detail { color: var(--accent); }
-  #kb-midiState { color: var(--dimmer); font-size: .85rem; }
   #kb-midiState.on { color: var(--accent); }
-  #kb-mpeLive { font: .78rem/1.5 ui-monospace, Consolas, monospace; color: var(--accent); margin-left: auto; white-space: nowrap; }
+  #kb-mpeLive { font: .78rem/1.5 ui-monospace, Consolas, monospace; color: var(--accent); min-height: 1.2em; white-space: nowrap; }
   .view .params .knob { grid-template-columns: 5.4rem 1fr 3.4rem; }
 
   #errorCard { display: none; margin: .8rem 1rem; }
@@ -368,7 +370,7 @@
   <div id="view-home" class="view home" hidden>
     <h1>LittleBigPlanet&nbsp;3&rsquo;s Music Sequencer, in the browser</h1>
     <p class="sub">
-      LBP Tracker plays, edits and renders the music written in the game&rsquo;s own sequencer &mdash;
+      LBP Tracker plays, edits and renders the music written in the game&rsquo;s own sequencer:
       the same instruments, the same synthesis, the same echo and reverb, note for note. Open one of
       your levels, a backup, or a level from the public archive; compose on the game&rsquo;s own
       grid; hear every change at once; save it as a WAV, a MIDI file or a song file.
@@ -380,11 +382,11 @@
       <button id="homeArrange" type="button">back to the song</button>
     </div>
     <div class="home-grid">
-      <div class="card"><h3>Arrange</h3><p>The board as the game lays it out &mdash; one instrument per chip, four bars to a tile &mdash; and inside each chip the note grid: points, glides, volume and timbre, whole steps or triplets.</p></div>
+      <div class="card"><h3>Arrange</h3><p>The board as the game lays it out, one instrument per chip and four bars to a tile, and inside each chip the note grid: points, glides, volume and timbre, whole steps or triplets.</p></div>
       <div class="card"><h3>Song/Mixer</h3><p>Tempo, swing, the mixer channels and their faders, the echo and the reverb, exactly the fields the game stores; and the engine&rsquo;s own voice pool and output stage.</p></div>
       <div class="card"><h3>Render</h3><p>The song to a 48&nbsp;kHz WAV through the same arithmetic the live player uses, with the numbers that say what the render did.</p></div>
       <div class="card"><h3>Import/Export</h3><p>Out as MIDI, MPE so a bend stays with its note, with a tally of what could not be carried; in from any MIDI file, played by the game&rsquo;s instruments.</p></div>
-      <div class="card"><h3>Keyboard</h3><p>The game&rsquo;s instruments under your fingers &mdash; mouse, computer keys or a MIDI controller &mdash; with every voice parameter to turn while it sounds.</p></div>
+      <div class="card"><h3>Keyboard</h3><p>The game&rsquo;s instruments under your fingers, by mouse, computer keys or a MIDI controller, with every voice parameter to turn while it sounds.</p></div>
       <div class="card"><h3>Faithful</h3><p>Every number here was read out of the game&rsquo;s own binaries and checked against real levels; where the project knowingly departs from the engine, it says so.</p></div>
     </div>
     <p class="hintline">
@@ -490,14 +492,14 @@
     <section>
       <p class="step"><b>3</b> What the render did</p>
       <div id="rd-stats"></div>
-      <p class="note-empty">Nothing rendered yet &mdash; the numbers appear here.</p>
+      <p class="note-empty">Nothing rendered yet; the numbers appear here.</p>
     </section>
   </div>
 
   <!-- ========================================================== Import/Export -->
   <div id="view-convert" class="view" hidden>
     <section>
-      <p class="step"><b>1</b> The song out &mdash; as MIDI <button type="button" class="help-btn" data-help="export" title="Help" aria-label="Help">?</button></p>
+      <p class="step"><b>1</b> The song out, as MIDI <button type="button" class="help-btn" data-help="export" title="Help" aria-label="Help">?</button></p>
       <div class="row">
         <button id="cv-save" class="primary" disabled>Download .mid</button>
         <span id="cv-status" style="margin:0"></span>
@@ -510,7 +512,7 @@
     </section>
 
     <section>
-      <p class="step"><b>2</b> A MIDI file in &mdash; it becomes the song <button type="button" class="help-btn" data-help="import" title="Help" aria-label="Help">?</button></p>
+      <p class="step"><b>2</b> A MIDI file in, to become the song <button type="button" class="help-btn" data-help="import" title="Help" aria-label="Help">?</button></p>
       <div class="drop" id="cv-midiDrop">
         <strong id="cv-midiTitle">Open a .mid</strong>
         <span id="cv-midiHint">Click here, or drop a MIDI file onto this box. Anything a DAW writes will do.</span>
@@ -536,49 +538,66 @@
   <!-- =============================================================== Keyboard -->
   <div id="view-keyboard" class="view" hidden>
     <section>
-      <p class="step"><b>1</b> An instrument &mdash; the selected chip&rsquo;s, or any <button type="button" class="help-btn" data-help="keyboard" title="Help" aria-label="Help">?</button></p>
-      <div class="row">
-        <label for="kb-instrument">instrument</label>
-        <select id="kb-instrument">
-          <option value="" selected disabled>pick one&hellip;</option>
-        </select>
-        <span class="spacer"></span>
-        <label for="kb-midiIn">MIDI in</label>
-        <select id="kb-midiIn"><option value="">none</option></select>
-        <span id="kb-midiState">not requested</span>
+      <p class="step"><b>1</b> An instrument: the selected chip&rsquo;s, or any <button type="button" class="help-btn" data-help="keyboard" title="Help" aria-label="Help">?</button></p>
+      <div class="live kb-setup">
+        <div class="group">
+          <h3>instrument</h3>
+          <div class="knob">
+            <label for="kb-instrument">sound</label>
+            <select id="kb-instrument" class="wide">
+              <option value="" selected disabled>pick one&hellip;</option>
+            </select>
+          </div>
+          <div id="kb-status"></div>
+        </div>
+        <div class="group">
+          <h3>MIDI controller</h3>
+          <div class="knob">
+            <label for="kb-midiIn">input</label>
+            <select id="kb-midiIn"><option value="">none</option></select>
+            <output id="kb-midiState">not requested</output>
+          </div>
+          <div class="knob">
+            <label for="kb-mpeMode">MPE</label>
+            <select id="kb-mpeMode">
+              <option value="auto" selected>auto</option>
+              <option value="lower">lower zone</option>
+              <option value="upper">upper zone</option>
+              <option value="off">off</option>
+            </select>
+            <output></output>
+          </div>
+          <div class="knob">
+            <label for="kb-bendRange">bend range</label>
+            <select id="kb-bendRange">
+              <option value="1">&plusmn;1</option>
+              <option value="2" selected>&plusmn;2</option>
+              <option value="7">&plusmn;7</option>
+              <option value="12">&plusmn;12</option>
+              <option value="24">&plusmn;24</option>
+              <option value="48">&plusmn;48</option>
+              <option value="96">&plusmn;96</option>
+            </select>
+            <output></output>
+          </div>
+          <div class="row" style="margin-top:.5rem">
+            <span id="kb-mpe-toggles" style="display:contents"></span>
+          </div>
+          <p class="hintline" id="kb-mpeState"></p>
+          <div id="kb-mpeLive"></div>
+        </div>
       </div>
-      <div class="row">
-        <label for="kb-mpeMode">MPE</label>
-        <select id="kb-mpeMode">
-          <option value="auto" selected>auto</option>
-          <option value="lower">lower zone</option>
-          <option value="upper">upper zone</option>
-          <option value="off">off</option>
-        </select>
-        <label for="kb-bendRange">bend range</label>
-        <select id="kb-bendRange">
-          <option value="1">&plusmn;1</option>
-          <option value="2" selected>&plusmn;2</option>
-          <option value="7">&plusmn;7</option>
-          <option value="12">&plusmn;12</option>
-          <option value="24">&plusmn;24</option>
-          <option value="48">&plusmn;48</option>
-          <option value="96">&plusmn;96</option>
-        </select>
-        <span id="kb-mpe-toggles" style="display:contents"></span>
-      </div>
-      <div class="row" style="margin-top:.5rem">
-        <span class="hintline" id="kb-mpeState" style="margin:0"></span>
-        <span id="kb-mpeLive"></span>
-      </div>
-      <div id="kb-status"></div>
-      <div id="kb-splits"></div>
     </section>
 
     <div id="kb-controls" hidden>
       <section>
         <p class="step"><b>2</b> Play</p>
         <div id="kb-piano" tabindex="0" role="group" aria-label="Keyboard"></div>
+        <p class="hintline">
+          <kbd>Z S X D C V G B H N J M</kbd> is one octave with its sharps,
+          <kbd>Q 2 W 3 E R 5 T 6 Y 7 U</kbd> the octave above,
+          <kbd>&larr;</kbd> <kbd>&rarr;</kbd> shift octave, <kbd>Esc</kbd> silences everything.
+        </p>
         <div class="row" style="margin-top:.7rem">
           <div id="kb-octave"></div>
           <span class="spacer"></span>
@@ -635,7 +654,7 @@
 </main>
 <footer class="daw-foot">
   <div id="status">start a new song, or open a level</div>
-  <span class="credit"><b>LBP Tracker</b> <span class="v" id="version"></span> · by <b>sgdc3</b> · MIT licensed</span>
+  <span class="credit"><b>LBP Tracker</b> <span class="v" id="version" role="button" tabindex="0" data-help="changelog" title="What changed"></span> · by <b>sgdc3</b> · MIT licensed</span>
   <span id="load">idle</span>
 </footer>
 <script type="module" src="./src/daw.ts"></script>

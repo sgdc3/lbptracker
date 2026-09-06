@@ -55,10 +55,10 @@ defineExpose({ focus: () => field.value?.focus() });
   <p class="archive-note" :class="{ bad }">{{ note || DEFAULT_NOTE }}</p>
   <p class="archive-hint">
     Find a level at
-    <a :href="searchHost" target="_blank" rel="noreferrer noopener">zaprit.fish</a> — its page
+    <a :href="searchHost" target="_blank" rel="noreferrer noopener">zaprit.fish</a>; its page
     shows the <b>root level</b> hash in a box of its own, under the title. Nothing here needs a
     server: the level comes straight from the Internet Archive. <b>Whole backup</b> also fetches
-    the plans, chunks and levels it depends on — slower, and usually the same songs, but it is
+    the plans, chunks and levels it depends on: slower, and usually the same songs, but it is
     where a song that was never placed in the level would be. An adventure has no world of its own
     and always takes this route.
   </p>

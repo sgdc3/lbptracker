@@ -122,7 +122,7 @@ export const player = new Player({
     for (const l of playerListeners) l.playing?.(on);
   },
   progress: (phase, done, total) => {
-    setStatus(`preparing — ${phase} ${Math.round((done / Math.max(1, total)) * 100)}%`);
+    setStatus(`preparing: ${phase} ${Math.round((done / Math.max(1, total)) * 100)}%`);
   },
 });
 
@@ -194,7 +194,7 @@ async function replan(): Promise<void> {
       `${clips} instrument${clips === 1 ? '' : 's'}, ` +
       `${loaded.played.toLocaleString()} note${loaded.played === 1 ? '' : 's'}` +
       (loaded.skipped ? `, ${loaded.skipped} with no instrument` : '') +
-      ` — ${clock(loaded.seconds)} at ${state.song.tempo} BPM`,
+      `; ${clock(loaded.seconds)} at ${state.song.tempo} BPM`,
     );
     for (const l of planListeners) l();
   } catch (error) {
@@ -226,7 +226,7 @@ export function openSong(song: Song, how: string): void {
   player.clear();
   restartNext = true;
   state.replace(song);
-  setStatus(`${how} — ${song.clips.length} instrument${song.clips.length === 1 ? '' : 's'}`);
+  setStatus(`${how}: ${song.clips.length} instrument${song.clips.length === 1 ? '' : 's'}`);
   replanSoon();
 }
 

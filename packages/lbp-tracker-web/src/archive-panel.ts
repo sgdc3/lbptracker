@@ -99,7 +99,7 @@ export function wireArchiveOpen(opts: {
     const answer = await fetch(rootLevelUrl(sha1), { mode: 'cors' });
     if (!answer.ok) {
       throw new Error(
-        `the archive answered ${answer.status} — check the hash, or the archive `
+        `the archive answered ${answer.status}; check the hash, or the archive `
         + 'may never have received this level',
       );
     }
@@ -226,11 +226,11 @@ export function wireArchiveOpen(opts: {
     } else if (pasted.kind === 'link') {
       // The hash is on that page and the page cannot be read from here; saying
       // so beats a failed fetch that looks like the archive being down.
-      say('that is a link to a level’s page — open it and copy the hash from it', true);
+      say('that is a link to a level’s page: open it and copy the hash from it', true);
     } else if (ui.query.trim() === '') {
       focusField();
     } else {
-      say('that is not a root level hash — it is 40 hex digits, from the level’s page', true);
+      say('that is not a root level hash: it is 40 hex digits, from the level’s page', true);
     }
   }
 

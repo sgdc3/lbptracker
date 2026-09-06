@@ -192,7 +192,7 @@ function refreshHeader(): void {
   songName.textContent = state.song.name || 'untitled';
   if (document.activeElement !== tempoBox) tempoBox.value = String(state.song.tempo);
   dirty.textContent = state.dirty ? '•' : '';
-  document.title = `LBP Tracker${state.dirty ? ' •' : ''} — ${state.song.name || 'untitled'}`;
+  document.title = `LBP Tracker${state.dirty ? ' •' : ''} · ${state.song.name || 'untitled'}`;
 }
 state.onChange(refreshHeader);
 

@@ -320,7 +320,7 @@ export function mountRender(opts: { isActive: () => boolean }): void {
           `<dl>${c.rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`)
         .join('');
       setBar(1);
-      setStatus(`done — ${seconds.toFixed(1)} s rendered in ${elapsed.toFixed(2)} s`);
+      setStatus(`done: ${seconds.toFixed(1)} s rendered in ${elapsed.toFixed(2)} s`);
       return;
     }
     if (message.type === 'error') {

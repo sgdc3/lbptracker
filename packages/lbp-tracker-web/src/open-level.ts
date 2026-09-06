@@ -201,7 +201,7 @@ export function openedTitle(result: BackupResult, sequencers: number, fallback: 
   if (levels > 1 || (levels > 0 && others.some(([n]) => n > 0))) parts.push(count(levels, 'level'));
   for (const [n, what] of others) if (n > 0) parts.push(count(n, what));
   parts.push(count(sequencers, 'sequencer'));
-  return `${openedLabel(result, fallback)} — ${parts.join(', ')}`;
+  return `${openedLabel(result, fallback)}: ${parts.join(', ')}`;
 }
 
 /**

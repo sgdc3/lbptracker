@@ -43,8 +43,8 @@ const CHOICE_SPECS = [
     label: 'channels',
     start: 'mpe',
     options: [
-      { value: 'mpe', label: 'MPE — a channel per note' },
-      { value: 'plain', label: 'plain — a channel per instrument' },
+      { value: 'mpe', label: 'MPE: a channel per note' },
+      { value: 'plain', label: 'plain: a channel per instrument' },
     ],
   },
   {

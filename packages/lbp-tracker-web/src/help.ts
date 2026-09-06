@@ -11,7 +11,10 @@
  * document, so a button drawn later by Vue needs no wiring of its own.
  */
 
+import changelog from '../../../CHANGELOG.md?raw';
+
 export type HelpTopic =
+  | 'changelog'
   | 'app'
   | 'open'
   | 'board'
@@ -32,7 +35,44 @@ interface Topic {
 const p = (html: string) => `<p>${html}</p>`;
 const h = (text: string) => `<h4>${text}</h4>`;
 
+const escape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
+ * The changelog, from the repository's own CHANGELOG.md: headings, bullets and
+ * paragraphs are all it uses, so that is all this reads. The first heading is
+ * the file's title and the note under it is for the file's editors; both stop
+ * at the first version heading.
+ */
+function changelogHtml(md: string): string {
+  const lines = md.split('\n');
+  const from = lines.findIndex((l) => l.startsWith('## '));
+  const out: string[] = [];
+  let list: string[] = [];
+  let para: string[] = [];
+  const flush = () => {
+    if (list.length) out.push(`<ul>${list.map((i) => `<li>${i}</li>`).join('')}</ul>`);
+    if (para.length) out.push(p(para.join(' ')));
+    list = [];
+    para = [];
+  };
+  for (const raw of lines.slice(from < 0 ? 0 : from)) {
+    const line = raw.trimEnd();
+    if (line.startsWith('## ')) { flush(); out.push(`<h3>${escape(line.slice(3))}</h3>`); }
+    else if (line.startsWith('### ')) { flush(); out.push(h(escape(line.slice(4)))); }
+    else if (line.startsWith('- ')) { if (para.length) flush(); list.push(escape(line.slice(2))); }
+    else if (line.startsWith('  ') && list.length) list[list.length - 1] += ' ' + escape(line.trim());
+    else if (line === '') flush();
+    else para.push(escape(line));
+  }
+  flush();
+  return out.join('');
+}
+
 export const HELP: Readonly<Record<HelpTopic, Topic>> = {
+  changelog: {
+    title: 'What changed',
+    body: changelogHtml(changelog),
+  },
   app: {
     title: 'Getting around',
     body:
@@ -194,14 +234,32 @@ export function mountHelp(): void {
   dialog.addEventListener('click', (event) => {
     if (event.target === dialog) dialog.close();
   });
-  document.addEventListener('click', (event) => {
-    const button = (event.target as Element).closest?.('[data-help]');
-    if (!(button instanceof HTMLElement)) return;
-    const topic = HELP[button.dataset.help as HelpTopic];
-    if (!topic) return;
+  const open = (name: string | undefined) => {
+    const topic = HELP[name as HelpTopic];
+    if (!topic) return false;
     title.textContent = topic.title;
     body.innerHTML = topic.body;
     body.scrollTop = 0;
     dialog.showModal();
+    return true;
+  };
+  document.addEventListener('click', (event) => {
+    const button = (event.target as Element).closest?.('[data-help]');
+    if (button instanceof HTMLElement) open(button.dataset.help);
   });
+  // A non-button with the attribute (the version in the status bar) opens on Enter too.
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    const el = event.target;
+    if (el instanceof HTMLElement && !(el instanceof HTMLButtonElement) && el.dataset.help) open(el.dataset.help);
+  });
+  // The wheel over an open dialog scrolls its text, never the page behind it.
+  // Done here rather than by hiding the page's overflow, which would drop the
+  // scrollbar, shift the page by its width and unstick the top bar.
+  for (const d of document.querySelectorAll<HTMLDialogElement>('dialog')) {
+    d.addEventListener('wheel', (event) => {
+      const scroller = (event.target as Element).closest?.('.help-body, .picker-list, .picker-scroll');
+      if (!(scroller instanceof HTMLElement) || scroller.scrollHeight <= scroller.clientHeight) event.preventDefault();
+    }, { passive: false });
+  }
 }

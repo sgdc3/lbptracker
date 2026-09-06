@@ -127,7 +127,7 @@ export function mountConvert(opts: { isActive: () => boolean; onShow: (l: () => 
       lost.push(`${plural(exported.droppedGlides, 'note')} lost a glide: plain mode has one channel per instrument, and a bend there would move the whole part. Switch to MPE to keep them.`);
     }
     if (exported.flattened > 0) {
-      lost.push(`${plural(exported.flattened, 'note')} lost a glide to a channel it had to share — the zone has fifteen and this passage wanted more at once.`);
+      lost.push(`${plural(exported.flattened, 'note')} lost a glide to a channel it had to share: the zone has fifteen and this passage wanted more at once.`);
     }
     if (exported.dropped > 0) {
       lost.push(`${plural(exported.dropped, 'note')} could not be written at all: more than fifteen copies of one pitch sounding together leaves no channel to tell them apart.`);
@@ -153,7 +153,7 @@ export function mountConvert(opts: { isActive: () => boolean; onShow: (l: () => 
     $('cv-lost').innerHTML = lost.map((line) => `<li>${line}</li>`).join('');
     $('cv-report').classList.add('on');
     saveButton.disabled = false;
-    setStatus('cv-status', `${seq.name || 'untitled'} — ${plural(exported.notes, 'note')} over ${plural(exported.parts, 'part')}`);
+    setStatus('cv-status', `${seq.name || 'untitled'}: ${plural(exported.notes, 'note')} over ${plural(exported.parts, 'part')}`);
   }
 
   saveButton.addEventListener('click', () => {
@@ -169,7 +169,7 @@ export function mountConvert(opts: { isActive: () => boolean; onShow: (l: () => 
     link.download = exportedName;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 0);
-    log(`saved ${exportedName} — ${(payload.length / 1024).toFixed(0)} kB${single ? '' : `, ${exported.files.length} files`}`);
+    log(`saved ${exportedName}, ${(payload.length / 1024).toFixed(0)} kB${single ? '' : `, ${exported.files.length} files`}`);
   });
 
   midi.setValue('bendRange', DEFAULT_BEND_RANGE);
@@ -265,10 +265,10 @@ export function mountConvert(opts: { isActive: () => boolean; onShow: (l: () => 
       buildAssign(imported);
       $('cv-inReport').classList.add('on');
       takeButton.disabled = false;
-      setStatus('cv-midiStatus', `${file.name} — ${plural(imported.notes, 'note')} in ${plural(imported.clips, 'clip')}`);
+      setStatus('cv-midiStatus', `${file.name}: ${plural(imported.notes, 'note')} in ${plural(imported.clips, 'clip')}`);
       for (const line of lost) log(line);
       midiDrop.classList.add('loaded');
-      $('cv-midiTitle').textContent = `${file.name} — ${plural(imported.notes, 'note')}`;
+      $('cv-midiTitle').textContent = `${file.name}: ${plural(imported.notes, 'note')}`;
       $('cv-midiHint').textContent = 'Click or drop to open a different file.';
     } catch (error) {
       setStatus('cv-midiStatus', String((error as Error).message ?? error), true);

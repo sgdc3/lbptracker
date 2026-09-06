@@ -25,7 +25,7 @@ import { ref, useTemplateRef } from 'vue';
 const emit = defineEmits<{ files: [files: File[]]; drop: [transfer: DataTransfer] }>();
 
 const title = ref('Open a level, or a whole backup');
-const hint = ref('Drop a level, a backup folder or a zip here — or use the buttons.');
+const hint = ref('Drop a level, a backup folder or a zip here, or use the buttons.');
 const busy = ref(false);
 const loaded = ref(false);
 const over = ref(false);

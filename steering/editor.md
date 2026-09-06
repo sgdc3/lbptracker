@@ -19,7 +19,9 @@ and the picker for a level holding several sequencers; a fixed footer carries th
 the credit and the audio thread's readout (idle, notes sounding, audio load, dropouts); and six
 views, one shown at a time, all reaching the same song through `src/daw/session.ts`. Every card
 has a "?" opening the one help dialog on its topic (`src/help.ts`): the views carry as little
-prose as they can, and what they do carry is for the person using the app, never a measurement.
+prose as they can, and what they do carry is for the person using the app, never a measurement;
+no em dash anywhere in it, by the owner's rule. The version in the status bar opens the same
+dialog on `CHANGELOG.md` (repository root, imported raw), which is written for the same reader.
 The views are:
 
 | view | file | what it does with the song |

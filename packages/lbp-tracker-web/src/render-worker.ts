@@ -79,7 +79,7 @@ self.onmessage = async (event: MessageEvent) => {
       }
 
       const started = performance.now();
-      say(`rendering "${seq.name}" — ${seq.tracks.length} tracks, ${seq.lengthSteps} steps…`);
+      say(`rendering "${seq.name}": ${seq.tracks.length} tracks, ${seq.lengthSteps} steps…`);
       const result = await renderSequencer(seq, await loaderFor(rinstIndex!, smpIndex!), {
         secondsArg: message.seconds ?? 0,
         fromArg: message.from ?? 0,
