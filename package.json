@@ -19,7 +19,9 @@
     "check": "npm run typecheck && npm test",
     "build": "npm run build -w @lbptracker/web",
     "serve": "npm run dev -w @lbptracker/web",
-    "preview": "npm run preview -w @lbptracker/web"
+    "preview": "npm run preview -w @lbptracker/web",
+    "stage": "npm run stage -w @lbptracker/web",
+    "deploy": "npm run deploy -w @lbptracker/web"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",

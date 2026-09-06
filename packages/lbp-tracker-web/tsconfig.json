@@ -12,6 +12,7 @@
     "src/**/*.ts",
     "src/**/*.vue",
     "test",
+    "dev/**/*.ts",
     "vite.config.ts"
   ]
 }

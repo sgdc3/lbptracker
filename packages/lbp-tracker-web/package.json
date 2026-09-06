@@ -9,6 +9,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "stage": "vite build && node dev/stage-site.ts",
+    "deploy": "npm run stage && wrangler deploy",
     "test": "node --test",
     "typecheck": "node dev/typecheck.mjs"
   },
@@ -20,6 +22,7 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.8",
     "vite": "^8.2.2",
-    "vue-tsc": "^3.3.11"
+    "vue-tsc": "^3.3.11",
+    "wrangler": "^4.129.0"
   }
 }

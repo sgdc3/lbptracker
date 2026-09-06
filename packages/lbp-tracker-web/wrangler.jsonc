@@ -1,0 +1,23 @@
+// Cloudflare deployment: an assets-only Worker serving `dist/`.
+//
+// `npm run deploy` stages the site (see dev/stage-site.ts) and runs
+// `wrangler deploy` here. Run `wrangler login` once, interactively, before
+// the first deploy. `npx wrangler dev` serves the staged `dist/` the way
+// Cloudflare will, `_headers` included — Vite's preview does not read
+// `_headers`.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "lbptracker",
+  "compatibility_date": "2026-09-06",
+  // The dev server makes no outbound requests (steering/tracker-architecture.md);
+  // neither does the deploy tool beyond the deploy itself.
+  "send_metrics": false,
+  "assets": {
+    // Where `vite build` writes: one level above this package (vite.config.ts).
+    "directory": "../../dist",
+    // `/live` and `/live.html` both serve live.html; nothing here needs more.
+    "html_handling": "auto-trailing-slash",
+    // A static site with four pages: a wrong URL is a 404, not index.html.
+    "not_found_handling": "none"
+  }
+}

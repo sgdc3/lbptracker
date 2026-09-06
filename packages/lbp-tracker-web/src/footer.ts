@@ -14,9 +14,9 @@
  * more than the deployment does is worse than one that claims nothing, so what
  * is left is the trademark disclaimer, which is true either way.
  *
- * ⚠️ `steering/game-assets.md` still says the tracker "must not redistribute
- * them". That stance and this deployment cannot both stand; the steering note is
- * the one to settle, not this file.
+ * `steering/game-assets.md` now says where a deployment gets the assets is the
+ * deployment's decision, and the Cloudflare deployment ships them
+ * (`dev/stage-site.ts`), so the two agree.
  */
 
 import { APP_VERSION } from './version.ts';

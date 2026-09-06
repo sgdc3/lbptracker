@@ -18,6 +18,21 @@
         "preview"
       ],
       "port": 8174
+    },
+    {
+      "name": "cloudflare",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "exec",
+        "-w",
+        "@lbptracker/web",
+        "--",
+        "wrangler",
+        "dev",
+        "--port",
+        "8175"
+      ],
+      "port": 8175
     }
   ]
 }

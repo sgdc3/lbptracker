@@ -151,6 +151,32 @@ modules being exactly one directory below the site root (`/src/assets.ts` in dev
 in the build). Both checked in the browser; change `build.rollupOptions.output` filenames and the
 fixtures 404 with no other symptom.
 
+### Deployment — Cloudflare, assets included
+
+`npm run deploy` is `vite build`, then `packages/lbp-tracker-web/dev/stage-site.ts`, then
+`wrangler deploy` on `packages/lbp-tracker-web/wrangler.jsonc` — an assets-only Worker, no script,
+`send_metrics` off. `wrangler login` once before the first deploy.
+
+❗ **The staging step is the one place game data enters `dist/`.** It copies exactly what
+`fixtures/rinst/manifest.json` and `fixtures/smp/manifest.json` name — 286 files, 6.7 MB on
+2026-09-06 — rewrites the two manifests, and writes `_headers`: hashed bundles immutable, samples a
+day, `nosniff` everywhere. `fixtures/archive` stays out; the pages read levels from archive.org.
+
+⚠️ **The staged names are not the game's.** `publicName` turns `#` into `-sharp` and a space into
+`_`, so no host ever has to decode `%23` back into a file name — the class of trap that cost a day
+in `assets.ts`. The manifest is the indirection; `fixtures/` on disk is untouched;
+`test/stage-site.test.ts` holds every name in the real manifests to being the identity under
+`encodeURIComponent`, with no collisions (the game already has a `harp_fsharp3.smp`, which is why
+the rule is `-sharp` and not `sharp`).
+
+⚠️ **Vite's preview never exercises the staged copies** — its middleware answers `/fixtures/` from
+the repository first. The check is `npx wrangler dev` (launch config `cloudflare`, port 8175),
+which serves `dist/` the way Cloudflare will, `_headers` included. Measured that way on
+2026-09-06: the choir's two `#` samples loaded under the staged names, the three header rules
+applied, the worklet started. ⚠️ npm 11's install-script gate holds `workerd`'s and `esbuild`'s
+postinstall; `wrangler dev` and `wrangler deploy --dry-run` both ran regardless, because the
+platform binaries arrive as optional dependencies.
+
 ## Vue, and where it is not allowed
 
 The pages are Vue 3, and the first thing to know is the line it does not cross:

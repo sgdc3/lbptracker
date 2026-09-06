@@ -27,6 +27,10 @@ dist/
 *.tsbuildinfo
 npm-debug.log*
 
+# cloudflare / wrangler
+.wrangler/
+.dev.vars*
+
 # locally generated test fixtures -- see steering/tracker-architecture.md.
 # Never commit these: they are derived from copyrighted game assets and from
 # other people's levels.

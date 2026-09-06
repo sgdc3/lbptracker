@@ -53,6 +53,20 @@ pages drive them from event handlers rather than from a Vue root.
 worker has no `document`; the mounting half is `widgets/open-panel.ts`. Nothing in the build warns
 about this — the bundle is fine and the worker crashes.
 
+## Deploying — Cloudflare, with the assets
+
+```bash
+npx wrangler login    # once
+npm run deploy        # from the repository root: build, stage, wrangler deploy
+npx wrangler dev      # from this package: serve the staged dist/ the way Cloudflare will
+```
+
+`dev/stage-site.ts` is the only step that copies game data into `dist/`: the `rinst` and `smp`
+directories under `fixtures/`, exactly as their manifests name them, under names a static host
+serves without decoding (`#` → `-sharp`, space → `_`; the manifest is rewritten to match). It also
+writes `_headers`. `wrangler.jsonc` is the Worker: assets only, telemetry off. ⚠️ Vite's preview
+serves `/fixtures/` from the repository and never exercises the staged copies — `wrangler dev` does.
+
 ## Two rules the URLs live by
 
 ⚠️ **`asset()` in `src/assets.ts` is the one place that builds an asset URL.** A bare relative URL in

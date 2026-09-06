@@ -248,14 +248,16 @@ against. ❗ `FARC` is not `FAR4`, the save-archive family in
 
 Every sample above is copyrighted Sony / Media Molecule material, and every level in the public
 archive is its creator's work. **Nothing of either is in this repository**: `fixtures/` is
-gitignored and always has been, and the build never copies it — `fixtures/` is served by a
-middleware in dev and preview and never enters `dist/`.
+gitignored and always has been, and `vite build` never copies it — `fixtures/` is served by a
+middleware in dev and preview. The one step that puts any of it into `dist/` is the deployment's
+staging, `packages/lbp-tracker-web/dev/stage-site.ts`, which runs only under `npm run stage` /
+`deploy`, copies exactly what the `rinst` and `smp` manifests name, and prints what it copied.
 
 The code's constraint is that assets arrive at runtime, never baked into a build: the pages read
 the user's own files client-side, and `packages/lbp-tracker-web/src/assets.ts` fetches manifests and
 samples from `../` relative to itself, which is whatever the deployment's root is. **Where a
-deployment gets those files from is the deployment's decision, and the plan of record is that the
-hosted copy serves them from the same bucket as the site.** This note used to say "the tracker
+deployment gets those files from is the deployment's decision, and the Cloudflare deployment
+serves them from the same origin as the site** (*Deployment* in tracker-architecture.md). This note used to say "the tracker
 must not redistribute them"; the sentence is gone rather than quietly contradicted, because a
 steering file that forbids what the project does is a trap for the next session. The copyright
 fact is unchanged and is why it was worth weighing.

@@ -90,6 +90,11 @@ point in the web package. Imports cross by package name:
 - `npm run check` — typecheck, then tests: the one command to run before a commit.
 - `npm run serve` / `build` / `preview` — Vite, **in the web package only**; `127.0.0.1:8173` and
   `:8174`.
+- `npm run stage` / `deploy` — the site **plus the assets it fetches**, for Cloudflare: `vite
+  build`, then `packages/lbp-tracker-web/dev/stage-site.ts` copies `fixtures/rinst` and
+  `fixtures/smp` into `dist/fixtures/` under boring names and writes `_headers`; `deploy` then runs
+  `wrangler deploy` on `packages/lbp-tracker-web/wrangler.jsonc`. ⚠️ Plain `build` still never
+  copies `fixtures/`. *Deployment* in `steering/tracker-architecture.md` has the measurements.
 - The libraries depend on each other as `"*"`, so a version bump touches the three manifests and
   nothing else; the web footer reads its version out of its own `package.json`
   (`packages/lbp-tracker-web/src/version.ts`), and a test holds the root manifest to the same number.
@@ -104,4 +109,6 @@ to remember before moving anything into `audio/mixer-worklet.ts`'s import graph:
 in there fails to load and the page goes silent with nothing on the main thread to say why.
 
 `fixtures/` is gitignored and always has been: it holds the user's own extracted game data and
-other people's levels, and none of it may be committed. `steering/tools.md` says how it is filled.
+other people's levels, and none of it may be committed. Two of its directories are *staged* into a
+deployment by the explicit step above; that is the only route out. `steering/tools.md` says how it
+is filled.
