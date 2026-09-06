@@ -1080,6 +1080,14 @@ async function init(): Promise<void> {
     $('status').textContent =
       `${instruments.length} instruments and ${samples.length} samples ready — pick one`;
     log(`manifest: ${instruments.length} instruments, ${samples.length} samples`);
+    // The piano is loaded to begin with, so the page plays the moment it opens
+    // rather than after a choice; the first instrument otherwise, should the
+    // extraction lack it.
+    const first = Math.max(0, instruments.findIndex((row) => row.file === 'piano.rinst'));
+    if (instruments.length > 0) {
+      select.value = String(first);
+      void loadInstrument(instruments[first]).catch((e) => log(String(e), 'bad'));
+    }
   } catch (error) {
     $('status').textContent = String(error);
     log(String(error), 'bad');
