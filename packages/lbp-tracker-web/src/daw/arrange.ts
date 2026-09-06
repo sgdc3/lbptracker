@@ -284,8 +284,10 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
   // ------------------------------------------------------------ chip loop
   // The selected chip's bars round and round, its row at full volume and
   // every other row at a fifth: hearing one part in place while editing it.
-  // Armed on a chip; it follows the selection to another chip, and it is
-  // dropped when the panel closes, the transport is stopped, or the song goes.
+  // Arming it pauses the song, if it was playing, at the chip's start, so play
+  // then begins the loop; disarming it plays the song on from the chip's
+  // start. It follows the selection to another chip, and it is dropped when
+  // the panel closes, the transport is stopped, or the song goes.
   const loopButton = $<HTMLButtonElement>('loopChip');
   let loopingClip: number | null = null;
   const aimChipLoop = (clip: Clip, seekToStart: boolean) => {
@@ -294,21 +296,29 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     player.setFocus(clip.row);
     player.setRegion(start, start + clip.steps);
     loopButton.setAttribute('aria-pressed', 'true');
-    if (!seekToStart || !player.hasPlan) return;
-    player.seek(player.frameAt(start));
-    if (!player.playing) player.play();
+    if (seekToStart && player.hasPlan) player.seek(player.frameAt(start));
   };
-  const dropChipLoop = () => {
+  /** Disarm; `resume` plays the song on from the chip's start. */
+  const dropChipLoop = (resume = false) => {
     if (loopingClip === null) return;
+    const clip = state.clip(loopingClip);
     loopingClip = null;
     player.setFocus(null);
     player.clearRegion();
     loopButton.setAttribute('aria-pressed', 'false');
+    if (resume && clip && player.hasPlan) {
+      player.seek(player.frameAt(clip.cell * STEPS_PER_CELL));
+      if (!player.playing) player.play();
+    }
   };
   loopButton.addEventListener('click', () => {
     const clip = state.clip();
-    if (loopingClip !== null) dropChipLoop();
-    else if (clip) aimChipLoop(clip, true);
+    if (loopingClip !== null) {
+      dropChipLoop(true);
+    } else if (clip) {
+      if (player.playing) player.stop();
+      aimChipLoop(clip, true);
+    }
   });
   state.onChange(() => {
     if (loopingClip === null) return;
@@ -316,7 +326,7 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     if (!clip || !player.hasPlan) dropChipLoop();
     else aimChipLoop(clip, clip.id !== loopingClip);
   });
-  window.addEventListener('lbp:stop', dropChipLoop);
+  window.addEventListener('lbp:stop', () => dropChipLoop());
 
   // ------------------------------------------------------------- keyboard
 
