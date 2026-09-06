@@ -511,16 +511,20 @@ So the right change is not a lower bound but an **allowed set**: `0x272` plus `0
 anything between still refused until a file turns up to test it. That is a design decision rather
 than a fix, and it is left to be taken deliberately.
 
-### What is left after that
+### What is left
 
-- **The zero thing count**, above. This is the next thing to do and it is a header field, not a part.
+✔ **The LBP1 layout is done** — 19 of 19, above. What is left is not layout:
+
+- **`0x26e`** — one level whose **chunk table** is not where this reader looks, so it fails before
+  any Thing is read. A container question, not a part question.
+- **One truncated file** — the archive itself stores `0-aaaffe` short, 4,327 bytes. Nothing to fix.
 - **A quest of a type other than 5** — still never seen in 103 archive levels or the saves.
   `readQuest` refuses rather than guessing.
 - **Branch `0x4431`** — one level in the saves, `f331efa7`, version 0x3e2. ⚠️ Nothing in the archive
   is on it: every sampled level is branch `0/0` or `4c44`. One file is not enough to reverse a
   branch from, and a 103-level sample did not supply a second.
-- **`0x26e` and one truncated file** — one level whose chunk table is not where this reader looks,
-  and one the archive itself stores short. Neither is an LBP1 layout question.
+- **The allowed-set decision**, above: whether to admit `0x272` alongside `0x3b7..0x3ff` now that it
+  is measured, while still refusing the untested span between them.
 
 **None of this is in the way of music**, and the archive sampler is still how the next one gets
 found: every real reader bug since 2026-09-05 came out of a file no PS3 save on this machine
