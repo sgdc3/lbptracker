@@ -22,7 +22,20 @@
  * relative to the page, never rooted at `/`.
  */
 import MIXER_WORKLET_URL from '@lbptracker/lib/audio/mixer-worklet.ts?worker&url';
+import { createApp, h, watch } from 'vue';
 import { asset } from './assets.ts';
+import ControlPanel from './controls/ControlPanel.vue';
+import Fader from './controls/Fader.vue';
+import Checks from './controls/Checks.vue';
+import {
+  effectSettings,
+  effectsSignature,
+  on,
+  overrideAdsr,
+  overrideFilter,
+  overrideLfos,
+  value as knob,
+} from './controls/state.ts';
 import { ADSR_PARAMS, ADSR_PARAMS_B, evaluateAdsr } from '@lbptracker/lib/envelope.ts';
 import { FILTER_PARAMS } from '@lbptracker/lib/audio/moog.ts';
 import { LFO_PARAMS, OUTPUT_PARAMS } from '@lbptracker/lib/params.ts';
@@ -254,55 +267,7 @@ function voiceFor(note: number) {
 }
 
 /** How long a note of a bench sequence is held, in seconds, from the slider. */
-function noteSeconds(): number {
-  return Number(($('length') as HTMLInputElement).value) / 100;
-}
-
-/** A slider's raw value. */
-const num = (id: string) => Number(($(id) as HTMLInputElement).value);
-/** A slider scaled to 0..1. */
-const unit = (id: string) => num(id) / 100;
-const ticked = (id: string) => ($(id) as HTMLInputElement).checked;
-
-/**
- * The live overrides, read at note-on.
- *
- * ⚠️ **Off by default, and that is the point.** Unticked, every group falls
- * through to the instrument's own measured parameters, so the bench still plays
- * the game. The sliders are for asking "what does this knob do", not for
- * inventing a patch and mistaking it for the engine.
- */
-const overrideAdsr = () =>
-  ticked('ovEnv')
-    ? {
-        attack: num('envA') / 100,
-        decay: num('envD') / 100,
-        sustain: unit('envS'),
-        release: num('envR') / 100,
-      }
-    : undefined;
-
-const overrideFilter = () =>
-  ticked('ovFilter')
-    ? {
-        settings: {
-          cutoff: unit('filCut'),
-          resonance: unit('filRes'),
-          keyTrack: num('filTrack') / 100,
-          envAmount: num('filEnv') / 100,
-        },
-        envelope: { attack: 0, decay: 0.3, sustain: 1, release: 0.2 },
-      }
-    : undefined;
-
-const overrideLfos = () =>
-  ticked('ovLfo')
-    ? ([0, 1, 2].map((i) => ({
-        rate: num(`lfo${i + 1}r`) / 10,
-        depth: unit(`lfo${i + 1}d`),
-        spread: 0,
-      })) as unknown as ReturnType<typeof currentLfos>)
-    : undefined;
+const noteSeconds = (): number => knob('length');
 
 /**
  * The instrument's own ADSR, or undefined when the bench is asked to fall back
@@ -313,7 +278,7 @@ const overrideLfos = () =>
  */
 function currentAdsr() {
   if (!instrument) return undefined;
-  if (!($('useEnvelope') as HTMLInputElement).checked) return undefined;
+  if (!on('useEnvelope')) return undefined;
   return evaluateAdsr(instrument.params, ADSR_PARAMS, 0);
 }
 
@@ -326,7 +291,7 @@ function currentAdsr() {
  */
 function currentFilter() {
   if (!instrument) return undefined;
-  if (!($('useFilter') as HTMLInputElement).checked) return undefined;
+  if (!on('useFilter')) return undefined;
   const p = instrument.params;
   return {
     settings: {
@@ -342,7 +307,7 @@ function currentFilter() {
 /** The instrument's three LFOs, evaluated at modulation 0, or undefined when off. */
 function currentLfos() {
   if (!instrument) return undefined;
-  if (!($('useLfos') as HTMLInputElement).checked) return undefined;
+  if (!on('useLfos')) return undefined;
   const p = instrument.params;
   const one = (l: (typeof LFO_PARAMS)[number]) => ({
     rate: p[l.rate].x,
@@ -400,10 +365,10 @@ function noteOn(note: number, velocity = 96, channel = LOCAL): void {
       playbackRate: v.playbackRate,
       gain:
         velocityGain(velocity) * 2 * (instrument?.params[OUTPUT_PARAMS.level].x ?? 0.5),
-      pan: unit('pPan'),
-      drive: unit('pDrive'),
-      echoSend: unit('echoSend'),
-      reverbSend: unit('reverbSend'),
+      pan: knob('pPan'),
+      drive: knob('pDrive'),
+      echoSend: knob('echoSend'),
+      reverbSend: knob('reverbSend'),
       // No `endFrame`: the gate stays open until `release` closes it.
       release: adsr ? 0 : Math.round(0.12 * context.sampleRate),
       envelope: adsr,
@@ -446,17 +411,9 @@ function panic(): void {
  * and not per note.
  */
 function pushEffects(): void {
-  const framesPerStep = ((60 / num('tempo')) / 4) * (context?.sampleRate ?? 48000);
   node?.port.postMessage({
     type: 'effects',
-    echoTime: num('echoTime') / 10,
-    framesPerStep,
-    feedback: unit('echoFb'),
-    mix: unit('echoMix'),
-    reverbSetting: num('reverbSet'),
-    echoOn: unit('echoSend') > 0,
-    reverbOn: unit('reverbSend') > 0,
-    clip: ticked('optClip'),
+    ...effectSettings(context?.sampleRate ?? 48000),
   });
 }
 
@@ -764,8 +721,8 @@ function expressionOn(channel: number): [number, number, number] {
     zone !== undefined && channel !== zone.master ? chanBend[zone.master] * masterBendRange : 0;
   return [
     chanBend[channel] * bendRange + fromMaster,
-    ticked('mpePress') ? chanPress[channel] : 1,
-    ticked('mpeSlide') ? chanSlide[channel] - 0.5 : 0,
+    on('mpePress') ? chanPress[channel] : 1,
+    on('mpeSlide') ? chanSlide[channel] - 0.5 : 0,
   ];
 }
 
@@ -1163,77 +1120,31 @@ async function init(): Promise<void> {
         : `sampler: ${name} over the full-rate sample (not what the game does)`,
     );
   });
-  const gain = $<HTMLInputElement>('gain');
-  gain.addEventListener('input', () => {
-    const value = Number(gain.value) / 100;
-    $('gainLabel').textContent = value.toFixed(2);
-    if (master && context) master.gain.setTargetAtTime(value, context.currentTime, 0.01);
-  });
-
   bindPiano();
 
-  // Every remaining slider is label + value, so they are declared rather than
-  // wired one at a time. `effects` marks the ones that rebuild the output stage.
-  const knobs: [string, (v: number) => string, boolean][] = [
-    ['pPan', (v) => (v === 50 ? 'centre' : `${v < 50 ? 'L' : 'R'} ${Math.abs(v - 50) * 2}%`), false],
-    ['pDrive', (v) => (v / 100).toFixed(2), false],
-    ['length', (v) => `${(v / 100).toFixed(2)}s`, false],
-    ['envA', (v) => `${(v / 100).toFixed(2)}s`, false],
-    ['envD', (v) => `${(v / 100).toFixed(2)}s`, false],
-    ['envS', (v) => (v / 100).toFixed(2), false],
-    ['envR', (v) => `${(v / 100).toFixed(2)}s`, false],
-    ['filCut', (v) => (v / 100).toFixed(2), false],
-    ['filRes', (v) => (v / 100).toFixed(2), false],
-    ['filEnv', (v) => (v / 100).toFixed(2), false],
-    ['filTrack', (v) => (v / 100).toFixed(2), false],
-    ['lfo1r', (v) => `${(v / 10).toFixed(1)} Hz`, false],
-    ['lfo1d', (v) => (v / 100).toFixed(2), false],
-    ['lfo2r', (v) => `${(v / 10).toFixed(1)} Hz`, false],
-    ['lfo2d', (v) => (v / 100).toFixed(2), false],
-    ['lfo3r', (v) => `${(v / 10).toFixed(1)} Hz`, false],
-    ['lfo3d', (v) => (v / 100).toFixed(2), false],
-    ['echoSend', (v) => (v / 100).toFixed(2), true],
-    ['echoTime', (v) => `${(v / 10).toFixed(2)} beats`, true],
-    ['echoFb', (v) => (v / 100).toFixed(2), true],
-    ['echoMix', (v) => (v / 100).toFixed(2), true],
-    ['tempo', (v) => `${v} BPM`, true],
-    ['reverbSend', (v) => (v / 100).toFixed(2), true],
-    ['reverbSet', (v) => String(v), true],
-  ];
-  for (const [id, format, effects] of knobs) {
-    const el = $<HTMLInputElement>(id);
-    const show = () => {
-      $(`${id}Label`).textContent = format(Number(el.value));
-      if (effects) pushEffects();
-    };
-    el.addEventListener('input', show);
-    show();
-  }
-  $('optClip').addEventListener('change', pushEffects);
-
-  // Double-click a fader to put it back where it started.
+  // The panel is Vue, and `src/controls/spec.ts` is the only place a fader is
+  // declared. Nothing below this line reads an `<input>`.
   //
-  // `defaultValue` is the `value=` attribute in the HTML, and nothing here ever
-  // writes a slider from code, so that attribute IS the default -- no second
-  // source of truth to keep in step. Re-dispatching `input` rather than setting
-  // the label directly means the reset goes through whatever the slider is
-  // already wired to, including the ones that rebuild the output stage.
-  document.addEventListener('dblclick', (event) => {
-    const el = event.target;
-    if (!(el instanceof HTMLInputElement) || el.type !== 'range') return;
-    if (el.value === el.defaultValue) return;
-    el.value = el.defaultValue;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+  // ⚠️ **Four mounts, not one app.** These are islands in a page that is
+  // otherwise plain markup, so each attaches where its markup used to be rather
+  // than the page being rebuilt around a root component. `Checks` is the same
+  // component twice with a different group.
+  createApp(ControlPanel).mount('#control-panel');
+  createApp({ render: () => h(Fader, { id: 'length' }) }).mount('#note-length');
+  createApp({ render: () => h(Checks, { group: 'stage' }) }).mount('#stage-toggles');
+  createApp({ render: () => h(Checks, { group: 'mpe' }) }).mount('#mpe-toggles');
 
-  // A group greys out until it is overriding, so it is obvious at a glance
-  // whether what you hear is the instrument's or yours.
-  for (const [box, group] of [['ovEnv', 'gEnv'], ['ovFilter', 'gFilter'], ['ovLfo', 'gLfo']]) {
-    const el = $<HTMLInputElement>(box);
-    const show = () => $(group).classList.toggle('off', !el.checked);
-    el.addEventListener('change', show);
-    show();
-  }
+  // ❗ **Two things react to the store rather than living in it**, because
+  // neither is state: the master gain is an `AudioParam` and has to be ramped
+  // rather than set, and the output stage is rebuilt by a message to the
+  // worklet. Both used to be `input` listeners on particular elements.
+  watch(
+    () => knob('gain'),
+    (g) => {
+      if (master && context) master.gain.setTargetAtTime(g, context.currentTime, 0.01);
+    },
+  );
+  watch(effectsSignature, () => pushEffects());
 
   $<HTMLSelectElement>('mpeMode').addEventListener('change', applyMpeMode);
   $<HTMLSelectElement>('bendRange').addEventListener('change', (e) => {

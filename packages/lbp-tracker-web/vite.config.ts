@@ -38,6 +38,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vue from '@vitejs/plugin-vue';
 import { defineConfig, type Plugin } from 'vite';
 
 const HERE = path.resolve(fileURLToPath(new URL('.', import.meta.url)));
@@ -116,5 +117,5 @@ export default defineConfig({
       },
     },
   },
-  plugins: [fixtures()],
+  plugins: [vue(), fixtures()],
 });

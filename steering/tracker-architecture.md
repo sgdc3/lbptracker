@@ -511,6 +511,65 @@ exactly one directory below the site root: `/src/assets.ts` in dev, `/assets/ass
 build. Both are true and both were checked in the browser. Change `build.rollupOptions.output`
 filenames and the fixtures 404 with no other symptom.
 
+## Vue, and where it is not allowed
+
+The pages are Vue 3 from 2026-09-06, and the first thing to know is the line it does not cross.
+
+| | |
+|---|---|
+| ✔ Vue | panels, forms, lists, pickers — anything whose state is what the reader typed |
+| ✘ not Vue | the audio graph, the note scheduler, the worklet and worker protocols, the keyboard, the canvas |
+
+❗ **The real-time layer is called by components, never owned by them.** A note-on writes to a
+`MessagePort`, not to a reactive object; the keyboard toggles a class on 88 elements at key-down
+rate; the meters run at `requestAnimationFrame`. None of that gets faster or clearer for being
+reactive, and some of it gets slower.
+
+⚠️ **The tracker grid, when it is built, is not a `v-for`.** A pattern editor scrolling thousands
+of cells at 60 fps is a canvas or a virtualised list — a custom component registered on Vue, which
+is the shape agreed before any of it was written. Rendering it as reactive components is the
+predictable way to make step 6 slow.
+
+### What it bought, on the one page converted so far
+
+`index.html` went from **404 lines to 243**: 158 lines of hand-written markup are now a table.
+
+❗ **The win is correctness, not brevity.** Every fader used to be declared **twice** — once in the
+HTML as an `<input type="range">` with its `min`, `max` and `value`, once in `app.ts` as a row of a
+`knobs` array carrying its formatter — joined by a string id, with `${id}Label` naming a third
+element. Nothing checked that the three agreed, and both ways of getting it wrong were silent: a
+mistyped id read the neighbouring parameter and the page still worked, and a formatter dividing by
+100 beside a reader dividing by 10 showed one number while playing another.
+
+`packages/lbp-tracker-web/src/controls/spec.ts` is now the only declaration, and both failures are
+structural rather than avoided:
+
+- `FaderId` is the union of the ids in that file, so a wrong id is a compile error.
+- `scale` is applied **once**. The label and the engine are handed the same number, and `format`
+  never sees the slider position.
+- The watcher that rebuilds the output stage is **generated from the `effects` flags** rather than
+  written out, so a new echo fader cannot move without rebuilding anything.
+
+⚠️ **`as const satisfies` narrows away the optional fields.** The table needs `as const` for the id
+union, and that also narrows each row to exactly the keys it wrote — so `fader.step` is an error on
+the rows that omit it. `spec.ts` exports the same array twice for that reason: const-asserted to
+derive the ids, then widened to `Fader<FaderId>[]` to read it. Neither form manages both.
+
+### ⚠️ Two TypeScript compilers, and it is not an accident
+
+`typescript@7` is the **native** compiler: its package ships a Go binary and `getExePath.js`, with
+no `lib/tsc.js` and no JavaScript API. Volar — which is what puts `.vue` files in front of the
+checker — patches that API, so `vue-tsc` on it dies with
+`ERR_PACKAGE_PATH_NOT_EXPORTED: './lib/tsc'`, which reads like a broken install rather than a
+missing feature.
+
+So the repository carries `typescript` (7, native) for the two libraries and `typescript5` — an npm
+alias for 5.9 — for this package alone, through
+`packages/lbp-tracker-web/dev/typecheck.mjs`. ❗ **The alias is the trick**: `vue-tsc` resolves
+`typescript/lib/tsc` from its own directory, so a nested install would never be reached and the two
+cannot both be called `typescript`. `run()` takes the path instead, which is a supported entry
+point rather than a patch. Both go away when Volar supports the native compiler.
+
 ## The dev server makes no outbound requests
 
 Vite serves only files inside the repository, plus `fixtures/` through the middleware above, and **makes no outbound requests at all**. Game

@@ -25,6 +25,21 @@ an AudioWorklet**, and this app has both. `render-worker.ts` reaches `assets.ts`
 `backup.ts`, so the worker's module graph is nearly the whole engine — without a bundler none of it
 could use the package names.
 
+## Vue, in the shell only
+
+The panels are Vue 3; the audio is not. Components **call** the real-time layer and never own it —
+a note-on writes to a `MessagePort`, the keyboard toggles classes on 88 elements at key-down rate,
+the meters run at `requestAnimationFrame`. ⚠️ And the tracker grid, when it arrives, is a custom
+component on a canvas rather than a `v-for` over cells.
+
+`src/controls/spec.ts` declares every fader and checkbox **once** — id, range, default, the `scale`
+that turns a slider position into the number the engine gets, and the formatter that turns *that
+same number* into the label. `state.ts` holds the values; nothing in `app.ts` reads an `<input>`.
+
+❗ **`npm run typecheck` here is not `tsc`.** It is `node dev/typecheck.mjs`, which runs `vue-tsc`
+against a second, aliased TypeScript. That file explains why, and it is worth reading before
+touching the toolchain.
+
 ## Two rules the URLs live by
 
 ⚠️ **`asset()` in `src/assets.ts` is the one place that builds an asset URL.** A bare relative URL in

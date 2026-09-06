@@ -133,8 +133,7 @@
         <option value="48">&plusmn;48 &mdash; the MPE default</option>
         <option value="96">&plusmn;96</option>
       </select>
-      <label class="check" title="MPE's Z: channel pressure, per note"><input type="checkbox" id="mpePress" checked> press &rarr; volume</label>
-      <label class="check" title="MPE's Y: CC 74, per note"><input type="checkbox" id="mpeSlide" checked> slide &rarr; cutoff</label>
+      <span id="mpe-toggles" style="display:contents"></span>
     </div>
     <div class="row" style="margin-top:.5rem">
       <span class="hintline" id="mpeState" style="margin:0"></span>
@@ -175,164 +174,8 @@
       <p class="hintline" style="margin-top:-.2rem">
         Double-click any fader to put it back where it started.
       </p>
-      <div class="params">
-        <div class="group">
-          <h3>voice</h3>
-          <div class="knob">
-            <label for="gain">master</label>
-            <input type="range" id="gain" min="0" max="100" value="50">
-            <output id="gainLabel">0.50</output>
-          </div>
-          <div class="knob">
-            <label for="pPan">pan</label>
-            <input type="range" id="pPan" min="0" max="100" value="50">
-            <output id="pPanLabel">centre</output>
-          </div>
-          <div class="knob">
-            <label for="pDrive">drive</label>
-            <input type="range" id="pDrive" min="0" max="95" value="0">
-            <output id="pDriveLabel">0.00</output>
-          </div>
-        </div>
-
-        <div class="group off" id="gEnv">
-          <h3>amplitude envelope
-            <label class="check"><input type="checkbox" id="ovEnv"> override</label>
-          </h3>
-          <div class="knob">
-            <label for="envA">attack</label>
-            <input type="range" id="envA" min="0" max="200" value="0">
-            <output id="envALabel">0.00s</output>
-          </div>
-          <div class="knob">
-            <label for="envD">decay</label>
-            <input type="range" id="envD" min="0" max="300" value="60">
-            <output id="envDLabel">0.60s</output>
-          </div>
-          <div class="knob">
-            <label for="envS">sustain</label>
-            <input type="range" id="envS" min="0" max="100" value="100">
-            <output id="envSLabel">1.00</output>
-          </div>
-          <div class="knob">
-            <label for="envR">release</label>
-            <input type="range" id="envR" min="0" max="300" value="20">
-            <output id="envRLabel">0.20s</output>
-          </div>
-        </div>
-
-        <div class="group off" id="gFilter">
-          <h3>ladder filter
-            <label class="check"><input type="checkbox" id="ovFilter"> override</label>
-          </h3>
-          <div class="knob">
-            <label for="filCut">cutoff</label>
-            <input type="range" id="filCut" min="0" max="100" value="100">
-            <output id="filCutLabel">1.00</output>
-          </div>
-          <div class="knob">
-            <label for="filRes">resonance</label>
-            <input type="range" id="filRes" min="0" max="100" value="0">
-            <output id="filResLabel">0.00</output>
-          </div>
-          <div class="knob">
-            <label for="filEnv">env amount</label>
-            <input type="range" id="filEnv" min="-100" max="100" value="0">
-            <output id="filEnvLabel">0.00</output>
-          </div>
-          <div class="knob">
-            <label for="filTrack">key track</label>
-            <input type="range" id="filTrack" min="0" max="200" value="100">
-            <output id="filTrackLabel">1.00</output>
-          </div>
-        </div>
-
-        <div class="group off" id="gLfo">
-          <h3>LFOs
-            <label class="check"><input type="checkbox" id="ovLfo"> override</label>
-          </h3>
-          <div class="knob">
-            <label for="lfo1r">1 pitch Hz</label>
-            <input type="range" id="lfo1r" min="0" max="200" value="0">
-            <output id="lfo1rLabel">0.0</output>
-          </div>
-          <div class="knob">
-            <label for="lfo1d">1 depth</label>
-            <input type="range" id="lfo1d" min="0" max="100" value="0">
-            <output id="lfo1dLabel">0.00</output>
-          </div>
-          <div class="knob">
-            <label for="lfo2r">2 gain Hz</label>
-            <input type="range" id="lfo2r" min="0" max="200" value="0">
-            <output id="lfo2rLabel">0.0</output>
-          </div>
-          <div class="knob">
-            <label for="lfo2d">2 depth</label>
-            <input type="range" id="lfo2d" min="0" max="100" value="0">
-            <output id="lfo2dLabel">0.00</output>
-          </div>
-          <div class="knob">
-            <label for="lfo3r">3 pan Hz</label>
-            <input type="range" id="lfo3r" min="0" max="200" value="0">
-            <output id="lfo3rLabel">0.0</output>
-          </div>
-          <div class="knob">
-            <label for="lfo3d">3 depth</label>
-            <input type="range" id="lfo3d" min="0" max="100" value="0">
-            <output id="lfo3dLabel">0.00</output>
-          </div>
-        </div>
-
-        <div class="group">
-          <h3>echo</h3>
-          <div class="knob">
-            <label for="echoSend">send</label>
-            <input type="range" id="echoSend" min="0" max="100" value="0">
-            <output id="echoSendLabel">0.00</output>
-          </div>
-          <div class="knob">
-            <label for="echoTime">time (beats)</label>
-            <input type="range" id="echoTime" min="0" max="80" step="1" value="10">
-            <output id="echoTimeLabel">1.00</output>
-          </div>
-          <div class="knob">
-            <label for="echoFb">feedback</label>
-            <input type="range" id="echoFb" min="0" max="95" value="54">
-            <output id="echoFbLabel">0.54</output>
-          </div>
-          <div class="knob">
-            <label for="echoMix">mix</label>
-            <input type="range" id="echoMix" min="0" max="100" value="60">
-            <output id="echoMixLabel">0.60</output>
-          </div>
-          <div class="knob">
-            <label for="tempo">tempo</label>
-            <input type="range" id="tempo" min="40" max="300" step="1" value="120">
-            <output id="tempoLabel">120 BPM</output>
-          </div>
-        </div>
-
-        <div class="group">
-          <h3>reverb &amp; output</h3>
-          <div class="knob">
-            <label for="reverbSend">send</label>
-            <input type="range" id="reverbSend" min="0" max="100" value="0">
-            <output id="reverbSendLabel">0.00</output>
-          </div>
-          <div class="knob">
-            <label for="reverbSet">setting</label>
-            <input type="range" id="reverbSet" min="0" max="15" step="1" value="5">
-            <output id="reverbSetLabel">5</output>
-          </div>
-          <div class="row" style="margin-top:.55rem">
-            <label class="check"><input type="checkbox" id="optClip" checked> output clip</label>
-          </div>
-          <p class="hintline">
-            The plugin hard-clips its own output to &plusmn;1 before the reverb send &mdash; the one
-            nonlinearity in the output stage.
-          </p>
-        </div>
-      </div>
+      <!-- packages/lbp-tracker-web/src/controls/ControlPanel.vue -->
+      <div id="control-panel"></div>
     </section>
 
     <section>
@@ -344,11 +187,7 @@
         <button id="stop">Stop</button>
       </div>
       <div class="row">
-        <div class="knob" style="flex:1 1 19rem; max-width:24rem">
-          <label for="length">note length</label>
-          <input type="range" id="length" min="10" max="400" value="120">
-          <output id="lengthLabel">1.20s</output>
-        </div>
+        <div id="note-length" style="flex:1 1 19rem; max-width:24rem"></div>
         <p class="hintline" style="margin:0; flex:1 1 15rem">
           How long each note of those sequences is held. The keyboard above ignores it &mdash; a
           key sounds for as long as you hold it.
@@ -368,9 +207,7 @@
           <option value="linear">linear</option>
           <option value="nearest">nearest</option>
         </select>
-        <label class="check"><input type="checkbox" id="useEnvelope" checked> envelope</label>
-        <label class="check"><input type="checkbox" id="useFilter" checked> filter</label>
-        <label class="check"><input type="checkbox" id="useLfos" checked> LFOs</label>
+        <span id="stage-toggles" style="display:contents"></span>
       </div>
 
       <details>

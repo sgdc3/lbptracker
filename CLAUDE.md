@@ -52,7 +52,7 @@ Steering files (read on demand, per the hints):
 |---|---|---|
 | `packages/cwlib-ts` | `@lbptracker/cwlib` | reading LBP's serialised resources: container, Thing graph, parts, saves |
 | `packages/lbp-tracker-lib` | `@lbptracker/lib` | turning that into sound: sampler, DSP chain, render pipeline, MIDI |
-| `packages/lbp-tracker-web` | `@lbptracker/web` | the four pages |
+| `packages/lbp-tracker-web` | `@lbptracker/web` | the four pages — Vite, and Vue for the panels |
 
 Each has its own `src/`, `test/` and — for the two libraries — a `dev/` of Node harnesses. Imports
 cross by package name: `import { readWorld } from '@lbptracker/cwlib/level.ts'`.
@@ -60,7 +60,10 @@ cross by package name: `import { readWorld } from '@lbptracker/cwlib/level.ts'`.
 - `npm install` — **now required**, and it was not before. Workspaces resolve the package names
   through symlinks in `node_modules`. Nothing is downloaded for the libraries.
 - `npm test` — `node --test`, all three workspaces at once, from the root.
-- `npm run typecheck` — the three `tsc` projects in order.
+- `npm run typecheck` — two `tsc` projects, then `vue-tsc` for the web package.
+  ⚠️ **The web package uses a second, aliased TypeScript** (`typescript5`): `vue-tsc` needs the
+  JavaScript API, and `typescript@7` is the native compiler and has none. See
+  `packages/lbp-tracker-web/dev/typecheck.mjs`.
 - `npm run serve` / `build` / `preview` — Vite, **in the web package only**.
 
 ❗ **The two libraries have no build step and must keep it that way.** Node runs their TypeScript
