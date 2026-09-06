@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   bandOf,
+  barOfCell,
   boardCellAt,
   boardRect,
   boardX,
@@ -31,7 +32,7 @@ test('board: a cell and its rectangle agree, and the gutter is not a cell', () =
   assert.equal(boardCellAt(board, 5, 40), null);
   assert.equal(boardCellAt(board, 100, 5), null);
   assert.equal(boardCellAt(board, 24 + 10 * 40 + 1, 40), null, 'past the last column');
-  assert.equal(boardX(board, 16), 64, 'a cell is a bar of 16 steps');
+  assert.equal(boardX(board, 16), 64, 'a cell is 16 steps');
   assert.equal(boardX(board, 8), 44);
 });
 
@@ -79,8 +80,11 @@ test('names and labels', () => {
   assert.equal(noteName(0), 'C-1');
   assert.equal(noteName(127), 'G9');
   assert.equal(positionLabel(0), '1.1.1');
-  assert.equal(positionLabel(3 * 17), '2.1.2');
+  assert.equal(positionLabel(3 * 9), '2.1.2', 'a bar is 8 steps');
+  assert.equal(positionLabel(3 * 17), '3.1.2');
   assert.equal(positionLabel(3 * 4 + 1), '1.2.1+1/3');
+  assert.equal(barOfCell(0), 1);
+  assert.equal(barOfCell(3), 7, 'a cell is two bars');
 });
 
 test('colours and distances', () => {

@@ -48,6 +48,7 @@ import { BoardView } from './editor/board.ts';
 import { RollView } from './editor/roll.ts';
 import { EditorState } from './editor/state.ts';
 import { instrumentsFrom, type InstrumentInfo } from './editor/instruments.ts';
+import { STEPS_PER_BAR, barOfCell } from './editor/geometry.ts';
 import Inspector from './editor/Inspector.vue';
 import Palette from './editor/Palette.vue';
 
@@ -369,7 +370,7 @@ function updateTitle(): void {
     rollTitle.append(
       clip.name || info?.name || '(no instrument)',
       Object.assign(document.createElement('small'), {
-        textContent: `${info && clip.name ? `${info.name} · ` : ''}bar ${clip.cell + 1}, row ${clip.row} · ${clip.steps} steps`,
+        textContent: `${info && clip.name ? `${info.name} · ` : ''}bar ${barOfCell(clip.cell)}, row ${clip.row} · ${clip.steps / STEPS_PER_BAR} bars`,
       }),
     );
   }

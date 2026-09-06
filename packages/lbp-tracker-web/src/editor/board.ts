@@ -8,9 +8,11 @@
  * This class owns the drawing and the pointer; the page owns what a click
  * means for the rest of the screen, through the callbacks.
  *
- * A cell is a bar: 16 steps, four beats. A chip is a rectangle from its cell
- * to the end of its grid -- four bars, six or eight -- and chips may overlap
- * in time, as clips of one part do every two cells in `Ascetic`; a translucent
+ * A cell is 16 steps: half of one of the game's 105-unit board tiles, two of
+ * its 8-step bars. A chip is a rectangle from its cell to the end of its grid
+ * -- one tile for the default four bars, half a tile more per two bars -- so
+ * the corpus's boards, chips two cells apart on a row, come out edge to edge.
+ * Chips may overlap in time (55 of 72,726 corpus neighbours do); a translucent
  * body keeps the one underneath visible, and the selected one is drawn last.
  */
 
@@ -22,6 +24,7 @@ import {
   boardRect,
   boardSize,
   boardX,
+  barOfCell,
   type BoardLayout,
 } from './geometry.ts';
 import { MISSING_INSTRUMENT, drawGlyph, type InstrumentInfo } from './instruments.ts';
@@ -143,15 +146,19 @@ export class BoardView {
       ctx.fillRect(layout.gutter, r.y, width - layout.gutter, r.h);
     }
 
-    // The grid.
-    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    // The grid: rows, and the cells -- a firm line every tile (two cells,
+    // the game's square), a faint one at the half.
     ctx.lineWidth = 1;
-    ctx.beginPath();
     for (let c = 0; c <= layout.cols; c += 1) {
       const x = layout.gutter + c * layout.cellW + 0.5;
+      ctx.strokeStyle = c % 2 === 0 ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.05)';
+      ctx.beginPath();
       ctx.moveTo(x, layout.ruler);
       ctx.lineTo(x, height);
+      ctx.stroke();
     }
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.beginPath();
     for (let r = 0; r <= layout.rows; r += 1) {
       const y = layout.ruler + r * layout.cellH + 0.5;
       ctx.moveTo(layout.gutter, y);
@@ -159,15 +166,14 @@ export class BoardView {
     }
     ctx.stroke();
 
-    // The ruler: bar numbers, one per cell.
+    // The ruler: the game's bar numbers, one per cell -- a cell is two bars.
     ctx.fillStyle = dim;
     ctx.font = '10px ui-monospace, Consolas, monospace';
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     for (let c = 0; c < layout.cols; c += 1) {
-      if (c % 4 === 0 || layout.cellW > 36) {
-        ctx.fillText(String(c + 1), layout.gutter + c * layout.cellW + 3, layout.ruler / 2);
-      }
+      ctx.fillStyle = c % 2 === 0 ? dim : 'rgba(110,118,132,0.55)';
+      ctx.fillText(String(barOfCell(c)), layout.gutter + c * layout.cellW + 3, layout.ruler / 2);
     }
     // The gutter: row numbers and the channel each row feeds.
     ctx.textAlign = 'right';

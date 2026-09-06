@@ -63,7 +63,7 @@ export interface Clip {
   /** Board row, 0 at the top. */
   row: number;
   /**
-   * The note grid's length, in steps: 64, 96 or 128 -- 4, 6 or 8 bars.
+   * The note grid's length, in steps: 32 to 128 in steps of 16 -- 4 to 16 bars, two at a time.
    *
    * ⚠️ Not a field of the file -- see `clipStepsFor`. It is what the editor
    * shows, and a note cannot be placed past it.
@@ -100,18 +100,29 @@ export interface Song {
   nextId: number;
 }
 
-/** A record's `x` is seven bits, so no clip grid can be longer than this: 8 bars. */
-export const MAX_CLIP_STEPS = 128;
 /**
- * A placed instrument's grid is **4 bars** (64 steps) and grows by **2 bars**
- * at a time -- 6, then 8, the ceiling `x` allows. Reported by the project's
- * owner from the game's editor, 2026-09-06; not read out of the bytes, since
- * nothing in the file carries the length (`clipStepsFor`). The corpus agrees
- * as far as it can: the highest `x` used is 31 in most clips, 63 in the rest,
- * and never above 63 -- a 4-bar grid that composers fill half or all of.
+ * The game's bar is **8 steps** -- two beats at four steps to the beat -- and
+ * a board tile is four of them.
+ *
+ * Reported by the project's owner from the game's editor, 2026-09-06: a placed
+ * instrument's grid is four bars and grows by two at a time. Measured against
+ * the corpus the same day (steering/sequencer-data-model.md, *The tile*): of
+ * 72,726 chips with a neighbour on their row, 63,337 sit exactly two cells
+ * (32 steps) apart, and the notes of 66,837 of 74,864 clips need exactly two
+ * cells -- so the default grid is 32 steps, one 105-unit square of the board,
+ * and "four bars" makes a bar 8 steps. Under a 64-step default 64,483 chips
+ * would overlap their neighbour; under this one 82 do, and the data itself
+ * holds 55 overlaps.
  */
-export const DEFAULT_CLIP_STEPS = 64;
-export const CLIP_STEPS_INCREMENT = 32;
+export const STEPS_PER_BAR = 8;
+/** Bars per board cell: a cell is 16 steps, a bar 8. */
+export const BARS_PER_CELL = STEPS_PER_CELL / STEPS_PER_BAR;
+/** A record's `x` is seven bits, so no clip grid can be longer than this: 16 bars. */
+export const MAX_CLIP_STEPS = 128;
+/** Four bars: one board tile. */
+export const DEFAULT_CLIP_STEPS = 4 * STEPS_PER_BAR;
+/** A grid grows two bars -- one cell, half a tile -- at a time. */
+export const CLIP_STEPS_INCREMENT = 2 * STEPS_PER_BAR;
 export const MAX_PITCH = 127;
 export const MAX_VOLUME = 127;
 export const MAX_TIMBRE = 15;
@@ -162,8 +173,8 @@ export function newSong(name = 'untitled'): Song {
 }
 
 /**
- * The grid length a clip needs to hold its notes: 4 bars, or the 6 or 8 the
- * notes reach into.
+ * The grid length a clip needs to hold its notes: four bars, or the even
+ * number above that the notes reach into.
  *
  * ⚠️ **The file does not say how long a clip's grid is.** The eboot copies a
  * length in steps from `PInstrument + 0x60` into the engine's clip, but the
@@ -178,7 +189,7 @@ export function clipStepsFor(maxStep: number): number {
   return Math.min(MAX_CLIP_STEPS, needed);
 }
 
-/** The grid lengths a clip may have: 64, 96, 128. */
+/** The grid lengths a clip may have: 32, 48, 64 ... 128. */
 export const CLIP_STEP_CHOICES: readonly number[] = Array.from(
   { length: (MAX_CLIP_STEPS - DEFAULT_CLIP_STEPS) / CLIP_STEPS_INCREMENT + 1 },
   (_, i) => DEFAULT_CLIP_STEPS + i * CLIP_STEPS_INCREMENT,

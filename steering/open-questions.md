@@ -130,13 +130,13 @@ have none.
 - **`PInstrument + 0x60`.** Copied into the engine's clip as its length in steps and not named by
   the serialiser walk ([sequencer-data-model.md](sequencer-data-model.md)); what serialises it, if
   anything, is unread — `readInstrumentPart` reads nothing for it, so it is derived at load. The
-  project's owner reports from the game's editor that a placed instrument's grid is 4 bars and
-  grows by 2 bars at a time, so the editor derives 64, 96 or 128 (`clipStepsFor` in
-  [editor.md](editor.md)); the corpus's 31-then-63-never-above distribution is consistent with
-  that and with nobody extending a grid, and is not a reading of the length either. **What would
-  settle it**: find the writer of `+0x60` in the eboot — the likeliest sources are the component's
-  `scaleX` on the board and the highest `x` in `Notes` — or save a level with an empty
-  6-bar grid and see what changes in the file.
+  project's owner reports from the game's editor that a placed instrument's grid is four bars and
+  grows by two at a time, and the corpus's chip spacing makes the bar 8 steps (*The tile* in
+  [sequencer-data-model.md](sequencer-data-model.md)), so the editor derives 32, 48 … 128 from
+  the notes (`clipStepsFor` in [editor.md](editor.md)) — a rule consistent with the data, not a
+  reading of the length. **What would settle it**: find the writer of `+0x60` in the eboot — the
+  likeliest sources are the component's `scaleX` on the board and the highest `x` in `Notes` —
+  or save a level with an empty six-bar grid and see what changes in the file.
 
 ## 40. What a new sequencer starts at — the editor's defaults are the corpus's modes
 

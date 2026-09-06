@@ -8,19 +8,20 @@ what is not there yet is at the end.
 
 ## What it shows, and what the game shows
 
-The in-game Music Sequencer is two grids. The **board** is the circuit board: cells 52.5 world
-units wide and 105 tall, one instrument chip per cell, sixteen steps per cell — one bar at four
-steps to the beat — and rows banded into mixer channels ([sequencer-data-model.md](sequencer-data-model.md),
-*The timeline*). The **note grid** inside a chip is a piano roll where a note is a chain of
+The in-game Music Sequencer is two grids. The **board** is the circuit board: 105-unit square
+tiles, a chip four of the game's 8-step bars long sitting on one, positions at half-tile
+resolution (52.5 units, 16 steps — a "cell" here), and rows banded into mixer channels
+([sequencer-data-model.md](sequencer-data-model.md), *The timeline* and *The tile*). The **note grid** inside a chip is a piano roll where a note is a chain of
 control points joined by straight lines: the game draws the dots at a size that is the volume and
 in a colour that runs from blue to orange with the timbre, and the engine glides pitch and volume
 linearly between consecutive points, so the straight line is what sounds.
 
 The editor draws both, as faithfully as the data allows and no further:
 
-- A chip is **a rectangle as long as its grid** — four, six or eight cells — with a translucent
-  body, because chips overlap in time (clips of one part sit every two cells in `Ascetic`) and
-  the one underneath has to stay visible; the selected chip is drawn last. A chip is grabbed by
+- A chip is **a rectangle as long as its grid** — one tile for four bars, half a tile more per
+  two — with a translucent body for the rare chip that overlaps another (55 of 72,726 corpus
+  neighbours); the selected chip is drawn last. The corpus's boards, chips two cells apart, come
+  out edge to edge, which is what a composer sees in the game. A chip is grabbed by
   any cell it covers and keeps that offset while dragged; a double-click adds a chip wherever none
   is *anchored*, under another's tail included.
 - The chip's colour and glyph are **ours**, by instrument family (`src/editor/instruments.ts`).
@@ -52,13 +53,14 @@ differ in bytes are the author-ordered ties and the clips with mixed resting bit
 
 ⚠️ **A clip's grid length is not in the file.** `PInstrument + 0x60` is copied into the engine's
 clip as its length in steps and nothing serialises it ([open-questions.md](open-questions.md)). The
-game's editor gives a placed instrument **4 bars** (64 steps) and lets it grow by **2 bars** at a
-time — 6, then 8, the ceiling `x`'s seven bits allow — reported by the project's owner from the
-game, 2026-09-06, not read out of bytes; `clipStepsFor` derives the smallest of 64, 96 and 128
-that holds the notes. Over the corpus the highest `x` used is 31 in 60,318 of 105,785 clips, 63 in
-the rest and never above 63: 4-bar grids filled half or all of the way, and none extended. On the
-board a chip is therefore four cells long at least, and chips of one part placed every two cells
-overlap, which is what `Ascetic` does. `resizeClip` refuses to shrink under a note.
+game's editor gives a placed instrument **four bars** and lets it grow by **two** at a time
+(reported by the project's owner from the game, 2026-09-06), and the corpus fixes the bar at
+**8 steps** — the chip spacing and note extents in *The tile* of
+[sequencer-data-model.md](sequencer-data-model.md) — so `clipStepsFor` derives the smallest of
+32, 48, 64 … 128 that holds the notes, 128 being the ceiling `x`'s seven bits allow. ⚠️ **The
+first reading of "four bars" was 64 steps**, a bar taken as a 16-step cell: on that rule 64,483 of
+72,726 corpus chips overlap their neighbour, against 82 with the 8-step bar and 55 in the data.
+`resizeClip` refuses to shrink under a note.
 
 The project file is JSON — `{ format: "lbptracker-song", version: 1, song }` — as decided at the
 start; `songFromJson` checks the shape rather than trusting it, because a file is the one input

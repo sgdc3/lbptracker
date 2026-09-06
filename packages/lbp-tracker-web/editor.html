@@ -98,7 +98,7 @@
   <header>
     <h1>Compose on the game&rsquo;s own grid</h1>
     <p class="sub">
-      The Music Sequencer as an editor: a board of instruments, sixteen steps to a bar, and inside
+      The Music Sequencer as an editor: a board of instruments, eight steps to a bar, and inside
       each one a note grid where a note is a chain of points &mdash; the size of a point its volume,
       its colour its timbre, and a straight line between two points the glide the engine plays.
       Every change is heard through the same engine as the renderer, at once.
@@ -121,7 +121,7 @@
   </section>
 
   <section>
-    <p class="step"><b>2</b> The board &mdash; one bar per cell, one instrument per chip</p>
+    <p class="step"><b>2</b> The board &mdash; four bars to a tile, one instrument per chip</p>
     <div id="transport">
       <button id="play" aria-label="Play" disabled>&#9654;</button>
       <button id="rewind" aria-label="Back to the start" disabled>&#9198;</button>
@@ -140,8 +140,9 @@
           cursor there, then pick an instrument on the right &mdash; or double-click the cell to add
           the last one used. Click the bar numbers to seek. <kbd>Delete</kbd> removes the selected
           chip when the board has the focus, <kbd>Ctrl+D</kbd> duplicates it into the cursor cell.
-          A chip is as long as its note grid &mdash; four bars, six or eight &mdash; and chips may
-          overlap in time, as they do in the game; the selected one is drawn on top.
+          A chip is as long as its note grid &mdash; four bars, then two more at a time &mdash; and
+          chips may overlap in time, though the game&rsquo;s composers rarely let them; the selected
+          one is drawn on top.
         </p>
       </div>
       <div id="palette"></div>

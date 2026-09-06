@@ -13,7 +13,7 @@ import { SCALE_NAMES } from '@lbptracker/lib/scale.ts';
 import {
   CLIP_STEP_CHOICES, MIXER_CHANNELS, highestStep, resizeClip, type ChangeKindLike,
 } from './inspector-support.ts';
-import { noteName, positionLabel } from './geometry.ts';
+import { STEPS_PER_BAR, barOfCell, noteName, positionLabel } from './geometry.ts';
 import type { InstrumentInfo } from './instruments.ts';
 import type { EditorState } from './state.ts';
 
@@ -194,7 +194,7 @@ const fmt = (v: number, dp = 2) => v.toFixed(dp);
         <div class="knob">
           <label for="clipSteps">grid</label>
           <select id="clipSteps" :value="clip.steps" autocomplete="off" @change="setSteps">
-            <option v-for="s in stepChoices" :key="s" :value="s">{{ s / 16 }} bars · {{ s }} steps</option>
+            <option v-for="s in stepChoices" :key="s" :value="s">{{ s / STEPS_PER_BAR }} bars · {{ s }} steps</option>
           </select>
           <output></output>
         </div>
@@ -239,7 +239,7 @@ const fmt = (v: number, dp = 2) => v.toFixed(dp);
           <output>{{ fmt(clip.reverbSend) }}</output>
         </div>
         <div class="row" style="margin-top:.6rem">
-          <span class="hintline" style="margin:0">bar {{ clip.cell + 1 }}, row {{ clip.row }} · {{ clip.notes.length }} note{{ clip.notes.length === 1 ? '' : 's' }}</span>
+          <span class="hintline" style="margin:0">bar {{ barOfCell(clip.cell) }}, row {{ clip.row }} · {{ clip.notes.length }} note{{ clip.notes.length === 1 ? '' : 's' }}</span>
           <span class="spacer"></span>
           <button type="button" @click="emit('duplicate')" title="Ctrl+D">duplicate</button>
           <button type="button" @click="emit('remove')" title="Delete, with the board focused">remove</button>

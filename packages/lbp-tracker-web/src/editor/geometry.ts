@@ -3,16 +3,17 @@
  * on a canvas, and back. No DOM here, so `test/editor-geometry.test.ts` can
  * hold it.
  *
- * The board is the game's: a cell is 16 steps -- one bar at four steps to the
- * beat -- and a row is one placement high (steering/sequencer-data-model.md,
- * *The timeline*). The piano roll is the placement's own note grid: positions
+ * The board is the game's: a cell is 16 steps, two of the game's 8-step bars,
+ * half of one of its 105-unit tiles, and a row is one placement high
+ * (steering/sequencer-data-model.md, *The timeline* and *The tile*). The piano roll is the placement's own note grid: positions
  * in thirds of a step, because that is the record's resolution, and one row
  * per pitch.
  */
 
 import { STEPS_PER_CELL } from '@lbptracker/cwlib/project.ts';
+import { BARS_PER_CELL, STEPS_PER_BAR } from '@lbptracker/lib/song.ts';
 
-export { STEPS_PER_CELL };
+export { BARS_PER_CELL, STEPS_PER_BAR, STEPS_PER_CELL };
 
 // ------------------------------------------------------------------ the board
 
@@ -170,14 +171,19 @@ export function isBlackKey(pitch: number): boolean {
   return [1, 3, 6, 8, 10].includes(((pitch % 12) + 12) % 12);
 }
 
-/** A position in thirds as "bar.beat.step+third" for a label. */
+/** A position in thirds as "bar.beat.step+third" for a label; a bar is the game's 8 steps. */
 export function positionLabel(thirds: number): string {
   const step = Math.floor(thirds / 3);
   const third = thirds - step * 3;
-  const bar = Math.floor(step / STEPS_PER_CELL) + 1;
-  const beat = Math.floor((step % STEPS_PER_CELL) / 4) + 1;
+  const bar = Math.floor(step / STEPS_PER_BAR) + 1;
+  const beat = Math.floor((step % STEPS_PER_BAR) / 4) + 1;
   const sub = (step % 4) + 1;
   return `${bar}.${beat}.${sub}${third ? `+${third}/3` : ''}`;
+}
+
+/** The game's bar a board cell starts at, 1-based, for labels. */
+export function barOfCell(cell: number): number {
+  return cell * BARS_PER_CELL + 1;
 }
 
 /** Distance from a point to a segment, for hit-testing a note's line. */

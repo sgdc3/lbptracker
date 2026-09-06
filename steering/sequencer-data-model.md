@@ -404,6 +404,17 @@ to something rotated), the board's basis **100.00%**, worst fractional part 0.00
 all 1,030 carry the odd-multiple fingerprint. `dev/verify-levels.ts` asserts the stronger property
 over the whole corpus: **62,158 board cells whole and distinct**.
 
+**The tile** — the board's square is 105 world units a side, and a placed instrument covers one:
+its default note grid is 32 steps, which is two of the 52.5-unit half-tile positions `gridX`
+counts in. Measured 2026-09-06 over the ten-level corpus plus `Ascetic` (74,864 clips): of the
+72,726 chips with a neighbour further along their row, **63,337 sit exactly 2 cells (32 steps)
+apart**, 1,059 three, 3,966 four; the notes of **66,837 clips need exactly 2 cells** (highest
+`x` 16..31), 3,105 one, 1,062 three, 3,253 four, 478 eight; and only **55** clips have notes
+reaching past the next chip on their row — overlap is possible and rare. The game's editor calls
+the default grid *four bars* and grows it *two bars* at a time (reported by the project's owner),
+so **a bar is 8 steps**, two beats, and a tile is four bars. ⚠️ A grid of 64 steps as the default
+would make 64,483 of those neighbours overlap; the 8-step bar makes 82.
+
 **Row to mixer channel** — the board is cut into `NumChannels` horizontal bands of equal height
 (`v0x1608d0` writes the channel into the clip header, `v0x1c7909`–`v0x1c793c` computes the divisor):
 

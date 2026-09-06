@@ -39,9 +39,9 @@ import {
   type SongNote,
   type SongPoint,
 } from '@lbptracker/lib/song.ts';
-import { STEPS_PER_CELL } from '@lbptracker/cwlib/project.ts';
 import {
   PITCHES,
+  STEPS_PER_BAR,
   isBlackKey,
   noteName,
   pointRadius,
@@ -91,7 +91,7 @@ export class RollView {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly state: EditorState;
   private readonly cb: RollCallbacks;
-  private layout: RollLayout = { keys: KEYS, ruler: RULER, stepW: STEP_W, rowH: ROW_H, steps: 64 };
+  private layout: RollLayout = { keys: KEYS, ruler: RULER, stepW: STEP_W, rowH: ROW_H, steps: 32 };
   private playStep: number | null = null;
   private drag: Drag | null = null;
   private hoverPitch: number | null = null;
@@ -186,7 +186,7 @@ export class RollView {
 
   private measure(): void {
     const clip = this.state.clip();
-    this.layout = { ...this.layout, steps: clip?.steps ?? 64 };
+    this.layout = { ...this.layout, steps: clip?.steps ?? 32 };
     const full = rollSize(this.layout);
     const viewW = this.scroller.clientWidth;
     const viewH = this.scroller.clientHeight;
@@ -243,12 +243,12 @@ export class RollView {
       }
     }
 
-    // Step lines: every step faint, every beat firmer, every bar firm; thirds
-    // dashed when the grid is set to triplets.
+    // Step lines: every step faint, every beat firmer, every 8-step bar firm;
+    // thirds dashed when the grid is set to triplets.
     ctx.lineWidth = 1;
     for (let step = stepLeft; step <= stepRight; step += 1) {
       const x = Math.round(rollStepX(layout, step) - sx) + 0.5;
-      const bar = step % STEPS_PER_CELL === 0;
+      const bar = step % STEPS_PER_BAR === 0;
       const beat = step % 4 === 0;
       ctx.strokeStyle = bar ? 'rgba(255,255,255,0.28)' : beat ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.06)';
       ctx.beginPath();
@@ -385,8 +385,8 @@ export class RollView {
     for (let step = stepLeft; step < stepRight; step += 4) {
       const x = rollStepX(layout, step) - sx;
       if (x < layout.keys) continue;
-      const bar = Math.floor(step / STEPS_PER_CELL) + 1;
-      const beat = ((step % STEPS_PER_CELL) / 4) + 1;
+      const bar = Math.floor(step / STEPS_PER_BAR) + 1;
+      const beat = ((step % STEPS_PER_BAR) / 4) + 1;
       ctx.fillStyle = beat === 1 ? ink : dim;
       ctx.fillText(beat === 1 ? `${bar}` : `${bar}.${beat}`, x + 3, layout.ruler / 2);
     }

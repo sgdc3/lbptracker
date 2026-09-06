@@ -140,7 +140,7 @@ test('a song round-trips through a sequencer and through JSON', () => {
   const again = back.clips[0];
   assert.equal(again.cell, 3);
   assert.equal(again.row, 2);
-  assert.equal(again.steps, 64);
+  assert.equal(again.steps, 32);
   assert.equal(again.rest, 1);
   assert.equal(again.notes.length, 3);
   const flat = (c: typeof clip) =>
@@ -171,23 +171,24 @@ test('points stay in order and inside the clip; a note goes with its last point'
   movePoint(clip, note, mid, { thirds: -5 });
   assert.equal(mid.thirds, 30);
   movePoint(clip, note, note.points[2], { thirds: 1000, pitch: 500 });
-  assert.equal(note.points[2].thirds, 64 * 3 - 1, 'the last position is the clip\'s last third');
+  assert.equal(note.points[2].thirds, 32 * 3 - 1, 'the last position is the clip\'s last third');
   assert.equal(note.points[2].pitch, 127);
   moveNote(clip, note, -100, -100);
   assert.equal(note.points[0].thirds, 0);
   assert.equal(Math.min(...note.points.map((p) => p.pitch)), 0);
-  assert.equal(note.points[2].thirds - note.points[0].thirds, 191 - 30, 'a shifted note keeps its shape');
+  assert.equal(note.points[2].thirds - note.points[0].thirds, 95 - 30, 'a shifted note keeps its shape');
 
-  assert.equal(resizeClip(clip, 96), true);
-  assert.equal(clip.steps, 96);
+  assert.equal(resizeClip(clip, 48), true);
+  assert.equal(clip.steps, 48);
   moveNote(clip, note, 1000, 0);
-  assert.equal(note.points[2].thirds, 96 * 3 - 1);
-  assert.equal(resizeClip(clip, 64), false, 'a clip cannot shrink under its notes');
-  assert.equal(clip.steps, 96);
+  assert.equal(note.points[2].thirds, 48 * 3 - 1);
+  assert.equal(resizeClip(clip, 32), false, 'a clip cannot shrink under its notes');
+  assert.equal(clip.steps, 48);
   assert.equal(resizeClip(clip, 1000), true);
-  assert.equal(clip.steps, 128, 'the ceiling is 8 bars');
-  assert.equal(resizeClip(clip, 100), true);
-  assert.equal(clip.steps, 96, 'lengths snap to 4, 6 or 8 bars');
+  assert.equal(clip.steps, 128, 'the ceiling is 16 bars');
+  assert.equal(resizeClip(clip, 70), true);
+  assert.equal(clip.steps, 64, 'lengths snap to two bars at a time');
+  assert.equal(resizeClip(clip, 10), false, 'four bars is the floor, and the notes reach past it');
 
   removePoint(clip, note, note.points[1]);
   removePoint(clip, note, note.points[0]);
@@ -196,14 +197,14 @@ test('points stay in order and inside the clip; a note goes with its last point'
   assert.equal(clip.notes.length, 0, 'the note went with its last point');
 });
 
-test('clipStepsFor: 4 bars by default, then 6 and 8, never past 128', () => {
-  assert.equal(clipStepsFor(-1), 64);
-  assert.equal(clipStepsFor(0), 64);
-  assert.equal(clipStepsFor(31), 64);
+test('clipStepsFor: four bars by default, then two more at a time, never past 128', () => {
+  assert.equal(clipStepsFor(-1), 32);
+  assert.equal(clipStepsFor(0), 32);
+  assert.equal(clipStepsFor(31), 32);
+  assert.equal(clipStepsFor(32), 48);
+  assert.equal(clipStepsFor(47), 48);
+  assert.equal(clipStepsFor(48), 64);
   assert.equal(clipStepsFor(63), 64);
-  assert.equal(clipStepsFor(64), 96);
-  assert.equal(clipStepsFor(95), 96);
-  assert.equal(clipStepsFor(96), 128);
   assert.equal(clipStepsFor(127), 128);
   assert.equal(clipStepsFor(500), 128);
 });
