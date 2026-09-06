@@ -284,8 +284,9 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
   // ------------------------------------------------------------ chip loop
   // The selected chip's bars round and round, its row at full volume and
   // every other row at a fifth: hearing one part in place while editing it.
-  // Arming it pauses the song, if it was playing, at the chip's start, so play
-  // then begins the loop; disarming it plays the song on from the chip's
+  // Arming it cuts the song off -- whatever was ringing goes, so the loop
+  // begins clean -- and starts the loop from the chip's start; disarming it
+  // cuts the loop off the same way and plays the song on from the chip's
   // start. It follows the selection to another chip, and it is dropped when
   // the panel closes, the transport is stopped, or the song goes.
   const loopButton = $<HTMLButtonElement>('loopChip');
@@ -307,8 +308,9 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     player.clearRegion();
     loopButton.setAttribute('aria-pressed', 'false');
     if (resume && clip && player.hasPlan) {
+      player.stop();
       player.seek(player.frameAt(clip.cell * STEPS_PER_CELL));
-      if (!player.playing) player.play();
+      player.play();
     }
   };
   loopButton.addEventListener('click', () => {
@@ -316,8 +318,9 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     if (loopingClip !== null) {
       dropChipLoop(true);
     } else if (clip) {
-      if (player.playing) player.stop();
+      player.stop();
       aimChipLoop(clip, true);
+      if (player.hasPlan) player.play();
     }
   });
   state.onChange(() => {
