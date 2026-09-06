@@ -432,7 +432,7 @@ export class BoardView {
       }
       const lit = this.flashOf(this.rowFlash, row, flashNow);
       if (lit > 0) {
-        ctx.fillStyle = `rgba(255,255,255,${(0.22 * lit).toFixed(3)})`;
+        ctx.fillStyle = `rgba(255,255,255,${(0.1 * lit).toFixed(3)})`;
         ctx.fillRect(0, y, MUTE_X - 2, r.h);
       }
       // The selected row's number turns into an "x" under the pointer: the
@@ -532,7 +532,7 @@ export class BoardView {
     const lit = this.flashOf(this.chipFlash, clip.id, performance.now());
     if (lit > 0) {
       ctx.fillStyle = '#ffffff';
-      ctx.globalAlpha = alpha * 0.3 * lit;
+      ctx.globalAlpha = alpha * 0.12 * lit;
       ctx.fill();
     }
     ctx.globalAlpha = alpha;
