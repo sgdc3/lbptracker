@@ -8,6 +8,7 @@
  */
 import { computed, onMounted, ref, useTemplateRef, watch } from 'vue';
 import type { InstrumentInfo } from './instruments.ts';
+import Glyph from './Glyph.vue';
 
 const props = defineProps<{ instruments: InstrumentInfo[]; title: string }>();
 const emit = defineEmits<{ pick: [guid: number]; cancel: [] }>();
@@ -103,7 +104,7 @@ onMounted(() => search.value?.focus());
           @mouseenter="at = row.index"
           @click="emit('pick', row.item.guid)"
         >
-          <span class="picker-swatch" :style="{ background: row.item.colour }"></span>
+          <Glyph :family="row.item.family" :colour="row.item.colour" />
           <span>{{ row.item.name }}</span>
         </button>
       </template>

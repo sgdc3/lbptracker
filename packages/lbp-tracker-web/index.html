@@ -165,7 +165,6 @@
     font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--dimmer);
     padding: .45rem .5rem .2rem;
   }
-  .picker-swatch { width: .7rem; height: .7rem; border-radius: 3px; flex: 0 0 auto; }
   .picker-foot { margin-top: .6rem; }
 
   /* Knobs, shared by the inspector, the mixer and the keyboard's panel. */
@@ -178,7 +177,16 @@
   .knob + .knob { margin-top: .3rem; }
   .knob label { font-size: .84rem; }
   .knob input[type="range"], .knob select, .knob input[type="text"] { width: 100%; min-width: 0; }
-  .knob input[type="text"].wide, .knob select.wide { grid-column: 2 / 4; }
+  .knob input[type="text"].wide, .knob select.wide, .knob .sound-field.wide { grid-column: 2 / 4; }
+  /* A sound field: the instrument's glyph and name, opening the picker. */
+  .sound-field {
+    display: flex; align-items: center; gap: .5rem; width: 100%; min-width: 0;
+    text-align: left; padding: .3rem .6rem; font: inherit;
+  }
+  .sound-field .sound-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sound-field::after { content: "\25be"; margin-left: auto; color: var(--dimmer); }
+  .glyph, .glyph-host { display: inline-block; flex: 0 0 auto; vertical-align: middle; line-height: 0; }
+  .picker-row .glyph-host { margin-right: .1rem; }
   .knob input[type="text"] { text-align: left; font-family: inherit; }
   .song-group { margin-bottom: 1rem; }
   #mixer .live { grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); }
@@ -546,9 +554,7 @@
           <h3>instrument</h3>
           <div class="knob">
             <label for="kb-instrument">sound</label>
-            <select id="kb-instrument" class="wide">
-              <option value="" selected disabled>pick one&hellip;</option>
-            </select>
+            <button id="kb-instrument" type="button" class="sound-field wide"><span class="sound-name">pick one&hellip;</span></button>
           </div>
           <div id="kb-status"></div>
         </div>

@@ -53,6 +53,9 @@ import { pitchRatio, velocityGain } from '@lbptracker/lib/voice.ts';
 import { loopRegion, readWav, type WavData } from '@lbptracker/lib/wav.ts';
 import { webInflate } from '@lbptracker/cwlib/platform/web.ts';
 import { state } from './session.ts';
+import { fillSoundField } from '../editor/glyph.ts';
+import { pickInstrument } from '../editor/instrument-picker.ts';
+import { instrumentsFrom, type InstrumentInfo } from '../editor/instruments.ts';
 
 interface ManifestRow {
   guid: number;
@@ -1067,6 +1070,13 @@ function playSequence(notes: number[], step: number): void {
 let instruments: ManifestRow[] = [];
 let loadedGuid = 0;
 let active: () => boolean = () => true;
+/** The palette the sound field and its picker show: built once the manifest is in. */
+let palette: InstrumentInfo[] = [];
+
+/** The sound field shows the loaded instrument's glyph and name. */
+function showSound(guid: number): void {
+  fillSoundField($('kb-instrument'), palette.find((i) => i.guid === guid), 'pick one…');
+}
 
 /** Load the instrument a chip plays, when it is not the one loaded. */
 function followSelection(): void {
@@ -1076,7 +1086,7 @@ function followSelection(): void {
   const index = instruments.findIndex((row) => row.guid === guid);
   if (index < 0) return;
   loadedGuid = guid;
-  $<HTMLSelectElement>('kb-instrument').value = String(index);
+  showSound(guid);
   void loadInstrument(instruments[index]).catch((e) => log(String(e), 'bad'));
 }
 
@@ -1089,18 +1099,15 @@ async function init(): Promise<void> {
     instruments = rows;
     sampleIndex = new Map(samples.map((s) => [s.guid, s]));
 
-    const select = $<HTMLSelectElement>('kb-instrument');
-    instruments
-      .sort((a, b) => a.file.localeCompare(b.file))
-      .forEach((row, i) => {
-        const option = document.createElement('option');
-        option.value = String(i);
-        option.textContent = row.file.replace('.rinst', '');
-        select.append(option);
-      });
-    select.addEventListener('change', () => {
-      const row = instruments[Number(select.value)];
+    instruments.sort((a, b) => a.file.localeCompare(b.file));
+    palette = instrumentsFrom(instruments);
+    // The sound field opens the same picker a new chip asks with.
+    $('kb-instrument').addEventListener('click', async () => {
+      const guid = await pickInstrument(palette, 'Which sound?');
+      const row = guid === null ? undefined : instruments.find((r) => r.guid === guid);
+      if (!row) return;
       loadedGuid = row.guid;
+      showSound(row.guid);
       void loadInstrument(row).catch((e) => log(String(e), 'bad'));
     });
     $('kb-status').textContent =
@@ -1111,8 +1118,8 @@ async function init(): Promise<void> {
     // extraction lack it.
     const first = Math.max(0, instruments.findIndex((row) => row.file === 'piano.rinst'));
     if (instruments.length > 0) {
-      select.value = String(first);
       loadedGuid = instruments[first].guid;
+      showSound(loadedGuid);
       void loadInstrument(instruments[first]).catch((e) => log(String(e), 'bad'));
     }
     followSelection();

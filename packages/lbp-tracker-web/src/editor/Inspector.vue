@@ -16,6 +16,8 @@ import { CLIP_STEP_CHOICES, highestStep, resizeClip, type ChangeKindLike } from 
 import { STEPS_PER_BAR, barOfCell, noteName, positionLabel } from './geometry.ts';
 import type { Clip } from '@lbptracker/lib/song.ts';
 import type { InstrumentInfo } from './instruments.ts';
+import Glyph from './Glyph.vue';
+import { pickInstrument } from './instrument-picker.ts';
 import type { EditorState } from './state.ts';
 
 const props = defineProps<{ state: EditorState; instruments: InstrumentInfo[] }>();
@@ -55,6 +57,22 @@ const setClip = (kind: ChangeKindLike, key: string, fn: (value: number, c: Clip)
   }, key);
 };
 
+/** The instrument the clip plays, for the sound field's glyph and name. */
+const sound = computed(() => {
+  const c = clip.value;
+  return c ? props.instruments.find((i) => i.guid === c.guid) : undefined;
+});
+
+/** The sound field: the same modal picker a new chip asks with. */
+const chooseSound = async () => {
+  const guid = await pickInstrument(props.instruments, 'Which sound?');
+  if (guid === null) return;
+  props.state.edit('notes', () => {
+    const c = props.state.clip();
+    if (c) c.guid = guid;
+  }, 'guid');
+};
+
 const setSteps = (event: Event) => {
   const c = props.state.clip();
   if (!c) return;
@@ -88,37 +106,30 @@ const fmt = (v: number, dp = 2) => v.toFixed(dp);
       <template v-if="clip">
         <div class="knob">
           <label for="clipGuid">sound</label>
-          <select id="clipGuid" class="wide" :value="clip.guid" autocomplete="off"
-                  @change="setClip('notes', 'guid', (v, c) => { c.guid = v; })($event)">
-            <option v-if="!instruments.some((i) => i.guid === clip!.guid)" :value="clip.guid">
-              {{ clip.guid ? `unknown (${clip.guid})` : '(none)' }}
-            </option>
-            <option v-for="i in instruments" :key="i.guid" :value="i.guid">{{ i.name }}</option>
-          </select>
-          <output></output>
+          <button id="clipGuid" type="button" class="sound-field wide" @click="chooseSound">
+            <Glyph v-if="sound" :family="sound.family" :colour="sound.colour" />
+            <span class="sound-name">{{ sound ? sound.name : clip.guid ? `unknown (${clip.guid})` : '(none)' }}</span>
+          </button>
         </div>
         <div class="knob">
           <label for="clipSteps">grid</label>
-          <select id="clipSteps" :value="clip.steps" autocomplete="off" @change="setSteps">
+          <select id="clipSteps" class="wide" :value="clip.steps" autocomplete="off" @change="setSteps">
             <option v-for="s in stepChoices" :key="s" :value="s">{{ s / STEPS_PER_BAR }} bars · {{ s }} steps</option>
           </select>
-          <output></output>
         </div>
         <div class="knob">
           <label for="clipKey">key</label>
-          <select id="clipKey" :value="clip.key" autocomplete="off"
+          <select id="clipKey" class="wide" :value="clip.key" autocomplete="off"
                   @change="setClip('notes', 'key', (v, c) => { c.key = v; })($event)">
             <option v-for="k in keyChoices" :key="k.value" :value="k.value">{{ k.label }}</option>
           </select>
-          <output></output>
         </div>
         <div class="knob">
           <label for="clipScale">scale</label>
-          <select id="clipScale" :value="clip.scale" autocomplete="off"
+          <select id="clipScale" class="wide" :value="clip.scale" autocomplete="off"
                   @change="setClip('notes', 'scale', (v, c) => { c.scale = v; })($event)">
             <option v-for="(name, i) in SCALE_NAMES" :key="i" :value="i">{{ name }}</option>
           </select>
-          <output></output>
         </div>
         <div class="knob">
           <label for="clipLevel">level</label>
