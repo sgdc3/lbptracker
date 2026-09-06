@@ -16,7 +16,9 @@ instead of disjoint menus. `index.html` is now the one page: a sticky top bar wi
 tabs, the song's name, the transport (play, stop, loop, clock, tempo, volume and a VU meter)
 and the file actions (new, open, save); "open" is a modal dialog holding the shared drop zone
 and the picker for a level holding several sequencers; a fixed footer carries the status line,
-the credit and the audio thread's readout (idle, notes sounding, audio load, dropouts); and six
+the credit and the audio thread's readout (idle, notes sounding, audio load, dropouts; ⚠️ the load is
+a share of wall time and reads lower on the Arrange view because its per-frame redraw keeps the CPU
+clocked up -- measured, see `canTime` in `packages/lbp-tracker-lib/src/audio/mixer-worklet.ts`); and six
 views, one shown at a time, all reaching the same song through `src/daw/session.ts`. Every card
 has a "?" opening the one help dialog on its topic (`src/help.ts`): the views carry as little
 prose as they can, and what they do carry is for the person using the app, never a measurement;

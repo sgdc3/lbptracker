@@ -180,6 +180,17 @@ export class MixerProcessor extends AudioWorkletProcessor {
    * window it comes out right on average, because a block's start has no
    * relationship to the millisecond tick -- the estimate is noisy per window and
    * unbiased over several, which is why the reported figure is smoothed.
+   *
+   * ⚠️ **The figure is a share of WALL time, on a CPU whose speed follows its
+   * load.** Measured 2026-09-07 on Ascetic from the start, Chrome 148, a
+   * 16-core Windows machine: ~6-8% with the page idle (the old live page and
+   * the Song/Mixer view alike), ~0.3% on the Arrange view, which redraws its
+   * board every frame while playing, and ~2% on Song/Mixer with a 6 ms
+   * busy-loop added per frame. Not the meter: a fixed 3e6-iteration loop on
+   * the main thread took 7-14 ms with the machine idle and 3.5 ms with a
+   * worker spinning beside it. The audio thread really does its work two to
+   * three times faster once something keeps the clock up, so the reading
+   * falls. It is honest; it is not a measure of the mixer's cost in cycles.
    */
   private readonly canTime = typeof Date !== 'undefined';
   /** Milliseconds spent inside `process` since the last report. */
