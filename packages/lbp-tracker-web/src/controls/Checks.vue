@@ -1,22 +1,27 @@
 <script setup lang="ts">
 /**
- * A row of checkboxes belonging to one group of `spec.ts`.
+ * A row of checkboxes belonging to one group of the page's spec.
  *
- * Two rows use it and they mean different things, which is worth saying because
- * the markup is identical. `stage` switches the instrument's own stages **out**
- * — unticked, the stage is bypassed rather than replaced, which is how the bench
- * answers "what does the ladder filter actually add" — while `mpe` is only about
- * which MPE dimensions the page listens to.
+ * The same component serves rows that mean quite different things — the bench's
+ * `stage` switches the instrument's own stages **out**, so unticked the stage is
+ * bypassed rather than replaced — which is worth saying because the markup is
+ * identical and only the spec tells them apart.
  */
-import { checksIn } from './spec.ts';
-import { checked } from './state.ts';
+import { inject } from 'vue';
+import { CONTROLS } from './kit.ts';
 
 const props = defineProps<{ group: string }>();
-const checks = checksIn(props.group);
+const controls = inject(CONTROLS)!;
+const checks = controls.checksIn(props.group);
 </script>
 
 <template>
   <label v-for="check in checks" :key="check.id" class="check" :title="check.title">
-    <input :id="check.id" v-model="checked[check.id]" type="checkbox"> {{ check.label }}
+    <input
+      :id="check.id"
+      v-model="controls.checked[check.id]"
+      type="checkbox"
+      autocomplete="off"
+    > {{ check.label }}
   </label>
 </template>

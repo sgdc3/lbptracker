@@ -10,20 +10,23 @@
  * against it fails with `ERR_PACKAGE_PATH_NOT_EXPORTED: './lib/tsc'`, which
  * reads like a broken install rather than a missing feature.
  *
- * So the repository carries **two** compilers, deliberately and narrowly:
+ * ❗ **`typescript-native-bridge` is the way round it**, and it keeps the native
+ * engine: a TypeScript fork carrying a `tsgoChecker` overlay, so the JavaScript
+ * API Volar needs is there while the checking is still done by tsgo — pinned, in
+ * the version installed here, to the same **7.0.2** the two libraries use. It
+ * prints `TNB ACTIVE` when it takes over. An earlier pass here used an aliased
+ * TypeScript 5.9 instead; the bridge replaced it on 2026-09-06.
  *
- * | | |
- * |---|---|
- * | `typescript` (7, native) | `cwlib-ts` and `lbp-tracker-lib`, plain `tsc -p` |
- * | `typescript5` (an npm alias for 5.9) | this package only, through `vue-tsc` |
+ * ⚠️ **It is a third-party fork, not Microsoft's**, by Volar's own author and
+ * days old at the time of writing. That is why it checks **this package only**:
+ * `cwlib-ts` and `lbp-tracker-lib` are checked by `tsc -p` against the real
+ * `typescript`, so a fault in the bridge cannot quietly change what the two
+ * libraries are held to. It is a devDependency and reaches nothing that ships.
  *
- * ❗ **The alias is the whole trick.** `vue-tsc` resolves `typescript/lib/tsc`
- * from its own directory, so a nested install would not reach it and the two
- * versions cannot both be called `typescript`. `run()` takes the path instead,
- * which is a supported entry point rather than a patch.
- *
- * When Volar supports the native compiler this file and the `typescript5`
- * devDependency both go away, and `npm run typecheck` goes back to three `tsc`s.
+ * ⚠️ **An exit code of 0 from a checker means nothing on its own.** This setup
+ * was accepted only after it was made to fail: a `const x: number = string` in
+ * `Fader.vue` and a `max: 'oops'` in a spec both came back as TS2322, from the
+ * `.vue` and the `.ts` alike.
  */
 
 import { createRequire } from 'node:module';
@@ -39,4 +42,4 @@ if (!process.argv.slice(2).some((a) => a === '-p' || a === '--project')) {
   process.argv.push('-p', path.join(HERE, '..'));
 }
 
-require('vue-tsc').run(require.resolve('typescript5/lib/tsc'));
+require('vue-tsc').run(require.resolve('typescript-native-bridge/lib/tsc'));

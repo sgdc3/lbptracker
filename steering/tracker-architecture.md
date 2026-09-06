@@ -530,45 +530,81 @@ of cells at 60 fps is a canvas or a virtualised list — a custom component regi
 is the shape agreed before any of it was written. Rendering it as reactive components is the
 predictable way to make step 6 slow.
 
-### What it bought, on the one page converted so far
+### What it bought, across all four pages
 
-`index.html` went from **404 lines to 243**: 158 lines of hand-written markup are now a table.
+Markup went from **1,148 lines to 804**, and `src/controls/` — five components and one spec per
+page — is 792. That is not a saving, and it is not meant to be one.
 
-❗ **The win is correctness, not brevity.** Every fader used to be declared **twice** — once in the
-HTML as an `<input type="range">` with its `min`, `max` and `value`, once in `app.ts` as a row of a
-`knobs` array carrying its formatter — joined by a string id, with `${id}Label` naming a third
-element. Nothing checked that the three agreed, and both ways of getting it wrong were silent: a
-mistyped id read the neighbouring parameter and the page still worked, and a formatter dividing by
-100 beside a reader dividing by 10 showed one number while playing another.
+❗ **The win is that a control is declared once.** Every fader used to be written **twice**: once in
+the HTML as an `<input type="range">` with its `min`, `max` and `value`, once in the page's module
+as a row carrying its formatter, joined by a string id, with `${id}Label` naming a third element.
+Nothing checked that the three agreed, and every way of getting it wrong was silent:
 
-`packages/lbp-tracker-web/src/controls/spec.ts` is now the only declaration, and both failures are
-structural rather than avoided:
+- a mistyped id read the neighbouring control and the page still worked;
+- a formatter dividing by 100 beside a reader dividing by 10 showed one number while playing
+  another;
+- ⚠️ and on the live player `setSlider('echoFb', seq.echoFeedback * 100)` had to be the exact
+  inverse of `num('echoFb') / 100` — **350 lines apart**, so a song could load at the wrong feedback
+  with the label agreeing.
 
-- `FaderId` is the union of the ids in that file, so a wrong id is a compile error.
-- `scale` is applied **once**. The label and the engine are handed the same number, and `format`
-  never sees the slider position.
-- The watcher that rebuilds the output stage is **generated from the `effects` flags** rather than
-  written out, so a new echo fader cannot move without rebuilding anything.
+`kit.ts` makes all three structural rather than avoided:
 
-⚠️ **`as const satisfies` narrows away the optional fields.** The table needs `as const` for the id
-union, and that also narrows each row to exactly the keys it wrote — so `fader.step` is an error on
-the rows that omit it. `spec.ts` exports the same array twice for that reason: const-asserted to
-derive the ids, then widened to `Fader<FaderId>[]` to read it. Neither form manages both.
+- `Controls<FaderId, CheckId, ChoiceId>` carries the unions from the page's own spec, so a wrong id
+  will not compile.
+- ❗ **`per` is one number, not two functions**: `value = raw / per` and `raw = value * per`, so the
+  third failure is not expressible. `live.setValue('echoFb', seq.echoFeedback)` has no `* 100` in it
+  any more.
+- `format` is handed the **engine's** number, never the slider position, and the `<output>` has no
+  id for anything else to write.
+- The watcher that rebuilds the output stage is **generated from the `effects` flags**, so a new
+  echo fader cannot move without rebuilding anything.
 
-### ⚠️ Two TypeScript compilers, and it is not an accident
+Three side effects a control used to carry by hand are now fields: `disabledBy` (the live pool's
+slider greys with `unlimited`, the MIDI bend range with `pick it from the music`), a `format` that
+reads a checkbox (`off`, `auto`), and `slotId` for the one list that is genuinely imperative — the
+live player's per-channel strip, which is rebuilt per song.
+
+⚠️ **`render.html` was converted least, on purpose.** It had none of this: no `*Label`, no
+formatters, no scales — five plain checkboxes read once. Its options live in `.switch` cards beside
+the prose explaining each, which is the page's whole idea, so only the checks moved into a spec and
+the markup kept its shape. `from`, `to` and `voices` are free text with validation and stay
+imperative; a fader spec would describe them wrongly.
+
+### ⚠️ Two traps, both found by the page breaking
+
+**`Symbol.for`, not `Symbol`, for the injection key.** Vite appends `?t=…` to a changed module's URL
+in dev, so a page can end up holding both `kit.ts` and `kit.ts?t=…` — two module instances, two
+distinct `Symbol()`s. `inject` then returns `undefined` in half the tree and the panel throws
+`Cannot read properties of undefined (reading 'fader')` **while still rendering correctly**, which
+is a confusing way to find out. A registry symbol is the same value in both copies.
+
+**`typescript` and `typescript-native-bridge` both declare `bin: tsc`**, so npm installed neither
+shim and `npm run typecheck` died with `'tsc' is not recognized` — which reads as a broken PATH, not
+as a bin collision. The script names `node node_modules/typescript/bin/tsc` instead.
+
+### ⚠️ Checking `.vue` needs a bridge, because `typescript@7` is native
 
 `typescript@7` is the **native** compiler: its package ships a Go binary and `getExePath.js`, with
 no `lib/tsc.js` and no JavaScript API. Volar — which is what puts `.vue` files in front of the
 checker — patches that API, so `vue-tsc` on it dies with
-`ERR_PACKAGE_PATH_NOT_EXPORTED: './lib/tsc'`, which reads like a broken install rather than a
-missing feature.
+`ERR_PACKAGE_PATH_NOT_EXPORTED: './lib/tsc'`, a message that reads like a broken install rather
+than a missing feature.
 
-So the repository carries `typescript` (7, native) for the two libraries and `typescript5` — an npm
-alias for 5.9 — for this package alone, through
-`packages/lbp-tracker-web/dev/typecheck.mjs`. ❗ **The alias is the trick**: `vue-tsc` resolves
-`typescript/lib/tsc` from its own directory, so a nested install would never be reached and the two
-cannot both be called `typescript`. `run()` takes the path instead, which is a supported entry
-point rather than a patch. Both go away when Volar supports the native compiler.
+❗ **`typescript-native-bridge` solves it without giving up the native engine**: a TypeScript fork
+carrying a `tsgoChecker` overlay, so Volar gets its JavaScript API while tsgo still does the
+checking — pinned to the same **7.0.2** the libraries use. `packages/lbp-tracker-web/dev/typecheck.mjs`
+hands `vue-tsc` its path through `run(tscPath)`, which is a supported entry point rather than a
+patch, and it announces itself with `TNB ACTIVE`.
+
+⚠️ **It is a third-party fork**, by Volar's author rather than by Microsoft, and days old when it
+was adopted. That is why it checks **the web package only**: `cwlib-ts` and `lbp-tracker-lib` go
+through `tsc -p` against the real `typescript`, so a fault in the bridge cannot quietly change what
+the libraries are held to.
+
+⚠️ **An exit code of 0 from a checker means nothing on its own**, which is why this was accepted
+only after being made to fail: a `const x: number = string` in `Fader.vue` and a `max: 'oops'` in a
+spec both came back as TS2322. An earlier pass used an aliased TypeScript 5.9 for the same job; the
+bridge replaced it the same day.
 
 ## The dev server makes no outbound requests
 

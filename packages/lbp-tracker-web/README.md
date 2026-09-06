@@ -32,13 +32,18 @@ a note-on writes to a `MessagePort`, the keyboard toggles classes on 88 elements
 the meters run at `requestAnimationFrame`. ⚠️ And the tracker grid, when it arrives, is a custom
 component on a canvas rather than a `v-for` over cells.
 
-`src/controls/spec.ts` declares every fader and checkbox **once** — id, range, default, the `scale`
-that turns a slider position into the number the engine gets, and the formatter that turns *that
-same number* into the label. `state.ts` holds the values; nothing in `app.ts` reads an `<input>`.
+`src/controls/` holds one spec per page — `bench.ts`, `live.ts`, `render.ts`, `midi.ts` — and
+`kit.ts` turns each into a typed store. A control is declared **once**: id, range, default, the
+`per` that converts between slider position and the number the engine gets, and the formatter that
+turns *that same number* into the label. Nothing in the page modules reads an `<input>`.
+
+⚠️ **A store belongs to one page.** Ids repeat with different ranges — the bench's `tempo` is
+40..300, the live player's 20..400 — so there is no shared table; the components take the store
+through `provide`/`inject`.
 
 ❗ **`npm run typecheck` here is not `tsc`.** It is `node dev/typecheck.mjs`, which runs `vue-tsc`
-against a second, aliased TypeScript. That file explains why, and it is worth reading before
-touching the toolchain.
+against `typescript-native-bridge` — the native compiler with the JavaScript API Volar needs. That
+file explains why, and it is worth reading before touching the toolchain.
 
 ## Two rules the URLs live by
 

@@ -16,6 +16,10 @@
  * the duplication `packages/lbp-tracker-web/src/assets.ts` and `packages/lbp-tracker-web/src/seq-picker.ts` exist to prevent.
  */
 
+import { createApp, watch } from 'vue';
+import ControlPanel from './controls/ControlPanel.vue';
+import { midi } from './controls/midi.ts';
+import { CONTROLS } from './controls/kit.ts';
 import { HANDOFF_KEY, manifest, type Manifest } from './assets.ts';
 import { seqPicker } from './seq-picker.ts';
 import {
@@ -43,13 +47,10 @@ const fileInput = $<HTMLInputElement>('file');
 const midiDrop = $<HTMLDivElement>('midiDrop');
 const midiInput = $<HTMLInputElement>('midiFile');
 const saveButton = $<HTMLButtonElement>('save');
-const modeSelect = $<HTMLSelectElement>('mode');
-const bakeSwing = $<HTMLInputElement>('bakeSwing');
-const bendInput = $<HTMLInputElement>('bendRange');
-const splitSelect = $<HTMLSelectElement>('split');
-const autoBend = $<HTMLInputElement>('autoBend');
-const exactBox = $<HTMLInputElement>('exact');
-const mergeBox = $<HTMLInputElement>('mergeRows');
+// The page's options, declared once in `src/controls/midi.ts`.
+const optionsApp = createApp(ControlPanel);
+optionsApp.provide(CONTROLS, midi);
+optionsApp.mount('#midi-options');
 const logBox = $<HTMLDivElement>('log');
 
 let project: LevelProject | undefined;
@@ -96,14 +97,14 @@ const picker = seqPicker($<HTMLDivElement>('seq'), () => convert());
 
 function options() {
   return {
-    mpe: modeSelect.value === 'mpe',
-    bakeSwing: bakeSwing.checked,
-    exact: exactBox.checked,
-    mergeRows: mergeBox.checked,
+    mpe: midi.picked('mode') === 'mpe',
+    bakeSwing: midi.on('bakeSwing'),
+    exact: midi.on('exact'),
+    mergeRows: midi.on('mergeRows'),
     // The level stores no name on a placement, so without this every track in
     // the file is called `guid 148321` and a DAW is unreadable.
     instrumentName: (guid: number) => rinstIndex?.get(guid)?.file.replace('.rinst', ''),
-    bendRange: autoBend.checked ? undefined : Number(bendInput.value),
+    bendRange: midi.on('autoBend') ? undefined : midi.raw('bendRange'),
   };
 }
 
@@ -134,7 +135,7 @@ function convert(): void {
 
   const opts = options();
   exported =
-    splitSelect.value === 'packed'
+    midi.picked('split') === 'packed'
       ? splitSequencerToMidi(seq, opts)
       : asSplit(seq, sequencerToMidi(seq, opts));
   const safe = (seq.name || `sequencer-${seq.uid}`).replace(/[^\w .-]+/g, '_').trim();
@@ -258,21 +259,22 @@ saveButton.addEventListener('click', () => {
   );
 });
 
-const showBend = () => {
-  $('bendRangeLabel').textContent = autoBend.checked
-    ? 'auto'
-    : `±${bendInput.value}`;
-  bendInput.disabled = autoBend.checked;
-};
-for (const el of [modeSelect, bakeSwing, bendInput, autoBend, splitSelect, exactBox, mergeBox]) {
-  el.addEventListener('change', () => {
-    showBend();
-    convert();
-  });
-}
-bendInput.addEventListener('input', showBend);
-bendInput.value = String(DEFAULT_BEND_RANGE);
-showBend();
+// ❗ **`showBend` is gone.** The label, the `auto` reading and the disabling all
+// live on the fader's row in `src/controls/midi.ts`, so there is nothing left
+// here to keep in step — only the re-convert.
+midi.setValue('bendRange', DEFAULT_BEND_RANGE);
+watch(
+  () => [
+    midi.picked('mode'),
+    midi.picked('split'),
+    midi.on('bakeSwing'),
+    midi.on('exact'),
+    midi.on('mergeRows'),
+    midi.on('autoBend'),
+    midi.raw('bendRange'),
+  ],
+  () => convert(),
+);
 
 /**
  * Every sequencer the open backup holds, by the picker's key.

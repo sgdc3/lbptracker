@@ -15,7 +15,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "typecheck": "tsc -p packages/cwlib-ts && tsc -p packages/lbp-tracker-lib && npm run typecheck -w @lbptracker/web",
+    "typecheck": "node node_modules/typescript/bin/tsc -p packages/cwlib-ts && node node_modules/typescript/bin/tsc -p packages/lbp-tracker-lib && npm run typecheck -w @lbptracker/web",
     "build": "npm run build -w @lbptracker/web",
     "serve": "npm run dev -w @lbptracker/web",
     "preview": "npm run preview -w @lbptracker/web"
@@ -23,6 +23,6 @@
   "devDependencies": {
     "@types/node": "^26.4.0",
     "typescript": "^7.0.2",
-    "typescript5": "npm:typescript@^5.9.3"
+    "typescript-native-bridge": "^6.0.3-bridge.16.tsgo.7.0.2"
   }
 }

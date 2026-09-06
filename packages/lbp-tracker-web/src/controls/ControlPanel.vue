@@ -1,15 +1,22 @@
 <script setup lang="ts">
-/** Every group in `spec.ts`, in the order it is declared there. */
-import { GROUPS } from './spec.ts';
+/**
+ * The page's groups, in the order the spec declares them.
+ *
+ * `only` narrows it to a few of them, because the live player draws its groups
+ * in three separate sections of the page rather than in one grid.
+ */
+import { computed, inject } from 'vue';
+import { CONTROLS } from './kit.ts';
 import ControlGroup from './ControlGroup.vue';
 
-// GROUPS holds the panel's groups only. `bench`, `stage` and `mpe` are
-// placement keys on faders and checks drawn elsewhere on the page, and they
-// deliberately have no group heading here.
+const props = defineProps<{ only?: string[]; grid?: string }>();
+const controls = inject(CONTROLS)!;
+const groups = computed(() =>
+  props.only ? controls.groups.filter((g) => props.only!.includes(g.key)) : controls.groups);
 </script>
 
 <template>
-  <div class="params">
-    <ControlGroup v-for="group in GROUPS" :key="group.key" :group="group" />
+  <div :class="grid ?? 'params'">
+    <ControlGroup v-for="group in groups" :key="group.key" :group="group" />
   </div>
 </template>

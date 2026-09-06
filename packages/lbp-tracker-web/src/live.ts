@@ -30,6 +30,10 @@
  * a plain URL, which is also what keeps the built site relocatable — the URL is
  * relative to the page, never rooted at `/`.
  */
+import { createApp, h, watch, type Component } from 'vue';
+import ControlPanel from './controls/ControlPanel.vue';
+import { live } from './controls/live.ts';
+import { CONTROLS } from './controls/kit.ts';
 import MIXER_WORKLET_URL from '@lbptracker/lib/audio/mixer-worklet.ts?worker&url';
 import { HANDOFF_KEY, loaderFor, manifest, asset, type Manifest } from './assets.ts';
 import { seqPicker } from './seq-picker.ts';
@@ -66,13 +70,25 @@ const dropTitle = $<HTMLElement>('dropTitle');
 const dropHint = $<HTMLElement>('dropHint');
 const fileInput = $<HTMLInputElement>('file');
 const volSlider = $<HTMLInputElement>('vol');
-const voicesInput = $<HTMLInputElement>('voices');
-const noCapBox = $<HTMLInputElement>('optNoCap');
+
+/**
+ * The three control grids, as Vue islands.
+ *
+ * ⚠️ **Three mounts rather than one panel**: the page draws the voice pool
+ * inside a `<details>`, the song's own settings in section 4 and the output
+ * stage in section 5, so `only` picks the groups for each. `src/controls/live.ts`
+ * is the single declaration behind all three.
+ */
+const island = (root: Component, at: string, props?: Record<string, unknown>) => {
+  const app = createApp(props ? { render: () => h(root, props) } : root);
+  app.provide(CONTROLS, live);
+  app.mount(at);
+};
+island(ControlPanel, '#pool-panel', { only: ['pool'], grid: 'live' });
+island(ControlPanel, '#song-panel', { only: ['timing', 'channels'], grid: 'live' });
+island(ControlPanel, '#output-panel', { only: ['echo', 'reverb'], grid: 'live' });
 const staleNote = $<HTMLParagraphElement>('staleNote');
-const tempoInput = $<HTMLInputElement>('tempo');
-const swingInput = $<HTMLInputElement>('swing');
 const channelsBox = $<HTMLDivElement>('channels');
-const numChannelsInput = $<HTMLInputElement>('numChannels');
 
 const setStatus = (text: string, bad = false) => {
   statusLine.textContent = text;
@@ -342,7 +358,7 @@ const withOverrides = <
 };
 
 /** The pool size the listener has asked for. */
-const poolSize = () => (noCapBox.checked ? VOICES_UNLIMITED : Number(voicesInput.value));
+const poolSize = () => (live.on('optNoCap') ? VOICES_UNLIMITED : live.raw('voices'));
 
 let pool = new LiveVoicePool(poolSize());
 /** Note -> the end its record was given, so its other layers can take the same. */
@@ -475,14 +491,14 @@ function pushEffects(): void {
   const num = (id: string) => Number(($(id) as HTMLInputElement).value);
   node?.port.postMessage({
     type: 'effects',
-    echoTime: num('echoTime') / 10,
+    echoTime: live.value('echoTime'),
     framesPerStep,
-    feedback: num('echoFb') / 100,
-    mix: num('echoMix') / 100,
-    reverbSetting: num('reverbSet'),
-    echoOn: ($('optEcho') as HTMLInputElement).checked,
-    reverbOn: ($('optReverb') as HTMLInputElement).checked,
-    clip: ($('optClip') as HTMLInputElement).checked,
+    feedback: live.value('echoFb'),
+    mix: live.value('echoMix'),
+    reverbSetting: live.value('reverbSet'),
+    echoOn: live.on('optEcho'),
+    reverbOn: live.on('optReverb'),
+    clip: live.on('optClip'),
   });
 }
 
@@ -519,15 +535,13 @@ async function prepare(restart = true): Promise<void> {
   // The song's own output stage, so the knobs start where the sequencer has them
   // rather than at a made-up default. `echoTime` is in beats and the slider is
   // tenths of a beat; `reverb` is the setting index straight through.
-  const setSlider = (id: string, value: number) => {
-    const el = $<HTMLInputElement>(id);
-    el.value = String(Math.min(Number(el.max), Math.max(Number(el.min), Math.round(value))));
-    el.dispatchEvent(new Event('input'));
-  };
-  setSlider('echoTime', seq.echoTime * 10);
-  setSlider('echoFb', seq.echoFeedback * 100);
-  setSlider('echoMix', seq.echoMix * 100);
-  setSlider('reverbSet', seq.reverb);
+  // ❗ **No `* 10` or `* 100` here any more.** `setValue` is the spec's own
+  // inverse of `value`, so the number written from a song and the number read
+  // back for the worklet cannot use different scales.
+  live.setValue('echoTime', seq.echoTime);
+  live.setValue('echoFb', seq.echoFeedback);
+  live.setValue('echoMix', seq.echoMix);
+  live.setValue('reverbSet', seq.reverb);
 
   const result = await renderSequencer(seq, load, {
     planOnly: true,
@@ -640,13 +654,10 @@ async function prepare(restart = true): Promise<void> {
     .map(([k, v]) => `<span>${k} ${v.startsWith('<b') ? v : `<b>${v}</b>`}</span>`)
     .join('');
   if (restart) {
-    tempoInput.value = String(Math.round(original.tempo));
-    swingInput.value = String(Math.round(original.swing * 100));
-    numChannelsInput.value = String(
-      Math.min(CHANNEL_COUNT, Math.max(1, original.numChannels)),
-    );
+    live.setValue('tempo', original.tempo);
+    live.setValue('swing', original.swing);
+    live.setValue('numChannels', Math.min(CHANNEL_COUNT, Math.max(1, original.numChannels)));
     buildFaders(original, original.volumes);
-    $('numChannels').textContent = `NumChannels ${original.numChannels}`;
     showSongOptions();
   }
   markStale();
@@ -861,29 +872,14 @@ volSlider.addEventListener('input', () => {
   if (master && context) master.gain.setTargetAtTime(Number(volSlider.value), context.currentTime, 0.01);
 });
 
-for (const [id, format] of [
-  ['echoTime', (v: number) => `${(v / 10).toFixed(2)} beats`],
-  ['echoFb', (v: number) => (v / 100).toFixed(2)],
-  ['echoMix', (v: number) => (v / 100).toFixed(2)],
-  ['reverbSet', (v: number) => String(v)],
-] as [string, (v: number) => string][]) {
-  const el = $<HTMLInputElement>(id);
-  const show = () => {
-    $(`${id}Label`).textContent = format(Number(el.value));
-    if (node) pushEffects();
-  };
-  el.addEventListener('input', show);
-  show();
-}
-for (const id of ['optEcho', 'optReverb', 'optClip']) {
-  $(id).addEventListener('change', () => node && pushEffects());
-}
+// One watcher for the whole output stage, generated from the spec's `effects`
+// flags rather than listed here — see `Controls.effectsSignature`.
+watch(live.effectsSignature, () => node && pushEffects());
 
-// The plan-time pair. Their labels update live; their effect waits for Prepare.
-voicesInput.value = String(VOICE_POOL_SIZE);
+// The plan-time pair. Their labels come from the spec; their effect waits for
+// Prepare.
+live.setValue('voices', VOICE_POOL_SIZE);
 const showPlanOptions = () => {
-  $('voicesLabel').textContent = noCapBox.checked ? 'off' : voicesInput.value;
-  voicesInput.disabled = noCapBox.checked;
   markStale();
 };
 /**
@@ -911,7 +907,7 @@ function buildFaders(
   seq: { tracks: readonly { gridY: number }[]; volumes: readonly number[] },
   levels: readonly number[],
 ): void {
-  const count = Math.min(CHANNEL_COUNT, Math.max(1, Number(numChannelsInput.value)));
+  const count = Math.min(CHANNEL_COUNT, Math.max(1, live.raw('numChannels')));
   const perChannel = new Array<number>(count).fill(0);
   for (const t of seq.tracks) {
     perChannel[((t.gridY % count) + count) % count] += 1;
@@ -936,9 +932,8 @@ function buildFaders(
  * voices, where the pool is only arithmetic.
  */
 const showSongOptions = () => {
-  $('numChannelsLabel').textContent = numChannelsInput.value;
-  $('tempoLabel').textContent = `${tempoInput.value} BPM`;
-  $('swingLabel').textContent = (Number(swingInput.value) / 100).toFixed(2);
+  // Only the channel strip is left: it is built imperatively per song, so its
+  // labels are not the spec's to draw.
   for (const el of channelsBox.querySelectorAll<HTMLInputElement>('.chan')) {
     const out = document.getElementById(`ch${el.dataset.ch}Label`);
     if (out) out.textContent = (Number(el.value) / 100).toFixed(2);
@@ -963,11 +958,11 @@ const showSongOptions = () => {
 const songChanged = () => {
   showSongOptions();
   if (!plan.length) return;
-  const tempo = Number(tempoInput.value);
+  const tempo = live.value('tempo');
   overrides = {
     tempo,
-    swing: Number(swingInput.value) / 100,
-    numChannels: Number(numChannelsInput.value),
+    swing: live.value('swing'),
+    numChannels: live.raw('numChannels'),
     volumes: [...channelsBox.querySelectorAll<HTMLInputElement>('.chan')].map(
       (el) => Number(el.value) / 100,
     ),
@@ -1011,19 +1006,21 @@ const songChanged = () => {
  * Changing the count redraws the faders before the rest of the handler reads
  * them, keeping the levels of the channels that survive.
  */
-numChannelsInput.addEventListener('input', () => {
-  const seq = songs.get(picker.value())?.sequencer;
-  if (seq) {
-    const kept = [...channelsBox.querySelectorAll<HTMLInputElement>('.chan')].map(
-      (el) => Number(el.value) / 100,
-    );
-    buildFaders(seq, kept.length ? kept : seq.volumes);
-  }
-  songChanged();
-});
+watch(
+  () => live.raw('numChannels'),
+  () => {
+    const seq = songs.get(picker.value())?.sequencer;
+    if (seq) {
+      const kept = [...channelsBox.querySelectorAll<HTMLInputElement>('.chan')].map(
+        (el) => Number(el.value) / 100,
+      );
+      buildFaders(seq, kept.length ? kept : seq.volumes);
+    }
+    songChanged();
+  },
+);
 
-tempoInput.addEventListener('input', songChanged);
-swingInput.addEventListener('input', songChanged);
+watch(() => [live.raw('tempo'), live.raw('swing')], songChanged);
 channelsBox.addEventListener('input', songChanged);
 
 const replanSoon = () => {
@@ -1034,12 +1031,11 @@ const replanSoon = () => {
   // playthrough at this size would have been holding.
   rebuildPool(songPosition());
   setStatus(
-    `voice pool ${noCapBox.checked ? 'uncapped' : voicesInput.value} — ` +
+    `voice pool ${live.on('optNoCap') ? 'uncapped' : live.raw('voices')} — ` +
       `${plan.length.toLocaleString()} voices`,
   );
 };
-voicesInput.addEventListener('input', replanSoon);
-noCapBox.addEventListener('change', replanSoon);
+watch(() => [live.raw('voices'), live.on('optNoCap')], replanSoon);
 showPlanOptions();
 
 /**

@@ -22,20 +22,19 @@
  * relative to the page, never rooted at `/`.
  */
 import MIXER_WORKLET_URL from '@lbptracker/lib/audio/mixer-worklet.ts?worker&url';
-import { createApp, h, watch } from 'vue';
+import { createApp, h, watch, type Component } from 'vue';
 import { asset } from './assets.ts';
 import ControlPanel from './controls/ControlPanel.vue';
 import Fader from './controls/Fader.vue';
 import Checks from './controls/Checks.vue';
 import {
+  bench,
   effectSettings,
-  effectsSignature,
-  on,
   overrideAdsr,
   overrideFilter,
   overrideLfos,
-  value as knob,
-} from './controls/state.ts';
+} from './controls/bench.ts';
+import { CONTROLS } from './controls/kit.ts';
 import { ADSR_PARAMS, ADSR_PARAMS_B, evaluateAdsr } from '@lbptracker/lib/envelope.ts';
 import { FILTER_PARAMS } from '@lbptracker/lib/audio/moog.ts';
 import { LFO_PARAMS, OUTPUT_PARAMS } from '@lbptracker/lib/params.ts';
@@ -267,7 +266,7 @@ function voiceFor(note: number) {
 }
 
 /** How long a note of a bench sequence is held, in seconds, from the slider. */
-const noteSeconds = (): number => knob('length');
+const noteSeconds = (): number => bench.value('length');
 
 /**
  * The instrument's own ADSR, or undefined when the bench is asked to fall back
@@ -278,7 +277,7 @@ const noteSeconds = (): number => knob('length');
  */
 function currentAdsr() {
   if (!instrument) return undefined;
-  if (!on('useEnvelope')) return undefined;
+  if (!bench.on('useEnvelope')) return undefined;
   return evaluateAdsr(instrument.params, ADSR_PARAMS, 0);
 }
 
@@ -291,7 +290,7 @@ function currentAdsr() {
  */
 function currentFilter() {
   if (!instrument) return undefined;
-  if (!on('useFilter')) return undefined;
+  if (!bench.on('useFilter')) return undefined;
   const p = instrument.params;
   return {
     settings: {
@@ -307,7 +306,7 @@ function currentFilter() {
 /** The instrument's three LFOs, evaluated at modulation 0, or undefined when off. */
 function currentLfos() {
   if (!instrument) return undefined;
-  if (!on('useLfos')) return undefined;
+  if (!bench.on('useLfos')) return undefined;
   const p = instrument.params;
   const one = (l: (typeof LFO_PARAMS)[number]) => ({
     rate: p[l.rate].x,
@@ -365,10 +364,10 @@ function noteOn(note: number, velocity = 96, channel = LOCAL): void {
       playbackRate: v.playbackRate,
       gain:
         velocityGain(velocity) * 2 * (instrument?.params[OUTPUT_PARAMS.level].x ?? 0.5),
-      pan: knob('pPan'),
-      drive: knob('pDrive'),
-      echoSend: knob('echoSend'),
-      reverbSend: knob('reverbSend'),
+      pan: bench.value('pPan'),
+      drive: bench.value('pDrive'),
+      echoSend: bench.value('echoSend'),
+      reverbSend: bench.value('reverbSend'),
       // No `endFrame`: the gate stays open until `release` closes it.
       release: adsr ? 0 : Math.round(0.12 * context.sampleRate),
       envelope: adsr,
@@ -721,8 +720,8 @@ function expressionOn(channel: number): [number, number, number] {
     zone !== undefined && channel !== zone.master ? chanBend[zone.master] * masterBendRange : 0;
   return [
     chanBend[channel] * bendRange + fromMaster,
-    on('mpePress') ? chanPress[channel] : 1,
-    on('mpeSlide') ? chanSlide[channel] - 0.5 : 0,
+    bench.on('mpePress') ? chanPress[channel] : 1,
+    bench.on('mpeSlide') ? chanSlide[channel] - 0.5 : 0,
   ];
 }
 
@@ -1129,22 +1128,27 @@ async function init(): Promise<void> {
   // otherwise plain markup, so each attaches where its markup used to be rather
   // than the page being rebuilt around a root component. `Checks` is the same
   // component twice with a different group.
-  createApp(ControlPanel).mount('#control-panel');
-  createApp({ render: () => h(Fader, { id: 'length' }) }).mount('#note-length');
-  createApp({ render: () => h(Checks, { group: 'stage' }) }).mount('#stage-toggles');
-  createApp({ render: () => h(Checks, { group: 'mpe' }) }).mount('#mpe-toggles');
+  const island = (root: Component, at: string, props?: Record<string, unknown>) => {
+    const app = createApp(props ? { render: () => h(root, props) } : root);
+    app.provide(CONTROLS, bench);
+    app.mount(at);
+  };
+  island(ControlPanel, '#control-panel');
+  island(Fader, '#note-length', { id: 'length' });
+  island(Checks, '#stage-toggles', { group: 'stage' });
+  island(Checks, '#mpe-toggles', { group: 'mpe' });
 
   // ❗ **Two things react to the store rather than living in it**, because
   // neither is state: the master gain is an `AudioParam` and has to be ramped
   // rather than set, and the output stage is rebuilt by a message to the
   // worklet. Both used to be `input` listeners on particular elements.
   watch(
-    () => knob('gain'),
+    () => bench.value('gain'),
     (g) => {
       if (master && context) master.gain.setTargetAtTime(g, context.currentTime, 0.01);
     },
   );
-  watch(effectsSignature, () => pushEffects());
+  watch(bench.effectsSignature, () => pushEffects());
 
   $<HTMLSelectElement>('mpeMode').addEventListener('change', applyMpeMode);
   $<HTMLSelectElement>('bendRange').addEventListener('change', (e) => {

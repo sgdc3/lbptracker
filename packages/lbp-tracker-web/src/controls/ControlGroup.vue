@@ -6,17 +6,18 @@
  * the note falls through to the instrument's own measured parameters — so it
  * has to be obvious at a glance whether what you hear is the game's or yours.
  */
-import { computed } from 'vue';
-import { checksIn, fadersIn, type Group } from './spec.ts';
-import { checked } from './state.ts';
+import { computed, inject } from 'vue';
+import { CONTROLS, type Group } from './kit.ts';
+import Choice from './Choice.vue';
 import Fader from './Fader.vue';
 
 const props = defineProps<{ group: Group }>();
+const controls = inject(CONTROLS)!;
 
-const faders = computed(() => fadersIn(props.group.key));
-/** The group's own checks, minus the one that gates it — that one lives in the heading. */
-const checks = computed(() => checksIn(props.group.key).filter((c) => c.id !== props.group.override));
-const off = computed(() => !!props.group.override && !checked[props.group.override]);
+const faders = controls.fadersIn(props.group.key);
+/** The group's own checks, minus the one that gates it — that one is in the heading. */
+const checks = controls.checksIn(props.group.key).filter((c) => c.id !== props.group.override);
+const off = computed(() => !!props.group.override && !controls.checked[props.group.override]);
 </script>
 
 <template>
@@ -24,17 +25,40 @@ const off = computed(() => !!props.group.override && !checked[props.group.overri
     <h3>
       {{ group.title }}
       <label v-if="group.override" class="check">
-        <input :id="group.override" v-model="checked[group.override]" type="checkbox"> override
+        <input
+          :id="group.override"
+          v-model="controls.checked[group.override]"
+          type="checkbox"
+          autocomplete="off"
+        > override
       </label>
     </h3>
 
+    <Choice :group="group.key" />
+
     <Fader v-for="fader in faders" :key="fader.id" :id="fader.id" />
 
-    <div v-if="checks.length" class="row" style="margin-top:.55rem">
-      <label v-for="check in checks" :key="check.id" class="check" :title="check.title">
-        <input :id="check.id" v-model="checked[check.id]" type="checkbox"> {{ check.label }}
-      </label>
-    </div>
+    <template v-if="checks.length">
+      <!-- `stack` gives each check its own row: the MIDI page's read as sentences. -->
+      <div
+        v-for="(row, i) in group.stack ? checks.map((c) => [c]) : [checks]"
+        :key="i"
+        class="row"
+        style="margin-top:.5rem"
+      >
+        <label v-for="check in row" :key="check.id" class="check" :title="check.title">
+          <input
+            :id="check.id"
+            v-model="controls.checked[check.id]"
+            type="checkbox"
+            autocomplete="off"
+          > {{ check.label }}
+        </label>
+      </div>
+    </template>
+
+    <!-- Filled by the page: a list rather than a declaration. -->
+    <div v-if="group.slotId" :id="group.slotId" style="margin-top:.45rem"></div>
 
     <p v-if="group.note" class="hintline">{{ group.note }}</p>
   </div>

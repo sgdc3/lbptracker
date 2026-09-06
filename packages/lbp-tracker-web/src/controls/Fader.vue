@@ -1,18 +1,18 @@
 <script setup lang="ts">
 /**
- * One labelled slider, drawn from its row of `spec.ts`.
+ * One labelled slider, drawn from its row of the page's spec.
  *
  * ⚠️ **The `<output>` has no id and nothing writes to it.** The old markup gave
- * every fader a matching `<output id="${id}Label">` and `app.ts` filled it by
- * string join, which is how a label could end up describing a different slider.
- * Here the number shown comes from the same `scale` the engine is given.
+ * every fader a matching `<output id="${id}Label">` and the page's module filled
+ * it by string join, which is how a label could end up describing a different
+ * slider. Here the number shown comes from the same `per` the engine is given.
  */
-import { computed } from 'vue';
-import { FADERS, type FaderId } from './spec.ts';
-import { positions, reset, shown } from './state.ts';
+import { inject } from 'vue';
+import { CONTROLS } from './kit.ts';
 
-const props = defineProps<{ id: FaderId }>();
-const fader = computed(() => FADERS.find((f) => f.id === props.id)!);
+const props = defineProps<{ id: string }>();
+const controls = inject(CONTROLS)!;
+const fader = controls.fader(props.id);
 </script>
 
 <template>
@@ -21,13 +21,15 @@ const fader = computed(() => FADERS.find((f) => f.id === props.id)!);
     <!-- Double-click a fader to put it back where it started. -->
     <input
       :id="id"
-      v-model.number="positions[id]"
+      v-model.number="controls.positions[id]"
       type="range"
       :min="fader.min"
       :max="fader.max"
       :step="fader.step ?? 1"
-      @dblclick="reset(id)"
+      :disabled="!!fader.disabledBy && controls.checked[fader.disabledBy]"
+      autocomplete="off"
+      @dblclick="controls.reset(id)"
     >
-    <output>{{ shown(id) }}</output>
+    <output>{{ controls.shown(id) }}</output>
   </div>
 </template>

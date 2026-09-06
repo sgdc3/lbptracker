@@ -118,25 +118,7 @@
     </div>
     <details id="switches">
       <summary>Engine switches</summary>
-      <div class="live" style="margin-top:.9rem">
-        <div class="group">
-          <h3>voice pool</h3>
-          <div class="knob">
-            <label for="voices">size</label>
-            <input type="range" id="voices" min="1" max="128" step="1" value="32" autocomplete="off">
-            <output id="voicesLabel">32</output>
-          </div>
-          <div class="row" style="margin-top:.5rem">
-            <label class="check"><input id="optNoCap" type="checkbox" autocomplete="off"> unlimited</label>
-          </div>
-          <p class="hintline">
-            Live &mdash; move it while it plays. The engine&rsquo;s is 32. Its stealing is decided
-            over the whole song at once, so changing it rebuilds the plan, but the rebuild is
-            swapped in underneath: nothing stops, and what is already sounding finishes.
-            Uncapping it plays every note, which is not the game.
-          </p>
-        </div>
-      </div>
+      <div id="pool-panel"></div>
       <p class="hintline" id="staleNote" hidden>
         Rebuilding for the new pool size&hellip;
       </p>
@@ -169,86 +151,12 @@
 
   <section>
     <p class="step"><b>4</b> The song&rsquo;s own settings</p>
-    <div class="live">
-      <div class="group">
-        <h3>timing</h3>
-        <div class="knob">
-          <label for="tempo">tempo</label>
-          <input type="range" id="tempo" min="20" max="400" step="1" value="120" autocomplete="off">
-          <output id="tempoLabel">120 BPM</output>
-        </div>
-        <div class="knob">
-          <label for="swing">swing</label>
-          <input type="range" id="swing" min="0" max="100" step="1" value="0" autocomplete="off">
-          <output id="swingLabel">0.00</output>
-        </div>
-        <p class="hintline">
-          Both are written into the song, and both move <em>every</em> note &mdash; but neither
-          rebuilds anything. The plan holds musical positions, so a new tempo or swing is three
-          numbers and the next note played uses them; your place is kept in the <em>music</em>
-          rather than in seconds, since a tempo change moves the second a bar sits at. What is
-          already sounding keeps the timing it was given, which is what a DAW does too.
-        </p>
-      </div>
-      <div class="group">
-        <h3>channels</h3>
-        <div class="knob">
-          <label for="numChannels">how many</label>
-          <input type="range" id="numChannels" min="1" max="8" step="1" value="1" autocomplete="off">
-          <output id="numChannelsLabel">1</output>
-        </div>
-        <div id="channels" style="margin-top:.45rem"></div>
-        <p class="hintline">
-          <code>NumChannels</code> and the song&rsquo;s own mixer. A board row feeds channel
-          <em>row mod NumChannels</em>, so with one channel every row goes through the one fader,
-          and raising it fans the same rows out &mdash; the count beside each fader is how many
-          tracks land on it. 308 of the 338 sequencers in the corpus declare one. Live, like the
-          timing: a fader is one factor of a voice&rsquo;s gain and nothing else.
-        </p>
-      </div>
-    </div>
+    <div id="song-panel"></div>
   </section>
 
   <section>
     <p class="step"><b>5</b> Turn the output stage while it runs</p>
-    <div class="live">
-      <div class="group">
-        <h3>echo</h3>
-        <div class="knob">
-          <label for="echoTime">time (beats)</label>
-          <input type="range" id="echoTime" min="0" max="80" step="1" value="10" autocomplete="off">
-          <output id="echoTimeLabel">1.00</output>
-        </div>
-        <div class="knob">
-          <label for="echoFb">feedback</label>
-          <input type="range" id="echoFb" min="0" max="95" value="54" autocomplete="off">
-          <output id="echoFbLabel">0.54</output>
-        </div>
-        <div class="knob">
-          <label for="echoMix">mix</label>
-          <input type="range" id="echoMix" min="0" max="100" value="60" autocomplete="off">
-          <output id="echoMixLabel">0.60</output>
-        </div>
-      </div>
-      <div class="group">
-        <h3>reverb &amp; output</h3>
-        <div class="knob">
-          <label for="reverbSet">setting</label>
-          <input type="range" id="reverbSet" min="0" max="15" step="1" value="5" autocomplete="off">
-          <output id="reverbSetLabel">5</output>
-        </div>
-        <div class="row" style="margin-top:.55rem">
-          <label class="check"><input type="checkbox" id="optEcho" checked autocomplete="off"> echo</label>
-          <label class="check"><input type="checkbox" id="optReverb" checked autocomplete="off"> reverb</label>
-          <label class="check"><input type="checkbox" id="optClip" checked autocomplete="off"> output clip</label>
-        </div>
-        <p class="hintline">
-          These take effect <strong>while it plays</strong>. Every default is the song&rsquo;s own,
-          read off the sequencer when you pressed Prepare. Moving one rebuilds that effect, which
-          drops its tail.
-        </p>
-      </div>
-    </div>
+    <div id="output-panel"></div>
   </section>
 
   <section id="errorCard">

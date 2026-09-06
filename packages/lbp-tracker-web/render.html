@@ -130,7 +130,7 @@
       <button id="save" disabled>Download WAV</button>
     </div>
     <div class="row">
-      <label class="check"><input id="useRange" type="checkbox"> just a section</label>
+      <span id="opt-range" style="display:contents"></span>
       <span id="rangeFields" class="off">
         <label for="from">from</label>
         <input id="from" type="text" inputmode="numeric" placeholder="0:00" size="5" disabled>
@@ -154,7 +154,7 @@
           <div class="line">
             <label for="voices">voice pool</label>
             <input id="voices" type="text" inputmode="numeric" size="4">
-            <label class="check"><input id="optNoCap" type="checkbox"> unlimited</label>
+            <span id="opt-pool" style="display:contents"></span>
           </div>
           <p class="why">
             The engine&rsquo;s is 32. Uncapping it plays every note, which is not the game &mdash; a
@@ -164,8 +164,7 @@
         </div>
         <div class="switch">
           <div class="line">
-            <label class="check"><input id="optReverb" type="checkbox" checked> reverb</label>
-            <label class="check"><input id="optEcho" type="checkbox" checked> echo</label>
+            <span id="opt-stage" style="display:contents"></span>
           </div>
           <p class="why">
             Take either off to compare against a recording of the game made with that effect
@@ -175,7 +174,7 @@
         </div>
         <div class="switch">
           <div class="line">
-            <label class="check"><input id="optClip" type="checkbox" checked> output clip</label>
+            <span id="opt-clip" style="display:contents"></span>
           </div>
           <p class="why">
             The plugin hard-clips its own output to &plusmn;1 before the reverb send &mdash; the one

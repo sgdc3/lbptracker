@@ -61,9 +61,9 @@ cross by package name: `import { readWorld } from '@lbptracker/cwlib/level.ts'`.
   through symlinks in `node_modules`. Nothing is downloaded for the libraries.
 - `npm test` — `node --test`, all three workspaces at once, from the root.
 - `npm run typecheck` — two `tsc` projects, then `vue-tsc` for the web package.
-  ⚠️ **The web package uses a second, aliased TypeScript** (`typescript5`): `vue-tsc` needs the
-  JavaScript API, and `typescript@7` is the native compiler and has none. See
-  `packages/lbp-tracker-web/dev/typecheck.mjs`.
+  ⚠️ **The web package checks `.vue` through `typescript-native-bridge`**: `vue-tsc` needs a
+  JavaScript API and `typescript@7` is the native compiler and has none. The bridge is tsgo 7.0.2
+  with that API bolted on. See `packages/lbp-tracker-web/dev/typecheck.mjs`.
 - `npm run serve` / `build` / `preview` — Vite, **in the web package only**.
 
 ❗ **The two libraries have no build step and must keep it that way.** Node runs their TypeScript

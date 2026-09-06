@@ -8,6 +8,10 @@
  * `playbackRate`, nothing that could differ between engines.
  */
 
+import { createApp, h, watch } from 'vue';
+import Checks from './controls/Checks.vue';
+import { render } from './controls/render.ts';
+import { CONTROLS } from './controls/kit.ts';
 import { seqPicker } from './seq-picker.ts';
 import { isZip, saveNote, wireOpen, type Opened } from './open-level.ts';
 import type { BackupResult } from '@lbptracker/cwlib/backup.ts';
@@ -16,15 +20,22 @@ import { mountFooter } from './footer.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const seqHost = $<HTMLDivElement>('seq');
-const useRange = $<HTMLInputElement>('useRange');
+// The five options, declared once in `src/controls/render.ts` and mounted where
+// they already sat — beside the prose that explains each one.
+for (const [at, group] of [
+  ['#opt-range', 'range'],
+  ['#opt-pool', 'pool'],
+  ['#opt-stage', 'stage'],
+  ['#opt-clip', 'clip'],
+] as const) {
+  const app = createApp({ render: () => h(Checks, { group }) });
+  app.provide(CONTROLS, render);
+  app.mount(at);
+}
 const rangeFields = $<HTMLSpanElement>('rangeFields');
 const fromInput = $<HTMLInputElement>('from');
 const toInput = $<HTMLInputElement>('to');
 const voicesInput = $<HTMLInputElement>('voices');
-const optNoCap = $<HTMLInputElement>('optNoCap');
-const optReverb = $<HTMLInputElement>('optReverb');
-const optEcho = $<HTMLInputElement>('optEcho');
-const optClip = $<HTMLInputElement>('optClip');
 const goButton = $<HTMLButtonElement>('go');
 const saveButton = $<HTMLButtonElement>('save');
 const statusLine = $<HTMLDivElement>('status');
@@ -62,7 +73,7 @@ voicesInput.value = String(VOICE_POOL_SIZE);
  * is still there when you turn the cap back on.
  */
 const readVoices = (): number | null => {
-  if (optNoCap.checked) return VOICES_UNLIMITED;
+  if (render.on('optNoCap')) return VOICES_UNLIMITED;
   const text = voicesInput.value.trim();
   if (text === '') return VOICE_POOL_SIZE;
   const value = Number(text);
@@ -70,10 +81,10 @@ const readVoices = (): number | null => {
 };
 
 const syncVoiceCap = () => {
-  voicesInput.disabled = optNoCap.checked;
-  if (optNoCap.checked) voicesInput.classList.remove('bad');
+  voicesInput.disabled = render.on('optNoCap');
+  if (render.on('optNoCap')) voicesInput.classList.remove('bad');
 };
-optNoCap.addEventListener('change', syncVoiceCap);
+watch(() => render.on('optNoCap'), syncVoiceCap);
 syncVoiceCap();
 
 // The renderer has nothing to do when a song is picked -- rendering waits for
@@ -466,8 +477,8 @@ goButton.addEventListener('click', () => {
   // The whole song unless the box is ticked. A section is the exception, and
   // making it the default meant every first render silently answered a question
   // nobody had asked.
-  const from = useRange.checked ? parseTime(fromInput.value) : undefined;
-  const to = useRange.checked ? parseTime(toInput.value) : undefined;
+  const from = render.on('useRange') ? parseTime(fromInput.value) : undefined;
+  const to = render.on('useRange') ? parseTime(toInput.value) : undefined;
   fromInput.classList.toggle('bad', from === null);
   toInput.classList.toggle('bad', to === null);
   if (from === null || to === null) {
@@ -498,9 +509,9 @@ goButton.addEventListener('click', () => {
     from: from ?? 0,
     seconds: to === undefined ? 0 : to - (from ?? 0),
     voiceLimit,
-    reverb: optReverb.checked,
-    echo: optEcho.checked,
-    clip: optClip.checked,
+    reverb: render.on('optReverb'),
+    echo: render.on('optEcho'),
+    clip: render.on('optClip'),
   });
 });
 
@@ -537,8 +548,8 @@ function loadFrom(opened: Opened) {
   });
 }
 
-useRange.addEventListener('change', () => {
-  const on = useRange.checked;
+watch(() => render.on('useRange'), () => {
+  const on = render.on('useRange');
   fromInput.disabled = !on;
   toInput.disabled = !on;
   rangeFields.classList.toggle('off', !on);
