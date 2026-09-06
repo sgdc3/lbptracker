@@ -19,8 +19,20 @@
   .daw-top .brand {
     display: inline-flex; align-items: center; gap: .5rem;
     font-size: .78rem; letter-spacing: .09em; text-transform: uppercase;
-    color: var(--dimmer); margin-right: .4rem; text-decoration: none;
+    color: var(--dimmer); margin-right: .4rem; text-decoration: none; cursor: pointer;
   }
+  .daw-top .brand:hover { color: var(--ink); }
+
+  /* ------------------------------------------------------------------- home */
+  .home { max-width: 56rem; margin: 1.5rem auto 0; padding: 0 1rem; }
+  .home h1 { font-size: 1.7rem; line-height: 1.25; margin: 0 0 .6rem; letter-spacing: -.01em; }
+  .home .sub { color: var(--dim); margin: 0 0 1.2rem; }
+  .home .sub strong { color: var(--ink); font-weight: 600; }
+  .home-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: .8rem; margin: 1rem 0; }
+  .home-grid .card { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: .8rem .9rem; }
+  .home-grid .card h3 { margin: 0 0 .35rem; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase; color: var(--dimmer); }
+  .home-grid .card p { margin: 0; color: var(--dim); font-size: .9rem; }
+  .home .actions { display: flex; gap: .6rem; flex-wrap: wrap; margin: 1.2rem 0; }
   .tabs { display: flex; gap: .2rem; }
   .tabs button {
     background: none; border: 1px solid transparent; color: var(--dim);
@@ -260,7 +272,7 @@
 </head>
 <body>
 <header class="daw-top">
-  <a class="brand" href="./">LBP Tracker</a>
+  <a class="brand" id="brand" href="./" title="About LBP Tracker">LBP Tracker</a>
   <div class="tabs" role="tablist" aria-label="Views">
     <button type="button" role="tab" data-view="arrange" aria-selected="true">Arrange</button>
     <button type="button" role="tab" data-view="mixer">Song/Mixer</button>
@@ -270,8 +282,8 @@
   </div>
   <span class="spacer"></span>
   <div class="transport">
-    <button id="rewind" type="button" aria-label="Back to the start" disabled>&#9198;</button>
     <button id="play" type="button" aria-label="Play" disabled>&#9654;</button>
+    <button id="stop" type="button" aria-label="Stop, and back to the start" title="Stop, and back to the start" disabled>&#9632;</button>
     <span id="clock">0:00 / 0:00</span>
     <label for="tempoBox" class="hintline" style="margin:0">BPM</label>
     <input id="tempoBox" type="number" min="20" max="400" step="1" value="240" aria-label="Tempo" autocomplete="off">
@@ -306,6 +318,35 @@
 
 
 <main>
+  <!-- =================================================================== Home -->
+  <div id="view-home" class="view home" hidden>
+    <h1>LittleBigPlanet&nbsp;3&rsquo;s Music Sequencer, in the browser</h1>
+    <p class="sub">
+      LBP Tracker plays, edits and renders the music written in the game&rsquo;s own sequencer &mdash;
+      the same instruments, the same synthesis, the same echo and reverb, note for note. Open one of
+      your levels, a backup, or a level from the public archive; compose on the game&rsquo;s own
+      grid; hear every change at once; save it as a WAV, a MIDI file or a song file.
+      <strong>Everything happens on your own computer:</strong> nothing you open is uploaded anywhere.
+    </p>
+    <div class="actions">
+      <button id="homeNew" type="button" class="primary">start a new song</button>
+      <button id="homeOpen" type="button">open a level or a song&hellip;</button>
+      <button id="homeArrange" type="button">back to the song</button>
+    </div>
+    <div class="home-grid">
+      <div class="card"><h3>Arrange</h3><p>The board as the game lays it out &mdash; one instrument per chip, four bars to a tile &mdash; and inside each chip the note grid: points, glides, volume and timbre, whole steps or triplets.</p></div>
+      <div class="card"><h3>Song/Mixer</h3><p>Tempo, swing, the mixer channels and their faders, the echo and the reverb, exactly the fields the game stores; and the engine&rsquo;s own voice pool and output stage.</p></div>
+      <div class="card"><h3>Render</h3><p>The song to a 48&nbsp;kHz WAV through the same arithmetic the live player uses, with the numbers that say what the render did.</p></div>
+      <div class="card"><h3>Convert</h3><p>Out as MIDI, MPE so a bend stays with its note, with a tally of what could not be carried; in from any MIDI file, played by the game&rsquo;s instruments.</p></div>
+      <div class="card"><h3>Keyboard</h3><p>The game&rsquo;s instruments under your fingers &mdash; mouse, computer keys or a MIDI controller &mdash; with every voice parameter to turn while it sounds.</p></div>
+      <div class="card"><h3>Faithful</h3><p>Every number here was read out of the game&rsquo;s own binaries and checked against real levels; where the project knowingly departs from the engine, it says so.</p></div>
+    </div>
+    <p class="hintline">
+      Whatever is open stays open while you read this: the transport keeps playing, and any view
+      brings you back to it.
+    </p>
+  </div>
+
   <!-- ================================================================ Arrange -->
   <div id="view-arrange" class="view arrange">
     <div id="boardScroller" class="board-scroller" tabindex="0" aria-label="The board">

@@ -44,7 +44,7 @@ setErrorSink((text) => {
 
 // ---------------------------------------------------------------------- tabs
 
-export type ViewName = 'arrange' | 'mixer' | 'render' | 'convert' | 'keyboard';
+export type ViewName = 'home' | 'arrange' | 'mixer' | 'render' | 'convert' | 'keyboard';
 const tabs = [...document.querySelectorAll<HTMLButtonElement>('.tabs [data-view]')];
 const viewListeners = new Set<(view: ViewName) => void>();
 let current: ViewName = 'arrange';
@@ -60,11 +60,19 @@ function showView(view: ViewName): void {
   for (const l of viewListeners) l(view);
 }
 for (const tab of tabs) tab.addEventListener('click', () => showView(tab.dataset.view as ViewName));
+// The brand is the way to the home view: a presentation, over the song that
+// stays open -- not a reload, which would lose it.
+$('brand').addEventListener('click', (event) => {
+  event.preventDefault();
+  showView('home');
+});
+$('homeArrange').addEventListener('click', () => showView('arrange'));
+$('homeOpen').addEventListener('click', () => $<HTMLDialogElement>('fileDialog').showModal());
 
 // ----------------------------------------------------------------- transport
 
 const playButton = $<HTMLButtonElement>('play');
-const rewindButton = $<HTMLButtonElement>('rewind');
+const stopButton = $<HTMLButtonElement>('stop');
 const clockLabel = $<HTMLSpanElement>('clock');
 const loadLabel = $<HTMLSpanElement>('load');
 const volSlider = $<HTMLInputElement>('vol');
@@ -99,12 +107,17 @@ onPlayer({
 });
 onPlan(() => {
   playButton.disabled = false;
-  rewindButton.disabled = false;
+  stopButton.disabled = false;
   paintClock();
   showLoad();
 });
 playButton.addEventListener('click', () => (player.playing ? player.stop() : player.play()));
-rewindButton.addEventListener('click', () => player.seek(0));
+// Stop: silence, and back to the start -- a stop, not a pause; the pause is
+// the play button pressed again.
+stopButton.addEventListener('click', () => {
+  player.stop();
+  player.seek(0);
+});
 volSlider.addEventListener('input', () => player.setVolume(Number(volSlider.value)));
 player.setVolume(Number(volSlider.value));
 
@@ -241,7 +254,7 @@ async function openLevel(opened: Opened): Promise<void> {
   }
 }
 
-$('newSong').addEventListener('click', () => {
+const startNew = () => {
   if (state.dirty && !window.confirm('Throw away the unsaved changes?')) return;
   songs = new Map();
   picker.setRows([]);
@@ -249,7 +262,9 @@ $('newSong').addEventListener('click', () => {
   state.selection.cursor = { cell: 0, row: 0 };
   state.touch('selection');
   showView('arrange');
-});
+};
+$('newSong').addEventListener('click', startNew);
+$('homeNew').addEventListener('click', startNew);
 
 function saveSong(): void {
   const name = saveSongFile(state.song);
