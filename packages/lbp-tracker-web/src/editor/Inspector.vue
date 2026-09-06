@@ -2,6 +2,8 @@
 /**
  * The inspector: the selected placement's settings -- every field of
  * `PInstrument` the game lets a composer set -- and the selected point's.
+ * ⚠️ Not the name: a placed instrument cannot be renamed in the game, so
+ * `Clip.name` is carried from the file and shown, never edited.
  * The song's own settings are the mixer's (`daw/MixerPanel.vue`).
  *
  * Reads go through `state.version` so the panel follows the canvases; writes
@@ -34,7 +36,6 @@ const keyChoices = [
 ];
 
 const num = (event: Event) => Number((event.target as HTMLInputElement).value);
-const text = (event: Event) => (event.target as HTMLInputElement).value;
 
 const setClip = (kind: ChangeKindLike, key: string, fn: (value: number) => void) => (event: Event) => {
   // A select with no matching option reports '' -- which `Number` reads as 0,
@@ -76,12 +77,6 @@ const fmt = (v: number, dp = 2) => v.toFixed(dp);
     <div class="group" :class="{ off: !clip }">
       <h3>instrument</h3>
       <template v-if="clip">
-        <div class="knob">
-          <label for="clipName">name</label>
-          <input id="clipName" type="text" class="wide" :value="clip.name" placeholder="(the instrument's)" autocomplete="off"
-                 @input="state.edit('selection', () => { clip!.name = text($event); }, 'clipName')">
-          <output></output>
-        </div>
         <div class="knob">
           <label for="clipGuid">sound</label>
           <select id="clipGuid" class="wide" :value="clip.guid" autocomplete="off"
