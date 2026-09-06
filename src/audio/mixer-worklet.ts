@@ -40,19 +40,6 @@ export type MixerMessage =
   // interpolators switch it off so they can be heard against it.
   | { type: 'interpolator'; name: InterpolatorName | 'engine' }
   /**
-   * How much of each voice's written pan survives, `0.5 + (p - 0.5) * width`.
-   *
-   * ⚠️ **It lives here rather than in the spec so that it can be turned while a
-   * song plays.** A scheduler that baked it into every voice would have to
-   * rebuild its whole plan to move it, and the number is exactly the kind a
-   * listener wants to sweep. Voices already sounding keep the width they were
-   * born with; notes are short enough that a move is heard within a beat.
-   *
-   * ❗ A caller that applies the width itself must send 1 here, or it is applied
-   * twice. See `PAN_WIDTH` in src/core/render.ts.
-   */
-  | { type: 'panWidth'; width: number }
-  /**
    * Rebuild the output stage. Everything here is a sequencer field, so a
    * keyboard can offer exactly what a song can set.
    *
@@ -135,7 +122,6 @@ export class MixerProcessor extends AudioWorkletProcessor {
    */
   private echo: Echo | null = null;
   private reverb: Reverb | null = null;
-  private panWidth = 1;
   private echoOn = false;
   private reverbOn = false;
   private clip = true;
@@ -252,23 +238,13 @@ export class MixerProcessor extends AudioWorkletProcessor {
           this.port.postMessage({ type: 'missingSample', id: message.sampleId });
           return;
         }
-        {
-          const pan =
-            this.panWidth === 1
-              ? message.voice.pan
-              : 0.5 + (message.voice.pan - 0.5) * this.panWidth;
-          // ⚠️ **Pan only — the fold's GAIN is not this knob's to move.** It
-          // briefly was, as `1/panWidth`, and that turned the page's width
-          // slider into a volume control: at 0.1 it was +20 dB and at 1.0 it
-          // was the -4.6 dB the fix existed to remove. The gain is the game's
-          // fold and is a constant; see `FOLD_GAIN` in `src/core/render.ts`.
-          this.mixer.play({ ...message.voice, sample, pan });
-        }
+        // The file's own pan, untouched. The stereo fold's narrowing used
+        // to be applied here from a `panWidth` message; it was removed on
+        // 2026-09-06 on a listening judgement. `FOLD_GAIN` in
+        // `src/core/render.ts` is the fold's other half and still applies.
+        this.mixer.play({ ...message.voice, sample, pan: message.voice.pan });
         break;
       }
-      case 'panWidth':
-        this.panWidth = message.width;
-        break;
       case 'interpolator':
         this.mixer.setEngineSampler(message.name === 'engine');
         if (message.name !== 'engine') {

@@ -154,7 +154,6 @@ function onClock(p: Planned, stepFrames: number, swing: number): VoiceSpec {
 const plan: Planned[] = [];
 await renderSequencer(seq, loadInstrument, {
   planOnly: true,
-  panWidth: 1,
   voiceLimit: VOICES_UNLIMITED,
   onVoice: (voice, where) => {
     plan.push({
@@ -207,8 +206,7 @@ async function renderTurned(): Promise<[Float32Array, Float32Array]> {
   const right = new Float32Array(frames);
   await renderSequencer(turned, loadInstrument, {
     planOnly: true,
-    panWidth: 1,
-    voiceLimit: VOICES_UNLIMITED,
+      voiceLimit: VOICES_UNLIMITED,
     onVoice: (voice) => {
       if ((voice.startFrame ?? 0) >= frames) return;
       mixer.play({ ...voice, random: () => 0 });

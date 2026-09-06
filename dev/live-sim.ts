@@ -126,11 +126,6 @@ interface Planned {
 const plan: Planned[] = [];
 const planResult = await renderSequencer(seq, loadInstrument, {
   planOnly: true,
-  // `panWidth: 1` renders the file's own image and leaves the narrowing to the
-  // page's worklet, which is what the live path does. The fold's GAIN is a
-  // constant and applies either way, so the levels here are the page's --
-  // see `FOLD_GAIN` in `src/core/render.ts`.
-  panWidth: 1,
   // Uncapped on purpose: the point of the exercise is to apply the pool live,
   // so the plan must not have its cuts baked in.
   voiceLimit: VOICES_UNLIMITED,

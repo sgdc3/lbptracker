@@ -49,8 +49,15 @@ import { pitchRatio, samplesPerStep, velocityGain } from './voice.ts';
 export const RATE = 48000;
 
 /**
- * How much of a written pan actually survives to the game's stereo output:
- * **`2 - Math.SQRT2` = 0.5857864**, applied as `p' = 0.5 + (p - 0.5) * PAN_WIDTH`.
+ * How much of a written pan survives to the game's stereo output:
+ * **`2 - Math.SQRT2` = 0.5857864**, as `p' = 0.5 + (p - 0.5) * PAN_WIDTH`.
+ *
+ * ❌ **This renderer does not apply it, since 2026-09-06.** The narrowing and
+ * the knob that swept it were both removed on a listening judgement: the
+ * listener wants the file's own pans. Everything below is still measured and
+ * still true of the game; it is the *decision* that changed, and
+ * {@link FOLD_GAIN} — the other half of the same operator — is still applied.
+ * See question 39 in `steering/open-questions.md`.
  *
  * ✔ **Measured against the game's own output at four pan values**, and the last
  * two were a *prediction* confirmed out of sample. Two placements at pan 0.40
@@ -109,21 +116,16 @@ export const RATE = 48000;
  * clearing those lanes (`fmodsmsreverb.prx` `0x2335`-`0x235d`). See *22* in
  * steering/answered-questions.md.
  *
- * A stereo listener therefore hears this narrowing on hardware or emulator
- * alike, which is why the tracker reproduces it. It does mean the game's
- * **internal** image is wider than what this renders.
+ * A stereo listener hears this narrowing on hardware or emulator alike, so the
+ * game's **internal** image is wider than what a TV plays. This renderer now
+ * takes the internal one.
  *
  * ❌ **This used to say "width, not gain", and that was half of a linear
- * operator.** The recordings were level-matched, so they say nothing about
- * absolute level — but the *fold* does, and the fold is now read rather than
- * fitted. `L = ch0 + k·d·(ch0+ch1)` shrinks the difference by `1/(1 + 2·k·d)`
- * and grows the **sum** by `(1 + 2·k·d)`, which is the same number: narrowing
- * the pan to `W` and leaving the gain alone renders everything a flat
- * **−4.645 dB** under the game's own stereo.
- *
- * {@link FOLD_GAIN} is the other half. ⚠️ **It did not show in a WAV**, because
- * `dev/render-level.ts` normalises; it showed the first time a listener played
- * the live page, which does not.
+ * operator.** `L = ch0 + k·d·(ch0+ch1)` shrinks the difference by
+ * `1/(1 + 2·k·d)` and grows the **sum** by `(1 + 2·k·d)`, the same number, so
+ * narrowing without the gain rendered everything a flat **−4.645 dB** under the
+ * game's own stereo. ⚠️ **We are now deliberately keeping the other half**, which
+ * is the same shape of error made on purpose — see {@link FOLD_GAIN}.
  */
 export const PAN_WIDTH = 2 - Math.SQRT2;
 
@@ -136,28 +138,26 @@ export const PAN_WIDTH = 2 - Math.SQRT2;
  * renders everything a flat **−4.645 dB** under the game's own stereo, at every
  * pan: the ratio is 0.585786 at 0, 0.25, 0.5, 0.75 and 1 alike.
  *
- * ❗ **A CONSTANT, and deliberately not `1 / panWidth`.** It was the reciprocal
- * of the knob for one commit, which is defensible physics — a narrower fold is a
- * bigger centre feed, which really is louder — and a bad instrument: the live
- * page's width slider became a volume control, **+20 dB at 0.1** and back to the
- * −4.6 dB the fix existed to remove at 1.0, so the one thing the slider is for
- * (hearing the image with and without the narrowing) could not be done without
- * a loudness difference confounding it.
+ * ❗ **It is applied and the narrowing is not, so this is half that operator,
+ * on purpose.** The pan narrowing was removed on 2026-09-06 because the
+ * listener wants the file's own image; keeping the gain keeps the level where
+ * it was, which is the least surprising half to keep. It is a hybrid: the
+ * game's downmixed **level** with the game's internal **image**.
  *
- * The game's fold is fixed — `k = 0.5` and `d = 1/sqrt2` are constants of FMOD
- * and of BS.775, not settings — so its gain is fixed too. `panWidth` stays what
- * it always was: a diagnostic on the **image**.
+ * ⚠️ **And it is applied in the wrong place for a faithful chain.** The fold
+ * happens in FMOD's speaker matrix, *after* the whole DSP chain — after the
+ * reverb and after `SMS WaveHammer`. This gain is folded into each voice, so it
+ * reaches our compressor 4.645 dB before the game's would. That is the largest
+ * single lead on why the compressor sounds wrong: see question 38 in
+ * `steering/open-questions.md`.
  *
- * ⚠️ **"At constant level" is not quite true at the narrow end, and the reason
- * is the pan law rather than this.** `panGains` is linear (`0x2d21`/`0x2d40`),
- * so a voice at the centre carries `2 × 0.5² = 0.5` of the power a hard-panned
- * one carries: collapsing a song toward mono costs up to **3 dB**, and how much
- * depends on how wide the song was written. Measured over 30 s, width 1 → 0:
- * `Orb` (the corpus's widest, mean per-voice power 0.887) loses **2.04 dB**,
- * `Zero` loses **0.12 dB**, and a song written down the middle loses nothing.
- * Compensating for it would need the program's own pan distribution and would
- * make the knob stop modelling the law, so it is documented instead — on the
- * live page's own hint, where the listener is.
+ * ⚠️ **A narrow image is quieter, and that is the pan law rather than this.**
+ * `panGains` is linear (`0x2d21`/`0x2d40`), so a voice at the centre carries
+ * `2 × 0.5² = 0.5` of the power a hard-panned one carries: collapsing a song
+ * toward mono costs up to **3 dB**. Measured over 30 s from width 1 to 0,
+ * `Orb` (the corpus's widest) lost **2.04 dB** and `Zero` **0.12 dB** — which is
+ * now moot for playback, and kept because it is what any future width control
+ * would run into.
  */
 export const FOLD_GAIN = 1 / PAN_WIDTH;
 
@@ -262,20 +262,6 @@ export interface RenderOptions {
   readonly reverb?: boolean;
   /** Run the echo. Default true. Same reasoning as `reverb`. */
   readonly echo?: boolean;
-  /**
-   * Scales every placement's pan toward centre: `p' = 0.5 + (p - 0.5) * width`.
-   * Defaults to {@link PAN_WIDTH}, which is measured. Pass `1` to render the
-   * file's own pan values untouched.
-   *
-   * The game **never hard-pans**: at a written pan of 1.0 its opposite channel
-   * comes back at -11.66 dB, not silence. See {@link PAN_WIDTH} for the numbers.
-   *
-   * It is a knob in all three front ends -- the `pan width` box on the render
-   * page, `LBP_PAN_WIDTH` for `dev/render-level.ts`, and this option -- because
-   * only the *effect* is measured. Until the mechanism is read, rendering the
-   * same section at `1` and comparing is the check that keeps it honest.
-   */
-  readonly panWidth?: number;
   /**
    * Called with every voice as it is handed to the mixer, and with the identity
    * of the sample it plays.
@@ -413,7 +399,6 @@ export async function renderSequencer(
     releaseTail: withReleaseTail = false,
     reverb: withReverb = true,
     echo: withEcho = true,
-    panWidth = PAN_WIDTH,
     onVoice,
     planOnly = false,
     onProgress,
@@ -795,17 +780,17 @@ export async function renderSequencer(
         2 *
         P(OUTPUT_PARAMS.level) *
         stackGain *
-        // ❗ **The fold's gain, the other half of `panWidth`** -- and a constant,
-        // so it applies here whatever `panWidth` is. The live path renders at
-        // `panWidth: 1` and narrows in the worklet, which is why this is the one
-        // site: the gain travels with the plan and the worklet moves the image
-        // only. See {@link FOLD_GAIN}.
+        // ❗ **The fold's gain.** ⚠️ Its other half, the pan narrowing, is no
+        // longer applied -- see {@link PAN_WIDTH} -- so this is half a
+        // measured operator, kept on purpose. See {@link FOLD_GAIN}.
         FOLD_GAIN,
       // `Params[26]`. The engine clamps it to 0..1 when the note starts
       // (`0x3cd8`-`0x3cf3`) and again to 0.95 in the block; `driveCoefficient`
       // does the second, so only the first belongs here.
       drive: Math.min(1, Math.max(0, P(OUTPUT_PARAMS.drive))),
-      pan: 0.5 + (track.pan - 0.5) * panWidth,
+      // The file's own pan. See {@link PAN_WIDTH} for the narrowing this
+      // renderer deliberately does not apply.
+      pan: track.pan,
       // Swing bends the step clock, so every frame position goes through it.
       startFrame: Math.round(swungFrame(event.step, framesPerStep, seq.swing)),
       // The note's own end -- what closes the gate. A one-shot ignores it; see
@@ -885,10 +870,8 @@ export async function renderSequencer(
         // engine sums them inside the DSP -- `0x25ab` loads `voice+0x18` and
         // `0x25b2` adds `voice + layer*4 + 0x7c` -- and the pan law at
         // `0x2d21`/`0x2d40` runs on the sum, so everything FMOD's output stage
-        // does to the base pan it does to this too. `spec.pan` is already
-        // narrowed, hence the factor here. (The live path renders at
-        // `panWidth: 1` and narrows in the worklet, which sums first anyway.)
-        pan: clamp01(spec.pan + panWidth * 0.5 * P(STACK_PARAMS.spread) * bipolar()),
+        // does to the base pan it does to this too.
+        pan: clamp01(spec.pan + 0.5 * P(STACK_PARAMS.spread) * bipolar()),
         // ⚠️ The draw happens for layer 0 too -- the engine calls `rand()` and
         // then overwrites the result -- so it stays here rather than behind the
         // branch. Moving it would change every later value in the stream.

@@ -76,7 +76,6 @@ self.onmessage = async (event: MessageEvent) => {
      * switch for it on the page would only offer a way to render something known
      * to be wrong. `dev/render-level.ts` still exposes them as env vars.
      */
-    panWidth?: number;
     oneShot?: 'full' | 'natural' | 'gate';
     voiceLimit?: number;
     reverb?: boolean;
@@ -141,7 +140,6 @@ self.onmessage = async (event: MessageEvent) => {
         secondsArg: message.seconds ?? 0,
         fromArg: message.from ?? 0,
         // Each absent field means the measured default; the page always sends them.
-        ...(message.panWidth === undefined ? {} : { panWidth: message.panWidth }),
         ...(message.oneShot === undefined ? {} : { oneShot: message.oneShot }),
         ...(message.voiceLimit === undefined ? {} : { voiceLimit: message.voiceLimit }),
         ...(message.reverb === undefined ? {} : { reverb: message.reverb }),

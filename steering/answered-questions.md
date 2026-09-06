@@ -1531,6 +1531,8 @@ type_infos, and dumping one prints strings where functions should be. Require sl
 
 ### What was implemented
 
+❌ **No longer applied — removed 2026-09-06, see *39* in [open-questions.md](open-questions.md).** The constant and this derivation stand; the renderer takes the file's own pans and keeps only {@link FOLD_GAIN}. What follows describes what it did.
+
 `PAN_WIDTH` in `src/core/render.ts`, applied where the voice spec is built; `LBP_PAN_WIDTH=1`
 restores the file's own pans. `panGains` itself stays hard-panning and linear, because that **is**
 the plugin's law at `0x2d21`; the narrowing belongs above it.

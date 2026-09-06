@@ -12,7 +12,6 @@ import { seqPicker } from './seq-picker.ts';
 import { isZip, saveNote, wireOpen, type Opened } from './open-level.ts';
 import type { BackupResult } from '../src/core/backup.ts';
 import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
-import { PAN_WIDTH } from '../src/core/render.ts';
 import { mountFooter } from './footer.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -21,7 +20,6 @@ const useRange = $<HTMLInputElement>('useRange');
 const rangeFields = $<HTMLSpanElement>('rangeFields');
 const fromInput = $<HTMLInputElement>('from');
 const toInput = $<HTMLInputElement>('to');
-const panWidthInput = $<HTMLInputElement>('panWidth');
 const voicesInput = $<HTMLInputElement>('voices');
 const optNoCap = $<HTMLInputElement>('optNoCap');
 const optReverb = $<HTMLInputElement>('optReverb');
@@ -49,21 +47,6 @@ const dropZone = $<HTMLDivElement>('drop');
 const dropTitle = $<HTMLElement>('dropTitle');
 const dropHint = $<HTMLElement>('dropHint');
 const fileInput = $<HTMLInputElement>('file');
-
-/**
- * The pan width starts at the measured default. It is a box rather than a fixed
- * constant because only the *effect* is measured -- see `PAN_WIDTH` -- so being
- * able to render the same section at 1 and compare is worth a text field.
- */
-panWidthInput.value = String(Number(PAN_WIDTH.toFixed(6)));
-
-/** `null` when the box does not hold a number in 0..1. */
-const readPanWidth = (): number | null => {
-  const text = panWidthInput.value.trim();
-  if (text === '') return PAN_WIDTH;
-  const value = Number(text);
-  return Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
-};
 
 voicesInput.value = String(VOICE_POOL_SIZE);
 
@@ -498,13 +481,6 @@ goButton.addEventListener('click', () => {
     setStatus('the end has to come after the start', true);
     return;
   }
-  const panWidth = readPanWidth();
-  if (panWidth === null) {
-    panWidthInput.classList.add('bad');
-    goButton.disabled = false;
-    setStatus('pan width is a number from 0 to 1', true);
-    return;
-  }
   const voiceLimit = readVoices();
   if (voiceLimit === null) {
     voicesInput.classList.add('bad');
@@ -517,7 +493,6 @@ goButton.addEventListener('click', () => {
   worker.postMessage({
     type: 'render',
     key: picker.value(),
-    panWidth,
     // An empty end means "to the end of the song", which the renderer spells as
     // a length of zero.
     from: from ?? 0,

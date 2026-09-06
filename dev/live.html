@@ -120,27 +120,6 @@
       <summary>Engine switches</summary>
       <div class="live" style="margin-top:.9rem">
         <div class="group">
-          <h3>pan width</h3>
-          <div class="knob">
-            <label for="panWidth">width</label>
-            <input type="range" id="panWidth" min="0" max="100" step="1" value="59" autocomplete="off">
-            <output id="panWidthLabel">0.59</output>
-          </div>
-          <p class="hintline">
-            Live &mdash; sweep it while it plays. How much of a written pan survives to the
-            game&rsquo;s stereo output; the measured default is <code>2 &minus; &radic;2</code>, and
-            1.00 plays the file&rsquo;s own pans. Notes already sounding keep the width they
-            started with.
-            <br>&#9888; <strong>Narrow does get quieter, and that is the pan law rather than a
-            fault.</strong> The plugin pans linearly &mdash; <code>1&minus;p</code> and
-            <code>p</code> &mdash; so a voice at the centre carries half the power of a hard-panned
-            one. Collapsing a wide song to mono therefore costs up to 3&nbsp;dB: measured, 2.0 dB on
-            the widest song in the corpus and 0.1 dB on one that was written down the middle. The
-            <em>level</em> of the game&rsquo;s own fold is a constant and does not move with this
-            slider.
-          </p>
-        </div>
-        <div class="group">
           <h3>voice pool</h3>
           <div class="knob">
             <label for="voices">size</label>

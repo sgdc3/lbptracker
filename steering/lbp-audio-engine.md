@@ -328,7 +328,7 @@ sets all eight speaker volumes to `32768`, 0 dB, applying no trim of its own.
 ⚠️ **So everything this project measures from a recording is measured through a downmix**, and the
 stereo image the tracker matches is narrower than the game's internal one. That is not a defect in
 the recordings; it is what a stereo listener hears. See *22. The stereo width* in
-[answered-questions.md](answered-questions.md) for the constant (`PAN_WIDTH = 2-sqrt2`) and for
+[answered-questions.md](answered-questions.md) for the constant (`PAN_WIDTH = 2-sqrt2`) — which ⚠️ **this renderer no longer applies**, see question 39 in [open-questions.md](open-questions.md) — and for
 which half of it belongs to the game and which to the fold.
 
 ⚠️ **How the corpus of recordings is captured, and why it matters.** They come from **shadPS4**,

@@ -33,7 +33,7 @@ import { webInflateRaw } from '../src/platform/web.ts';
 import { LiveVoicePool, VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/core/polyphony.ts';
 import { swungFrame } from '../src/core/swing.ts';
 import { samplesPerStep } from '../src/core/voice.ts';
-import { PAN_WIDTH, RATE, renderSequencer } from '../src/core/render.ts';
+import { RATE, renderSequencer } from '../src/core/render.ts';
 import { webInflate } from '../src/platform/web.ts';
 import { mountFooter } from './footer.ts';
 
@@ -55,7 +55,6 @@ const dropTitle = $<HTMLElement>('dropTitle');
 const dropHint = $<HTMLElement>('dropHint');
 const fileInput = $<HTMLInputElement>('file');
 const volSlider = $<HTMLInputElement>('vol');
-const panWidthInput = $<HTMLInputElement>('panWidth');
 const voicesInput = $<HTMLInputElement>('voices');
 const noCapBox = $<HTMLInputElement>('optNoCap');
 const staleNote = $<HTMLParagraphElement>('staleNote');
@@ -293,9 +292,6 @@ const TICK = 100;
  * plan stale rather than doing nothing quietly.
  */
 const planOptions = () => ({
-  // ❗ Raw pans in the plan: the worklet owns the width so it can be swept while
-  // the song plays. Sending anything but 1 here would apply it twice.
-  panWidth: 1,
   // ❗ And no cap: the pool is applied live, per note. See `Planned`.
   voiceLimit: VOICES_UNLIMITED,
 });
@@ -428,9 +424,6 @@ function rebuildPoolTo(limit: number): void {
     noteEnd.set(p.note, end);
   }
 }
-
-const pushPanWidth = () =>
-  node?.port.postMessage({ type: 'panWidth', width: Number(panWidthInput.value) / 100 });
 
 let preparedWith = '';
 const markStale = () => {
@@ -591,7 +584,6 @@ async function prepare(restart = true): Promise<void> {
   liveChannels = seq.numChannels;
   liveVolumes = seq.volumes;
   pushEffects();
-  pushPanWidth();
   drawDensity();
   if (restart) {
     seek(0);
@@ -877,18 +869,12 @@ for (const id of ['optEcho', 'optReverb', 'optClip']) {
 }
 
 // The plan-time pair. Their labels update live; their effect waits for Prepare.
-panWidthInput.value = String(Math.round(PAN_WIDTH * 100));
 voicesInput.value = String(VOICE_POOL_SIZE);
 const showPlanOptions = () => {
-  $('panWidthLabel').textContent = (Number(panWidthInput.value) / 100).toFixed(2);
   $('voicesLabel').textContent = noCapBox.checked ? 'off' : voicesInput.value;
   voicesInput.disabled = noCapBox.checked;
   markStale();
 };
-panWidthInput.addEventListener('input', () => {
-  showPlanOptions();
-  pushPanWidth();
-});
 /**
  * The pool re-plans without stopping.
  *
