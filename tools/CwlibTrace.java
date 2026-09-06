@@ -63,10 +63,16 @@ public class CwlibTrace {
                 }
                 RLevel level = (RLevel) loaded;
                 PWorld world = level.worldThing.getPart(Part.WORLD);
-                System.out.printf("%s  v%x/%x branch %x/%x  -> %d things%n", name,
+                int total = world == null ? -1 : world.things.size();
+                int live = 0;
+                if (world != null)
+                    for (Thing t : world.things) if (t != null) live++;
+                // ⚠️ The list holds nulls: `src/core/level.ts` filters them out, so
+                // compare the NON-NULL count against what the walk reports.
+                System.out.printf("%s  v%x/%x branch %x/%x  -> %d things (%d non-null)%n", name,
                     sr.getRevision().getVersion(), sr.getRevision().getSubVersion(),
                     sr.getRevision().getBranchID(), sr.getRevision().getBranchRevision(),
-                    world == null ? -1 : world.things.size());
+                    total, live);
                 for (int k = 0; k < 3 && world != null && k < world.things.size(); k++)
                     dump("  [" + k + "]", world.things.get(k));
             } catch (Throwable t) {

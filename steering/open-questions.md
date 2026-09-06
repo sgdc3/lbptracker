@@ -363,7 +363,7 @@ them is an even spread over the game's life, which is what puts old revisions in
 |---|---|---|
 | `0x3b7` | `0/0` | **4 of 4** |
 | `0x3b8`–`0x3f9` | `0/0` | **78 of 78** |
-| `0x272` | `4c44` (LEERDAMMER) | **0 of 21** at the shipped bound, and 0 of 21 correct with it lowered — but the failures now name a byte inside a part reader rather than running off the end |
+| `0x272` | `4c44` (LEERDAMMER) | **0 of 21** at the shipped bound; **2 of 21 correct** with it lowered, matching cwlib exactly, and the rest failing thousands of bytes deeper than they were |
 | `0x26e` | — | 0 of 1, the chunk table is not where this reader looks |
 | — | — | 1 file the archive stores truncated |
 
@@ -455,17 +455,36 @@ three more: below 0x341 there is no flags byte and `COPYRIGHT`, `EDITABLE` and `
 are separate bools at three separate gates. And `PMetadata` was written from scratch — it had no
 reader at all, because nothing above `LBP3_MIN_VERSION` ever reaches one.
 
-### Where it stands now
+### Where it stands now: two LBP1 levels read correctly
 
-Every LBP1 file gets **far** deeper: the marker used to fail at byte 287 and now fails between 927
-and 8450, or names a part rather than a misalignment. ⚠️ **Still 0 of 21 read to the end**, and the
-remaining failures are the same shape as the ones already fixed — one part reader at a time, each
-one a span diff away from being named.
+✔ `0-ea18ed` and `0-935f66` come out **identical to cwlib** — 26 Things of which 23 are non-null,
+and 321 of which 55 are. The rest still fail, but the marker now catches them between byte 3,343 and
+99,898 rather than 287.
 
-The one that is not: `1-c8b731` wants `PMetadata`'s **translation-tag** branch, four strings instead
-of the four LAMS keys, which cwlib takes below LEERDAMMER revision 8 and below 0x2ba. Every other
-file in the sample is LEERDAMMER 0x17 and takes the key branch, so the tag branch has no file here
-to check against and `readMetadata` refuses instead of guessing.
+Two more readers fell to the same span diff:
+
+- **`PRenderMesh`** — `editorColor` is four floats at or below **0x31a** and a packed ARGB above it.
+  Same shape as `PShape`'s colour: the comment said so, the code always read the packed form, and it
+  was **15 bytes short** on every pre-0x31b Thing.
+- **`PTrigger`** — `zOffset` arrives at **0x322** and this reader read it always: **4 bytes long**
+  on everything older. (`hysteresisMultiplier` and `enabled` are gated at 0x19b too, and an `i32`
+  exists below 0x1d5; neither bites at 0x272 but both are implemented now.)
+
+⚠️ **"0 of 21" in the last write-up was a measurement error, not a result.** It compared this
+reader's count against cwlib's `things.size()`, which **includes null entries**; `readWorld` filters
+those out. The two numbers were never comparable. `CwlibTrace parts` now prints both — `321 things
+(55 non-null)` — so the mistake cannot repeat.
+
+### The loop, which is now the whole method
+
+1. `CwlibTrace spans <level>` for the reference offsets, `setTrace` for ours.
+2. Diff. The first part whose span disagrees names the file to open in cwlib.
+3. The disagreement is almost always a **version gate that exists in the comment and not in the
+   code** — five of the seven readers fixed so far were exactly that.
+
+❗ That third point is the finding worth keeping. These readers were ported with their gates
+*documented* and then written for the LBP3 branch only, so the comments are a list of the bugs. A
+grep for "at or below", "above 0x" and "regenerated" in `src/core/parts.ts` is a work list.
 
 ### What is left after that
 

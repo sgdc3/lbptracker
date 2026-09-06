@@ -116,15 +116,19 @@ export function readJoint(s: Serializer, readers: ReadonlyMap<string, PartReader
 
 /** `PTrigger`: the volume a switch senses in. */
 export function readTrigger(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+  const { version, subVersion } = s.revision;
   s.u8(); // triggerType, enum8
   things(s, readers); // inThings
   s.f32(); // radiusMultiplier
-  if (s.revision.subVersion >= 0x2a) s.u8(); // zRangeHundreds
+  if (version < 0x1d5) s.i32();
+  if (subVersion >= 0x2a) s.u8(); // zRangeHundreds
   s.bool(); // allZLayers
-  s.f32(); // hysteresisMultiplier
-  s.bool(); // enabled
-  s.f32(); // zOffset
-  if (s.revision.subVersion >= 0x90) s.s32(); // scoreValue
+  if (version >= 0x19b) {
+    s.f32(); // hysteresisMultiplier
+    s.bool(); // enabled
+  }
+  if (version >= 0x322) s.f32(); // zOffset
+  if (subVersion >= 0x90) s.s32(); // scoreValue
 }
 
 /**
@@ -389,10 +393,16 @@ export function readRenderMesh(s: Serializer, readers: ReadonlyMap<string, PartR
   s.bool(); // animLoop
   s.f32(); // loopStart
   s.f32(); // loopEnd
-  s.i32(); // editorColor -- four floats at or below 0x31a
+  // ❗ Four floats at or below 0x31a, a packed ARGB above it. The comment said
+  // so above a line that always read the packed form -- 15 bytes short on every
+  // pre-0x31b Thing, which is the same mistake `PShape`'s colour made.
+  if (version > 0x31a) s.i32();
+  else s.vector4(); // editorColor
   s.u8(); // castShadows, enum8
   s.bool(); // RTTEnable
-  s.u8(); // visibilityFlags -- a bool at or below 0x2e2
+  // Same width either way, so this one never desynchronised anything.
+  if (version > 0x2e2) s.u8();
+  else s.bool(); // visibilityFlags
   s.f32(); // poppetRenderScale
   if (version > 0x1f5 && version < 0x34d) {
     s.f32(); // parentDistanceFront
