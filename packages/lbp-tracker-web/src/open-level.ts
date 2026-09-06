@@ -10,12 +10,18 @@
  * them grew their own copy of something this small it cost a day -- the same
  * reason `packages/lbp-tracker-web/src/assets.ts` and `packages/lbp-tracker-web/src/seq-picker.ts` exist.
  *
+ * ⚠️ **Nothing here may import Vue, or anything that touches `document`.**
+ * `render-worker.ts` imports `openedTitle` from this file, and a worker has no
+ * document: pulling the drop zone's component in here crashed the renderer
+ * with `ReferenceError: document is not defined` from inside Vue's runtime,
+ * and nothing in the build says so — the bundle is happy, the worker is not.
+ * The mounting half lives in `widgets/open-panel.ts` for exactly that reason.
+ *
  * ❗ **Nothing is uploaded.** Every byte is read from the `File` the browser
  * hands over, in the page, and the reading is `packages/cwlib-ts/src/backup.ts` which knows
  * nothing about files at all. See `steering/game-assets.md`.
  */
 
-import { wireArchiveOpen } from './archive-panel.ts';
 import type { BackupFile, BackupResult } from '@lbptracker/cwlib/backup.ts';
 
 /**
@@ -115,67 +121,6 @@ export async function fromFiles(list: readonly File[]): Promise<Opened | undefin
 /** Whether this is an archive rather than a resource. Read by extension only. */
 export function isZip(file: File | { name: string }): boolean {
   return /\.zip$/i.test(file.name);
-}
-
-/**
- * Wire a drop zone and its buttons to one handler.
- *
- * ⚠️ **The zone itself takes drops and nothing else.** Making a click
- * anywhere on it open the file picker looked convenient and was a bug: pressing
- * "choose a folder" opened BOTH pickers, because `input.click()` dispatches a
- * click on the input that bubbles straight back up to the zone, and the zone
- * cannot tell it from a click on its own background. Two buttons, one job each,
- * and the drag stays for a file or a folder.
- *
- * ❗ **The archive is the third button and it lives here** rather than beside
- * each page's own wiring. Three pages open levels; the last time two of them
- * grew their own copy of something this small it cost a day. A page opts in by
- * having the markup and passing `archiveButton` and `archiveHost`, and what it
- * then opens ends in this same `onOpen`.
- */
-export function wireOpen(opts: {
-  zone: HTMLElement;
-  fileInput: HTMLInputElement;
-  folderInput?: HTMLInputElement;
-  fileButton?: HTMLElement | null;
-  folderButton?: HTMLElement | null;
-  /** The "from the archive" button and the empty box the panel is built in. */
-  archiveButton?: HTMLElement | null;
-  archiveHost?: HTMLElement | null;
-  onOpen: (opened: Opened) => void | Promise<void>;
-}): void {
-  const { zone, fileInput, folderInput, fileButton, folderButton, onOpen } = opts;
-  if (opts.archiveButton && opts.archiveHost) {
-    wireArchiveOpen({ button: opts.archiveButton, host: opts.archiveHost, onOpen });
-  }
-  const give = async (from: Promise<Opened | undefined>) => {
-    const opened = await from;
-    if (opened && opened.files.length > 0) await onOpen(opened);
-  };
-  fileButton?.addEventListener('click', () => fileInput.click());
-  folderButton?.addEventListener('click', () => folderInput?.click());
-  fileInput.addEventListener('change', () => {
-    void give(fromFiles([...(fileInput.files ?? [])]));
-  });
-  folderInput?.addEventListener('change', () => {
-    void give(fromFiles([...(folderInput.files ?? [])]));
-  });
-  for (const type of ['dragenter', 'dragover']) {
-    zone.addEventListener(type, (event) => {
-      event.preventDefault();
-      zone.classList.add('over');
-    });
-  }
-  for (const type of ['dragleave', 'drop']) {
-    zone.addEventListener(type, (event) => {
-      event.preventDefault();
-      zone.classList.remove('over');
-    });
-  }
-  zone.addEventListener('drop', (event) => {
-    const transfer = (event as DragEvent).dataTransfer;
-    if (transfer) void give(fromDrop(transfer));
-  });
 }
 
 /**

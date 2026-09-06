@@ -36,14 +36,14 @@ import {
   readBackup, readBackupZip, sequencersOf, type BackupResult,
 } from '@lbptracker/cwlib/backup.ts';
 import { type LevelProject, type Sequencer } from '@lbptracker/cwlib/project.ts';
-import { isZip, openedTitle, saveNote, wireOpen, type Opened } from './open-level.ts';
+import { isZip, openedTitle, saveNote, type Opened } from './open-level.ts';
+import { mountOpen } from './widgets/open-panel.ts';
 import { webInflateRaw } from '@lbptracker/cwlib/platform/web.ts';
 import { webInflate } from '@lbptracker/cwlib/platform/web.ts';
 import { mountFooter } from './footer.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const dropZone = $<HTMLDivElement>('drop');
-const fileInput = $<HTMLInputElement>('file');
+const drop = mountOpen('#open', { onOpen: (opened) => openLevel(opened) });
 const midiDrop = $<HTMLDivElement>('midiDrop');
 const midiInput = $<HTMLInputElement>('midiFile');
 const saveButton = $<HTMLButtonElement>('save');
@@ -285,7 +285,7 @@ watch(
 let songs = new Map<string, Sequencer>();
 
 async function openLevel(opened: Opened): Promise<void> {
-  dropZone.classList.add('busy');
+  drop.busy(true);
   rinstIndex = rinstIndex ?? (await manifest('fixtures/rinst').catch(() => undefined));
   setStatus('status', `reading ${opened.label}…`);
   try {
@@ -305,10 +305,9 @@ async function openLevel(opened: Opened): Promise<void> {
       file: result.projects.length > 1 ? r.file : undefined,
     }));
     picker.setRows(list);
-    dropZone.classList.add('loaded');
+    drop.loaded(true);
     const title = openedTitle(result, list.length, opened.label);
-    $('dropTitle').textContent = title;
-    $('dropHint').textContent = 'Click, or drop a level, a backup folder or a zip.';
+    drop.say(title, 'Click, or drop a level, a backup folder or a zip.');
     log(title);
     for (const save of result.saves) {
       log(`${save.name ?? save.folder}: save game, ${save.why ?? `${save.resources} resources`}`,
@@ -322,7 +321,7 @@ async function openLevel(opened: Opened): Promise<void> {
     setStatus('status', String((error as Error).message ?? error), true);
     log(String(error), true);
   } finally {
-    dropZone.classList.remove('busy');
+    drop.busy(false);
   }
 }
 
@@ -496,16 +495,6 @@ function wireDrop(zone: HTMLElement, input: HTMLInputElement, open: (file: File)
   });
 }
 
-wireOpen({
-  zone: dropZone,
-  fileInput,
-  folderInput: (document.getElementById('folder') as HTMLInputElement | null) ?? undefined,
-  fileButton: document.getElementById('pickFile'),
-  folderButton: document.getElementById('pickFolder'),
-  archiveButton: document.getElementById('pickArchive'),
-  archiveHost: document.getElementById('archive'),
-  onOpen: openLevel,
-});
 wireDrop(midiDrop, midiInput, (file) => void openMidi(file));
 
 mountFooter();

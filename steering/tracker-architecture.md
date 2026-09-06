@@ -570,6 +570,39 @@ the prose explaining each, which is the page's whole idea, so only the checks mo
 the markup kept its shape. `from`, `to` and `voices` are free text with validation and stay
 imperative; a fader spec would describe them wrongly.
 
+### The three shared widgets, and the four bugs converting them found
+
+`src/widgets/` holds the pieces more than one page draws: `SeqPicker.vue`, `ArchivePanel.vue` and
+`OpenLevel.vue`. Each keeps an **imperative façade** — `seqPicker(host, onPick)`,
+`wireArchiveOpen(opts)`, `mountOpen(at, opts)` — because three pages drive them from event handlers
+and none has a Vue root for props to flow down from. The call sites barely changed; the markup did.
+
+❗ **The picker's `escape()` was covering a real hole, and only half of it.** Its rows were one
+`innerHTML` string, and the song's *name* went through an escaper while the detail column did not —
+and that column carries **a filename out of the opened backup**. A zip holding a file called
+`<img src=x onerror=…>` therefore ran it, and the archive button exists to download other people's
+zips. `{{ }}` is text, so there is no escaper in the component and nothing to forget.
+
+❗ **The drop zone was written out three times and had already drifted.** `live.html` set
+`autocomplete="off"` on the file inputs and the other two did not; `midi.html` styled the zone
+through a class where the others used the id — and its twelve CSS rules were copied into all three
+pages' `<style>` blocks, in both spellings. One component, one block of rules in `ui.css`.
+
+❗ **Only one page cleared its file input, and the other two had the bug.** `render-app.ts` did
+`fileInput.value = ''` after every pick, with a comment saying why: without it, choosing the *same*
+file again fires no `change` at all, so re-reading a level you have just re-exported from the game
+silently does nothing. The component does it for all three now.
+
+⚠️ **`open-level.ts` must not import Vue, and nothing says so but a crash.** `render-worker.ts`
+imports `openedTitle` from it; when the mounting lived in the same file, the worker pulled in Vue
+and died with `ReferenceError: document is not defined` from inside Vue's runtime. The build is
+perfectly happy either way. The mounting half is `widgets/open-panel.ts` for that reason, and the
+rule is general: **a module a worker imports may not reach the DOM.**
+
+⚠️ **`defineExpose` unwraps refs.** Exposing `busy` and writing `ui.busy.value = true` gives
+`Cannot create property 'value' on boolean 'false'` — and only when the zone is first used, which
+on the live page is after a level has been read. The components expose setters.
+
 ### ⚠️ Two traps, both found by the page breaking
 
 **`Symbol.for`, not `Symbol`, for the injection key.** Vite appends `?t=…` to a changed module's URL

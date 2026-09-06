@@ -20,6 +20,8 @@
  * comes out of a resource somebody wrote in 2011 and arrived over the network.
  */
 
+import { createApp, h, reactive } from 'vue';
+import ArchivePanel from './widgets/ArchivePanel.vue';
 import { readPaste, rootLevelUrl, SEARCH_HOST } from './lbparchive.ts';
 import { OPENABLE_DEPENDENCIES, readDependencies } from '@lbptracker/cwlib/resource.ts';
 import { looksLikeLevel } from '@lbptracker/cwlib/backup.ts';
@@ -58,37 +60,35 @@ export function wireArchiveOpen(opts: {
   const { button, host, onOpen } = opts;
   host.classList.add('archive');
   host.hidden = true;
-  host.innerHTML =
-    '<div class="row">' +
-    '<input class="archive-q" type="text" placeholder="a root level hash, or a link to its file…" ' +
-    'aria-label="Root level hash" autocomplete="off" spellcheck="false">' +
-    '<button type="button" class="archive-go primary">open</button>' +
-    // ⚠️ `autocomplete="off"`, like every other control on these pages: Chrome
-    // restores a checkbox across a reload, and a switch that comes back ticked
-    // when the markup says otherwise is a bug that looks like the code.
-    '<label class="check archive-deep"><input type="checkbox" autocomplete="off" checked>' +
-    'whole backup</label>' +
-    '</div>' +
-    '<p class="archive-note">Paste the 40 digits and the level is downloaded to your browser ' +
-    'and read there.</p>' +
-    '<p class="archive-hint">Find a level at <a href="' + SEARCH_HOST + '" target="_blank" ' +
-    'rel="noreferrer noopener">zaprit.fish</a> — its page shows the <b>root level</b> hash in a ' +
-    'box of its own, under the title. Nothing here needs a server: the level comes straight from ' +
-    'the Internet Archive. <b>Whole backup</b> also fetches the plans, chunks and levels it ' +
-    'depends on — slower, and usually the same songs, but it is where a song that was never placed ' +
-    'in the level would be. An adventure has no world of its own and always takes this route.</p>';
 
-  const query = host.querySelector<HTMLInputElement>('.archive-q')!;
-  const go = host.querySelector<HTMLButtonElement>('.archive-go')!;
-  const deep = host.querySelector<HTMLInputElement>('.archive-deep input')!;
-  const note = host.querySelector<HTMLElement>('.archive-note')!;
+  // The markup is `widgets/ArchivePanel.vue`; this keeps the state it binds to
+  // and the logic that reads it. ❗ The panel used to be a 20-line `innerHTML`
+  // string, which is why the note's default had to be read back out of the DOM.
+  const ui = reactive({ query: '', deep: true, note: '', bad: false, busy: false });
+  let focusField = () => {};
+  createApp({
+    render: () =>
+      h(ArchivePanel, {
+        searchHost: SEARCH_HOST,
+        busy: ui.busy,
+        query: ui.query,
+        'onUpdate:query': (v: string) => (ui.query = v),
+        deep: ui.deep,
+        'onUpdate:deep': (v: boolean) => (ui.deep = v),
+        note: ui.note,
+        bad: ui.bad,
+        onSubmit: () => void submit(),
+        ref: (el: unknown) => {
+          focusField = (el as { focus(): void } | null)?.focus.bind(el) ?? (() => {});
+        },
+      }),
+  }).mount(host);
 
-  const NOTE = note.textContent ?? '';
   let busy = false;
 
   const say = (text: string, bad = false) => {
-    note.textContent = text || NOTE;
-    note.classList.toggle('bad', bad);
+    ui.note = text;
+    ui.bad = bad;
   };
 
   /** One resource out of the archive. Throws with something worth reading. */
@@ -160,7 +160,7 @@ export function wireArchiveOpen(opts: {
   async function open_(sha1: string): Promise<void> {
     if (busy) return;
     busy = true;
-    go.disabled = true;
+    ui.busy = true;
     say(`fetching ${sha1.slice(0, 8)}…`);
     try {
       const root = await grab(sha1);
@@ -169,7 +169,7 @@ export function wireArchiveOpen(opts: {
       // ❗ **Read once, at the start.** Ticking the box while eighteen fetches
       // are in flight must not change what this open is doing halfway through.
       // ❗ Not optional when the root is not itself openable: see above.
-      const withParts = deep.checked || !looksLikeLevel(root);
+      const withParts = ui.deep || !looksLikeLevel(root);
       const queue = withParts ? partsOf(root, seen) : [];
       let missing = 0;
       while (queue.length > 0 && files.length < RESOURCE_LIMIT) {
@@ -214,21 +214,21 @@ export function wireArchiveOpen(opts: {
       say(error instanceof Error ? error.message : String(error), true);
     } finally {
       busy = false;
-      go.disabled = false;
+      ui.busy = false;
     }
   }
 
   function submit(): void {
     if (busy) return;
-    const pasted = readPaste(query.value);
+    const pasted = readPaste(ui.query);
     if (pasted.kind === 'hash') {
       void open_(pasted.sha1);
     } else if (pasted.kind === 'link') {
       // The hash is on that page and the page cannot be read from here; saying
       // so beats a failed fetch that looks like the archive being down.
       say('that is a link to a level’s page — open it and copy the hash from it', true);
-    } else if (query.value.trim() === '') {
-      query.focus();
+    } else if (ui.query.trim() === '') {
+      focusField();
     } else {
       say('that is not a root level hash — it is 40 hex digits, from the level’s page', true);
     }
@@ -236,13 +236,6 @@ export function wireArchiveOpen(opts: {
 
   button.addEventListener('click', () => {
     host.hidden = !host.hidden;
-    if (!host.hidden) query.focus();
-  });
-  go.addEventListener('click', submit);
-  query.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      submit();
-    }
+    if (!host.hidden) focusField();
   });
 }

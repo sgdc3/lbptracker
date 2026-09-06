@@ -13,7 +13,8 @@ import Checks from './controls/Checks.vue';
 import { render } from './controls/render.ts';
 import { CONTROLS } from './controls/kit.ts';
 import { seqPicker } from './seq-picker.ts';
-import { isZip, saveNote, wireOpen, type Opened } from './open-level.ts';
+import { isZip, saveNote, type Opened } from './open-level.ts';
+import { mountOpen } from './widgets/open-panel.ts';
 import type { BackupResult } from '@lbptracker/cwlib/backup.ts';
 import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '@lbptracker/lib/polyphony.ts';
 import { mountFooter } from './footer.ts';
@@ -54,10 +55,7 @@ const playPause = $<HTMLButtonElement>('playPause');
 const timesLabel = $<HTMLSpanElement>('times');
 const muteButton = $<HTMLButtonElement>('mute');
 const volSlider = $<HTMLInputElement>('vol');
-const dropZone = $<HTMLDivElement>('drop');
-const dropTitle = $<HTMLElement>('dropTitle');
-const dropHint = $<HTMLElement>('dropHint');
-const fileInput = $<HTMLInputElement>('file');
+const drop = mountOpen('#open', { onOpen: (opened) => loadFrom(opened) });
 
 voicesInput.value = String(VOICE_POOL_SIZE);
 
@@ -171,7 +169,7 @@ function resetResults() {
  * `return`, so it never ran and the picker died the moment a render finished.
  */
 function setBusy(value: boolean) {
-  dropZone.classList.toggle('busy', value);
+  drop.busy(value);
 }
 
 /*
@@ -406,9 +404,8 @@ worker.onmessage = (event: MessageEvent) => {
     // ⚠️ The zone stays. Swapping one level for another without reloading the
     // page is the first thing anyone tries, and hiding the picker after the
     // first load made it impossible.
-    dropZone.classList.add('loaded');
-    dropTitle.textContent = title;
-    dropHint.textContent = 'Click, or drop a level, a backup folder or a zip.';
+    drop.loaded(true);
+    drop.say(title, 'Click, or drop a level, a backup folder or a zip.');
     setStatus(
       `ready — ${plural(list.length, 'sequencer')}, ` +
         `${plural(Number(message.instruments), 'instrument')}, ` +
@@ -561,21 +558,6 @@ watch(() => render.on('useRange'), () => {
   }
 });
 
-wireOpen({
-  zone: dropZone,
-  fileInput,
-  folderInput: (document.getElementById('folder') as HTMLInputElement | null) ?? undefined,
-  fileButton: document.getElementById('pickFile'),
-  folderButton: document.getElementById('pickFolder'),
-  archiveButton: document.getElementById('pickArchive'),
-  archiveHost: document.getElementById('archive'),
-  onOpen: (opened) => {
-    // Cleared so that picking the *same* file again still fires `change`, which
-    // is how you re-read a level you have just re-exported from the game.
-    fileInput.value = '';
-    loadFrom(opened);
-  },
-});
 
 // ⚠️ Nothing is loaded until the user opens a file. The page does **not** try
 // the server first: level data is other people's work, this app is meant to be a

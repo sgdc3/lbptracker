@@ -45,6 +45,14 @@ through `provide`/`inject`.
 against `typescript-native-bridge` — the native compiler with the JavaScript API Volar needs. That
 file explains why, and it is worth reading before touching the toolchain.
 
+`src/widgets/` holds what more than one page draws — the song picker, the archive field and the
+drop zone. Each keeps an imperative façade (`seqPicker`, `wireArchiveOpen`, `mountOpen`) because the
+pages drive them from event handlers rather than from a Vue root.
+
+⚠️ **`open-level.ts` may not import Vue.** `render-worker.ts` imports `openedTitle` from it, and a
+worker has no `document`; the mounting half is `widgets/open-panel.ts`. Nothing in the build warns
+about this — the bundle is fine and the worker crashes.
+
 ## Two rules the URLs live by
 
 ⚠️ **`asset()` in `src/assets.ts` is the one place that builds an asset URL.** A bare relative URL in

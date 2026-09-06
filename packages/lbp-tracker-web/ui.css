@@ -251,3 +251,20 @@ input.archive-q { flex: 1 1 24rem; min-width: 0; text-align: left; }
 .site-foot a:hover { color: var(--accent); border-bottom-color: currentColor; }
 .site-foot-v { font-family: ui-monospace, Consolas, monospace; }
 .site-foot-small { margin-top: .7rem; font-size: .78rem; }
+
+/* ------------------------------------------------------------- the drop zone */
+/* One copy. `widgets/OpenLevel.vue` supplies the markup for all three pages;
+   these rules were written out three times, twice as `#drop` and once as
+   `.drop`, which is how the two spellings came to exist at all. */
+.drop {
+  border: 1.5px dashed var(--line); border-radius: var(--radius); padding: 1.8rem 1rem;
+  text-align: center; cursor: pointer; background: var(--panel-2);
+  transition: border-color .12s, background .12s;
+}
+.drop:hover, .drop.over { border-color: var(--accent); background: #1f262e; }
+.drop strong { display: block; margin-bottom: .25rem; font-size: 1.02rem; }
+.drop span { color: var(--dim); font-size: .9rem; }
+.drop.busy { opacity: .5; pointer-events: none; }
+.drop.loaded { padding: .95rem 1rem; border-style: solid; }
+.drop.loaded strong { display: inline; margin: 0; }
+.drop input[type="file"] { display: none; }

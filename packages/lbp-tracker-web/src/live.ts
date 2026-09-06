@@ -42,7 +42,8 @@ import { readBackup, sequencersOf, type BackupResult } from '@lbptracker/cwlib/b
 import {
   CHANNEL_COUNT, channelVolume, type LevelProject, type Sequencer,
 } from '@lbptracker/cwlib/project.ts';
-import { fromFiles, isZip, openedTitle, saveNote, wireOpen } from './open-level.ts';
+import { fromFiles, isZip, openedTitle, saveNote } from './open-level.ts';
+import { mountOpen } from './widgets/open-panel.ts';
 import { readBackupZip } from '@lbptracker/cwlib/backup.ts';
 import { webInflateRaw } from '@lbptracker/cwlib/platform/web.ts';
 import { LiveVoicePool, VOICES_UNLIMITED, VOICE_POOL_SIZE } from '@lbptracker/lib/polyphony.ts';
@@ -65,10 +66,7 @@ const density = $<HTMLCanvasElement>('density');
 const metersBox = $<HTMLDivElement>('meters');
 const errorCard = $<HTMLElement>('errorCard');
 const errorBox = $<HTMLPreElement>('error');
-const dropZone = $<HTMLDivElement>('drop');
-const dropTitle = $<HTMLElement>('dropTitle');
-const dropHint = $<HTMLElement>('dropHint');
-const fileInput = $<HTMLInputElement>('file');
+const drop = mountOpen('#open', { onOpen: (opened) => openBackup(opened) });
 const volSlider = $<HTMLInputElement>('vol');
 
 /**
@@ -1075,7 +1073,7 @@ async function openBackup(opened: {
   rewindButton.disabled = true;
   metersBox.innerHTML = '';
   setError('');
-  dropZone.classList.add('busy');
+  drop.busy(true);
   setStatus(`reading ${opened.label}…`);
   try {
     const only = opened.files.length === 1 ? opened.files[0] : undefined;
@@ -1101,9 +1099,8 @@ async function openBackup(opened: {
     }));
     project = result.projects[0] ?? null;
     picker.setRows(rows);
-    dropZone.classList.add('loaded');
-    dropTitle.textContent = openedTitle(result, rows.length, opened.label);
-    dropHint.textContent = 'Click, or drop a level, a backup folder or a zip.';
+    drop.loaded(true);
+    drop.say(openedTitle(result, rows.length, opened.label), 'Click, or drop a level, a backup folder or a zip.');
     // ⚠️ A save game that would not open is a bug here and says so; one that
     // opened needs no sentence, because its levels are in the list.
     const note = saveNote(result);
@@ -1121,7 +1118,7 @@ async function openBackup(opened: {
     setStatus('failed', true);
     setError(String((error as Error).stack ?? error));
   } finally {
-    dropZone.classList.remove('busy');
+    drop.busy(false);
   }
 }
 
@@ -1141,7 +1138,7 @@ async function takeHandoff(): Promise<void> {
     return; // storage refused; nothing was handed over
   }
   if (stored === null) return;
-  dropZone.classList.add('busy');
+  drop.busy(true);
   setStatus('reading the imported song\u2026');
   try {
     const seq = JSON.parse(stored) as LevelProject['sequencers'][number];
@@ -1153,30 +1150,19 @@ async function takeHandoff(): Promise<void> {
     const key = `${project.file}#${seq.uid}`;
     songs = new Map([[key, { project: project as LevelProject, sequencer: seq }]]);
     picker.setRows([{ key, name: seq.name, tracks: seq.tracks.length }]);
-    dropZone.classList.add('loaded');
-    dropTitle.textContent = `${seq.name} \u2014 imported from MIDI`;
-    dropHint.textContent = 'Click or drop to open a level instead.';
+    drop.loaded(true);
+    drop.say(`${seq.name} \u2014 imported from MIDI`, 'Click or drop to open a level instead.');
     prepareNow();
   } catch (error) {
     setStatus('the imported song could not be read', true);
     setError(String((error as Error).stack ?? error));
   } finally {
-    dropZone.classList.remove('busy');
+    drop.busy(false);
   }
 }
 
 void takeHandoff();
 
-wireOpen({
-  zone: dropZone,
-  fileInput,
-  folderInput: document.getElementById('folder') as HTMLInputElement | null ?? undefined,
-  fileButton: document.getElementById('pickFile'),
-  folderButton: document.getElementById('pickFolder'),
-  archiveButton: document.getElementById('pickArchive'),
-  archiveHost: document.getElementById('archive'),
-  onOpen: openBackup,
-});
 void fromFiles;
 
 mountFooter();
