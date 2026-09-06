@@ -44,13 +44,19 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
   // It opens when a chip is clicked or drawn, not when the playhead merely
   // moves the selection, and stays where it was dragged to.
 
+  /** The board gets to scroll under the panel by the panel's height. */
+  const insetBoard = () => {
+    board.setBottomInset(panel.hidden ? 0 : panel.getBoundingClientRect().height);
+  };
   const openPanel = () => {
     if (!panel.hidden) return;
     panel.hidden = false;
     roll.schedule();
+    insetBoard();
   };
   const closePanel = () => {
     panel.hidden = true;
+    insetBoard();
   };
   $('panelClose').addEventListener('click', closePanel);
   const helpDialog = $<HTMLDialogElement>('helpDialog');
@@ -74,6 +80,7 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
       const h = Math.max(160, Math.min(total * 0.92, startH + (startY - e.clientY)));
       view.style.setProperty('--panel-h', `${h}px`);
       roll.schedule();
+      insetBoard();
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
@@ -100,6 +107,7 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     instrument: (guid) => byGuid.get(guid),
     onPick: () => openPanel(),
   });
+  new ResizeObserver(insetBoard).observe(panel);
 
   const roll = new RollView(
     $<HTMLCanvasElement>('roll'), rollScroller, $<HTMLDivElement>('rollSpacer'), state, {

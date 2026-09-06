@@ -80,6 +80,7 @@ export class BoardView {
     | null = null;
   private hover: { cell: number; row: number } | null = null;
   private frame = 0;
+  private bottomInset = 0;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -121,6 +122,16 @@ export class BoardView {
     return boardX(this.layout, step);
   }
 
+  /**
+   * How much of the view's bottom something else covers -- the chip panel --
+   * so the board can scroll that far past its last row.
+   */
+  setBottomInset(px: number): void {
+    if (this.bottomInset === px) return;
+    this.bottomInset = px;
+    this.schedule();
+  }
+
   /** Keep a step in view while the song plays. */
   followStep(step: number): void {
     const x = this.xOfStep(step);
@@ -158,7 +169,9 @@ export class BoardView {
     const viewW = this.scroller.clientWidth;
     const viewH = this.scroller.clientHeight;
     this.spacer.style.width = `${full.width}px`;
-    this.spacer.style.height = `${Math.max(0, full.height - viewH)}px`;
+    // Room to scroll past the last row by whatever covers the bottom of the
+    // view, so a low row can be brought up from under the chip panel.
+    this.spacer.style.height = `${Math.max(0, full.height - viewH + this.bottomInset)}px`;
     const dpr = window.devicePixelRatio || 1;
     if (this.canvas.width !== Math.round(viewW * dpr) || this.canvas.height !== Math.round(viewH * dpr)) {
       this.canvas.width = Math.round(viewW * dpr);
