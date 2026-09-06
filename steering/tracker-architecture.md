@@ -18,7 +18,9 @@ with the same `{ name, bytes }[]`.
 - `packages/cwlib-ts/src/zip.ts` — the writer grew a **reader**: stored and deflated entries,
   through an `InflateRaw` the platform supplies (`deflate-raw` in the browser,
   `inflateRawSync` in Node).
-- `packages/lbp-tracker-web/src/open-level.ts` — the one drop zone, shared. The three pages had grown
+- `packages/lbp-tracker-web/src/widgets/OpenLevel.vue` — the one drop zone, shared, with
+  `widgets/open-panel.ts` mounting it and `src/open-level.ts` keeping the pure halves
+  (`fromFiles`, `fromDrop`, `openedTitle`) that a **worker** also imports. The three pages had grown
   three copies of the drag wiring already.
 - `packages/lbp-tracker-web/src/lbparchive.ts` + `packages/lbp-tracker-web/src/archive-panel.ts` — the fourth route, for a listener
   with no backup of their own: paste the root level hash a level's page at
@@ -307,7 +309,7 @@ reorder 1 and 2 — you want the asset pipeline proven before anything depends o
 2. ~~**The voice engine**~~ — **done**: worklet, interpolators, pitch formula, key splits.
 3. ~~**`RInstrument` reading**~~ — **done**. `SampleGuids` resolve through the FileDB
    (`output/orbisguids.map`) to plain RIFF/WAV `.smp` files in the FARC archives, at 48 kHz 16-bit.
-   All 68 of the game's instruments parse exactly, and `dev/` plays them.
+   All 68 of the game's instruments parse exactly, and the bench page plays them.
 4. ~~**Level import**~~ — **done, both halves.**
    `packages/cwlib-ts/src/project.ts` turns a dump into sequencers, tracks and a scheduled event list, and it
    imports the whole corpus: **19 files, 338 sequencers, 129,696 tracks, 2,027,633 notes, zero
@@ -356,6 +358,8 @@ reorder 1 and 2 — you want the asset pipeline proven before anything depends o
 6. **UI**.
 7. **Round-trip export** back into a game-loadable resource. The feature that makes the project
    matter to the LBP community, and it depends on step 4.
+
+⚠️ **Step 6 is the editor, not the pages.** The four pages exist and are built with Vue (below), but nothing in them edits a song — they open, play, render and export. A grid, a piano roll and undo are all still ahead.
 
 Steps 1–3 and 5 are done. Step 4 plays a real level end to end, and **the render itself is now in
 the browser**: `packages/lbp-tracker-lib/src/render.ts` holds the pipeline, `packages/lbp-tracker-lib/dev/render-level.ts` is the Node wrapper and
@@ -450,11 +454,13 @@ Follow the pattern for anything else platform-shaped.
 | `packages/lbp-tracker-lib/src/rinstrument.ts` | the `INSb` sampler patch. Parses all 68 instruments exactly |
 | `packages/lbp-tracker-lib/src/wav.ts` | 16-bit PCM RIFF read + write — the sequencer's own sample format |
 | `packages/lbp-tracker-web/index.html`, `packages/lbp-tracker-web/src/app.ts` | the instrument bench: picks any of the game's 68 instruments, loads its real samples, plays them across its key splits |
-| `packages/cwlib-ts/src/thing.ts`, `level.ts`, `parts.ts` | the Thing-graph walk, in TypeScript. **All 10 corpus levels parse, and `packages/cwlib-ts/dev/verify-levels.ts` matches `tools/RawDump.java` on 149 music sequencers and 62,158 instrument placements byte for byte** — every instrument in the corpus |
+| `packages/cwlib-ts/src/thing.ts`, `level.ts`, `parts.ts` | the Thing-graph walk, in TypeScript. **All 10 corpus levels parse, and `packages/cwlib-ts/dev/verify-levels.ts` matches the cwlib dump on 149 music sequencers and 62,158 instrument placements byte for byte** — ⚠️ the dump is `fixtures/levels/sequencers.jsonl`, and `tools/RawDump.java`, which produced it, was deleted 2026-09-02 and cannot regenerate it — every instrument in the corpus |
 | `packages/lbp-tracker-lib/src/render.ts` | the whole pipeline as one platform-neutral function. **Verified 2026-09-02: the Node render and a Chrome render of the same level are byte-identical** — 70,704,044 bytes, SHA-256 `1785d0d8…`. ⚠️ That file predates the voice-pool fix later the same day; the equality does not depend on it |
 | `packages/lbp-tracker-web/render.html`, `render-app.ts`, `render-worker.ts` | the browser renderer: pick any of the corpus's 338 sequencers, render it in a worker, play it and save the WAV. **The level dump is opened by the user**, not served — the same file, opened from disk, renders to the same bytes |
 | echo, reverb | done and measured — see *2 / 2b* and *6 / 14* in [answered-questions.md](answered-questions.md) |
-| UI | not started (build order step 6) |
+| `packages/lbp-tracker-web/src/controls/` | the four pages' controls: one spec per page, `kit.ts` turning each into a typed store, five components. Nothing in a page module reads an `<input>` |
+| `packages/lbp-tracker-web/src/widgets/` | what more than one page draws — the song picker, the archive field, the drop zone — each behind the imperative façade its pages call |
+| the tracker's own UI | **not started** (build order step 6). ⚠️ The four pages are benches and players, not the editor: there is no grid, no piano roll and no editing of anything |
 
 ## Serving and shipping: Vite, in the web package only
 

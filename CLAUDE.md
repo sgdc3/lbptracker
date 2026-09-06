@@ -35,8 +35,9 @@ Steering files (read on demand, per the hints):
   the game's engine actually does: FMOD Ex 4.44.10, which parts of it LBP3 uses and which it
   ignores, the DSP chain, and what that implies for matching its sound.
 - [steering/tracker-architecture.md](steering/tracker-architecture.md) — read before starting
-  implementation: the web architecture, why AudioWorklet and not `AudioBufferSourceNode`, the
-  module breakdown and the build order.
+  implementation: the three packages and where the seam between them runs, why the web layer has a
+  bundler and Vue and the libraries have neither, why AudioWorklet and not `AudioBufferSourceNode`,
+  the module breakdown and the build order.
 - [steering/eboot-re.md](steering/eboot-re.md) — **read before opening the eboot**: address
   conventions (the delta trap that costs hours), the tools in `tools/`, the script-binding table,
   and the anchors already found in the sequencer module.
@@ -54,7 +55,8 @@ Steering files (read on demand, per the hints):
 | `packages/lbp-tracker-lib` | `@lbptracker/lib` | turning that into sound: sampler, DSP chain, render pipeline, MIDI |
 | `packages/lbp-tracker-web` | `@lbptracker/web` | the four pages — Vite, and Vue for the panels |
 
-Each has its own `src/`, `test/` and — for the two libraries — a `dev/` of Node harnesses. Imports
+Each has its own `src/`, `test/` and a `dev/`: Node harnesses in the libraries, the typecheck
+entry point in the web package. Imports
 cross by package name: `import { readWorld } from '@lbptracker/cwlib/level.ts'`.
 
 - `npm install` — **now required**, and it was not before. Workspaces resolve the package names

@@ -366,7 +366,9 @@ Box), `132205` (Electric Guitar), `129080` (Pulse Wave).
 
 ### How the arrays were obtained
 
-They were produced by a small Java tool over cwlib, `tools/RawDump.java`, which walked the real
+They were produced by a small Java tool over cwlib, `tools/RawDump.java` — ⚠️ **deleted
+2026-09-02 and not regenerable**; what it left is the golden fixture
+`fixtures/levels/sequencers.jsonl` — which walked the real
 Thing graph — `RLevel` → `PWorld.things` → Things carrying both `PMicrochip` and a `PSequencer`
 with `MusicSequencer` set → circuit-board components → `PInstrument` — and emitted the note
 records as raw bytes, one JSON line per instrument. It used only the extraction half of the toolkit
