@@ -1,7 +1,8 @@
 /**
- * The Mixer view: the song's settings (`MixerPanel.vue`) beside the engine
- * switches (`controls/engine.ts`, drawn by the shared control panel) and the
- * live meters -- notes sounding, dropouts, voices the pool has taken back.
+ * The Song/Mixer view: one card with the song's settings (`MixerPanel.vue`),
+ * and an "Engine" card with the switches that are not in the file
+ * (`controls/engine.ts`, drawn by the shared control panel) and the live
+ * meters -- notes sounding, dropouts, voices the pool has taken back.
  */
 
 import { createApp, h } from 'vue';
@@ -12,14 +13,14 @@ import MixerPanel from './MixerPanel.vue';
 import { onPlan, onPlayer, player, state } from './session.ts';
 
 export function mountMixer(): void {
-  const host = document.getElementById('mixer')!;
-  const song = document.createElement('div');
+  // Two cards: the song's own settings, and the engine -- what is not in the file.
+  const song = document.getElementById('mixer')!;
+  const engineCard = document.getElementById('engine')!;
   const engineHost = document.createElement('div');
-  engineHost.style.marginTop = '1rem';
   const meters = document.createElement('div');
   meters.id = 'meters';
   meters.style.cssText = 'display:flex; gap:1.2rem; flex-wrap:wrap; margin-top:.8rem; font:.82rem/1.5 ui-monospace, Consolas, monospace; color: var(--dim)';
-  host.append(song, engineHost, meters);
+  engineCard.append(engineHost, meters);
 
   createApp({ render: () => h(MixerPanel, { state }) }).mount(song);
 
