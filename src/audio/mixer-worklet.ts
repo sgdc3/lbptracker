@@ -12,7 +12,7 @@
  */
 
 import { WaveHammer } from './compressor.ts';
-import { Echo, Reverb, clipToUnit, reverbPreset } from './effects.ts';
+import { Echo, FOLD_GAIN, Reverb, clipToUnit, reverbPreset } from './effects.ts';
 import { INTERPOLATORS, type InterpolatorName } from './interpolate.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from './mixer.ts';
 import { buildMipChain } from './mipmap.ts';
@@ -341,6 +341,9 @@ export class MixerProcessor extends AudioWorkletProcessor {
         left[i] *= g;
         right[i] *= g;
       }
+      // The stereo fold's gain, last, where FMOD's speaker matrix applies it.
+      left[i] *= FOLD_GAIN;
+      right[i] *= FOLD_GAIN;
     }
     if (output.length > 1 && right === left) right.set(left);
     this.report(left.length, began);

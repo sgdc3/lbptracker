@@ -65,16 +65,15 @@ in *37* in [answered-questions.md](answered-questions.md), which is worth readin
 — as `[rbx+0x3c]` through an interior pointer.** `tools/runhammer.py` loads the PRX and runs it,
 which is what settled it and is reusable on the other two plugins.
 
-**Nothing about the engine's signal path is unread any more.** What is left in this file is two
-measured things deliberately not applied (38, 39), two decisions with bounded error (section 0),
-one question that is not about fidelity at all (24), and one about files this reader does not
-claim to support (28).
+**Nothing about the engine's signal path is unread any more.** What is left in this file is one
+measured DSP deliberately switched off (38), two decisions with bounded error (section 0), one
+question that is not about fidelity at all (24), and one about files this reader does not claim
+to support (28).
 
-⚠️ **38 and 39 are the only places this project knowingly does something the game does not**, both
-added 2026-09-06 on listening judgements, and they are entangled: 39 leaves `FOLD_GAIN` applied
-4.645 dB upstream of where the game folds. Read both before touching anything about gain or pan
-— and read 38's corrected diagnosis first, because "our level is too hot" was measured on the
-corpus's busiest song and does not hold on the other three.
+✔ **39 is closed**, 2026-09-06: the stereo fold's gain now runs where FMOD's speaker matrix
+applies it — last, after the clip, the reverb and the compressor — instead of being folded into
+every voice. See *39* in [answered-questions.md](answered-questions.md); the one deliberate
+deviation left in the project is 38.
 
 Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then working outward from it. That
 run closed questions 5 and 7 outright, the whole of 8's `Params`, and the triplet half of 3; it
@@ -248,7 +247,8 @@ project. It is recorded here rather than quietly defaulted because a reader who 
 It said: turning the compressor on costs 6.94 dB, our RMS sits 3.5 dB above its knee, therefore our
 absolute level into the chain is too hot. **The first number is right and the inference is not.**
 Measured 2026-09-06 over four corpus sequencers, against the knee bottom at −21 dBFS (all figures
-after the pan-width removal of *39*, which raised every one of them by about 1 dB):
+after the pan-width removal recorded in *39* in [answered-questions.md](answered-questions.md),
+which raised every one of them by about 1 dB):
 
 | sequencer | notes | RMS dBFS | vs knee | peak dBFS | vs knee |
 |---|---|---|---|---|---|
@@ -278,13 +278,16 @@ That leaves the real question narrower and harder than "are we too loud":
 ⚠️ **Neither can be told apart from a level match**, which is why the level-matched capture behind the
 withdrawn *23* is useless here, and why the crest factor is the thing to ask a new capture for.
 
-### The `FOLD_GAIN` lead, and what it is worth
+### ❌ The `FOLD_GAIN` lead is retired
 
-*39* leaves `FOLD_GAIN` (+4.645 dB) applied to each voice, where the game folds after the whole DSP
-chain — so it reaches our compressor 4.645 dB before the game's would. On 723339 removing it would
-land the RMS within 0.01 dB of the knee, which looked decisive for about a minute; on the other
-three it lands them 6 to 13 dB **below** it. ❗ **One song agreeing to two decimal places is a
-coincidence, and this file has been wrong before by treating one as a measurement.**
+This entry used to point at `FOLD_GAIN` (+4.645 dB) reaching the compressor before the game's fold
+does, and note that removing it landed 723339's RMS within 0.01 dB of the knee. Two things killed
+it. The 0.01 dB was one song agreeing by coincidence — on the other three it lands them 6 to 13 dB
+**below** the knee. And the placement is fixed: *39* in
+[answered-questions.md](answered-questions.md) moved the gain to where FMOD's speaker matrix
+applies it, after the clip, the reverb and the compressor. ❗ **The compressor now sees the same
+signal the game's does**, so what is left here is crest factor and it needs a capture, not a code
+change.
 
 ### What would settle it
 
@@ -303,50 +306,6 @@ A capture, and this is now the only thing in this file that wants one it cannot 
 `LBP_COMPRESSOR=1 node --experimental-strip-types dev/render-level.ts` reproduces it in one
 command, and `compressor: true` does it from code. The measurement of the DSP itself is settled —
 see *37* in [answered-questions.md](answered-questions.md); nothing here reopens it.
-
-## 39. ❗ The stereo fold is measured, and half of it is deliberately not applied
-
-Added 2026-09-06, the same day as *38* and for the same kind of reason: the listener asked for the
-file's own pans, so the pan-width knob and the narrowing behind it were removed from all three front
-ends and from `src/core/render.ts`.
-
-### What is measured and what we now do
-
-The fold is a **single linear operator**, read rather than fitted (see *22* in
-[answered-questions.md](answered-questions.md)): the game renders 7.1, its centre carries
-`k = 0.5` of the front pair, and BS.775 folds that back at `d = 1/√2`. That one operator both
-
-- narrows the image by `PAN_WIDTH = 1/(1 + 2kd) = 2 − √2`, and
-- raises the sum by `FOLD_GAIN = 1 + 2kd = 1/PAN_WIDTH`, worth **+4.645 dB**.
-
-❌ **We now apply the gain and not the narrowing.** That is the *same shape of error this project
-already made once, in the other direction* — applying the narrowing without the gain, which cost a
-flat −4.645 dB and took a listener on the live page to catch. It is deliberate this time: the
-result is a hybrid, the game's downmixed **level** with the game's internal **image**.
-
-Removing the narrowing widened `level-seq723339` and raised it by **1.09 dB** (RMS 0.134 → 0.152,
-peak 0.934 → 0.966). That rise is the linear pan law, not a bug: a centred voice carries
-`2 × 0.5² = 0.5` of a hard-panned one's power, so any widening is louder.
-
-### ❗ Why this is not just a taste decision
-
-The fold happens in **FMOD's speaker matrix, after the whole DSP chain** — after the reverb and
-after `SMS WaveHammer`. `FOLD_GAIN` in `src/core/render.ts` is folded into each *voice*, so in our
-chain it arrives 4.645 dB too early, before the compressor rather than after it.
-
-That is the largest single lead on *38*. Our render sits 3.5 dB above the compressor's knee in RMS;
-4.645 dB of gain that the game applies downstream of its compressor would more than account for it.
-⚠️ **Do not "fix" this by moving `FOLD_GAIN` after the compressor without measuring** — with the
-narrowing gone the operator is already half-applied, and moving the surviving half is a second
-change on top of a first. The order to settle them in is: what our level *should* be (38), then
-where the fold belongs, then whether the image narrows.
-
-### The anchor
-
-`PAN_WIDTH` and `FOLD_GAIN` in `src/core/render.ts` still carry the derivation and the numbers;
-nothing about the measurement is in doubt and *22* is not reopened. `tools/panmeasure.py` is what
-would check a new capture. Restoring the narrowing is one line at the `pan:` field where the voice
-spec is built, plus the same at the stack spread.
 
 ## 28. What still will not open — measured over 103 archive levels
 

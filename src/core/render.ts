@@ -26,7 +26,13 @@
  */
 
 import { WaveHammer } from '../audio/compressor.ts';
-import { Echo, Reverb, clipToUnit, reverbPreset } from '../audio/effects.ts';
+import {
+  Echo,
+  FOLD_GAIN,
+  Reverb,
+  clipToUnit,
+  reverbPreset,
+} from '../audio/effects.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from '../audio/mixer.ts';
 import { FILTER_PARAMS } from '../audio/moog.ts';
 import {
@@ -48,118 +54,9 @@ import { pitchRatio, samplesPerStep, velocityGain } from './voice.ts';
 /** The output rate. The engine's own is hard-coded to this too. */
 export const RATE = 48000;
 
-/**
- * How much of a written pan survives to the game's stereo output:
- * **`2 - Math.SQRT2` = 0.5857864**, as `p' = 0.5 + (p - 0.5) * PAN_WIDTH`.
- *
- * ❌ **This renderer does not apply it, since 2026-09-06.** The narrowing and
- * the knob that swept it were both removed on a listening judgement: the
- * listener wants the file's own pans. Everything below is still measured and
- * still true of the game; it is the *decision* that changed, and
- * {@link FOLD_GAIN} — the other half of the same operator — is still applied.
- * See question 39 in `steering/open-questions.md`.
- *
- * ✔ **Measured against the game's own output at four pan values**, and the last
- * two were a *prediction* confirmed out of sample. Two placements at pan 0.40
- * and 0.60 in `Ascetic` gave a channel ratio of 0.5586 where this renderer gave
- * 0.6000; that fixed a one-parameter family, which predicted **0.261204** for a
- * hard-panned voice. A recording of one instrument at pan 0 and another at pan 1
- * then measured, by least squares over the whole file:
- *
- * ```
- *                        pan 0      pan 1     predicted
- *   opposite / dominant  0.261202   0.261202  0.261204
- *   residual / rms       0.0008     0.0008
- *   correlation, lag     1.000000, 0 samples
- * ```
- *
- * Six significant figures on both files. **A constant-power law over a reduced
- * angle -- the one candidate that is not affine -- predicts 0.198 and is
- * refuted.** The residual and the unit correlation say the quiet channel is the
- * loud one times a constant: no delay, no decorrelation, no reverb of its own.
- *
- * The same numbers in the other two forms, all one law: a mono copy of the voice
- * added to both channels at `c = 2^-1.5 = 0.3535534`, or a cross-bleed of
- * `b = 1 / (1 + 2*sqrt2) = 0.2612039`. `2^-1.5` is `0.5 / sqrt2` -- the mono
- * average of a stereo pair folded back in at the textbook -3 dB, which is what a
- * **centre channel** does.
- *
- * ⚠️ **It happens in the stereo fold, not in the sequencer**, and the two halves
- * have different owners. The game renders **7.1**: `v0xa57770`, FMOD's
- * `GetDriverCaps` for its "FMOD Orbis AudioOut Output" driver, reports
- * `FMOD_SPEAKERMODE_7POINT1`, 48 kHz and float, and `setSpeakerMode` is never
- * called. Eight channels leave the game, and folding 7.1 to stereo cross-feeds
- * **only through the centre**, at the ITU-R BS.775 coefficient `1/sqrt2` --
- * which is what `2^-1.5 = 0.7071 * (L+R)/2` is.
- *
- * So the centre must carry the mono average, and that part is the *game's*: the
- * sequencer itself cannot do it -- its pan law is exactly `1-p` / `p`
- * (`0x2d21`/`0x2d40`), the pan reaches the voice unmodified (`0x3b29`), and its
- * four output channels are one image plus a scaled copy.
- *
- * ✔ **And FMOD's side is read too, 2026-09-05, so this constant is a derivation
- * rather than a fit.** `System::playDSP` makes the 4-channel Sequencer DSP the
- * channel's own head (`v0x3e6718`), `ChannelSoftware::setPan` asks for a
- * channel-to-speaker matrix (`v0xa243a0`), and the 7.1-by-4-channels case at
- * **`v0xa2599f`** writes `levels[centre] = {k, k, 0, 0}` with **`k = 0.5`**
- * (`v0xefc008`) -- the mono average of the front pair, in FMOD Ex's own code.
- * Three read constants and no free parameter:
- *
- * ```
- *   L = x[(1-p) + k*d],  R = x[p + k*d],   k = 0.5, d = 1/sqrt2
- *   width = 1 / (1 + 2*k*d) = 1 / (1 + 1/sqrt2) = 2 - sqrt2
- * ```
- *
- * The same matrix puts the DSP's channels 2-3 -- the reverb send -- on the four
- * surrounds, which would bleed the send into the dry output. It does not: the
- * reverb DSP shares the buffer and writes `(dry + wet, dry + wet, 0, 0)`,
- * clearing those lanes (`fmodsmsreverb.prx` `0x2335`-`0x235d`). See *22* in
- * steering/answered-questions.md.
- *
- * A stereo listener hears this narrowing on hardware or emulator alike, so the
- * game's **internal** image is wider than what a TV plays. This renderer now
- * takes the internal one.
- *
- * ❌ **This used to say "width, not gain", and that was half of a linear
- * operator.** `L = ch0 + k·d·(ch0+ch1)` shrinks the difference by
- * `1/(1 + 2·k·d)` and grows the **sum** by `(1 + 2·k·d)`, the same number, so
- * narrowing without the gain rendered everything a flat **−4.645 dB** under the
- * game's own stereo. ⚠️ **We are now deliberately keeping the other half**, which
- * is the same shape of error made on purpose — see {@link FOLD_GAIN}.
- */
-export const PAN_WIDTH = 2 - Math.SQRT2;
-
-/**
- * The gain the same fold puts on the sum: **`1 / PAN_WIDTH` = 1.7071068**.
- *
- * `L = ch0 + k·d·(ch0 + ch1)` shrinks the difference by `1/(1 + 2·k·d)` and
- * grows the sum by `(1 + 2·k·d)`, and those are the same number — so the width
- * and this are one linear operator seen from two sides. Applying only the first
- * renders everything a flat **−4.645 dB** under the game's own stereo, at every
- * pan: the ratio is 0.585786 at 0, 0.25, 0.5, 0.75 and 1 alike.
- *
- * ❗ **It is applied and the narrowing is not, so this is half that operator,
- * on purpose.** The pan narrowing was removed on 2026-09-06 because the
- * listener wants the file's own image; keeping the gain keeps the level where
- * it was, which is the least surprising half to keep. It is a hybrid: the
- * game's downmixed **level** with the game's internal **image**.
- *
- * ⚠️ **And it is applied in the wrong place for a faithful chain.** The fold
- * happens in FMOD's speaker matrix, *after* the whole DSP chain — after the
- * reverb and after `SMS WaveHammer`. This gain is folded into each voice, so it
- * reaches our compressor 4.645 dB before the game's would. That is the largest
- * single lead on why the compressor sounds wrong: see question 38 in
- * `steering/open-questions.md`.
- *
- * ⚠️ **A narrow image is quieter, and that is the pan law rather than this.**
- * `panGains` is linear (`0x2d21`/`0x2d40`), so a voice at the centre carries
- * `2 × 0.5² = 0.5` of the power a hard-panned one carries: collapsing a song
- * toward mono costs up to **3 dB**. Measured over 30 s from width 1 to 0,
- * `Orb` (the corpus's widest) lost **2.04 dB** and `Zero` **0.12 dB** — which is
- * now moot for playback, and kept because it is what any future width control
- * would run into.
- */
-export const FOLD_GAIN = 1 / PAN_WIDTH;
+// The stereo fold's two constants live in `src/audio/effects.ts` so the
+// AudioWorklet can reach them without importing this module's level stack.
+export { FOLD_GAIN, PAN_WIDTH } from '../audio/effects.ts';
 
 /** One instrument, with its samples decoded and mipmapped. */
 export interface LoadedInstrument {
@@ -779,11 +676,7 @@ export async function renderSequencer(
         channelVolume(seq, track) *
         2 *
         P(OUTPUT_PARAMS.level) *
-        stackGain *
-        // ❗ **The fold's gain.** ⚠️ Its other half, the pan narrowing, is no
-        // longer applied -- see {@link PAN_WIDTH} -- so this is half a
-        // measured operator, kept on purpose. See {@link FOLD_GAIN}.
-        FOLD_GAIN,
+        stackGain,
       // `Params[26]`. The engine clamps it to 0..1 when the note starts
       // (`0x3cd8`-`0x3cf3`) and again to 0.95 in the block; `driveCoefficient`
       // does the second, so only the first belongs here.
@@ -990,7 +883,18 @@ export async function renderSequencer(
     let sendL = reverbL[i] + e.left;
     let sendR = reverbR[i] + e.right;
     if (clip) {
-      if (dryL > 1 || dryL < -1 || dryR > 1 || dryR < -1) clipped += 1;
+      // ⚠️ **All four channels are clipped and the count used to watch two.** The
+      // send pair is clipped by the same instruction (`vmaxps`/`vminps` on all
+      // four lanes), so a frame whose reverb send clipped while the dry pair did
+      // not was reported as untouched. Found 2026-09-06 while moving
+      // `FOLD_GAIN`: `level-seq732985` read 0.05% before the move and 0.00%
+      // after, and both numbers were under-counting.
+      if (
+        dryL > 1 || dryL < -1 || dryR > 1 || dryR < -1 ||
+        sendL > 1 || sendL < -1 || sendR > 1 || sendR < -1
+      ) {
+        clipped += 1;
+      }
       dryL = clipToUnit(dryL);
       dryR = clipToUnit(dryR);
       sendL = clipToUnit(sendL);
@@ -1012,6 +916,13 @@ export async function renderSequencer(
       right[i] *= g;
       compressorGain = Math.min(compressorGain, g);
     }
+    // ❗ **The fold's gain, and it belongs HERE.** FMOD's speaker matrix folds
+    // 7.1 to stereo after the whole DSP chain -- after the plugin's own clip,
+    // after the reverb, after the WaveHammer. It used to be folded into each
+    // voice instead, which put it 4.645 dB upstream of all three: our clip saw a
+    // signal the game's clip never sees at that level. See {@link FOLD_GAIN}.
+    left[i] *= FOLD_GAIN;
+    right[i] *= FOLD_GAIN;
   }
 
   let peak = 0;

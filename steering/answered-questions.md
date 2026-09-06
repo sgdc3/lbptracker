@@ -3233,3 +3233,51 @@ the capture chain again. ❗ It is suspiciously **flat** for a filter — a resa
 frequency rather than sitting at −1 dB across five octaves — which always argued for something
 gain-like, and the largest gain-like thing in this renderer turned out to be `FOLD_GAIN`, whose
 placement is now question 39's problem rather than this one's.
+
+## 39. The stereo fold — CLOSED 2026-09-06: the gain moved to where the game applies it
+
+The fold is **one linear operator**, read rather than fitted (*22* above): the game renders 7.1, its
+centre carries `k = 0.5` of the front pair, and BS.775 folds that back at `d = 1/√2`. It both narrows
+the image by `PAN_WIDTH = 2 − √2` and raises the sum by `FOLD_GAIN = 1/PAN_WIDTH`, **+4.645 dB**.
+
+### What this project does, and why each half
+
+❌ **The narrowing is not applied**, on a listening judgement: the listener asked for the file's own
+pans and that outranks a reading here. The measurement is untouched — `PAN_WIDTH` and its derivation
+are in `src/audio/effects.ts` — and restoring it is one line at the `pan:` field where the voice spec
+is built, plus the same at the stack spread.
+
+✔ **The gain is applied, and now in the right place.** FMOD's speaker matrix folds after the whole
+DSP chain: after the sequencer plugin's own hard clip, after `SMS Reverb`, after `SMS WaveHammer`.
+It used to be folded into each *voice*, which put it **4.645 dB upstream of all three**.
+
+### ❗ That placement was a real bug, not a tidiness point
+
+Our `clipToUnit` saw a signal 4.645 dB hotter than the game's clip ever sees at that point, so it
+engaged on material the game passes through untouched. Measured on `level-seq732985`, 20 s:
+
+| | before | after |
+|---|---|---|
+| frames the clip touched | 0.05% | **0.00%** |
+| peak | 1.046 (clipped) | **1.385** |
+| RMS | 0.07425 | 0.07550 |
+
+The echo is inside the same plugin and was equally over-driven; it now runs at the game's level too.
+
+⚠️ **And the count was under-reporting.** `vmaxps`/`vminps` clip all four lanes — the dry pair *and*
+the reverb send — while `clippedFrames` only watched the dry two. A frame whose send clipped and
+whose dry pair did not was reported as untouched. Both numbers in the table above were taken with the
+old counter and are therefore floors, not values; the counter watches all four now.
+
+### What is left of it
+
+Nothing measurable. The surviving asymmetry — the game's downmixed **level** with the game's internal
+**image** — is a stated choice, carried in `PAN_WIDTH`'s own docstring so that a reader who finds it
+knows it is deliberate. ❗ It is still half of a linear operator, and that is worth saying plainly
+rather than letting the closure imply otherwise: if a capture ever shows the image is wrong, the
+other half is one line away.
+
+⚠️ **This also retires the biggest lead on *38*.** That entry pointed at `FOLD_GAIN` arriving
+upstream of the compressor as the reason our level looked hot. It no longer does — the compressor,
+when it is switched on, now sees the same signal the game's does — so 38's remaining question is
+purely about crest factor and needs a capture rather than a code change.
