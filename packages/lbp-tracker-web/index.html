@@ -39,7 +39,9 @@
   .transport button { padding: .3rem .7rem; line-height: 1.2; min-width: 2.4rem; }
   #clock { color: var(--dim); font: .9rem/1 ui-monospace, Consolas, monospace; min-width: 6.5rem; }
   #tempoBox { width: 4.2rem; padding: .3rem .4rem; }
-  #vol { width: 6rem; }
+  .vol { display: flex; flex-direction: column; gap: 3px; width: 7rem; }
+  #vu { display: block; width: 100%; height: 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 3px; }
+  #vol { width: 100%; margin: 0; }
   .file-bar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
   .file-bar .picker { flex: 1 1 16rem; max-width: 28rem; }
 
@@ -272,7 +274,10 @@
     <span id="clock">0:00 / 0:00</span>
     <label for="tempoBox" class="hintline" style="margin:0">BPM</label>
     <input id="tempoBox" type="number" min="20" max="400" step="1" value="240" aria-label="Tempo" autocomplete="off">
-    <input id="vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" autocomplete="off">
+    <div class="vol">
+      <canvas id="vu" width="120" height="10" aria-label="Output level, left and right"></canvas>
+      <input id="vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" autocomplete="off">
+    </div>
   </div>
   <span class="spacer"></span>
   <span id="dirty" title="unsaved changes"></span>

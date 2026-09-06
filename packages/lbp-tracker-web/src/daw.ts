@@ -108,6 +108,46 @@ rewindButton.addEventListener('click', () => player.seek(0));
 volSlider.addEventListener('input', () => player.setVolume(Number(volSlider.value)));
 player.setVolume(Number(volSlider.value));
 
+/**
+ * The VU meter: two bars, left over right, the output's peak after the master
+ * fader on a -60..0 dB scale, with a peak-hold mark that falls back. Drawn
+ * every frame once the audio exists; reading two analysers is nothing.
+ */
+const vu = $<HTMLCanvasElement>('vu');
+const vuCtx = vu.getContext('2d')!;
+const held = [0, 0];
+const shown = [0, 0];
+function drawVu(): void {
+  const peaks = player.peaks();
+  const { width, height } = vu;
+  vuCtx.clearRect(0, 0, width, height);
+  if (peaks) {
+    peaks.forEach((peak, i) => {
+      // Amplitude to a bar: -60 dB is empty, 0 dB is full.
+      const db = peak > 0 ? 20 * Math.log10(peak) : -120;
+      const level = Math.max(0, Math.min(1, (db + 60) / 60));
+      // The bar falls a little slower than the signal; the hold mark slower still.
+      shown[i] = Math.max(level, shown[i] - 0.06);
+      held[i] = Math.max(shown[i], held[i] - 0.01);
+      const y = i * (height / 2);
+      const h = height / 2 - 1;
+      const w = Math.round(shown[i] * width);
+      const grad = vuCtx.createLinearGradient(0, 0, width, 0);
+      grad.addColorStop(0, '#6fd3a0');
+      grad.addColorStop(0.75, '#e3b341');
+      grad.addColorStop(1, '#ef6b6b');
+      vuCtx.fillStyle = grad;
+      vuCtx.fillRect(0, y, w, h);
+      if (held[i] > 0.01) {
+        vuCtx.fillStyle = held[i] > 0.98 ? '#ef6b6b' : '#e8eaee';
+        vuCtx.fillRect(Math.min(width - 2, Math.round(held[i] * width) - 1), y, 2, h);
+      }
+    });
+  }
+  requestAnimationFrame(drawVu);
+}
+drawVu();
+
 tempoBox.addEventListener('change', () => {
   const tempo = Math.max(20, Math.min(400, Math.round(Number(tempoBox.value)) || state.song.tempo));
   tempoBox.value = String(tempo);

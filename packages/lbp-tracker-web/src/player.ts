@@ -210,6 +210,9 @@ export class Player {
   private context: AudioContext | null = null;
   private node: AudioWorkletNode | null = null;
   private master: GainNode | null = null;
+  /** One analyser per output channel, after the master: what the VU meter reads. */
+  private analysers: [AnalyserNode, AnalyserNode] | null = null;
+  private readonly scratch = new Float32Array(512);
   private volume = 1;
   private effects: EffectSettings | null = null;
   /** Sample ids the worklet already holds. Survives a re-plan: the buffers do. */
@@ -290,6 +293,15 @@ export class Player {
     this.node = node;
     this.master = new GainNode(context, { gain: this.volume });
     node.connect(this.master).connect(context.destination);
+    // The meter taps the master through a splitter; an analyser is a sink
+    // and needs no connection onward.
+    const splitter = new ChannelSplitterNode(context, { numberOfOutputs: 2 });
+    this.master.connect(splitter);
+    const left = new AnalyserNode(context, { fftSize: 512 });
+    const right = new AnalyserNode(context, { fftSize: 512 });
+    splitter.connect(left, 0);
+    splitter.connect(right, 1);
+    this.analysers = [left, right];
     node.port.onmessage = (event: MessageEvent) => {
       const data = event.data as {
         type: string; id?: string; total?: number; sounding?: number; notes?: number;
@@ -312,6 +324,25 @@ export class Player {
     };
     if (this.effects) this.pushEffects();
     return node;
+  }
+
+  /**
+   * The output's peak over the last block, per channel, after the master
+   * fader -- what a VU meter shows. `null` before the audio exists.
+   */
+  peaks(): [number, number] | null {
+    if (!this.analysers) return null;
+    const out: [number, number] = [0, 0];
+    this.analysers.forEach((analyser, i) => {
+      analyser.getFloatTimeDomainData(this.scratch);
+      let peak = 0;
+      for (let k = 0; k < this.scratch.length; k += 1) {
+        const a = Math.abs(this.scratch[k]);
+        if (a > peak) peak = a;
+      }
+      out[i] = peak;
+    });
+    return out;
   }
 
   setVolume(volume: number): void {
