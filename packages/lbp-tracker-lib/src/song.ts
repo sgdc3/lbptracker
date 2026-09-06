@@ -82,8 +82,6 @@ export interface Clip {
 
 export interface Song {
   name: string;
-  /** A note the composer keeps with the song. Ours: the game has no such field. */
-  description: string;
   tempo: number;
   swing: number;
   echoFeedback: number;
@@ -173,7 +171,6 @@ export const NEW_CLIP_DEFAULTS = {
 export function newSong(name = 'untitled'): Song {
   return {
     name,
-    description: '',
     ...NEW_SONG_DEFAULTS,
     loop: false,
     startPoint: 0,
@@ -614,7 +611,6 @@ export function songFromJson(text: string): Song {
   }
   const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
   const song = newSong(typeof raw.name === 'string' ? raw.name : 'untitled');
-  song.description = typeof raw.description === 'string' ? raw.description : '';
   song.tempo = num(raw.tempo, song.tempo);
   song.swing = num(raw.swing, song.swing);
   song.echoFeedback = num(raw.echoFeedback, song.echoFeedback);
