@@ -12,6 +12,11 @@
   // The dev server makes no outbound requests (steering/tracker-architecture.md);
   // neither does the deploy tool beyond the deploy itself.
   "send_metrics": false,
+  // The public address. A Custom Domain: Cloudflare creates the DNS record and
+  // the certificate itself, so the zone `sgdc3.it` has to live on this account.
+  "routes": [{ "pattern": "lbptracker.sgdc3.it", "custom_domain": true }],
+  // One address, not two: the workers.dev one is off on purpose.
+  "workers_dev": false,
   "assets": {
     // Where `vite build` writes: one level above this package (vite.config.ts).
     "directory": "../../dist",

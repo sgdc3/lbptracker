@@ -156,8 +156,9 @@ fixtures 404 with no other symptom.
 `npm run deploy` is `vite build`, then `packages/lbp-tracker-web/dev/stage-site.ts`, then
 `wrangler deploy` on `packages/lbp-tracker-web/wrangler.jsonc` — an assets-only Worker, no script,
 `send_metrics` off. `wrangler login` once before the first deploy. Live at
-<https://lbptracker.gabriele-c-7428.workers.dev> since 2026-09-06 (313 files uploaded, the
-sourcemaps included). ⚠️ Cloudflare canonicalises `/render.html` to `/render` with a 307 — the
+<https://lbptracker.sgdc3.it> since 2026-09-06 — a Custom Domain in `wrangler.jsonc`, so Cloudflare
+owns the DNS record and the certificate; the `workers.dev` address is off on purpose (313 files
+uploaded on the first deploy, the sourcemaps included). ⚠️ Cloudflare canonicalises `/render.html` to `/render` with a 307 — the
 nav's `./render.html` links still work, one redirect each; `html_handling` is the default
 `auto-trailing-slash` and this is what it means.
 
