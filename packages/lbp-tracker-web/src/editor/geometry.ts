@@ -94,6 +94,22 @@ export interface RollLayout {
 
 export const PITCHES = 128;
 
+/**
+ * A triplet cell, in thirds of a step: a third of a BEAT, not of a step. A
+ * beat is four steps -- twelve thirds -- so the triplet grid has three cells
+ * to the beat, each four thirds (1⅓ steps) wide, and is sparser than the
+ * whole-step grid, not three times denser. This is what the record's thirds
+ * exist for: the triplet positions 1⅓ and 2⅔ are the sub-steps 1 and 2 the
+ * corpus holds in equal measure (steering/sequencer-data-model.md).
+ *
+ * ⚠️ For a day the triplet grid was thirds of a step, three cells per step;
+ * the owner called it far too dense, and it was.
+ */
+export const TRIPLET_THIRDS = 4;
+
+/** The thirds a position is a multiple of on a grid: 3 for steps, 4 for triplets. */
+export const gridUnit = (triplets: boolean): number => (triplets ? TRIPLET_THIRDS : 3);
+
 export function rollSize(layout: RollLayout): { width: number; height: number } {
   return {
     width: layout.keys + layout.steps * layout.stepW,
@@ -103,18 +119,19 @@ export function rollSize(layout: RollLayout): { width: number; height: number } 
 
 /**
  * A position in thirds of a step to its canvas x: the CENTRE of its cell, the
- * way the game's grid draws a note. The cell is the step when the grid is
- * whole steps and the point is on one; it is the third when the grid is set
- * to triplets, or when the point sits on a third whatever the grid says.
+ * way the game's grid draws a note. On the triplet grid a point on a triplet
+ * cell sits in the centre of that four-third cell; otherwise a point on a
+ * whole step sits in the centre of the step, and a point on a third in the
+ * centre of the third -- the finest cell it is on.
  *
  * ⚠️ For a day every point sat at the centre of its third, which in a
  * whole-step grid is a sixth of the way into the step -- "all shifted left".
  */
 export function rollX(layout: RollLayout, thirds: number): number {
-  if (!layout.triplets && thirds % 3 === 0) {
-    return layout.keys + (thirds / 3 + 0.5) * layout.stepW;
-  }
-  return layout.keys + ((thirds + 0.5) / 3) * layout.stepW;
+  const unit = layout.triplets && thirds % TRIPLET_THIRDS === 0
+    ? TRIPLET_THIRDS
+    : thirds % 3 === 0 ? 3 : 1;
+  return layout.keys + ((thirds + unit / 2) / 3) * layout.stepW;
 }
 
 /** A step boundary to its canvas x: the grid lines, the ruler, the playhead. */
@@ -139,13 +156,20 @@ export function rollPitchAt(layout: RollLayout, y: number): number {
 }
 
 /**
- * The grid cell a continuous position falls in: a whole step, or a third when
- * the grid is set to triplets. A click anywhere inside a cell means that cell,
- * as on the game's grid; the switch only decides how fine the cells are.
+ * The grid cell a continuous position falls in: a whole step, or a triplet
+ * cell of four thirds when the grid is set to triplets. A click anywhere
+ * inside a cell means that cell, as on the game's grid.
  */
 export function snapThirds(thirds: number, triplets: boolean, steps: number): number {
-  const snapped = triplets ? Math.floor(thirds) : Math.floor(thirds / 3) * 3;
+  const unit = gridUnit(triplets);
+  const snapped = Math.floor(thirds / unit) * unit;
   return Math.max(0, Math.min(steps * 3 - 1, snapped));
+}
+
+/** Whether a note sits entirely on a grid's cells. */
+export function onGrid(points: readonly { thirds: number }[], triplets: boolean): boolean {
+  const unit = gridUnit(triplets);
+  return points.every((p) => p.thirds % unit === 0);
 }
 
 /** A note's volume as a dot: 0..127 to a radius, never smaller than a target. */

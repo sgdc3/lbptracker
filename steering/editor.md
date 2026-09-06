@@ -26,13 +26,14 @@ The editor draws both, as faithfully as the data allows and no further:
   is *anchored*, under another's tail included.
 - The chip's colour and glyph are **ours**, by instrument family (`src/editor/instruments.ts`).
   The game's icon is a texture this project cannot ship ([game-assets.md](game-assets.md)).
-- A point sits at the **centre of its cell** (`rollX`), as the game draws it: the step, when the
-  grid is whole steps and the point is on one; the third, when the grid is set to triplets or the
-  point sits on a third. A click anywhere inside a cell means that cell; the "triplet grid" switch
-  only decides whether the cells are steps or thirds, both being the record's own resolution.
-  A note that belongs to the other grid is drawn through at 30% -- on the triplet grid one whose
-  points are all on whole steps, on the whole-step grid one that uses a third -- still there and
-  editable, just not what that grid is for.
+- A point sits at the **centre of its cell** (`rollX`), as the game draws it. A click anywhere
+  inside a cell means that cell. **The "triplet grid" switch makes the cells thirds of a beat, not
+  of a step**: a beat is four steps, twelve thirds, so the triplet grid has three four-third cells
+  to the beat and is *sparser* than the whole-step grid (`TRIPLET_THIRDS` in `geometry.ts`) — the
+  triplet positions 1⅓ and 2⅔ are the sub-steps 1 and 2 the corpus holds in equal measure. A
+  note with a point off the current grid's cells is drawn through at 30% (`onGrid`), still
+  there and editable. ⚠️ For a day the triplet grid was thirds of a step, three cells per step;
+  the owner called it far too dense, and it was.
   ⚠️ Every point sat at the centre of its *third* for a day — a sixth into the step on a whole-step
   grid, "all shifted left" — and then, briefly, on the grid lines; the owner settled it here.
 - The volume is the dot's radius (`pointRadius`, 0..127 → 0.18..0.5 of a row) and the timbre

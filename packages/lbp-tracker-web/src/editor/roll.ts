@@ -42,8 +42,11 @@ import {
 import {
   PITCHES,
   STEPS_PER_BAR,
+  TRIPLET_THIRDS,
+  gridUnit,
   isBlackKey,
   noteName,
+  onGrid,
   pointRadius,
   positionLabel,
   rollPitchAt,
@@ -243,23 +246,25 @@ export class RollView {
       }
     }
 
-    // Step lines: every step faint, every beat firmer, every 8-step bar firm.
-    // With the grid set to triplets the cells are thirds, so the lines between
-    // them are the grid, not a decoration over it.
+    // The grid's lines: every beat firmer, every 8-step bar firm, and between
+    // them the cells -- steps, or with the grid set to triplets the three
+    // four-third cells of each beat, which is why that grid is sparser.
     ctx.lineWidth = 1;
     for (let step = stepLeft; step <= stepRight; step += 1) {
-      const x = Math.round(rollStepX(layout, step) - sx) + 0.5;
       const bar = step % STEPS_PER_BAR === 0;
       const beat = step % 4 === 0;
-      ctx.strokeStyle = bar ? 'rgba(255,255,255,0.28)' : beat ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.08)';
-      ctx.beginPath();
-      ctx.moveTo(x, layout.ruler);
-      ctx.lineTo(x, viewH);
-      ctx.stroke();
-      if (state.triplets && step < layout.steps) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-        for (const third of [1, 2]) {
-          const tx = Math.round(rollStepX(layout, step + third / 3) - sx) + 0.5;
+      if (bar || beat || !state.triplets) {
+        const x = Math.round(rollStepX(layout, step) - sx) + 0.5;
+        ctx.strokeStyle = bar ? 'rgba(255,255,255,0.28)' : beat ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.08)';
+        ctx.beginPath();
+        ctx.moveTo(x, layout.ruler);
+        ctx.lineTo(x, viewH);
+        ctx.stroke();
+      }
+      if (state.triplets && beat && step < layout.steps) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        for (const cell of [1, 2]) {
+          const tx = Math.round(rollStepX(layout, step + (cell * TRIPLET_THIRDS) / 3) - sx) + 0.5;
           ctx.beginPath();
           ctx.moveTo(tx, layout.ruler);
           ctx.lineTo(tx, viewH);
@@ -284,15 +289,12 @@ export class RollView {
     const px = (t: number) => rollX(layout, t) - sx;
     const py = (p: number) => rollY(layout, p) - sy;
     /**
-     * A note that belongs to the other grid is drawn through: with the grid
-     * set to triplets, a note whose points are all on whole steps; with whole
-     * steps, a note that uses a third. It is still there and still editable,
-     * it is just not what this grid is for.
+     * A note that is not on this grid's cells is drawn through: on the
+     * triplet grid a note with a point off the four-third cells, on the
+     * whole-step grid one with a point on a third. It is still there and
+     * still editable, it is just not what this grid is for.
      */
-    const dimmed = (note: SongNote) => {
-      const usesThirds = note.points.some((p) => p.thirds % 3 !== 0);
-      return state.triplets ? !usesThirds : usesThirds;
-    };
+    const dimmed = (note: SongNote) => !onGrid(note.points, state.triplets);
     for (const note of clip.notes) {
       const on = selected.has(note.id);
       const pts = note.points;
@@ -733,7 +735,7 @@ export class RollView {
     const state = this.state;
     const clip = state.clip();
     if (!clip || state.selection.noteIds.size === 0) return;
-    const dt = dSteps * (state.triplets ? 1 : 3);
+    const dt = dSteps * gridUnit(state.triplets);
     state.edit('notes', () => {
       for (const note of clip.notes) {
         if (state.selection.noteIds.has(note.id)) moveNote(clip, note, dt, dPitch);

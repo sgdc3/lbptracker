@@ -8,6 +8,7 @@ import {
   boardRect,
   boardX,
   noteName,
+  onGrid,
   positionLabel,
   rollPitchAt,
   rollStepX,
@@ -55,8 +56,10 @@ test('roll: positions and pitches map both ways, pitch 127 at the top', () => {
   assert.equal(rollX(roll, 0), 62, 'a point on a step sits in the centre of the step');
   assert.equal(rollX(roll, 3), 86);
   assert.equal(rollX(roll, 1), 62, 'a point on a third sits in the centre of the third');
-  assert.equal(rollX(tripletRoll, 0), 54, 'with a triplet grid every point is in its third');
-  assert.equal(rollX(tripletRoll, 3), 78);
+  assert.equal(rollX(tripletRoll, 0), 66, 'on the triplet grid a triplet cell is four thirds wide');
+  assert.equal(rollX(tripletRoll, 4), 98);
+  assert.equal(rollX(tripletRoll, 3), 86, 'a whole-step point off the triplet grid keeps its step centre');
+  assert.equal(rollX(tripletRoll, 1), 62, 'and a stray third its third');
   assert.equal(rollThirdsAt(roll, 74), 3);
   assert.equal(rollThirdsAt(roll, 62), 1.5);
   assert.equal(rollY(roll, 127), 26, 'the top row\'s centre');
@@ -67,15 +70,21 @@ test('roll: positions and pitches map both ways, pitch 127 at the top', () => {
   assert.equal(rollPitchAt(roll, 1e6), 0);
 });
 
-test('snapThirds: the cell a position is in -- a step, or a third for triplets', () => {
+test('snapThirds: the cell a position is in -- a step, or a third of a beat for triplets', () => {
   assert.equal(snapThirds(4, false, 32), 3);
   assert.equal(snapThirds(5.9, false, 32), 3, 'anywhere inside step 1 is step 1');
   assert.equal(snapThirds(6, false, 32), 6);
+  assert.equal(snapThirds(3.9, true, 32), 0, 'a triplet cell is four thirds');
   assert.equal(snapThirds(4.4, true, 32), 4);
-  assert.equal(snapThirds(4.9, true, 32), 4);
+  assert.equal(snapThirds(11, true, 32), 8);
+  assert.equal(snapThirds(12, true, 32), 12, 'three cells to the beat');
   assert.equal(snapThirds(-2, true, 32), 0);
   assert.equal(snapThirds(500, false, 32), 95, 'clamped to the last third of the last step');
   assert.equal(snapThirds(95.5, false, 32), 93, 'the last step, in whole-step mode');
+  assert.equal(onGrid([{ thirds: 0 }, { thirds: 12 }], true), true);
+  assert.equal(onGrid([{ thirds: 0 }, { thirds: 3 }], true), false, 'a whole step is not a triplet cell');
+  assert.equal(onGrid([{ thirds: 0 }, { thirds: 4 }], false), false);
+  assert.equal(onGrid([{ thirds: 8 }], false), false);
 });
 
 test('names and labels', () => {
