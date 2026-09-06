@@ -97,7 +97,9 @@ by 128 steps with a playhead thirty times a second is not a `v-for`. ⚠️ **Th
 size of its viewport, not of the grid** — 3,000 by 1,700 pixels, twice that on a dense screen —
 `position: sticky` in a scroller whose spacer sets the scroll size, painting the visible window
 offset by the scroll, with the keyboard and the ruler painted over the content at the canvas's own
-edges. The geometry is pure (`src/editor/geometry.ts`, held by `test/editor-geometry.test.ts`).
+edges. **The board works the same way** since the owner asked for its bar and row numbers to stay
+put while it scrolls (`Ascetic` is 15,000 pixels wide); its scroller is resizable in height by
+its corner handle (`resize: vertical`) and fixed in width. The geometry is pure (`src/editor/geometry.ts`, held by `test/editor-geometry.test.ts`).
 
 `EditorState` (`src/editor/state.ts`) holds the song as a **plain object** and ticks a `version`
 ref on every change; the Vue panel (`Inspector.vue`) reads through the counter and
@@ -121,16 +123,19 @@ glide and the plan rebuilds to 14,500 notes; play advances 32 steps in two secon
 Ctrl+Z restores the count; "add an instrument" places a chip at the cursor, the inspector's key select
 writes `Key`, Ctrl+D duplicates into the next free cell, Delete on the board removes the chip.
 
-**The row is the unit the roll follows.** `selection.row` — row 0 on opening — is lit across the
+**The row is the unit the roll follows.** `selection.row` — on opening, the row of the chip nearest the start of the song, with that chip selected — is lit across the
 board; clicking a chip, a cell or a row number selects its row. As the song plays, the roll moves
 to the chip the playhead *enters* on that row (`chipUnder` in `editor.ts`): by transition, not
 by position, so a chip clicked while the playhead sits inside another holds until the playhead
 crosses into a third. The owner asked for this on 2026-09-06: the game's grid is the row being
 watched, and a composer follows one part at a time.
 
-⚠️ **There is no instrument palette.** One existed for a day — a filtered list with a "most
-used" group beside the board — and the owner had it removed: the inspector's sound select is where
-a sound is chosen, a new chip takes the last one chosen, and the board is the whole width. The
+⚠️ **There is no instrument palette, and no "add" button.** Both existed for a day and the owner
+had them removed. A chip is **drawn**: a drag across empty cells of a row makes one as long as the
+drag — four bars at least, then two at a time (`snapClipSteps`) — and on release a modal asks
+which instrument, with a text search (`InstrumentPicker.vue` inside a `<dialog>`,
+`instrument-picker.ts`); dismissing it adds nothing. A double-click draws a four-bar chip the
+same way. The inspector's sound select changes an existing chip's instrument. The
 roll always shows the selected chip, and opening a song selects the chip nearest its start
 (`EditorState.replace`) rather than the first in file order, which on `Ascetic` was a chip at
 bar 175 that nothing on screen showed as selected.

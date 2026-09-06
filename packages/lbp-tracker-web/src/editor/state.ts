@@ -154,11 +154,12 @@ export class EditorState {
     this.redoStack = [];
     this.lastKey = undefined;
     this.dirty = false;
-    // The first row, and on it the chip nearest the start of the song, so the
-    // roll opens on something the board is showing rather than on whatever the
-    // file listed first.
-    this.selection.row = 0;
-    this.selection.clipId = this.firstClipOnRow(0)?.id ?? null;
+    // The chip nearest the start of the song, and its row: the roll opens on
+    // the first thing that will sound, not on whatever the file listed first
+    // (on Ascetic that was a chip at bar 175). Row 0 when the song is empty.
+    const first = [...song.clips].sort((a, b) => a.cell - b.cell || a.row - b.row)[0];
+    this.selection.row = first?.row ?? 0;
+    this.selection.clipId = first?.id ?? null;
     this.selection.noteIds = new Set();
     this.selection.point = null;
     this.selection.cursor = null;

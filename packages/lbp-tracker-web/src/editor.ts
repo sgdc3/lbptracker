@@ -50,6 +50,7 @@ import { EditorState } from './editor/state.ts';
 import { instrumentsFrom, type InstrumentInfo } from './editor/instruments.ts';
 import { STEPS_PER_BAR, barOfCell } from './editor/geometry.ts';
 import Inspector from './editor/Inspector.vue';
+import { pickInstrument } from './editor/instrument-picker.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const statusLine = $<HTMLDivElement>('status');
@@ -97,8 +98,6 @@ const byGuid = new Map<number, InstrumentInfo>();
 let rinstIndex: Manifest | null = null;
 let smpIndex: Manifest | null = null;
 let loader: InstrumentLoader | null = null;
-/** The sound a new chip gets: the last one chosen in the inspector, Square Wave to begin with. */
-let lastGuid = 129085; // the corpus's most used instrument
 /** What a level gave us, by the picker's key. */
 let songs = new Map<string, Sequencer>();
 
@@ -220,8 +219,6 @@ function pushSettings(): void {
 
 state.onChange((kind) => {
   updateTitle();
-  const chosen = state.clip();
-  if (chosen && chosen.guid) lastGuid = chosen.guid;
   if (kind === 'notes') replanSoon();
   else if (kind === 'settings') {
     pushSettings();
@@ -270,7 +267,7 @@ async function playSolo(solo: Clip): Promise<void> {
 
 // --------------------------------------------------------------- the views
 
-const board = new BoardView($<HTMLCanvasElement>('board'), state, {
+const board = new BoardView($<HTMLCanvasElement>('board'), boardScroller, $<HTMLDivElement>('boardSpacer'), state, {
   onSeek: (step) => player.hasPlan && player.seek(player.frameAt(Math.max(0, step))),
   onMove: (clip, to) => {
     state.edit('notes', () => {
@@ -278,7 +275,7 @@ const board = new BoardView($<HTMLCanvasElement>('board'), state, {
       clip.row = to.row;
     });
   },
-  onAddAt: (at) => addInstrument(lastGuid, at),
+  onCreate: (at) => void createChip(at),
   instrument: (guid) => byGuid.get(guid),
 });
 
@@ -296,25 +293,22 @@ const roll = new RollView(
   },
 );
 
-function addInstrument(guid: number, at?: { cell: number; row: number }): void {
-  const song = state.song;
-  let where = at ?? state.selection.cursor;
-  if (!where) {
-    // The first free cell on the first row, after everything on it.
-    const row = 0;
-    const used = new Set(song.clips.filter((c) => c.row === row).map((c) => c.cell));
-    let cell = 0;
-    while (used.has(cell)) cell += 1;
-    where = { cell, row };
-  }
-  if (song.clips.some((c) => c.cell === where!.cell && c.row === where!.row)) {
-    setStatus('that cell already holds an instrument — pick an empty one', true);
+/**
+ * A chip drawn on the board wants an instrument: ask, then add it with the
+ * length the drag gave it. Nothing is added if the question is dismissed.
+ */
+async function createChip(at: { cell: number; row: number; steps: number }): Promise<void> {
+  if (state.song.clips.some((c) => c.cell === at.cell && c.row === at.row)) {
+    setStatus('that cell already holds an instrument — start from an empty one', true);
     return;
   }
-  lastGuid = guid;
+  const bars = at.steps / STEPS_PER_BAR;
+  const guid = await pickInstrument(instruments.value, `Which instrument, for ${bars} bars at bar ${barOfCell(at.cell)}, row ${at.row}?`);
+  if (guid === null) return;
   let added: Clip | null = null;
   state.edit('notes', (s) => {
-    added = addClip(s, where!, guid);
+    added = addClip(s, at, guid);
+    added.steps = at.steps;
   });
   state.selection.cursor = null;
   state.selectClip(added!.id);
@@ -426,11 +420,7 @@ function paint(): void {
     roll.setPlayhead(inClip);
     if (player.playing && inClip >= 0 && inClip <= clip.steps) roll.followStep(inClip);
   } else roll.setPlayhead(null);
-  if (player.playing) {
-    const x = board.xOfStep(step);
-    const left = boardScroller.scrollLeft;
-    if (x - left > boardScroller.clientWidth - 30 || x < left) boardScroller.scrollLeft = Math.max(0, x - 60);
-  }
+  if (player.playing) board.followStep(step);
 }
 
 playButton.addEventListener('click', () => (player.playing ? player.stop() : player.play()));
@@ -443,7 +433,6 @@ tripletsBox.addEventListener('change', () => {
   state.touch('selection');
 });
 $('fitNotes').addEventListener('click', () => roll.scrollToNotes());
-$('addChip').addEventListener('click', () => addInstrument(lastGuid));
 
 // ----------------------------------------------------------------- keyboard
 

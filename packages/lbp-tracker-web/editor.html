@@ -9,11 +9,13 @@
   /* Only what is particular to the editor; the rest is in ui.css. */
   main { max-width: 96rem; }
 
+  /* The board: a viewport-sized sticky canvas over a spacer, like the roll's;
+     resizable in height by its corner handle, never in width. */
   .board-scroller {
-    overflow: auto; max-height: 24rem; background: var(--panel-2);
-    border: 1px solid var(--line); border-radius: 8px;
+    position: relative; overflow: auto; height: 32rem; min-height: 8rem; resize: vertical;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
   }
-  .board-scroller canvas { display: block; }
+  .board-scroller canvas { position: sticky; top: 0; left: 0; display: block; z-index: 1; }
   .board-scroller:focus-visible, .roll-scroller:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
   /* The transport sits over the board: play, rewind, the clock, the volume. */
@@ -50,6 +52,23 @@
   .knob input[type="text"] { text-align: left; font-family: inherit; }
   .knob output { font: .78rem/1 ui-monospace, Consolas, monospace; color: var(--dim); text-align: right; }
   .group.off { opacity: .55; }
+
+  /* The "which instrument?" dialog. */
+  .picker-dialog {
+    background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 0; width: min(26rem, 92vw);
+    box-shadow: 0 18px 50px rgb(0 0 0 / .55);
+  }
+  .picker-dialog::backdrop { background: rgb(0 0 0 / .55); }
+  .picker-box { padding: 1rem 1.1rem 1rem; }
+  .picker-title { margin: 0 0 .6rem; font-size: .95rem; color: var(--dim); }
+  .picker-list.picker-tall { max-height: 20rem; }
+  .picker-family {
+    font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--dimmer);
+    padding: .45rem .5rem .2rem;
+  }
+  .picker-swatch { width: .7rem; height: .7rem; border-radius: 3px; flex: 0 0 auto; }
+  .picker-foot { margin-top: .6rem; }
 
   kbd {
     font: .78rem ui-monospace, Consolas, monospace; background: var(--panel-2);
@@ -106,18 +125,19 @@
       <span class="spacer"></span>
       <span id="load">idle</span>
       <input id="vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" autocomplete="off">
-      <button id="addChip" type="button" title="A new instrument at the cursor, or at the first free cell">add an instrument</button>
     </div>
     <div id="boardScroller" class="board-scroller" tabindex="0" aria-label="The board">
       <canvas id="board"></canvas>
+      <div id="boardSpacer"></div>
     </div>
     <p class="hintline">
       One row is selected at a time &mdash; click its number, a chip on it, or a cell &mdash; and
       as the song plays the grid below follows the chip the playhead is inside on that row.
-      Click a chip to edit its notes below; drag it to another cell. Click an empty cell to put
-      the cursor there, then &ldquo;add an instrument&rdquo; &mdash; or double-click the cell. A new
-      chip takes the sound last chosen; change it in the settings below. Click the bar numbers to
-      seek. <kbd>Delete</kbd> removes the selected chip when the board has the focus,
+      <strong>Drag across empty cells to draw a new chip</strong> as long as the drag &mdash; four
+      bars at least, then two at a time &mdash; and pick its instrument when you let go; a
+      double-click draws a four-bar one. Click a chip to edit its notes below; drag it to another
+      cell. Click the bar numbers to seek; drag the board&rsquo;s bottom-right corner to make it
+      taller. <kbd>Delete</kbd> removes the selected chip when the board has the focus,
       <kbd>Ctrl+D</kbd> duplicates it into the cursor cell. A chip is as long as its note grid
       &mdash; four bars, then two more at a time &mdash; and chips may overlap in time, though the
       game&rsquo;s composers rarely let them; the selected one is drawn on top.
