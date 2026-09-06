@@ -9,8 +9,32 @@
 
 import { createApp, h } from 'vue';
 import { wireArchiveOpen } from '../archive-panel.ts';
+import { asset } from '../assets.ts';
 import { fromDrop, fromFiles, type Opened } from '../open-level.ts';
 import OpenLevel from './OpenLevel.vue';
+
+/**
+ * `?open=fixtures/levels/x.lvl` opens a file the site itself serves.
+ *
+ * ❗ **A development affordance, and the only way a browser driven by a script
+ * can open a level**: a file input cannot be filled from a page, and every
+ * check of these pages in an automated browser was stuck at the drop zone
+ * until this existed. The path is resolved like an asset -- under the site
+ * root, every segment encoded -- so it cannot reach outside it; on the deployed
+ * site only `fixtures/rinst` and `fixtures/smp` exist, and anything else 404s
+ * into the page's own error line.
+ */
+async function openFromQuery(give: (from: Promise<Opened | undefined>) => Promise<void>): Promise<void> {
+  const wanted = new URLSearchParams(window.location.search).get('open');
+  if (!wanted) return;
+  await give((async () => {
+    const response = await fetch(asset(wanted));
+    if (!response.ok) throw new Error(`${response.status} fetching ${wanted}`);
+    const name = wanted.slice(wanted.lastIndexOf('/') + 1);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return { label: name, files: [{ name, bytes }], many: false };
+  })());
+}
 
 export interface OpenPanel {
   /** The zone's two lines. The hint keeps its last value when omitted. */
@@ -69,6 +93,8 @@ export function mountOpen(
   if (ui.archiveButton && ui.archiveHost) {
     wireArchiveOpen({ button: ui.archiveButton, host: ui.archiveHost, onOpen: opts.onOpen });
   }
+
+  void openFromQuery(give);
 
   return {
     say: (title, hint) => ui.say(title, hint),

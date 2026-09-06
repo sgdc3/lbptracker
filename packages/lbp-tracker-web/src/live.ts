@@ -1,57 +1,33 @@
 /**
- * The live player: a song scheduled into the audio thread instead of a file.
+ * The live player page: a song scheduled into the audio thread instead of a file.
  *
- * ⚠️ **It is not a second engine, and that is the whole design.** Every voice it
- * plays comes out of `renderSequencer` itself, through the `onVoice` seam and
- * with `planOnly` set, so the key splits, the pitch formula, the modulation
- * point, the stack layers, the sends, the pan width and the voice pool's
- * stealing are all decided by exactly the code that writes the WAV. This file
- * owns only *when* a voice is handed over, never *what* it is.
- *
- * The plan is built once, up front, because the voice pool has to be: the
- * allocator needs the whole note list to decide what gets stolen, and a
- * scheduler that only looked a second ahead would steal differently from the
- * renderer and drift.
- *
- * ⚠️ **`VoiceSpec.random` and `VoiceSpec.sample` cannot cross a thread** -- one
- * is a function and the other is megabytes of mipmaps. The sample is sent once
- * per instrument slot and referenced by id; the LFO phases are plain numbers on
- * the spec (`lfoPhase`, drawn by the render, one base per note) and cross as
- * they are, so dropping `random` costs the worklet nothing.
+ * ❗ **The player itself is `player.ts`**, shared with the editor since the
+ * editor needed to play what it edits. This file is the page around it: the
+ * drop zone, the picker, the transport, the meters, the control grids, and
+ * the handoff from the MIDI page. Everything about *when* a voice is handed
+ * over -- the plan, the pool, the look-ahead, the settings applied live -- is
+ * the player's, and the reasons are written there.
  */
 
-/**
- * The mixer's AudioWorklet module, as a URL Vite has already built.
- *
- * ⚠️ **A worklet cannot resolve a bare specifier**, measured in Chrome and
- * written up in `vite.config.ts`: `audioWorklet.addModule` runs the module in a
- * realm with no import map, so `@lbptracker/lib/…` inside it fails to load.
- * `?worker&url` makes Vite resolve the whole graph ahead of time and hand back
- * a plain URL, which is also what keeps the built site relocatable — the URL is
- * relative to the page, never rooted at `/`.
- */
 import { createApp, h, watch, type Component } from 'vue';
 import ControlPanel from './controls/ControlPanel.vue';
 import { live } from './controls/live.ts';
 import { CONTROLS } from './controls/kit.ts';
-import MIXER_WORKLET_URL from '@lbptracker/lib/audio/mixer-worklet.ts?worker&url';
-import { HANDOFF_KEY, loaderFor, manifest, asset, type Manifest } from './assets.ts';
+import { HANDOFF_KEY, loaderFor, manifest, type Manifest } from './assets.ts';
 import { seqPicker } from './seq-picker.ts';
-import { type VoiceSpec } from '@lbptracker/lib/audio/mixer.ts';
 import { readBackup, sequencersOf, type BackupResult } from '@lbptracker/cwlib/backup.ts';
 import {
-  CHANNEL_COUNT, channelVolume, type LevelProject, type Sequencer,
+  CHANNEL_COUNT, type LevelProject, type Sequencer,
 } from '@lbptracker/cwlib/project.ts';
-import { fromFiles, isZip, openedTitle, saveNote } from './open-level.ts';
+import { isZip, openedTitle, saveNote } from './open-level.ts';
 import { mountOpen } from './widgets/open-panel.ts';
 import { readBackupZip } from '@lbptracker/cwlib/backup.ts';
 import { webInflateRaw } from '@lbptracker/cwlib/platform/web.ts';
-import { LiveVoicePool, VOICES_UNLIMITED, VOICE_POOL_SIZE } from '@lbptracker/lib/polyphony.ts';
-import { swungFrame } from '@lbptracker/lib/swing.ts';
-import { samplesPerStep } from '@lbptracker/lib/voice.ts';
-import { RATE, renderSequencer } from '@lbptracker/lib/render.ts';
+import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '@lbptracker/lib/polyphony.ts';
+import { RATE, type InstrumentLoader } from '@lbptracker/lib/render.ts';
 import { webInflate } from '@lbptracker/cwlib/platform/web.ts';
 import { mountFooter } from './footer.ts';
+import { Player, type Health } from './player.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const seqHost = $<HTMLDivElement>('seq');
@@ -105,86 +81,6 @@ const clock = (seconds: number) => {
 
 // --------------------------------------------------------------------- state
 
-/**
- * One scheduled voice: when it starts, which sample it plays, and its spec.
- *
- * ⚠️ **`endFrame` and `cutFrame` are stored as DURATIONS here, not as the
- * absolute frames the render uses.** `Mixer.play` derives the note's life as
- * `endFrame - startFrame`, so a spec whose `startFrame` is rewritten to a
- * look-ahead delay while its `endFrame` still counts from the start of the song
- * gets a life of nearly the whole song -- every note rings until the end, which
- * is exactly what a first attempt sounded like. Rebasing at post time is the fix,
- * and keeping the durations rather than the absolutes is what makes it hard to
- * get wrong twice.
- */
-interface Planned {
-  /**
-   * Where the voice starts and ends **in steps**, not in frames.
-   *
-   * ❗ **Tempo, swing and the channel mixer are applied when the note is
-   * posted, not when the plan is built.** None of the three changes a voice:
-   * they change where it starts, how long it lasts and how loud it is, and all
-   * three of those are one line of arithmetic over a musical position. Storing
-   * frames instead meant every turn of the tempo knob re-ran the whole voice
-   * pass -- `Ascetic` is 1,150 tracks -- on the thread that also feeds the
-   * audio, which is exactly the stutter a listener heard.
-   *
-   * ⚠️ Tempo is only free of the voice because **no instrument the game
-   * ships sets `fitBpm`** (0 of 68). One that did would have its playback rate
-   * scaled by the tempo and would need a rebuild after all.
-   */
-  readonly startStep: number;
-  readonly endStep?: number;
-  /** The board row, which picks the mixer channel through `NumChannels`. */
-  readonly row: number;
-  /** `voice.gain` with the channel's factor divided out, so it can be redone. */
-  readonly baseGain: number;
-  /**
-   * The pool's score, likewise without the channel factor.
-   *
-   * ❗ The pool is in STEPS and so is immune to tempo and swing -- but its score
-   * is `channelVolume * velocityGain`, so a fader or `NumChannels` changes
-   * which voice gets stolen. That has to follow the mixer or the pool decides
-   * by a mix nobody is listening to.
-   */
-  readonly baseScore: number;
-  /**
-   * The note this voice belongs to, and which stack layer of it.
-   *
-   * ❗ **The pool counts notes, not layers.** A stacked instrument plays all
-   * its layers out of ONE of the engine's 32 records, so the allocator is asked
-   * once per note and every other layer takes the same answer. Asking per layer
-   * made `C4K3 S0NG` steal 3,634 notes of 13,091 where the truth is 1,526.
-   */
-  readonly note: number;
-  readonly layer: number;
-  /**
-   * Each control point's offset from the note's start, in steps.
-   *
-   * ❗ `automation` and `morph.points` hold frames from the voice's own start,
-   * and those frames were bent by the tempo AND the swing. Everything else
-   * about a voice is in seconds or is a ratio, so this is the only part a live
-   * change has to rebuild. `packages/lbp-tracker-lib/dev/live-settings.ts` proves the rebuild exact.
-   */
-  readonly pointSteps: readonly number[];
-  readonly sampleId: string;
-  readonly voice: Omit<VoiceSpec, 'sample' | 'random' | 'startFrame' | 'endFrame' | 'cutFrame'>;
-  /**
-   * What the voice pool needs, in its own units.
-   *
-   * ⚠️ **The plan carries no cuts.** It is built uncapped and the pool is
-   * applied as each voice is handed over, one note at a time, which is what the
-   * engine does and what lets the size be changed without rebuilding anything.
-   * `LiveVoicePool` is proved to decide exactly what `allocateVoices` decides
-   * (packages/lbp-tracker-lib/test/polyphony.test.ts), and `packages/lbp-tracker-lib/dev/live-sim.ts` proves the audio is
-   * bit-identical at pools of 2, 4, 8 and 32.
-   */
-  readonly poolStart: number;
-  readonly poolEnd: number;
-  readonly score: number;
-  readonly index: number;
-}
-
 let project: LevelProject | null = null;
 /**
  * Every sequencer the open backup holds, by the picker's key.
@@ -196,69 +92,44 @@ let project: LevelProject | null = null;
 let songs = new Map<string, { project: LevelProject; sequencer: Sequencer }>();
 let rinstIndex: Manifest | null = null;
 let smpIndex: Manifest | null = null;
-let plan: Planned[] = [];
-let songFrames = 0;
-let songSeconds = 0;
-let framesPerStep = 0;
+let loader: InstrumentLoader | null = null;
 
-let context: AudioContext | null = null;
-let node: AudioWorkletNode | null = null;
-let master: GainNode | null = null;
+/** The pool size the listener has asked for. */
+const poolSize = () => (live.on('optNoCap') ? VOICES_UNLIMITED : live.raw('voices'));
 
-/** Where the playhead is, in song frames, and when that was true. */
-let cursorFrames = 0;
-let startedAt = 0;
-let playing = false;
-/** How far into `plan` the scheduler has already posted. */
-let nextIndex = 0;
-/**
- * What the audio thread last said it was holding.
- *
- * ⚠️ **Not the count of voices posted in the last tick**, which is what this
- * readout used to be and which is nearly always zero: the scheduler posts in
- * bursts every 100 ms, so on a sparse song most ticks post nothing while plenty
- * is still ringing. A voice can also outlive its gate by its release, which no
- * amount of counting on this side would know about.
- */
-let sounding = 0;
-/**
- * How many of the engine's records those voices came out of.
- *
- * ❗ **This is the number the 32-voice cap applies to, and `sounding` is not.**
- * The worklet counts distinct `VoiceSpec.tag`s, and `pump` tags by note, so a
- * stacked instrument's five layers are one note here and five voices there.
- * Showing only one of the two is what made a listener read a perfectly correct
- * "164" as the pool being broken; see the note in `showLoad`.
- */
-let notes = 0;
-/**
- * Voices posted but not yet started, and `sounding` beside it.
- *
- * ⚠️ **Neither is displayed any more**; both are kept because the label's idle
- * test is "nothing is playing and nothing is still ringing", and that needs
- * both. See `showLoad` for why they left the line.
- */
-let queued = 0;
-/**
- * Worst block cost as a fraction of realtime; over 1 means the device starved.
- * `null` means the worklet could not read a clock, which must not read as zero.
- */
-let audioLoad: number | null = null;
-/** Blocks the audio thread failed to deliver since playback started. */
-let dropouts = 0;
-let lostMs = 0;
-/** Voices the pool has taken back since playback started, counted as it goes. */
-let stolenLive = 0;
+let health: Health = { sounding: 0, notes: 0, queued: 0, audioLoad: null, dropouts: 0, lostMs: 0 };
+
+const player = new Player({
+  health: (h) => {
+    health = h;
+    showLoad();
+  },
+  stolen: (total) => {
+    const cell = document.getElementById('stolenCell');
+    if (cell) cell.textContent = total.toLocaleString();
+  },
+  missingSample: (id) => setError(`the worklet has no sample "${id}"`),
+  tick: () => paint(),
+  playing: (on) => {
+    playButton.textContent = on ? '⏸' : '▶';
+    playButton.setAttribute('aria-label', on ? 'Pause' : 'Play');
+    showLoad();
+  },
+  progress: (phase, done, total) => {
+    setStatus(`preparing — ${phase} ${Math.round((done / Math.max(1, total)) * 100)}%`);
+  },
+});
 
 function showLoad(): void {
-  if (!playing && sounding === 0 && queued === 0) {
-    loadLabel.textContent = plan.length ? 'ready' : 'idle';
+  const { sounding, notes, queued, audioLoad, dropouts, lostMs } = health;
+  if (!player.playing && sounding === 0 && queued === 0) {
+    loadLabel.textContent = player.hasPlan ? 'ready' : 'idle';
     return;
   }
   // Dropouts rather than a load percentage: see `lastFrame` in the worklet for
   // why a percentage cannot be measured from there, and why this answers the
   // question a load meter was only being asked as a proxy for.
-  const health = dropouts === 0
+  const dropped = dropouts === 0
     ? 'no dropouts'
     : `${dropouts} dropout${dropouts === 1 ? '' : 's'}` +
       (lostMs >= 1 ? ` (${lostMs.toFixed(0)} ms lost)` : '');
@@ -293,19 +164,8 @@ function showLoad(): void {
     `${sounding} sampler voices are rendering them, ${queued} more are queued.">` +
     `${notes} notes</span> ${busy}· ` +
     `<button type="button" class="drops${dropouts > 0 ? ' bad' : ''}" ` +
-    `title="Click to reset the count">${health}</button>`;
+    `title="Click to reset the count">${dropped}</button>`;
 }
-
-/**
- * How far ahead notes are posted.
- *
- * ⚠️ Long enough that a slow frame cannot leave a gap, short enough that moving
- * an effect control is heard within a beat. The worklet delays each voice by
- * `startFrame`, so accuracy does not depend on this -- only latency to a change
- * does.
- */
-const LOOKAHEAD = 0.35;
-const TICK = 100;
 
 /**
  * The two switches that are decided when a song is prepared, not while it plays.
@@ -317,180 +177,19 @@ const TICK = 100;
  * plan stale rather than doing nothing quietly.
  */
 const planOptions = () => ({
-  // ❗ And no cap: the pool is applied live, per note. See `Planned`.
+  // ❗ And no cap: the pool is applied live, per note. See `Planned` in player.ts.
   voiceLimit: VOICES_UNLIMITED,
 });
 
-/**
- * The song's own settings, as the listener has left them.
- *
- * ✅ **All four are applied live and none of them rebuilds anything.** The plan
- * holds musical positions and a gain with the channel factor divided out, so a
- * new tempo, swing, channel count or fader is three numbers and the next note
- * posted uses them. What is already sounding keeps the timing it was given,
- * which is what a DAW does too.
- *
- * ⚠️ They used to rebuild: every turn of the knob re-ran the whole voice
- * pass on the thread that feeds the audio, and a listener heard it stutter.
- */
-let overrides: {
-  tempo?: number;
-  swing?: number;
-  volumes?: number[];
-  numChannels?: number;
-} = {};
-
-const withOverrides = <
-  T extends { tempo: number; swing: number; volumes: readonly number[]; numChannels: number },
->(
-  seq: T,
-): T => {
-  const volumes = overrides.volumes ?? seq.volumes;
-  return {
-    ...seq,
-    tempo: overrides.tempo ?? seq.tempo,
-    swing: overrides.swing ?? seq.swing,
-    numChannels: overrides.numChannels ?? seq.numChannels,
-    volumes,
-  };
-};
-
-/** The pool size the listener has asked for. */
-const poolSize = () => (live.on('optNoCap') ? VOICES_UNLIMITED : live.raw('voices'));
-
-let pool = new LiveVoicePool(poolSize());
-/** Note -> the end its record was given, so its other layers can take the same. */
-let noteEnd = new Map<number, number>();
-/** Note -> the step it was handed over at, for measuring a steal's cut from. */
-let noteStart = new Map<number, number>();
-/**
- * The STEP at which each handed-over voice started, so a theft can reach it.
- *
- * ❗ A step and not a frame: the tempo can move after the voice was handed
- * over, and a frame written under the old clock would measure a steal's cut
- * from the wrong place -- too long a cut leaves a stolen voice sounding, which
- * is loudness nobody asked for.
- */
-const handed = new Map<number, number>();
-let stepFrames = 0;
-let swing = 0;
-/** The song's own length in steps, and the render's tail, so a tempo change can
- * put `songFrames` back without asking the renderer. */
-let songSteps = 0;
-let tailFrames = 0;
-const cutFrameAt = (step: number) => Math.round(swungFrame(step, stepFrames, swing));
-
-/**
- * Where a planned voice starts, how long it lasts and how loud it is, **now**.
- *
- * ❗ The three settings a listener turns while the music runs are applied here
- * and nowhere else, which is what makes them free: `startedAt` is untouched, no
- * message goes to the worklet, and the plan is read, not rewritten.
- */
-const frameOf = (p: Planned) => cutFrameAt(p.startStep);
-const lifeOf = (p: Planned) =>
-  (p.endStep === undefined ? undefined : Math.max(0, cutFrameAt(p.endStep) - frameOf(p)));
-const mixerNow = () => ({ numChannels: liveChannels, volumes: liveVolumes });
-const gainOf = (p: Planned) => p.baseGain * channelVolume(mixerNow(), { gridY: p.row });
-const scoreOf = (p: Planned) => p.baseScore * channelVolume(mixerNow(), { gridY: p.row });
-/** The voice with its in-note automation put back on the current clock. */
-const onClock = (p: Planned): Planned['voice'] => {
-  const base = swungFrame(p.startStep, stepFrames, swing);
-  const frameAt = (offset: number) =>
-    Math.round(swungFrame(p.startStep + offset, stepFrames, swing) - base);
-  const v = p.voice;
-  return {
-    ...v,
-    automation: v.automation?.map((point, index) => ({
-      ...point, frame: frameAt(p.pointSteps[index] ?? 0),
-    })),
-    morph: v.morph === undefined ? undefined : {
-      ...v.morph,
-      points: v.morph.points.map((point, index) => ({
-        ...point, frame: frameAt(p.pointSteps[index] ?? 0),
-      })),
-    },
-  };
-};
-/** The mixer as the faders have it, read by `gainOf` on every note posted. */
-let liveChannels = 1;
-let liveVolumes: readonly number[] = [1, 1, 1, 1, 1, 1];
-
-/**
- * Rebuild the pool's state so it matches a playthrough that reached `upTo`.
- *
- * ⚠️ Changing the size cannot just start an empty pool from here: the engine's
- * stealing depends on what it is holding, so a pool that forgot the last minute
- * of the song would steal differently from one that had been this size all
- * along. Replaying the decisions is pure arithmetic over the notes already
- * passed -- no audio, no rebuild of the plan.
- */
-function rebuildPool(upTo: number): void {
-  rebuildPoolTo(plan.findIndex((p) => frameOf(p) >= upTo));
-}
-
-/**
- * Replay the pool over the first `limit` notes of the plan, `-1` meaning all.
- *
- * ❗ **By INDEX, not by frame, when the clock has just moved.** A settings
- * change re-points the playhead, and everything already handed to the worklet
- * has to stay in the pool -- rebuilding to the playhead instead would forget
- * the look-ahead window and then hand it over a second time.
- */
-function rebuildPoolTo(limit: number): void {
-  pool = new LiveVoicePool(poolSize());
-  noteEnd = new Map();
-  const upTo = limit < 0 ? plan.length : limit;
-  for (let i = 0; i < upTo; i += 1) {
-    const p = plan[i];
-    // Only the note's first layer takes a record, exactly as in `pump`.
-    if (p.layer !== 0) continue;
-    const { end } = pool.add(p.note, { start: p.poolStart, end: p.poolEnd, score: scoreOf(p) });
-    noteEnd.set(p.note, end);
-  }
-}
-
 let preparedWith = '';
 const markStale = () => {
-  staleNote.hidden = plan.length === 0 || JSON.stringify(planOptions()) === preparedWith;
+  staleNote.hidden = !player.hasPlan || JSON.stringify(planOptions()) === preparedWith;
 };
-
-// --------------------------------------------------------------------- audio
-
-async function ensureAudio(): Promise<AudioWorkletNode> {
-  if (node) return node;
-  context = new AudioContext({ sampleRate: RATE });
-  await context.audioWorklet.addModule(MIXER_WORKLET_URL);
-  node = new AudioWorkletNode(context, 'lbp-mixer', { outputChannelCount: [2] });
-  master = new GainNode(context, { gain: Number(volSlider.value) });
-  node.connect(master).connect(context.destination);
-  node.port.onmessage = (event: MessageEvent) => {
-    const data = event.data as {
-      type: string; id?: string; total?: number; sounding?: number; notes?: number;
-      load?: number | null; dropouts?: number; lostFrames?: number;
-    };
-    if (data.type === 'missingSample') setError(`the worklet has no sample "${data.id}"`);
-    // The only place that knows what is actually sounding is the audio thread.
-    if (data.type === 'voices') {
-      sounding = data.sounding ?? 0;
-      notes = data.notes ?? 0;
-      queued = (data.total ?? 0) - sounding;
-      audioLoad = data.load ?? null;
-      dropouts += data.dropouts ?? 0;
-      lostMs = ((data.lostFrames ?? 0) / RATE) * 1000;
-      showLoad();
-    }
-  };
-  return node;
-}
 
 /** Push the song's own output stage, with whatever the knobs currently say. */
 function pushEffects(): void {
-  const num = (id: string) => Number(($(id) as HTMLInputElement).value);
-  node?.port.postMessage({
-    type: 'effects',
+  player.setEffects({
     echoTime: live.value('echoTime'),
-    framesPerStep,
     feedback: live.value('echoFb'),
     mix: live.value('echoMix'),
     reverbSetting: live.value('reverbSet'),
@@ -513,22 +212,12 @@ async function prepare(restart = true): Promise<void> {
   const original = chosen?.sequencer;
   if (!original || !chosen || !rinstIndex || !smpIndex) return;
   project = chosen.project;
-  if (restart) overrides = {};
-  const seq = withOverrides(original);
-  // Where we are in the music, not in seconds: a tempo change moves one and
-  // not the other, and the music is what a listener is following.
-  const stepBefore = !restart && framesPerStep > 0 ? songPosition() / framesPerStep : 0;
-  const wasPlaying = playing;
 
   if (restart) {
     setError('');
-    setStatus(`getting "${seq.name}" ready — ${seq.tracks.length} tracks…`);
+    setStatus(`getting "${original.name}" ready — ${original.tracks.length} tracks…`);
   }
-  await ensureAudio();
-
-  const load = await loaderFor(rinstIndex, smpIndex);
-  const sent = new Set<string>();
-  const built: Planned[] = [];
+  loader ??= await loaderFor(rinstIndex, smpIndex);
 
   // The song's own output stage, so the knobs start where the sequencer has them
   // rather than at a made-up default. `echoTime` is in beats and the slider is
@@ -536,102 +225,22 @@ async function prepare(restart = true): Promise<void> {
   // ❗ **No `* 10` or `* 100` here any more.** `setValue` is the spec's own
   // inverse of `value`, so the number written from a song and the number read
   // back for the worklet cannot use different scales.
-  live.setValue('echoTime', seq.echoTime);
-  live.setValue('echoFb', seq.echoFeedback);
-  live.setValue('echoMix', seq.echoMix);
-  live.setValue('reverbSet', seq.reverb);
-
-  const result = await renderSequencer(seq, load, {
-    planOnly: true,
-    ...planOptions(),
-    onVoice: (voice, where) => {
-      const sampleId = `g${where.guid}z${where.zone}`;
-      if (!sent.has(sampleId)) {
-        sent.add(sampleId);
-        const sample = voice.sample;
-        node!.port.postMessage({
-          type: 'load',
-          sample: {
-            id: sampleId,
-            // Copies, because the worklet keeps them and this thread replays
-            // the same buffers for every later voice on the same slot.
-            channels: sample.channels.map((c) => new Float32Array(c)),
-            sampleRate: sample.sampleRate,
-            loop: sample.loop,
-          },
-        });
-      }
-      const {
-        sample: _s, random: _r, startFrame: _f, endFrame, cutFrame: _c, ...rest
-      } = voice;
-
-      built.push({
-        startStep: where.startStep,
-        endStep: where.endStep,
-        row: where.row,
-        // ❗ Divided out so the faders can put a different one back. It is never
-        // zero: `CHANNEL_HEADROOM` is 0.75 and a volume of 0 would have made
-        // the voice silent in the render too.
-        baseGain: where.channelGain === 0 ? rest.gain : rest.gain / where.channelGain,
-        baseScore: where.channelGain === 0 ? where.score : where.score / where.channelGain,
-        pointSteps: where.pointSteps,
-        sampleId,
-        voice: rest,
-        poolStart: where.poolStart,
-        note: where.note,
-        layer: where.layer,
-        poolEnd: where.poolEnd,
-        score: where.score,
-        index: built.length,
-      });
-    },
-    onProgress: (phase, done, total) => {
-      if ((done & 0xfff) === 0) {
-        setStatus(`preparing — ${phase} ${Math.round((done / Math.max(1, total)) * 100)}%`);
-      }
-    },
-  });
-
-  // Sorted by musical position, which is the order they will be posted in at
-  // any tempo: swing is monotonic in the step.
-  built.sort((a, b) => a.startStep - b.startStep);
-  plan = built;
-  preparedWith = JSON.stringify(planOptions());
-  songFrames = result.frames;
-  songSeconds = result.seconds;
-  framesPerStep = result.framesPerStep;
-  stepFrames = result.framesPerStep;
-  songSteps = original.lengthSteps;
-  tailFrames = Math.max(0, result.frames - Math.round(original.lengthSteps * stepFrames));
-  swing = seq.swing;
-  liveChannels = seq.numChannels;
-  liveVolumes = seq.volumes;
+  live.setValue('echoTime', original.echoTime);
+  live.setValue('echoFb', original.echoFeedback);
+  live.setValue('echoMix', original.echoMix);
+  live.setValue('reverbSet', original.reverb);
   pushEffects();
+  player.setPool(poolSize());
+
+  const loaded = await player.load(original, loader, restart);
+  preparedWith = JSON.stringify(planOptions());
   drawDensity();
-  if (restart) {
-    seek(0);
-  } else {
-    // ⚠️ **Swapped underneath a running transport, without touching the audio.**
-    // Voices already handed to the worklet keep their old cuts and finish as
-    // they were going to; only notes not yet posted come from the new plan.
-    // Re-pointing `nextIndex` at the current position is the whole handover --
-    // no `stopAll`, no seek, no gap.
-    cursorFrames = Math.min(songFrames, stepBefore * framesPerStep);
-    if (context) startedAt = context.currentTime;
-    playing = wasPlaying;
-    const now = songPosition();
-    nextIndex = plan.findIndex((p) => frameOf(p) >= now);
-    if (nextIndex < 0) nextIndex = plan.length;
-    handed.clear();
-    noteStart.clear();
-    rebuildPool(now);
-  }
 
   playButton.disabled = false;
   rewindButton.disabled = false;
-  timeline.setAttribute('aria-valuemax', songSeconds.toFixed(1));
+  timeline.setAttribute('aria-valuemax', player.songSeconds.toFixed(1));
   metersBox.innerHTML = [
-    ['voices', built.length.toLocaleString()],
+    ['voices', loaded.voices.toLocaleString()],
     // ⚠️ "skipped" means the instrument was not there, not that the pool dropped
     // the note: `renderSequencer` counts a note as skipped when
     // `loadInstrument` returns nothing for its GUID, which happens when that
@@ -639,15 +248,15 @@ async function prepare(restart = true): Promise<void> {
     // extraction, and the label says which question it is answering.
     [
       'notes',
-      `${result.played.toLocaleString()} played` +
-        (result.skipped > 0 ? `, ${result.skipped} with no instrument` : ''),
+      `${loaded.played.toLocaleString()} played` +
+        (loaded.skipped > 0 ? `, ${loaded.skipped} with no instrument` : ''),
     ],
     // Counted as the song plays rather than read off a finished plan: the pool
     // decides its stealing live now, so this is the only place the number
-    // exists. `stolenCell` is updated in `pump`.
+    // exists. Updated through the player's `stolen` event.
     ['stolen so far', '<b id="stolenCell">0</b>'],
-    ['samples', String(sent.size)],
-    ['length', `${clock(songSeconds)} at ${seq.tempo} BPM`],
+    ['samples', String(loaded.samples)],
+    ['length', `${clock(player.songSeconds)} at ${player.tempo} BPM`],
   ]
     .map(([k, v]) => `<span>${k} ${v.startsWith('<b') ? v : `<b>${v}</b>`}</span>`)
     .join('');
@@ -659,8 +268,8 @@ async function prepare(restart = true): Promise<void> {
     showSongOptions();
   }
   markStale();
-  showPlanOptions();
-  setStatus(`ready — ${built.length.toLocaleString()} voices scheduled, press play`);
+  paint();
+  setStatus(`ready — ${loaded.voices.toLocaleString()} voices scheduled, press play`);
 }
 
 /** A voice-per-second histogram, so the song has a shape before it plays. */
@@ -668,12 +277,8 @@ function drawDensity(): void {
   const ctx = density.getContext('2d')!;
   const { width, height } = density;
   ctx.clearRect(0, 0, width, height);
-  if (!plan.length || songFrames <= 0) return;
-  const bins = new Float32Array(width);
-  for (const p of plan) {
-    const x = Math.min(width - 1, Math.max(0, Math.floor((frameOf(p) / songFrames) * width)));
-    bins[x] += 1;
-  }
+  if (!player.hasPlan) return;
+  const bins = player.densityBins(width);
   const peak = Math.max(...bins) || 1;
   ctx.fillStyle = '#3d4a52';
   for (let x = 0; x < width; x += 1) {
@@ -684,212 +289,52 @@ function drawDensity(): void {
 
 // ---------------------------------------------------------------- transport
 
-function songPosition(): number {
-  if (!playing || !context) return cursorFrames;
-  return cursorFrames + (context.currentTime - startedAt) * RATE;
-}
-
-function seek(frames: number): void {
-  const was = playing;
-  if (was) stop(false);
-  cursorFrames = Math.min(songFrames, Math.max(0, frames));
-  // Everything before the cursor is skipped rather than replayed. A voice that
-  // straddles the point is not resurrected: the engine has no way to start a
-  // note in the middle and neither has this.
-  nextIndex = plan.findIndex((p) => frameOf(p) >= cursorFrames);
-  if (nextIndex < 0) nextIndex = plan.length;
-  handed.clear();
-  noteStart.clear();
-  rebuildPool(cursorFrames);
-  stolenLive = 0;
-  const cell = document.getElementById('stolenCell');
-  if (cell) cell.textContent = '0';
-  paint();
-  if (was) start();
-}
-
-function start(): void {
-  if (!context || !node || playing) return;
-  void context.resume();
-  // The detector compares against the last block it saw, and a suspended
-  // context has not produced one since before the pause. Tell it to start over.
-  node.port.postMessage({ type: 'resetHealth' });
-  dropouts = 0;
-  lostMs = 0;
-  startedAt = context.currentTime;
-  playing = true;
-  playButton.textContent = '⏸';
-  playButton.setAttribute('aria-label', 'Pause');
-  pump();
-}
-
-function stop(clear = true): void {
-  if (!playing) return;
-  cursorFrames = songPosition();
-  playing = false;
-  playButton.textContent = '▶';
-  playButton.setAttribute('aria-label', 'Play');
-  if (clear) {
-    node?.port.postMessage({ type: 'stopAll' });
-    sounding = 0;
-    notes = 0;
-    queued = 0;
-    dropouts = 0;
-    lostMs = 0;
-  }
-  showLoad();
-}
-
-/**
- * Post everything that starts inside the look-ahead window.
- *
- * `startFrame` is a delay the worklet counts down, so a voice posted early is
- * still sample-accurate; the window only has to be wide enough that the next
- * tick is never late.
- */
-function pump(): void {
-  if (!playing || !node) return;
-  const now = songPosition();
-  const until = now + LOOKAHEAD * RATE;
-  while (nextIndex < plan.length && frameOf(plan[nextIndex]) < until) {
-    const p = plan[nextIndex];
-    // ❗ **Never twice.** The index arithmetic is supposed to guarantee this and
-    // once did not: a settings change re-pointed the playhead into the middle of
-    // the look-ahead window and every voice in it was handed over again, which
-    // sounded like the notes repeating and the mix getting very loud. `handed`
-    // is cleared by `seek`, where re-posting IS right because the worklet has
-    // been told to stop everything.
-    if (handed.has(p.index)) {
-      nextIndex += 1;
-      continue;
-    }
-    // ❗ Frames and gain derived HERE, from the tempo, swing and faders as they
-    // stand this instant. Everything else about the voice was decided once.
-    const at = frameOf(p);
-    const life = lifeOf(p);
-    // The delay this voice waits before it starts, and its own end rebased onto
-    // that delay so the mixer's `endFrame - startFrame` is still its length.
-    const delay = Math.max(0, Math.round(at - now));
-    // ❗ One call per NOTE. The other layers of a stacked note share its record
-    // and therefore its answer; see `Planned.note`.
-    let end: number;
-    let stole: { index: number; at: number } | undefined;
-    if (p.layer === 0) {
-      ({ end, stole } = pool.add(p.note, {
-        start: p.poolStart,
-        end: p.poolEnd,
-        score: scoreOf(p),
-      }));
-      noteEnd.set(p.note, end);
-    } else {
-      end = noteEnd.get(p.note) ?? p.poolEnd;
-    }
-    if (!noteStart.has(p.note)) noteStart.set(p.note, p.startStep);
-    const cut = end < p.poolEnd ? cutFrameAt(end) - at : undefined;
-    node.port.postMessage({
-      type: 'play',
-      sampleId: p.sampleId,
-      voice: {
-        ...onClock(p),
-        gain: gainOf(p),
-        // ❗ **Tagged by NOTE, not by layer.** A stacked instrument's layers all
-        // came out of one of the engine's records, so they are taken away
-        // together, expressed together, and counted together -- which is also
-        // what lets the worklet report notes beside voices.
-        tag: p.note,
-        startFrame: delay,
-        endFrame: life === undefined ? undefined : delay + life,
-        cutFrame: cut === undefined ? undefined : delay + cut,
-      },
-    });
-    handed.set(p.index, p.startStep);
-    if (stole) {
-      stolenLive += 1;
-      const cell = document.getElementById('stolenCell');
-      if (cell) cell.textContent = stolenLive.toLocaleString();
-      // The victim loses its record at the thief's start, and every layer of it
-      // goes with it -- one message now that the tag is the note. `cutAt` counts
-      // the frames it still gets to sound, so measure from where it is now.
-      const startStep = noteStart.get(stole.index);
-      if (startStep !== undefined) {
-        node.port.postMessage({
-          type: 'cutAt',
-          tag: stole.index,
-          frames: Math.max(0, cutFrameAt(stole.at) - Math.max(now, cutFrameAt(startStep))),
-        });
-      }
-    }
-    nextIndex += 1;
-  }
-  if (now >= songFrames) {
-    stop();
-    cursorFrames = songFrames;
-  }
-  paint();
-  if (playing) window.setTimeout(pump, TICK);
-}
-
 function paint(): void {
-  const frames = songPosition();
-  const ratio = songFrames > 0 ? Math.min(1, frames / songFrames) : 0;
+  const frames = player.position();
+  const ratio = player.songFrames > 0 ? Math.min(1, frames / player.songFrames) : 0;
   head.style.left = `${ratio * 100}%`;
-  clockLabel.textContent = `${clock(frames / RATE)} / ${clock(songSeconds)}`;
+  clockLabel.textContent = `${clock(frames / RATE)} / ${clock(player.songSeconds)}`;
   timeline.setAttribute('aria-valuenow', (frames / RATE).toFixed(1));
-  timeline.setAttribute('aria-valuetext', `${clock(frames / RATE)} of ${clock(songSeconds)}`);
+  timeline.setAttribute('aria-valuetext', `${clock(frames / RATE)} of ${clock(player.songSeconds)}`);
 }
 
 // -------------------------------------------------------------------- wiring
 
-playButton.addEventListener('click', () => (playing ? stop() : start()));
-rewindButton.addEventListener('click', () => seek(0));
+playButton.addEventListener('click', () => (player.playing ? player.stop() : player.play()));
+rewindButton.addEventListener('click', () => player.seek(0));
 
 timeline.addEventListener('pointerdown', (event) => {
-  if (!plan.length) return;
+  if (!player.hasPlan) return;
   const box = timeline.getBoundingClientRect();
-  seek(((event.clientX - box.left) / box.width) * songFrames);
+  player.seek(((event.clientX - box.left) / box.width) * player.songFrames);
 });
 
 window.addEventListener('keydown', (event) => {
   const target = event.target as HTMLElement | null;
   if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
-  if (event.code !== 'Space' || !plan.length) return;
+  if (event.code !== 'Space' || !player.hasPlan) return;
   event.preventDefault();
-  if (playing) stop();
-  else start();
+  if (player.playing) player.stop();
+  else player.play();
 });
 
 // Delegated, because `showLoad` replaces the button ten times a second.
 loadLabel.addEventListener('click', (event) => {
   if (!(event.target as HTMLElement).closest('.drops')) return;
-  dropouts = 0;
-  lostMs = 0;
-  showLoad();
+  player.resetHealth();
 });
 
-volSlider.addEventListener('input', () => {
-  if (master && context) master.gain.setTargetAtTime(Number(volSlider.value), context.currentTime, 0.01);
-});
+volSlider.addEventListener('input', () => player.setVolume(Number(volSlider.value)));
+player.setVolume(Number(volSlider.value));
 
 // One watcher for the whole output stage, generated from the spec's `effects`
 // flags rather than listed here — see `Controls.effectsSignature`.
-watch(live.effectsSignature, () => node && pushEffects());
+watch(live.effectsSignature, () => pushEffects());
 
 // The plan-time pair. Their labels come from the spec; their effect waits for
 // Prepare.
 live.setValue('voices', VOICE_POOL_SIZE);
-const showPlanOptions = () => {
-  markStale();
-};
-/**
- * The pool re-plans without stopping.
- *
- * ⚠️ The allocator needs the whole note list at once to decide what gets
- * stolen, so the size cannot be changed without rebuilding the plan -- but
- * rebuilding it does not have to interrupt anything. The new plan is swapped in
- * under the running transport and takes effect for notes not yet scheduled;
- * what is already sounding finishes as it was going to. Debounced, because it
- * is a slider and every pixel of it would otherwise start a rebuild.
- */
+
 /**
  * One fader per channel the song has, with how many tracks land on each.
  *
@@ -923,15 +368,8 @@ function buildFaders(
   }).join('');
 }
 
-/**
- * Labels for the song's own settings, and the debounced rebuild they need.
- *
- * Slower than the pool's debounce because this one actually re-renders the
- * voices, where the pool is only arithmetic.
- */
+/** Labels for the channel strip: built imperatively per song, so not the spec's to draw. */
 const showSongOptions = () => {
-  // Only the channel strip is left: it is built imperatively per song, so its
-  // labels are not the spec's to draw.
   for (const el of channelsBox.querySelectorAll<HTMLInputElement>('.chan')) {
     const out = document.getElementById(`ch${el.dataset.ch}Label`);
     if (out) out.textContent = (Number(el.value) / 100).toFixed(2);
@@ -941,61 +379,22 @@ const showSongOptions = () => {
 /**
  * Tempo, swing, channel count and the faders, applied without a rebuild.
  *
- * ✅ **Nothing the audio thread is working on is regenerated.** The samples it
- * holds, the voices already sounding and the plan itself are all untouched:
- * three numbers change, the playhead is carried over in STEPS because a tempo
- * change moves the seconds a musical position sits at, and the next note posted
- * uses the new values. There is no debounce because there is nothing to
- * debounce -- this is a handful of arithmetic, not a pass over the song.
- *
- * ⚠️ It used to set `overrides` and call `prepare(false)` behind a 450 ms
- * timer, which re-ran the whole voice pass -- 1,150 tracks on `Ascetic` -- on
- * the thread that also feeds the audio. That is the stutter a listener heard,
- * and the delay was there to make it happen less often rather than to fix it.
+ * ✅ **Nothing the audio thread is working on is regenerated** -- see
+ * `Player.setSettings` for why, and for the bug that shipped when the playhead
+ * was allowed to move backwards.
  */
 const songChanged = () => {
   showSongOptions();
-  if (!plan.length) return;
-  const tempo = live.value('tempo');
-  overrides = {
-    tempo,
+  if (!player.hasPlan) return;
+  player.setSettings({
+    tempo: live.value('tempo'),
     swing: live.value('swing'),
     numChannels: live.raw('numChannels'),
     volumes: [...channelsBox.querySelectorAll<HTMLInputElement>('.chan')].map(
       (el) => Number(el.value) / 100,
     ),
-  };
-
-  // Where we are in the music, not in seconds: a tempo change moves one and not
-  // the other, and the music is what a listener is following.
-  const stepNow = stepFrames > 0 ? songPosition() / stepFrames : 0;
-  stepFrames = samplesPerStep(RATE, tempo);
-  framesPerStep = stepFrames;
-  swing = overrides.swing ?? 0;
-  liveChannels = overrides.numChannels ?? liveChannels;
-  liveVolumes = overrides.volumes ?? liveVolumes;
-
-  songFrames = Math.round(songSteps * stepFrames) + tailFrames;
-  songSeconds = songFrames / RATE;
-  timeline.setAttribute('aria-valuemax', songSeconds.toFixed(1));
-  cursorFrames = Math.min(songFrames, Math.round(stepNow * stepFrames));
-  if (context) startedAt = context.currentTime;
-  const now = songPosition();
-  // ❗ **`nextIndex` must never go BACKWARDS.** `pump` posts a look-ahead window
-  // to the worklet, and those voices are already there and already sounding; a
-  // playhead that lands before the end of that window would hand every one of
-  // them over a second time. Dragging the tempo slider did exactly that, thirty
-  // times a second, and it sounded like the notes repeating and the mix getting
-  // very loud -- because they were, and it was.
-  //
-  // ⚠️ `handed` is kept for the same reason: it is what a steal's `cutAt`
-  // measures from, and clearing it left stolen voices uncut, which is the other
-  // half of that loudness.
-  const want = plan.findIndex((p) => frameOf(p) >= now);
-  nextIndex = Math.max(nextIndex, want < 0 ? plan.length : want);
-  rebuildPoolTo(nextIndex);
-  // The echo delay is in beats, so it follows the tempo.
-  pushEffects();
+  });
+  timeline.setAttribute('aria-valuemax', player.songSeconds.toFixed(1));
   drawDensity();
   paint();
 };
@@ -1021,20 +420,23 @@ watch(
 watch(() => [live.raw('tempo'), live.raw('swing')], songChanged);
 channelsBox.addEventListener('input', songChanged);
 
+/**
+ * The pool re-sizes without stopping.
+ *
+ * ❗ No rebuild at all: the plan has no cuts in it, so a new size is a new
+ * pool and nothing else, replayed up to the playhead by the player.
+ */
 const replanSoon = () => {
-  showPlanOptions();
-  if (!plan.length) return;
-  // ❗ No rebuild at all any more: the plan has no cuts in it, so a new size is
-  // a new pool and nothing else. Replayed up to the playhead so it holds what a
-  // playthrough at this size would have been holding.
-  rebuildPool(songPosition());
+  markStale();
+  if (!player.hasPlan) return;
+  player.setPool(poolSize());
   setStatus(
     `voice pool ${live.on('optNoCap') ? 'uncapped' : live.raw('voices')} — ` +
-      `${plan.length.toLocaleString()} voices`,
+      `${player.plan.length.toLocaleString()} voices`,
   );
 };
 watch(() => [live.raw('voices'), live.on('optNoCap')], replanSoon);
-showPlanOptions();
+markStale();
 
 /**
  * Choosing a song gets it ready. There is no button for it.
@@ -1045,7 +447,7 @@ showPlanOptions();
  * it twice, once by picking and once by pressing, bought nothing.
  */
 const prepareNow = () => {
-  stop();
+  player.stop();
   void prepare().catch((error: unknown) => {
     setStatus('failed', true);
     setError(String((error as Error).stack ?? error));
@@ -1067,8 +469,7 @@ async function openBackup(opened: {
   files: readonly { name: string; bytes: Uint8Array }[];
   many: boolean;
 }): Promise<void> {
-  stop();
-  plan = [];
+  player.clear();
   playButton.disabled = true;
   rewindButton.disabled = true;
   metersBox.innerHTML = '';
@@ -1123,7 +524,7 @@ async function openBackup(opened: {
 }
 
 /**
- * A song handed over by the MIDI page, if there is one.
+ * A song handed over by the MIDI page or the editor, if there is one.
  *
  * ⚠️ **Taken once and then removed.** It is a one-way handover, not a
  * setting: leaving it in `sessionStorage` would resurrect last week's import
@@ -1139,7 +540,7 @@ async function takeHandoff(): Promise<void> {
   }
   if (stored === null) return;
   drop.busy(true);
-  setStatus('reading the imported song\u2026');
+  setStatus('reading the imported song…');
   try {
     const seq = JSON.parse(stored) as LevelProject['sequencers'][number];
     project = { file: `${seq.name}.mid`, kind: 'level', sequencers: [seq] };
@@ -1151,7 +552,7 @@ async function takeHandoff(): Promise<void> {
     songs = new Map([[key, { project: project as LevelProject, sequencer: seq }]]);
     picker.setRows([{ key, name: seq.name, tracks: seq.tracks.length }]);
     drop.loaded(true);
-    drop.say(`${seq.name} \u2014 imported from MIDI`, 'Click or drop to open a level instead.');
+    drop.say(`${seq.name} — handed over`, 'Click or drop to open a level instead.');
     prepareNow();
   } catch (error) {
     setStatus('the imported song could not be read', true);
@@ -1163,6 +564,6 @@ async function takeHandoff(): Promise<void> {
 
 void takeHandoff();
 
-void fromFiles;
+void project;
 
 mountFooter();
