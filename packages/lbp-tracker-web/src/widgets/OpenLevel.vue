@@ -85,7 +85,9 @@ defineExpose({
     @drop.prevent="onDrop"
   >
     <strong>{{ title }}</strong>
-    <span>{{ hint }}</span>
+    <!-- Once something is open the title says what, and the buttons say how to
+         change it; "click, or drop…" beside the name only read as clutter. -->
+    <span v-if="!loaded">{{ hint }}</span>
     <input ref="fileInput" type="file" autocomplete="off" @change="take(fileInput)">
     <!--
       Dropping a folder works on its own; this is for the browsers and
