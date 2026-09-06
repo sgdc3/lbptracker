@@ -363,7 +363,7 @@ them is an even spread over the game's life, which is what puts old revisions in
 |---|---|---|
 | `0x3b7` | `0/0` | **4 of 4** |
 | `0x3b8`–`0x3f9` | `0/0` | **78 of 78** |
-| `0x272` | `4c44` (LEERDAMMER) | **0 of 21** at the shipped bound; 10 of 21 past the Thing header with it lowered, all reading zero Things |
+| `0x272` | `4c44` (LEERDAMMER) | **0 of 21** at the shipped bound, and 0 of 21 correct with it lowered — but the failures now name a byte inside a part reader rather than running off the end |
 | `0x26e` | — | 0 of 1, the chunk table is not where this reader looks |
 | — | — | 1 file the archive stores truncated |
 
@@ -396,54 +396,61 @@ enough to take one.
 field" — it is "find out which of the branches already ported are wrong". The 2-of-19 says at least
 some are.
 
-### ❗ Worked 2026-09-06: the wall moved once and then stopped
+### ❗ Worked 2026-09-06. The wall moved four times; no LBP1 file reads correctly yet
 
-**Nothing shipped changes.** `LBP3_MIN_VERSION` is still `0x3b7` and all 21 LBP1 files are still
-refused at the bound; everything below was measured by lowering it to `0x100` by hand, and the
-golden fixture (`dev/verify-levels.ts`, 62,158 placements byte for byte) is unmoved.
+**Nothing shipped changes.** `LBP3_MIN_VERSION` is still `0x3b7`, all 21 LBP1 files are still
+refused at the bound, and the golden fixture is unmoved at 62,158 placements byte for byte.
+Everything below was measured by lowering the bound to `0x100` by hand.
 
-✔ **One real bug, found by reading cwlib rather than the bytes.** `fillThing` read the UID before
-the parent for every file, with a comment directly above it saying *"version >= 0x27f puts the UID
-first; older files put the parent first"*. cwlib's `Thing.java:96` is explicit and the code simply
-did not implement its own comment. Fixed:
+✔ **First: cwlib reads every one of these files.** 557, 524, 1054, 1475 Things. So they are not
+damaged and the reader is simply wrong — which is worth knowing before spending a session on a hex
+dump, and was not known before.
 
-| | LBP1 files past the Thing header |
+Four bugs found and fixed, all by reading cwlib rather than bytes:
+
+| | what it was |
 |---|---|
-| before | **3** of 21 |
-| after | **10** of 21 |
+| `fillThing` | read the UID before the parent for every file. cwlib `Thing.java:96`: below **0x27f** the parent comes first. A comment directly above the line already said so. |
+| `fillThing` | the `0xAA` test marker is gated at `version >= 0x2a1` — and also on **LEERDAMMER from its own revision 5**. Every LBP1 file here is that branch at 0x17, so the marker was being taken as the first byte of the parent reference. |
+| `fillThing` | the parts mask is likewise present on **LEERDAMMER from revision 2** (cwlib's `isCompressed`). Without it the mask was `-1`: every declared part treated as present. |
+| `readPos` | below **0x341** the local matrix is stored as well as the world one. The comment said *"localPosition is regenerated above 0x341"* above a line that read one matrix always — so every pre-0x341 Thing was 64 bytes short. |
 
-⚠️ **And all ten then read `PWorld` and get a thing count of zero.** That is the wall now, and it
-is a different one: they are no longer diverging in the stream, they are reading a plausible-looking
-zero where hundreds of Things should be. `readWorld` matches cwlib's `PWorld.serialize` field for
-field at subVersion 0 -- none of the four gated fields is read, then the array -- so the count is
-landing in the wrong place because something in the Thing header before it is *still* short or long,
-not because `PWorld` is wrong.
+And `readShape` was rewritten against cwlib's `PShape`: below LBP3 the colour is four floats rather
+than a packed ARGB, `brightness` does not exist below 0x301, `behavior`/`colorOff`/`brightnessOff`
+below 0x303, `interactPlayMode`/`interactEditMode` exist at or below 0x306, `lethalType` is an
+enum32 at or below 0x345, and below 0x2b5 three bools stand in for the flags word. **Five gates that
+were simply absent.**
 
-### ❌ What was tried and made it worse, which is the useful half
+⚠️ **The result is progress, not success.** Two files now return Things instead of an error — and
+cwlib says those two hold 26 and 39 Things where this reader returns **4**. So the honest count is
+still **0 of 21 read correctly**. What changed is the *kind* of failure: the marker now catches
+misalignment one Thing later instead of the stream running off the end, so every remaining failure
+names a byte offset inside a part reader.
 
-cwlib's `Thing.serialize` computes `isCompressed = version >= 0x297 || revision.has(LEERDAMMER,
-LD_RESOURCES)`, and **every LBP1 file in the sample is LEERDAMMER `0x4c44` revision `0x17`**, so by
-that rule the parts mask *is* present and this reader is not reading it — it uses `mask = -1`, every
-declared part treated as present. Implementing it, together with `Part.hasPart`'s two index
-exclusions and its `subVersion < 0x107` bit shift, took the count from **10 down to 2**.
+### ✔ The tool that makes the rest mechanical
 
-❗ That is evidence, not a dead end: if a rule taken verbatim from the reference implementation makes
-a reader worse, the misalignment is **upstream of it**. The mask is read at the right place only if
-everything before it consumed the right bytes, and the zero thing count says it did not. So the
-order is fixed: find the header field that is still wrong, *then* re-apply `isCompressed`.
+`tools/CwlibTrace.java`, added the same day. cwlib's serialiser already logs every part boundary
+with its offset; `ResourceSystem.LOG_LEVEL` turns it on. `CwlibTrace spans <level>` prints the
+reference reading's spans and `setTrace` in `src/core/thing.ts` prints ours, so a divergence is a
+diff rather than a hunt:
 
-### The anchor, and it is better than it was
+```
+0-c33a7e, the second Thing        cwlib          ours
+  BODY                            63..82         63..82     agree
+  POS                             82..121        82..121    agree
+  SHAPE                           121..233       121..248   +15 bytes
+  REF                             233..242       248..249   read as a null
+  GROUP                           242..288       249..250   read as a null
+```
 
-❗ **cwlib's source is on this disk**, not just its jar:
-`C:\Users\sgdc3\Desktop\LBP\toolkit\lib\cwlib\src\main\java\cwlib\`. The whole of the
-above came out of `structs/things/Thing.java`, `structs/things/parts/PWorld.java` and
-`enums/Part.java` in about ten minutes. **Read those before tracing bytes** — this entry spent a
-session on a byte-level trace it did not need.
+❗ **That table is the whole remaining job in one line each.** `SHAPE` is 15 bytes long on this
+file; find the field, and `REF` and `GROUP` stop reading nulls because they stop starting in the
+wrong place. Then take the next Thing, and the next part.
 
-The reproduction is two commands: lower `LBP3_MIN_VERSION` to `0x100` in `src/core/serializer.ts`,
-then `node --experimental-strip-types dev/walk-levels.ts fixtures/archive`. The LBP1 lines are the
-ones matching `v2[0-9a-f]{2}/`. `setTrace` in `src/core/thing.ts` gives the per-part spans when a
-single file needs following.
+⚠️ **`readShape` is known to still be wrong** — the row above is measured, not predicted. It is
+kept because its gates come from cwlib and its LBP3 path is provably unchanged (the golden fixture
+is byte for byte), so it is strictly closer than the five missing gates it replaced. Do not read it
+as finished.
 
 ### What is left after that
 

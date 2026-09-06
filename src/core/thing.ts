@@ -52,6 +52,26 @@ import { Serializer, SerializerError } from './serializer.ts';
  * `since` is the part's `PartHistory` value: a part is present only when the
  * stream's parts-revision has reached it, whatever its flag bit says.
  */
+/**
+ * cwlib `Branch.LEERDAMMER` and the two of its revisions this reader needs.
+ *
+ * ❗ **A branch can turn a version gate on early, and two of the gates in
+ * `fillThing` are branch gates wearing a version gate's clothes.** Every LBP1
+ * level in the archive sample is on this branch at revision 0x17, so both of
+ * these fire and neither was implemented.
+ */
+const LEERDAMMER = 0x4c44;
+const LD_RESOURCES = 0x2;
+const LD_TEST_MARKER = 0x5;
+
+/** cwlib `Revision.has(branch, revision)`. */
+function onLeerdammer(
+  revision: { branchId: number; branchRevision: number },
+  since: number,
+): boolean {
+  return revision.branchId === LEERDAMMER && revision.branchRevision >= since;
+}
+
 export const PARTS: readonly { readonly name: string; readonly index: number; readonly since: number }[] = [
   { name: 'BODY', index: 0x00, since: 0x01 },
   { name: 'JOINT', index: 0x01, since: 0x02 },
@@ -207,7 +227,11 @@ function fillThing(
 
   // `Revisions.THING_TEST_MARKER` is 0x2a1. It is a plain 0xAA and its whole job
   // is to fail loudly here rather than 200 bytes later.
-  if (version >= 0x2a1) {
+  //
+  // ⚠️ **LEERDAMMER has it from its own revision 5, well below 0x2a1.** Reading a
+  // 0x272 file without the marker takes the 0xAA as the first byte of the parent
+  // reference and everything after is one byte out.
+  if (version >= 0x2a1 || onLeerdammer(s.revision, LD_TEST_MARKER)) {
     const marker = s.u8();
     if (marker !== 0xaa) {
       throw new SerializerError(
@@ -264,7 +288,13 @@ function fillThing(
   // highest part index is 53, so a mask carrying `STREAMING_HINT` alongside any
   // low part comes back rounded and the low part vanishes without a word. See
   // `Serializer.u64Big` for the measurement.
-  const mask = version >= 0x297 ? s.u64Big() : -1n;
+  //
+  // ⚠️ **And LEERDAMMER has the mask from its revision 2**, which is cwlib's
+  // `isCompressed`. Without it a 0x272 Thing was read with `mask = -1` -- every
+  // declared part treated as present -- and the parts revision it had just read
+  // was garbage anyway, so nothing was read at all.
+  const masked = version >= 0x297 || onLeerdammer(s.revision, LD_RESOURCES);
+  const mask = masked ? s.u64Big() : -1n;
 
   for (const part of PARTS) {
     if (partsRevision < part.since) continue;

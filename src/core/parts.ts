@@ -58,7 +58,13 @@ export function readBody(s: Serializer, readers: ReadonlyMap<string, PartReader>
 export function readPos(s: Serializer, readers: ReadonlyMap<string, PartReader>): Float32Array {
   readThingRef(s, readers); // thingOfWhichIAmABone
   s.i32(); // animHash
-  return s.matrix(); // worldPosition; localPosition is regenerated above 0x341
+  // Below 0x341 the local matrix is STORED as well; from 0x341 the game keeps
+  // only the world one and regenerates the local. The old comment here said
+  // "localPosition is regenerated above 0x341", which is true and was written as
+  // if it were true everywhere -- so every pre-0x341 Thing was read 64 bytes
+  // short. cwlib `PPos.serialize`.
+  if (s.revision.version < 0x341) s.matrix(); // localPosition
+  return s.matrix(); // worldPosition
 }
 
 /** `PJoint`: the connector between two Things. Long, and all of it fixed-width. */
@@ -168,21 +174,49 @@ export function readShape(s: Serializer, readers: ReadonlyMap<string, PartReader
   const { version, subVersion } = s.revision;
   readPolygon(s);
   s.resource(); // material
-  s.resource(); // oldMaterial
+  if (version >= 0x15c) s.resource(); // oldMaterial
   s.f32(); // thickness
-  s.f32(); // massDepth
-  s.i32(); // color -- a packed ARGB above 0x389, four floats below it
-  s.f32(); // brightness
+  if (version >= 0x227) s.f32(); // massDepth
+  // ❗ **The colour is four floats until 0x389 and a packed ARGB after.** The
+  // comment here used to say exactly that above a line that always read the
+  // packed form -- 12 bytes short on every pre-0x389 Thing. cwlib `PShape`.
+  if (version <= 0x389) s.vector4();
+  else s.i32(); // color
+  if (version >= 0x301) s.f32(); // brightness
   s.f32(); // bevelSize
-  s.matrix(); // COM
-  s.i32(); // behavior
-  s.i32(); // colorOff
-  s.f32(); // brightnessOff
-  s.u16(); // lethalType -- an enum32 at or below 0x345, a u16 after
+  if (version <= 0x340 || version >= 0x38e) s.matrix(); // COM
+  if (version <= 0x306) {
+    s.u8(); // interactPlayMode
+    s.u8(); // interactEditMode
+  }
+  if (version >= 0x303) {
+    s.i32(); // behavior
+    if (version < 0x38a) s.vector4();
+    else s.i32(); // colorOff
+    s.f32(); // brightnessOff
+  }
+  if (version <= 0x345) s.i32(); // lethalType, an enum32 here and a u16 after
+  else s.u16();
+  if (version < 0x2b5) {
+    // The flags word does not exist yet; three bools stand in for its bits.
+    s.bool(); // COLLIDABLE_GAME
+    if (version >= 0x224) s.bool(); // COLLIDABLE_POPPET
+    s.bool(); // COLLIDABLE_WITH_PARENT
+  }
   s.i32(); // soundEnumOverride
-  s.u8(); // playerNumberColor -- an i32 at or below 0x367
-  s.i16(); // flags -- an i8 at or below 0x345
-  readContactCache(s, readers);
+  if (version >= 0x29d && version < 0x30c) {
+    s.f32(); // restitution
+    if (version < 0x2b5) s.u8();
+  }
+  if (version >= 0x2a3) {
+    if (version <= 0x367) s.i32();
+    else s.u8(); // playerNumberColor
+  }
+  if (version >= 0x2b5) {
+    if (version <= 0x345) s.u8();
+    else s.i16(); // flags
+  }
+  if (version >= 0x307) readContactCache(s, readers);
   if (version >= 0x3bd) {
     s.u8(); // stickiness
     s.u8(); // grabbability

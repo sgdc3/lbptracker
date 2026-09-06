@@ -56,6 +56,15 @@ they are the ground truth the JavaScript has to reproduce:
   62,158, is what `test/project.test.ts` pins the TypeScript walk against. ⚠️ The "eight part
   readers" its output was once read as scoping the walk down to was a misreading — 30 were needed;
   see `steering/tracker-architecture.md`.
+- `CwlibTrace.java` — **ask cwlib what it reads from a level, and where.** `CwlibTrace parts <level>`
+  gives the Thing count and each Thing's decoded part list; `CwlibTrace spans <level>` turns on
+  cwlib's own serialiser log and prints every part boundary **with its byte offset**, which
+  `setTrace` in `src/core/thing.ts` prints for our side. ❗ **Reach for this before tracing bytes by
+  hand.** Question 28 spent one session on a hex dump and another guessing at version gates; four
+  real bugs then came out of `Thing.java`, `PPos.java` and `PShape.java` in an afternoon, and the
+  remaining work is now a span diff. ⚠️ `javac` here is JDK 25 and the first `java` on PATH is 1.8 —
+  use the JDK's own `java` or it fails with `UnsupportedClassVersionError`. Its header has the
+  command lines.
 - `GuidLookup.java` — resolve a GUID (or a path substring) against the game's FileDB
   `output/orbisguids.map`. This is how you find where any resource actually lives.
 - `ExtractGuid.java` — GUID → FileDB → SHA1 → FARC → bytes, plus a `manifest.json` the browser can
