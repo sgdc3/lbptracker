@@ -56,6 +56,7 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
   };
   const closePanel = () => {
     panel.hidden = true;
+    window.dispatchEvent(new Event('lbp:stop'));
     insetBoard();
   };
   $('panelClose').addEventListener('click', closePanel);
@@ -279,6 +280,43 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     state.touch('selection');
   });
   $('fitNotes').addEventListener('click', () => roll.scrollToNotes());
+
+  // ------------------------------------------------------------ chip loop
+  // The selected chip's bars round and round, its row at full volume and
+  // every other row at a fifth: hearing one part in place while editing it.
+  // Armed on a chip; it follows the selection to another chip, and it is
+  // dropped when the panel closes, the transport is stopped, or the song goes.
+  const loopButton = $<HTMLButtonElement>('loopChip');
+  let loopingClip: number | null = null;
+  const aimChipLoop = (clip: Clip, seekToStart: boolean) => {
+    const start = clip.cell * STEPS_PER_CELL;
+    loopingClip = clip.id;
+    player.setFocus(clip.row);
+    player.setRegion(start, start + clip.steps);
+    loopButton.setAttribute('aria-pressed', 'true');
+    if (!seekToStart || !player.hasPlan) return;
+    player.seek(player.frameAt(start));
+    if (!player.playing) player.play();
+  };
+  const dropChipLoop = () => {
+    if (loopingClip === null) return;
+    loopingClip = null;
+    player.setFocus(null);
+    player.clearRegion();
+    loopButton.setAttribute('aria-pressed', 'false');
+  };
+  loopButton.addEventListener('click', () => {
+    const clip = state.clip();
+    if (loopingClip !== null) dropChipLoop();
+    else if (clip) aimChipLoop(clip, true);
+  });
+  state.onChange(() => {
+    if (loopingClip === null) return;
+    const clip = state.clip();
+    if (!clip || !player.hasPlan) dropChipLoop();
+    else aimChipLoop(clip, clip.id !== loopingClip);
+  });
+  window.addEventListener('lbp:stop', dropChipLoop);
 
   // ------------------------------------------------------------- keyboard
 

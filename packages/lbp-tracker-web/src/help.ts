@@ -139,7 +139,9 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
       p('<strong>grid</strong> is how long the instrument is, in bars. <strong>key</strong> and <strong>scale</strong> ' +
         'transpose and fold its notes the way the game does. <strong>level</strong> and <strong>pan</strong> are its own ' +
         'volume and position; the two <strong>sends</strong> say how much of it goes to the song\'s echo and reverb. ' +
-        'Drag the panel\'s top edge to resize it; <kbd>Esc</kbd> closes it.'),
+        '<strong>Loop this chip</strong> plays its bars round and round with every other row at a fifth of its ' +
+        'volume, to hear the part in place while you edit it; it follows the chip you select, and stop, or closing ' +
+        'the panel, ends it. Drag the panel\'s top edge to resize it; <kbd>Esc</kbd> closes it.'),
   },
   song: {
     title: 'The song',

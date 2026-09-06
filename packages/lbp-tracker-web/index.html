@@ -134,6 +134,7 @@
   .panel-head .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .panel-head .title small { color: var(--dimmer); font-weight: 400; margin-left: .4rem; }
   .panel-head button { padding: .25rem .6rem; }
+  .panel-head button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
   .panel-body { flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr) 21rem; min-height: 0; }
   @media (max-width: 52rem) { .panel-body { grid-template-columns: minmax(0, 1fr); } .panel-side { display: none; } }
   .panel-roll { display: flex; flex-direction: column; min-height: 0; }
@@ -413,6 +414,7 @@
         <label class="check">
           <input id="triplets" type="checkbox" autocomplete="off"> triplet grid
         </label>
+        <button id="loopChip" type="button" aria-pressed="false" title="Play this instrument's bars round and round, the other rows turned down">&#8635; loop this chip</button>
         <button id="fitNotes" type="button" title="Scroll the grid to the notes">find the notes</button>
         <button type="button" class="help-btn" data-help="notes" title="Help" aria-label="Help">?</button>
         <button id="panelClose" type="button" aria-label="Close the panel" title="Close (Esc)">&times;</button>

@@ -606,6 +606,8 @@ export class Player {
   /** Forget the song: the page is opening another. */
   clear(): void {
     this.stop();
+    this.region = null;
+    this.focusRow = null;
     this.plan = [];
     this.songFrames = 0;
     this.songSeconds = 0;
@@ -651,7 +653,8 @@ export class Player {
   }
 
   private gainOf(p: Planned): number {
-    return p.baseGain * channelVolume(this.mixerNow(), { gridY: p.row });
+    const focus = this.focusRow !== null && p.row !== this.focusRow ? this.focusOthers : 1;
+    return p.baseGain * channelVolume(this.mixerNow(), { gridY: p.row }) * focus;
   }
 
   private scoreOf(p: Planned): number {
@@ -818,6 +821,34 @@ export class Player {
   /** Start over at the end instead of stopping: the song's own loop flag, mirrored here. */
   loop = false;
 
+  /**
+   * A section to go round instead of the song, in steps; and a row to hear
+   * on its own, the others turned down to `focusOthers`. Ours, for working
+   * on one chip in place: the game has neither. Neither touches the plan:
+   * the region is a seek at its end, the focus a factor on each voice's gain
+   * as it is handed over, so the pool steals exactly as before.
+   */
+  private region: { start: number; end: number } | null = null;
+  private focusRow: number | null = null;
+  private focusOthers = 0.2;
+
+  setRegion(start: number, end: number): void {
+    this.region = end > start ? { start, end } : null;
+  }
+
+  clearRegion(): void {
+    this.region = null;
+  }
+
+  get regionNow(): { start: number; end: number } | null {
+    return this.region;
+  }
+
+  setFocus(row: number | null, others = 0.2): void {
+    this.focusRow = row;
+    this.focusOthers = others;
+  }
+
   seek(frames: number): void {
     const was = this.playing;
     if (was) this.stop(false);
@@ -950,6 +981,11 @@ export class Player {
         }
       }
       this.nextIndex += 1;
+    }
+    if (this.region && now >= this.frameAt(this.region.end)) {
+      // Round the section again; as with the song's loop, this pump is done.
+      this.seek(this.frameAt(this.region.start));
+      return;
     }
     if (now >= this.songFrames) {
       if (this.loop && this.songFrames > 0) {

@@ -124,6 +124,8 @@ playButton.addEventListener('click', () => (player.playing ? player.stop() : pla
 // Stop: silence, and back to the start -- a stop, not a pause; the pause is
 // the play button pressed again.
 stopButton.addEventListener('click', () => {
+  // Stop drops the chip loop too: what plays next is the song from the top.
+  window.dispatchEvent(new Event('lbp:stop'));
   player.stop();
   player.seek(0);
 });
