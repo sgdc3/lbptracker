@@ -371,10 +371,10 @@ worker.onmessage = (event: MessageEvent) => {
     const list = message.list as {
       key: string; name: string; tracks: number; file?: string;
     }[];
+    // The first song, always. A development shortcut used to jump to
+    // `#737099` (This Is Halloween) whenever a level held it, which read as
+    // "the renderer picks the second song" the moment anyone else opened one.
     picker.setRows(list);
-    // This Is Halloween, if it is in here: the one every render is judged on.
-    const halloween = list.find((item) => item.key.endsWith('#737099'));
-    if (halloween) picker.select(halloween.key);
     // ⚠️ A level that would not open is said out loud, never swallowed.
     for (const bad of (message.failed as { name: string; why: string }[] | undefined) ?? []) {
       setStatus(`${bad.name}: ${bad.why}`, true);
