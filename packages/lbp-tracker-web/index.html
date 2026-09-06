@@ -7,8 +7,13 @@
 <link rel="stylesheet" href="./ui.css">
 <style>
   /* The one page: a DAW shell around one song. Page-level rules are in ui.css. */
-  body { padding: 0 0 4rem; }
-  main { max-width: none; padding: 0 1rem; }
+  /* A column at least a viewport tall, so the text footer sits at the end of the
+     scroll -- just above the fixed status bar -- however short the content is. */
+  body {
+    padding: 0 0 var(--foot-h, 2.2rem); box-sizing: border-box; min-height: 100vh;
+    display: flex; flex-direction: column;
+  }
+  main { flex: 1 0 auto; max-width: none; padding: 0 1rem; }
 
   /* ------------------------------------------------------------- the top bar */
   .daw-top {
@@ -273,7 +278,9 @@
   #errorCard.show { display: block; }
   /* The text footer belongs to the home view only, centred under the presentation;
      the working views end at the status bar. */
-  .site-foot { display: none; padding-left: 1rem; padding-right: 1rem; max-width: none; text-align: center; }
+  .site-foot {
+    display: none; margin: 2rem 0 0; padding: 1.1rem 1rem .9rem; max-width: none; text-align: center;
+  }
   body[data-view="home"] .site-foot { display: block; }
 </style>
 </head>
