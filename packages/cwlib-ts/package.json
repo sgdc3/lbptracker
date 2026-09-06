@@ -9,5 +9,9 @@
   },
   "files": [
     "src"
-  ]
+  ],
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "node ../../node_modules/typescript/bin/tsc -p ."
+  }
 }

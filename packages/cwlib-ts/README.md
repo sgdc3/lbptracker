@@ -45,4 +45,4 @@ coverage at all, and the bound is what keeps "we do not support this" from becom
 produced something". See *28* in `steering/open-questions.md`.
 
 Verified against 22 real levels and, for the Thing walk, against a cwlib dump of 129,696 sequencer
-rows. `node --test` from the repository root runs it.
+rows. `npm test` from the repository root runs it, or `npm test -w @lbptracker/cwlib` alone.

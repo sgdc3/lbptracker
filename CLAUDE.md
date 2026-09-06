@@ -80,14 +80,19 @@ point in the web package. Imports cross by package name:
 
 - `npm install` — **required**: workspaces resolve the package names through symlinks in
   `node_modules`. Nothing is downloaded for the libraries.
-- `npm test` — `node --test`, all three workspaces at once, from the root (291 tests, 2026-09-06).
-- `npm run typecheck` — two `tsc` projects, then `vue-tsc` for the web package. ⚠️ **The web
-  package checks `.vue` through `typescript-native-bridge`**: `vue-tsc` needs a JavaScript API and
-  `typescript@7` is the native compiler and has none. See
-  `packages/lbp-tracker-web/dev/typecheck.mjs` and *The toolchain* in
+- `npm test` — `node --test`, all three workspaces at once, from the root (291 tests, 2026-09-06);
+  `npm test -w @lbptracker/lib` for one package.
+- `npm run typecheck` — fans out to each package's own `typecheck` script: `tsc -p .` in the two
+  libraries, `vue-tsc` for the web package. ⚠️ **The web package checks `.vue` through
+  `typescript-native-bridge`**: `vue-tsc` needs a JavaScript API and `typescript@7` is the native
+  compiler and has none. See `packages/lbp-tracker-web/dev/typecheck.mjs` and *The toolchain* in
   `steering/tracker-architecture.md`.
+- `npm run check` — typecheck, then tests: the one command to run before a commit.
 - `npm run serve` / `build` / `preview` — Vite, **in the web package only**; `127.0.0.1:8173` and
   `:8174`.
+- The libraries depend on each other as `"*"`, so a version bump touches the three manifests and
+  nothing else; the web footer reads its version out of its own `package.json`
+  (`packages/lbp-tracker-web/src/version.ts`), and a test holds the root manifest to the same number.
 
 ❗ **The two libraries have no build step and must keep it that way.** Node runs their TypeScript
 directly, so the file the browser executes is the file `node --test` executes, which is what the

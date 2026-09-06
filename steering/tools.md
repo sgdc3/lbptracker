@@ -180,7 +180,8 @@ believing a zero.
 
 ## The sound harnesses — `packages/lbp-tracker-lib/dev/`
 
-All run as `node --experimental-strip-types <file>`. None is in the pipeline; each exists so that a
+All run as `node <file>` — Node 24 strips the types unaided, and `engines` in the root
+`package.json` says so. None is in the pipeline; each exists so that a
 question can be answered in seconds instead of by ear.
 
 | harness | what it proves |

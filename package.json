@@ -11,17 +11,18 @@
     "packages/lbp-tracker-web"
   ],
   "engines": {
-    "node": ">=22.6"
+    "node": ">=24"
   },
   "scripts": {
     "test": "node --test",
-    "typecheck": "node node_modules/typescript/bin/tsc -p packages/cwlib-ts && node node_modules/typescript/bin/tsc -p packages/lbp-tracker-lib && npm run typecheck -w @lbptracker/web",
+    "typecheck": "npm run typecheck --workspaces",
+    "check": "npm run typecheck && npm test",
     "build": "npm run build -w @lbptracker/web",
     "serve": "npm run dev -w @lbptracker/web",
     "preview": "npm run preview -w @lbptracker/web"
   },
   "devDependencies": {
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.4.1",
     "typescript": "^7.0.2",
     "typescript-native-bridge": "^6.0.3-bridge.16.tsgo.7.0.2"
   }

@@ -101,9 +101,16 @@ the file `node --test` runs, which is the property the fidelity argument rests o
   `typescript`. It was accepted only after being made to fail (a `const x: number = string` in
   `Fader.vue` and a `max: 'oops'` in a spec both came back as TS2322): **an exit code of 0 from a
   checker means nothing on its own.**
-- ⚠️ `typescript` and `typescript-native-bridge` both declare `bin: tsc`, so npm installed neither
-  shim and `npm run typecheck` died with `'tsc' is not recognized` — which reads as a broken PATH.
-  The script names `node node_modules/typescript/bin/tsc`.
+- ⚠️ `typescript` and `typescript-native-bridge` both declare `bin: tsc`, so npm installs neither
+  shim (`node_modules/.bin` holds `vite` and `vue-tsc` and no `tsc`) and a script saying `tsc`
+  dies with `'tsc' is not recognized` — which reads as a broken PATH. The libraries' `typecheck`
+  scripts therefore name the file: `node ../../node_modules/typescript/bin/tsc -p .`. Both
+  packages are hoisted to the root `node_modules`, so the path is stable.
+- Each package owns its `test` and `typecheck` scripts; the root's `typecheck` is
+  `npm run typecheck --workspaces`, which runs all three and exits non-zero if any fails
+  (measured with a `const x: number = 'oops'` in `cwlib`: exit 1, and the web check still ran
+  after it), and `npm run check` chains it with the tests. `node --test` at
+  the root finds every `*.test.ts` under `packages/` in one process, which is faster than three.
 
 ## Serving and shipping: Vite, in the web package only
 

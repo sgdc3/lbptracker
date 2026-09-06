@@ -9,11 +9,12 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "test": "node --test",
     "typecheck": "node dev/typecheck.mjs"
   },
   "dependencies": {
-    "@lbptracker/cwlib": "0.1.0",
-    "@lbptracker/lib": "0.1.0",
+    "@lbptracker/cwlib": "*",
+    "@lbptracker/lib": "*",
     "vue": "^3.5.42"
   },
   "devDependencies": {

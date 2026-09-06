@@ -24,6 +24,8 @@ __pycache__/
 node_modules/
 dist/
 .vite/
+*.tsbuildinfo
+npm-debug.log*
 
 # locally generated test fixtures -- see steering/tracker-architecture.md.
 # Never commit these: they are derived from copyrighted game assets and from
