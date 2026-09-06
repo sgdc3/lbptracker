@@ -167,6 +167,11 @@ glide and the plan rebuilds to 14,500 notes; play advances 32 steps in two secon
 Ctrl+Z restores the count; "add an instrument" places a chip at the cursor, the inspector's key select
 writes `Key`, Ctrl+D duplicates into the next free cell, Delete on the board removes the chip.
 
+**Mute and solo are per row and are the listener's, not the song's.** The game has neither, so
+they are kept on `EditorState` and never written to the song file or the MIDI; they decide which
+rows reach the player's plan and the render (`audibleSequencer` in `daw/session.ts`), a solo
+anywhere outranking every mute. The boxes sit in the board's gutter beside the row number.
+
 **The row is the unit the roll follows.** `selection.row` — on opening, the row of the chip nearest the start of the song, with that chip selected — is lit across the
 board; clicking a chip, a cell or a row number selects its row. As the song plays, the roll moves
 to the chip the playhead *enters* on that row (`chipUnder` in `daw/arrange.ts`): by transition, not

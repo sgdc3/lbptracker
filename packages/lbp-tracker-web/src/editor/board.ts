@@ -56,7 +56,11 @@ export interface BoardCallbacks {
 
 const CELL_W = 44;
 const CELL_H = 34;
-const GUTTER = 30;
+/** The gutter: the row number, then the mute and solo buttons. */
+const GUTTER = 66;
+const MUTE_X = 26;
+const SOLO_X = 46;
+const BUTTON_W = 17;
 const RULER = 18;
 
 export class BoardView {
@@ -257,13 +261,14 @@ export class BoardView {
     // drawn last so it sits on top of whatever it overlaps.
     const selectedClip = state.clip();
     const moving = this.drag?.kind === 'move' && this.drag.moved ? this.drag : null;
+    const heard = (clip: Clip) => (state.rowAudible(clip.row) ? 1 : 0.35);
     for (const clip of song.clips) {
       if (moving?.clip === clip) continue;
       if (clip === selectedClip) continue;
-      this.drawChip(clip, clip.cell, clip.row, false, 1);
+      this.drawChip(clip, clip.cell, clip.row, false, heard(clip));
     }
     if (selectedClip && moving?.clip !== selectedClip) {
-      this.drawChip(selectedClip, selectedClip.cell, selectedClip.row, true, 1);
+      this.drawChip(selectedClip, selectedClip.cell, selectedClip.row, true, heard(selectedClip));
     }
     // The one being dragged, where it would land.
     if (moving) this.drawChip(moving.clip, moving.at.cell, moving.at.row, true, 0.85);
@@ -332,7 +337,28 @@ export class BoardView {
         ctx.fillRect(0, y, 3, r.h);
       }
       ctx.fillStyle = row === state.selection.row ? accent : dim;
-      ctx.fillText(String(row), layout.gutter - 4, y + r.h / 2);
+      ctx.fillText(String(row), MUTE_X - 5, y + r.h / 2);
+      // Mute and solo: two small boxes, lit when on. A solo anywhere greys
+      // the mute boxes, since solos outrank them.
+      const muted = state.mutedRows.has(row);
+      const solo = state.soloRows.has(row);
+      const soloing = state.soloRows.size > 0;
+      const box = (x: number, on: boolean, colour: string, label: string, faded: boolean) => {
+        const bh = Math.min(16, r.h - 8);
+        const by = y + (r.h - bh) / 2;
+        ctx.fillStyle = on ? colour : 'rgba(255,255,255,0.06)';
+        ctx.globalAlpha = faded ? 0.4 : 1;
+        ctx.fillRect(x, by, BUTTON_W, bh);
+        ctx.fillStyle = on ? '#0d1a14' : dim;
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 9px ui-sans-serif, system-ui, sans-serif';
+        ctx.fillText(label, x + BUTTON_W / 2, by + bh / 2 + 0.5);
+        ctx.globalAlpha = 1;
+        ctx.textAlign = 'right';
+        ctx.font = '10px ui-monospace, Consolas, monospace';
+      };
+      box(MUTE_X, muted, '#ef6b6b', 'M', soloing && !solo);
+      box(SOLO_X, solo, '#e3b341', 'S', false);
     }
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
     ctx.fillRect(layout.gutter - 1, layout.ruler, 1, viewH);
@@ -458,9 +484,12 @@ export class BoardView {
       return;
     }
     if (cx < this.layout.gutter) {
-      // The row number: select the row.
+      // The gutter: the mute and solo boxes, or the row number to select the row.
       const row = Math.floor((y - this.layout.ruler) / this.layout.cellH);
-      if (row >= 0 && row < this.layout.rows) this.state.selectRow(row);
+      if (row < 0 || row >= this.layout.rows) return;
+      if (cx >= MUTE_X && cx < MUTE_X + BUTTON_W) this.state.toggleMute(row);
+      else if (cx >= SOLO_X && cx < SOLO_X + BUTTON_W) this.state.toggleSolo(row);
+      else this.state.selectRow(row);
       return;
     }
     const at = boardCellAt(this.layout, x, y);

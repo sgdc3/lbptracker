@@ -23,7 +23,7 @@ import type { Clip, Song, SongNote, SongPoint } from '@lbptracker/lib/song.ts';
  * to be rebuilt for a note, a placement or an instrument; the mixer and the
  * clock are applied live for a setting; the output stage is one message.
  */
-export type ChangeKind = 'notes' | 'settings' | 'effects' | 'selection';
+export type ChangeKind = 'notes' | 'settings' | 'effects' | 'selection' | 'mix';
 
 export interface Selection {
   /**
@@ -48,6 +48,15 @@ export class EditorState {
   readonly selection: Selection = { row: 0, clipId: null, noteIds: new Set(), point: null, cursor: null };
   /** The piano roll's grid: thirds of a step when on, whole steps when off. */
   triplets = false;
+  /**
+   * Rows muted and soloed, for listening only.
+   *
+   * ⚠️ Not the song's: the game has no mute or solo, so neither is written to
+   * the song file or the MIDI. They decide which rows reach the player's plan
+   * and the render -- what is heard -- and any solo outranks every mute.
+   */
+  readonly mutedRows = new Set<number>();
+  readonly soloRows = new Set<number>();
   dirty = false;
 
   private undoStack: Song[] = [];
@@ -63,6 +72,21 @@ export class EditorState {
   onChange(listener: (kind: ChangeKind) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** Whether a row is heard, under the mutes and solos as they stand. */
+  rowAudible(row: number): boolean {
+    return this.soloRows.size > 0 ? this.soloRows.has(row) : !this.mutedRows.has(row);
+  }
+
+  toggleMute(row: number): void {
+    if (!this.mutedRows.delete(row)) this.mutedRows.add(row);
+    this.notify('mix');
+  }
+
+  toggleSolo(row: number): void {
+    if (!this.soloRows.delete(row)) this.soloRows.add(row);
+    this.notify('mix');
   }
 
   private notify(kind: ChangeKind): void {
@@ -160,6 +184,8 @@ export class EditorState {
     const first = [...song.clips].sort((a, b) => a.cell - b.cell || a.row - b.row)[0];
     this.selection.row = first?.row ?? 0;
     this.selection.clipId = first?.id ?? null;
+    this.mutedRows.clear();
+    this.soloRows.clear();
     this.selection.noteIds = new Set();
     this.selection.point = null;
     this.selection.cursor = null;

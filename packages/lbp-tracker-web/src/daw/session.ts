@@ -53,8 +53,18 @@ export async function ensureAssets(): Promise<InstrumentLoader> {
   return loader;
 }
 
-/** The song as the renderer, the exporter and the player read it. */
+/** The song as the exporter reads it: every clip, whatever is muted. */
 export const currentSequencer = (): Sequencer => sequencerFromSong(state.song);
+
+/**
+ * The song as it is heard: the rows the mutes and solos leave, for the
+ * player's plan and the render. The mix is the listener's, not the file's.
+ */
+export const audibleSequencer = (): Sequencer => {
+  const song = state.song;
+  if (song.clips.every((c) => state.rowAudible(c.row))) return sequencerFromSong(song);
+  return sequencerFromSong({ ...song, clips: song.clips.filter((c) => state.rowAudible(c.row)) });
+};
 
 // ------------------------------------------------------------- status, error
 
@@ -172,7 +182,7 @@ async function replan(): Promise<void> {
   replanning = true;
   try {
     const load = await ensureAssets();
-    const seq = currentSequencer();
+    const seq = audibleSequencer();
     const restart = restartNext;
     restartNext = false;
     pushEffects();
@@ -199,7 +209,7 @@ async function replan(): Promise<void> {
 }
 
 state.onChange((kind) => {
-  if (kind === 'notes') replanSoon();
+  if (kind === 'notes' || kind === 'mix') replanSoon();
   else if (kind === 'settings') pushSettings();
   else if (kind === 'effects') pushEffects();
 });

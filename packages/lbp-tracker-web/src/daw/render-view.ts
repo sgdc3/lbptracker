@@ -7,8 +7,8 @@
  * to an `<audio>` element as a blob. Playback of the result is the browser's
  * only job here -- no resampling, no `playbackRate`.
  *
- * ❗ It renders **the song that is open**, as it stands: the same
- * `sequencerFromSong` the player schedules from, so what is heard on the
+ * ❗ It renders **the song that is open**, as it is heard: the same rows the
+ * player schedules under the mutes and solos, so what is heard on the
  * transport is what the file will hold.
  */
 
@@ -17,7 +17,7 @@ import Checks from '../controls/Checks.vue';
 import { render } from '../controls/render.ts';
 import { CONTROLS } from '../controls/kit.ts';
 import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '@lbptracker/lib/polyphony.ts';
-import { clock, currentSequencer, setError, state } from './session.ts';
+import { audibleSequencer, clock, setError, state } from './session.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -360,7 +360,8 @@ export function mountRender(opts: { isActive: () => boolean }): void {
     setBar(0);
     worker.postMessage({
       type: 'render',
-      sequencer: currentSequencer(),
+      // What is heard: the rows the mutes and solos leave, as on the transport.
+      sequencer: audibleSequencer(),
       from: from ?? 0,
       seconds: to === undefined ? 0 : to - (from ?? 0),
       voiceLimit,
