@@ -40,6 +40,9 @@ time. If you add an import to that graph, keep it relative.
 
 ## Deliberate deviations
 
-There is exactly one, and it is switched off rather than removed: the WaveHammer compressor is
-implemented, tested and **disabled by default** on a listening judgement. `renderProject`'s
-`compressor` option turns it back on. See *38* in `steering/open-questions.md`.
+Four, each a listening judgement kept one switch away from the measured behaviour: the WaveHammer
+compressor is implemented, tested and **disabled by default** (`compressor`); the voice pool frees a
+record at the note's written end rather than after its release (`releaseTail`); the stereo fold's
+gain is applied but its narrowing is not; and note onsets are sample-accurate where the engine
+places them on its 256-frame block. All four, with what would settle each, are in
+`steering/open-questions.md`.

@@ -19,7 +19,7 @@ console.log(level.things.length, musicSequencers(level).length);
 |---|---|
 | `resource.ts` | the `LVLb` / `PLNb` container: revision, branch, the zlib chunk table |
 | `stream.ts` | the big-endian reader, and `Revision` with the version and branch gates |
-| `thing.ts`, `parts.ts` | the Thing graph and **30 part serialisers** |
+| `thing.ts`, `parts.ts` | the Thing graph and its part readers — `partReaders().size` is the number (50 as of 2026-09-06) |
 | `level.ts` | the walk: worlds, plans, streamed `CHKb` chunks and islands |
 | `project.ts`, `notes.ts` | the music sequencer as data — note records, chaining, automation |
 | `savearchive.ts` | PS3 `FAR4` saves, XXTEA with a constant key |

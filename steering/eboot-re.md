@@ -1,177 +1,159 @@
-# Reverse-engineering LBP3's eboot
+# Reverse-engineering LBP3's eboot and its audio plugins
 
-Read before opening the binary. The address conventions here have already cost one session several
-hours; the rest is a map of what has been found so far.
+Read before opening the binary. The address conventions have already cost one session several
+hours twice; the rest is the map of what has been found, so the next session extends it instead of
+re-deriving it. The tools are catalogued in [tools.md](tools.md).
 
-
-## ⚠️ `v0x2a1190` is mid-function — the DSP-record builder starts at `v0x2a1144`
-
-Recorded 2026-09-02, because it cost time twice. Steering named the builder that fills the DSP's
-instrument record as `v0x2a1190`; that is the `lea rdi, [r14 + 0x4e8]` **inside** it, and
-disassembling from there opens with `add byte ptr [rax], al`, which is what a desynchronised stream
-looks like rather than an error.
-
-The entry is `v0x2a1144` (`push r14 ; mov r14, rsi`). It has **no direct callers** — it is reached
-through a vtable, so the usual "scan for `E8` landing here" finds nothing and the constructor above
-it, `v0x2a0e80`, is what the call graph shows instead.
-
-The general rule: in this eboot, **find the function start before disassembling**, by taking the
-largest `E8` target at or below the address of interest. When that returns something implausibly far
-away, suspect an indirect call rather than a long function.
-
-
-## The files
+## The files, and the delta each needs
 
 | file | size | `file = vaddr + …` |
 |---|---|---|
 | `C:\Users\sgdc3\Desktop\shadPS4\lbp3-ebins\eboot-v128.bin` | 18,497,333 | **`0x4000`** |
 | `D:\PS4Games\CUSA00063-patch\eboot.bin` (installed fSELF) | 18,506,517 | **`0x8AD0`** |
 | `C:\Users\sgdc3\Desktop\shadPS4\lbp3-ebins\eboot-v100.bin` | 17,218,664 | derive it, don't assume |
+| `D:\PS4Games\CUSA00063-patch\gamedata_orbis\spu\fmodextinput.prx` | 23,794 | **`0x7e0`** for `v0x0`–`0x4b08`; the BSS segment `v0x8000`–`0xd3b0` is at file `0x5310` |
+| `D:\PS4Games\CUSA00063-patch\gamedata_orbis\spu\fmodsmsreverb.prx` | 16,118 | **`0x7c0`** |
+| `D:\PS4Games\CUSA00063-patch\gamedata_orbis\spu\fmodsmswavehammer.prx` | 11,870 | `prxdis.py hammer map` |
+| `D:\PS4Games\CUSA00063-patch\sce_module\libc.prx` | | `prxdis.py libc map` |
+
+⚠️⚠️ **The plugins this project has read are the PATCH copies**, the ones `tools/prxdis.py` and
+`tools/prxnid.py` open. The base game's `D:\PS4Games\CUSA00063\gamedata_orbis\spu\` holds
+*different* files — 23,614, 14,898 and 11,754 bytes — with a different rodata layout, and a
+constant dumped out of one of those at a vaddr from this workspace lands on the wrong value with
+no error (measured 2026-09-06: the sampler's `4.0` is at `v0x4584` in the patch file and at
+`v0x44f0` in the base one). The eboot is the patch too (`eboot-v128.bin`).
 
 ⚠️⚠️ **The delta depends on which file you opened.** `eboot-v128.bin` is the already-peeled ELF —
 its own program headers say so (`ebseg.py`: LOAD `off=0x4000, vaddr=0`). The installed `eboot.bin`
-is the fSELF, whose extra container header shifts everything by `0x8AD0`. **All addresses in this
-workspace are vaddrs**; convert at the point of use.
+is the fSELF, whose container header shifts everything by `0x8AD0`. **All addresses in this
+workspace are vaddrs**; convert at the point of use. One-line check: apply the delta to the 4222
+script-binding targets and count how many land on a `55 48 89 e5` prologue — the right delta gives
+**3559/4222**, a wrong one ~640/4222.
 
-How to check you got it right, in one line: apply the delta to the 4222 script-binding targets and
-count how many land on a `55 48 89 e5` prologue. The correct delta gives **3559/4222**; a wrong one
-gives ~640/4222. `tools/lbpdis.py` already carries the right delta for `eboot-v128.bin`.
+The PRXs are SELFs too: the inner ELF's program headers are not file offsets, and the real offset of
+ELF segment `i` is the SELF entry at `0x20 + n*0x20` whose `props >> 20` is `i`. ⚠️⚠️ **Every PRX
+address written in this project before 2026-09-02 is 0x40 too high**: `prxdis.py` used `0x7a0` and
+`0x780` — the offsets of the 32-byte *digest* blocks that precede those segments. The failure mode
+is completely invisible: disassembly from `start` reads `data[start + delta]`, so a uniform delta
+error just relabels correct code, and a rip-relative target computed as `vaddr + size + disp` is
+read back at `target + delta` — the same error twice, cancelling. **No fact recorded from those
+disassemblies is wrong; every address is.** Subtract 0x40 before looking one up.
 
-### The audio PRXs have the same trap, and this project fell into it
+⚠️ **The failure mode of a wrong eboot delta is silent and convincing too.** The identifier blob is
+dense enough that you still read plausible strings — truncated by a byte or two
+(`sSlotShareable__Q6SlotID` for `IsSlotShareable__Q6SlotID`) — and the disassembler starts
+mid-instruction without complaining. If names look *almost* right, suspect the delta.
 
-| file | `file = vaddr + …` |
-|---|---|
-| `gamedata_orbis/spu/fmodextinput.prx` | **`0x7e0`** |
-| `gamedata_orbis/spu/fmodsmsreverb.prx` | **`0x7c0`** |
-
-Same rule as the eboot: these are SELFs, the inner ELF's program headers are not file offsets, and
-the real offset of ELF segment `i` is the SELF entry at `0x20 + n*0x20` whose `props >> 20` is `i`.
-
-⚠️⚠️ **Every PRX address written in this project before 2026-09-02 is 0x40 too high.** `prxdis.py`
-used **0x7a0** and **0x780** — the offsets of the 32-byte *digest* blocks that precede those
-segments, not of the segments. The failure mode here is the opposite of the eboot's: it is
-completely invisible. Disassembly from `start` reads `data[start + delta]`, so a uniform delta error
-just relabels correct code, and a rip-relative target computed as `vaddr + size + disp` is read back
-at `target + delta` — the same error twice, cancelling. **No fact recorded from those disassemblies
-is wrong; every address is.** Subtract 0x40 before looking one up, and re-run it through
-`tools/prxdis.py`, which now carries the measured deltas and can print the segment table.
-
-⚠️ **The failure mode is silent and convincing.** With the wrong delta the identifier blob is dense
-enough that you still read plausible-looking strings — just truncated by a byte or two
-(`sSlotShareable__Q6SlotID` instead of `IsSlotShareable__Q6SlotID`) — and the disassembler starts
-mid-instruction without complaining. If names look *almost* right, suspect the delta before
-suspecting the data.
+❗ **Find the function start before disassembling.** Take the largest `E8` target at or below the
+address of interest; when that lands implausibly far away, suspect an indirect call rather than a
+long function. `v0x2a1190` cost time twice: it is the `lea rdi, [r14 + 0x4e8]` *inside* the DSP
+record builder, whose entry is `v0x2a1144` (`push r14 ; mov r14, rsi`), reached through a vtable
+with no direct callers. The same trap in the PRX: `0x250` is inside the scale quantiser, which
+starts at `0x240`; `0x3930` is the note walker, not `0x38e0`. A range quoted in a note can stop at
+a loop's back-edge — **disassemble past its end**, or you stop before the loop's own conclusion
+(the instruction after the stack loop was the whole of question 12).
 
 ## The script-binding table
 
-`C:\Users\sgdc3\Desktop\shadPS4\lbp3-re\bindings-1.28.txt` — 4222 `name -> vaddr` pairs.
-
-Names with a `__` suffix are the game's script-VM bindings. They have **no rip-relative reference
-anywhere in the binary**, which is why xref hunts for them always come back empty: the tables that
-hold them are built from `R_X86_64_RELATIVE` relocations, so the pointers exist only as relocation
-addends. `lbp3-re\ebrela.py` recovers them by finding the RELA array by shape.
-
-⚠️ Use the **`vaddr` column only**. The `file` column in that file is computed with the `0x8AD0`
-delta and is therefore wrong for `eboot-v128.bin`.
-
-## Tools (in `tools/`)
-
-| tool | what it does |
-|---|---|
-| `lbpdis.py <vaddr> [n]` | capstone disassembly by vaddr, resolving rip-relative targets to strings, tagging binding names and marking call targets that land inside FMOD |
-| `callgraph.py <vaddr> [depth]` | BFS the direct-call graph from a seed and report the shortest paths that reach FMOD code |
-| `fmodapi.py` | enumerate every game→FMOD call edge and attribute each callee to the FMOD `.cpp` it lives in |
-| `ebvtable.py <name> [n]` | **name a C++ class's vtable through RTTI** and dump its slots; `slot <off> <name>` compares one slot across classes, `who <vaddr>` says which vtable slot holds a function |
-
-They share one measurement trick worth understanding: **FMOD's code range is derived, not
-assumed.** FMOD's memory tracker passes `__FILE__` at every allocation site, so every rip-relative
-reference to a `Z:\LBP\sdk\fmod\...cpp` string sits inside FMOD code. Collect those and you get
-FMOD's extent (`v0x9c5da3`–`v0xab6397`) and, per callee, which source file it belongs to. The same
-trick works for the CWLib paths on the game side.
-
-⚠️ **`ebxref.py` is two different scripts, and the one you want is this repository's.**
-`tools/ebxref.py` answers *who references this address* — `refs <vaddr>` for rip-relative
-references and `calls <vaddr>` for direct calls, clustered by caller and marked game-side or
-FMOD-internal, all in **vaddr** space. An older script of the same name in the scratch checkout
-below works in **file-offset** space and predates the delta being fixed. Reach for `tools/`.
-
-The rest of that older set is still worth knowing about and still only lives in
-`C:\Users\sgdc3\Desktop\shadPS4\lbp3-re\`, outside this repository: `ebrela.py` (binding table),
-`ebseg.py` (program headers — run this first on any new binary), `ebschema.py` (recover a
-serialised struct's field names and offsets), `ebstr.py` (string scan; ⚠️ its `v=` column uses a
-stale delta, ignore it).
+`C:\Users\sgdc3\Desktop\shadPS4\lbp3-re\bindings-1.28.txt` — 4222 `name -> vaddr` pairs. Names
+with a `__` suffix are the game's script-VM bindings. They have **no rip-relative reference anywhere
+in the binary**, which is why xref hunts for them come back empty: the tables that hold them are
+built from `R_X86_64_RELATIVE` relocations, so the pointers exist only as relocation addends.
+`lbp3-re\ebrela.py` recovers them by finding the RELA array by shape. ⚠️ Use the **`vaddr` column
+only**; the `file` column is computed with the `0x8AD0` delta.
 
 ## Techniques that worked here
 
+- **FMOD's code range is derived, not assumed.** FMOD's memory tracker passes `__FILE__` at every
+  allocation site, so every rip-relative reference to a `Z:\LBP\sdk\fmod\...cpp` string sits inside
+  FMOD code. Collecting those gives FMOD's extent (`v0x9c5da3`–`v0xab6397`) and, per callee, which
+  source file it belongs to; every tool in `tools/` marks calls that land there. The same trick
+  works for the CWLib paths on the game side.
 - **Serialiser walking.** Every LBP resource and part has a serialiser that emits, per field, a
   `lea` to the member offset and a `lea` to the field-name string. Disassemble it linearly and you
-  get the whole schema with names. This is how `PSequencer`, `PInstrument`, `RInstrument` and the
-  sample-slot struct were recovered. ⚠️ `ebschema.py` assumes the member `lea` comes **first** and
-  the name second — pairing them the other way shifts every field by one and still looks plausible.
-- **Array element sizes from the growth helper.** Array fields pass an element callback whose
-  allocation multiplier is the element size (`lea edx, [r13*4]` → 4 bytes). That is how `Notes` was
+  get the whole schema with names — `PSequencer`, `PInstrument`, `RInstrument` and the sample
+  slot. ⚠️ `ebschema.py` assumes the member `lea` comes first and the name second; pairing them
+  the other way shifts every field by one and still looks plausible.
+- **Array element sizes from the growth helper.** An array field passes an element callback whose
+  allocation multiplier is the element size (`lea edx, [r13*4]` → 4 bytes) — how `Notes` was
   measured, cross-checked against `Name` giving 1.
 - **Field-name neighbourhoods.** Serialiser name strings are packed contiguously, so dumping the
-  strings around one known field name usually reveals the whole struct at once.
+  strings around one known field name usually reveals the whole struct.
 - **Import-library names from the dynamic section.** `DT_SCE_IMPORT_LIB` entries encode
   `(id << 48) | (version << 32) | name_offset`; the id maps to the symbol suffix through the same
-  base64 alphabet as NIDs. That is how the `FMOD*` libraries and the 5 `libSceAudioOut` imports
-  were found.
-- ❗ **RTTI names vtables, and this binary has it.** 122 Itanium-mangled `N4FMOD...E` strings and
-  **322 nameable vtables**. Three hops, each a lookup in the relocation map:
-  `name -> type_info + 8 -> type_info -> vtable - 8 -> vtable`. `ebvtable.py` does it in a third of
-  a second, and it is what closed question 22 after a session of structural vtable enumeration had
-  produced five wrong candidates and one very convincing near miss.
-
-  ⚠️ **Every vtable slot is ZERO on disk.** This is a PIE and the pointer lives in an
-  `R_X86_64_RELATIVE` addend, so searching the image for a pointer to a type_info returns nothing —
-  which reads as "no RTTI" rather than "look in the relocations". The relocations are plain 24-byte
+  base64 alphabet as NIDs. That is how the `FMOD*` libraries and the 5 `libSceAudioOut` imports were
+  found, and ⚠️ a NID's `#L#M` suffix names its module — read it before building anything on the
+  symbol (`ebdyn.py`).
+- ❗ **RTTI names vtables, and this binary has it.** 204 Itanium-mangled `N4FMOD…E` strings
+  (measured 2026-09-06 with `N4FMOD[A-Za-z0-9_]+E\0` over the image) and **322 nameable vtables**.
+  Three hops, each a lookup in the relocation map: `name -> type_info + 8 -> type_info -> vtable - 8
+  -> vtable`; `ebvtable.py` does it in a third of a second. ⚠️ **Every vtable slot is ZERO on
+  disk** — this is a PIE and the pointer lives in an `R_X86_64_RELATIVE` addend (plain 24-byte
   `(r_offset, r_info, r_addend)` triples with `r_info == 8`, recoverable by a stride-8 sweep with no
-  section headers.
+  section headers), so searching the image for a pointer returns nothing, which reads as "no
+  RTTI". ⚠️ A pointer to `X`'s type_info comes from `X`'s vtable *and* from every derived class's
+  `__si_class_type_info` at `type_info + 16`; half the candidates a naive walk finds are
+  type_infos, and dumping one prints strings where functions should be. Require slot 0 to be code.
+- **Naming a slot, once the class is named.** Nothing carries method names; identify a slot from the
+  call site's *shape*: `v0xa0b539` calls `[vtable + 0x98]` with two floats and no integer, which is
+  `setPan(pan, spread)` on a `ChannelSoftware` and could not be the four-argument
+  `DSP::setDefaults` a structural search had offered.
+- **Relocation addends over segment arithmetic.** The scale table's address was computed from the
+  SELF mapping once and landed 48 bytes early on a row of zeros; the `R_X86_64_RELATIVE` addend on
+  the pointer slot is the number. Read the relocation; do not compute the address.
+- **Run the thing.** `tools/runhammer.py` loads a PRX into a Windows process; it settled in a minute
+  what three static readings had got wrong (an absolute-offset search is only sound if every access
+  uses the same base).
+- **Byte-scan for `E8` displacements** landing on a known callee to find its callers, then search
+  backwards for `55 48 89 e5` for the caller's prologue — how the channel-banding writer was found.
+  `ebxref.py` does it in vaddr space.
 
-  ⚠️ **A pointer to `X`'s type_info comes from `X`'s vtable *and* from every derived class's
-  `__si_class_type_info`** (at `type_info + 16`). Half the candidates a naive walk finds are
-  type_infos, and dumping one prints strings and small integers where functions should be. Require
-  slot 0 to be a code address.
-- **Naming the slot, once the class is named.** Nothing carries method names. Identify a slot from
-  the call site's *shape*: `v0xa0b539` calls `[vtable + 0x98]` with two floats and no integer, which
-  is `setPan(pan, spread)` on a `ChannelSoftware` and could not be the four-argument
-  `DSP::setDefaults` that a structural search had offered.
-
-## Anchors already mapped
+## Anchors already mapped — the eboot
 
 | what | vaddr |
 |---|---|
-| sequencer module | `v0x1c3000` … `v0x1c7000` |
-| `PSequencer::BeginPlayback` | `v0x1c4f00` |
-| "stop all other music sequencers" walk | `v0x1c5670` |
-| sample-preload job (`StartSamplePreload` at `v0x1c3ce8`) | worker `v0x1c37f0` |
+| sequencer module | `v0x1c3000` … `v0x1c7000` (⚠️ linear disassembly from `v0x1c3000` desynchronises on the first instruction; sync from a function start) |
+| `BeginSequencerPlayback__Q5Thingibi` (script binding) → part lookup wrapper → `PSequencer::BeginPlayback` | `v0x854b80` → `v0x9629d0` (reads `[thing+0x50] + 0x128`) → `v0x1c4f00` |
+| **playback start**: fetches the audio state, plays the start sound (`v0x3de390` with 1.5), fills the clip arrays, pushes the settings | `v0x1c5640` (`v0x1c5670` is *inside* it — not a separate "stop others" walk; the walk over every `MusicSequencer` Thing tests `+0x56` at `v0x1c5773`) |
+| the settings push: `Tempo`, `Swing` (`vminss` 0.99), `EchoFeedback`, `EchoTime × 0.5`, `EchoMix`, eight `Volume × 0.75`, `ReverbSetting` → `v0x3e7470` | `v0x1c6250`; the constants at `v0xe60fe4`, `v0xe60fe8`, `v0xe60fec` |
+| world length → steps (`x·32/105`) | `v0x1c5cda` |
+| board position → grid cell (`floor(2x/105 − 0.5)`, `floor(−y/105)`) | `v0x1c4ad0`–`v0x1c4b23`; constants `v0xe60f98`, `v0xe60f9c`, `v0xe60fa8` |
+| the clip filler (`PInstrument` → `0x470` clip), and its one caller | `v0x1607c0`; `v0x1c449b` (passes `rdx = 0`); the instrument index written by `v0x1c4420` |
+| the clip header writer (channel band), the band divisor, the `<< 4` | `v0x1608d0`; `v0x1c7909`–`v0x1c793c`; `v0x1c452a` |
+| the runtime instrument builder, and the DSP-record builder that copies `Params` at `+0x4e8` | `v0x1c3fb0`; `v0x2a1144` (entry; `v0x2a1190` is mid-function), constructor above it `v0x2a0e80`, the first slot field copied at `v0x2a1220` |
+| sample-preload job spawner, its worker, the `RSample` (type `0x31`) load | `v0x1c3c80`, `v0x1c37f0`, `v0x1c38aa`; `"StartSamplePreload"` at `v0xe61158`, referenced at `v0x1c3ce5` |
 | CWLib audio layer | `v0x3dd000` … `v0x3fe000` |
-| audio init / `.fev` load / `EventSystem::getGroup` calls | `v0x3e7960` |
-| DSP creation | `v0x3e6700` … `v0x3e72c0` |
-| `DSP::setParameter` block (10 calls) | `v0x3fd4c0` … `v0x3fd5d0` |
-| generic play-sound(id, flags, volume) | `v0x3de390` |
-| VoIP audio-out port open | `v0x3f5650` |
+| the audio state block, its accessor, its init (768,000-byte echo ring at `+0x1b18`), enable/pause, teardown | `v0x132bb10`, `v0x3fbf20`, `v0x3e6c10`, `v0x3e6e00`, `v0x3e7060`; nine accessors over `+0x1ac8`/`+0x1ad0`/`+0x1ad8` at `v0x160930`–`v0x1610c0` |
+| the `"Sequencer"` DSP: description on the stack, `createDSP`, `setDefaults`, `playDSP`, `setMode`, `addDSP`(reverb), `addDSP`(WaveHammer) | `v0x3e65a0`/`v0x3e664b`, `v0x3e66cb` (`createDSP` at `v0xa48b90`), `v0x3e66f4`, `v0x3e6718`, `v0x3e67cb`, `v0x3e67f9`, `v0x3e6976`; handles `v0x132aac8` (sequencer), `v0x132aac0` (WaveHammer); the read-callback import slot `v0x10cc3f8` |
+| the WaveHammer description (name as a `movabs` immediate), its create callback with the `rep movsd` of the static template, its setparameter callback, the paramdescs | `v0x3e62b0`; `v0x3fd6c0` (`v0x3fd8cb`), template `v0x1062850`; `v0x3fda80`; `v0x10783c0` (`numparameters` = 16 from `v0xbc10a0`) |
+| DSP creation range; the `DSP::setParameter` block (10 calls); `applyReverbPreset`; the reverb configure | `v0x3e6700`–`v0x3e72c0`; `v0x3fd4c0`–`v0x3fd5d0` (`setParameter` at `v0xa23970`); `v0x3fd4c0`; `v0x3fcd50` |
+| reverb preset table (12 × 11 `int32`) / `ReverbSetting` remap (8 entries) | `v0x1062620` / `v0x1062830` |
+| audio init, `.fev` load, `EventSystem::getGroup` calls | `v0x3e7960` (`getGroup` at `v0x9d3190`) |
+| VoIP audio-out port open (4 ports of type 2, one per player) | `v0x3f5650` |
 | FMOD code | `v0x9c5da3` … `v0xab6397` |
+| FMOD's output description "FMOD Orbis AudioOut Output", its `GetDriverCaps`, its `Init` | `v0x13e3c78`, `v0xa57770` (`v0xa577f7` rejects any rate but 48000), `v0xa577a0` |
+| `ChannelSoftware::setPan`, `setSpeakerMix`, the channel→speaker matrix, the 7.1×4 case | vtable `+0x98` → `v0xabdf30`, `+0xa8` → `v0xabe160`, `v0xa243a0`, jump tables `v0xa2664c`/`v0xa2670c`, **`v0xa2599f`** (`k = 0.5` at `v0xefc008`); the stereo→7.1 case `v0xa2579c` |
 | Sony reverb plugin (`aSfxDsp`) entry — **not** the sequencer's reverb | `v0xab51b0` |
-| reverb preset table (12 x 11 `int32`) / `ReverbSetting` remap | `v0x1062620` / `v0x1062830` |
-| `applyReverbPreset(dsp, setting)` | `v0x3fd4c0` |
-| reverb DSP configure — slots to parameter block | `v0x3fcd50` |
-| `PInstrument` serialiser | `v0xd36c60` |
-| `PSequencer` serialiser | `v0xd37d10` |
-| `RInstrument` serialiser | `v0xc68a70` |
-| sample-slot serialiser | `v0xcc0e90` |
+| `PSequencer`, `PInstrument`, `RInstrument`, sample-slot serialisers; the array serialiser with its `movbe` | `v0xd37d10`, `v0xd36c60`, `v0xc68a70`, `v0xcc0e90`; `v0xcc0f20` (`v0xcc0f9d`, `v0xcc1025`) |
+| part-name table; the ordered `R*` resource-type names | file `0xe4e196+`; file `0xe4e405` |
+| the script→native funnel (one indirect call, callee in `rbx`) | file `0x3d9e72` |
 
-## A live-tracing option, if static analysis stalls
+Other useful script bindings: `StopSequencerPlayback__Q5Thingi`, `TriggerSequencerMusic__Q5Thing`,
+`GetElemPSequencer__Q5Thingi`, `GetSizePSequencer__Q5Thing`, `GetTimeLengthOnSequencer__Q5Thing`,
+`GetSequencerReverbSetting__Q5Thing`, `TweakSequencer`, and the Interactive Music set
+(`SetInteractiveMusic__ggffiQ5Thing`, `GetInteractiveMusicStemName__gi`,
+`GetInteractiveMusicNumSliders__g`).
 
-The shadPS4 workspace has (uncommitted) a guest breakpoint tracer, `src/core/guest_trace.{h,cpp}`,
-driven by `SHADPS4_TRACE=<addr,addr>` and `SHADPS4_TRACE_OUT=<path>`. Every hit logs the address,
-the return address read from `[rsp]` (which names the caller even for indirect calls) and the
-argument registers. Every script→native call also funnels through **one** indirect call at file
-`0x3d9e72`, callee in `rbx` — breakpoint that and cross the `rbx` values against the binding table
-and you get a complete script call trace.
+## Anchors already mapped — the plugins
 
-⚠️ Three traps documented there, all of which look like "the code is never called": the trap
-arrives with RIP **on** the address rather than after it; never call `LOG_*` from inside the
-handler (deadlock); and the handler must be registered with `AddVectoredExceptionHandler(1, …)`.
-Always arm the eboot entry point as a positive control before believing a zero.
+`fmodextinput.prx` exports exactly one symbol, `wycAbBCjLI4` at `0x170`; its LOAD segments are
+`vaddr 0x0000 size 0x4ab0` and `vaddr 0x8000 filesz 0x210 memsz 0x53a0`; its imports and the
+dynlibdata offsets are in [synth-engine.md](synth-engine.md), along with every function read
+inside it (`0xa90` the block function, `0x1c60` the per-voice renderer, `0x3930` the note walker,
+`0x19e0`/`0x1a70` note start and the stack loop, `0x1600` the allocator, `0x240` the quantiser,
+`0x3780` the sampler, `0x12e0` the mip builder, `0x0680`/`0x07c0` the echo, `0x16b0` the
+envelope, `0x0280` the clip scheduler). ⚠️ Several of those were spelled `0x20` off in older notes
+(`0x19c0`, `0x1a50`, `0x1c40`, `0x38e0`, `0x1690`, `0xab0`, `0x3740`, `0x290`); measured 2026-09-06,
+each of the labels above begins with a prologue and each of the old ones decodes as garbage. `fmodsmsreverb.prx` exports `iO5jJEuFaSo` at `0x23a0`; `fmodsmswavehammer.prx` has eight
+functions and exports `0x19f0`; both are in [lbp-audio-engine.md](lbp-audio-engine.md).
+`sce_module/libc.prx` has `rand` at `0x17000` and `_FLog` (`log10f`) at `0x383e0` → `0x37c20`.

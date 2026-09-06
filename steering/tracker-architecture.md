@@ -1,484 +1,120 @@
-# Tracker architecture — how to build it
+# Tracker architecture — how it is built, and why
 
-Read before starting implementation. This describes the intended shape and the reasoning behind the
-non-obvious choices, so a future session can disagree with the reasoning rather than rediscover it.
-
-## Opening a backup, not a level
-
-A creator's backup is not a file, it is a **pile**: the game writes each
-resource under its own SHA-1, so "open your level" otherwise means "find the
-right extensionless file among forty and guess". All three pages that open
-levels take a folder, a zip of one, a single file, **or a root level hash out of
-the public archive** — and every one of those four ends in the same `onOpen`
-with the same `{ name, bytes }[]`.
-
-- `packages/cwlib-ts/src/backup.ts` — the reading, over `{ name, bytes }[]`. It knows nothing
-  about files, directories or archives, because the user's own game data is read
-  client-side and never uploaded.
-- `packages/cwlib-ts/src/zip.ts` — the writer grew a **reader**: stored and deflated entries,
-  through an `InflateRaw` the platform supplies (`deflate-raw` in the browser,
-  `inflateRawSync` in Node).
-- `packages/lbp-tracker-web/src/widgets/OpenLevel.vue` — the one drop zone, shared, with
-  `widgets/open-panel.ts` mounting it and `src/open-level.ts` keeping the pure halves
-  (`fromFiles`, `fromDrop`, `openedTitle`) that a **worker** also imports. The three pages had grown
-  three copies of the drag wiring already.
-- `packages/lbp-tracker-web/src/lbparchive.ts` + `packages/lbp-tracker-web/src/archive-panel.ts` — the fourth route, for a listener
-  with no backup of their own: paste the root level hash a level's page at
-  zaprit.fish shows, and the level comes straight from the Internet Archive.
-  Wired from `wireOpen` rather than from each page, for the reason the drop zone
-  is. ❗ **It needs no server** — not even the dev one — which is why it is a
-  hash and not a search; see *The public archive* in `lbp-modding-toolchain.md`
-  for the search that was built and removed the same day.
-
-❗ **A level is told from everything else by its first four bytes** — `LVLb` or
-`PLNb` — and never by its name. A backup is full of `ICON0.PNG`, `PARAM.SFO`,
-costumes and photographs; trying every file works and reports forty failures for
-one level.
-
-❗ **`CHKb` is a piece of a streamed adventure**, and the chain to its Things
-is the deepest nesting in the format: a level names chunks, a chunk holds
-islands, an island holds a whole `PLNb` resource. 171 chunks, 2,553 islands,
-10,837 Things and 9 sequencers in the corpus. See *26. Streaming levels* in
-[answered-questions.md](answered-questions.md) — including the three byte-width
-bugs it uncovered, all invisible while every file in the corpus was compressed.
-
-⚠️ **An island that will not open is reported, not swallowed.** Islands are
-independent resources in one list, so one failing says nothing about its
-neighbours — `LevelParse.problems` carries them out and `readBackup` puts them
-in `failed`. This is the one place in the reader where a partial result is
-honest; everything else is one stream, where a bad read poisons what follows.
-
-❗ **`PLNb` is a plan, and that is where most of the music is.** 224 plans over
-six real saves against 6 levels; **172 music sequencers inside plans, 19 inside
-the levels**. A plan is a saved Thing, so its Things live in a nested blob with
-its own reference table — `readPlan` unwraps it and `readLevelProject`
-dispatches on the same four bytes. See *25. Plans* in
-[answered-questions.md](answered-questions.md).
-
-⚠️ **"56 levels" was a lie the moment plans opened**, and each page told it
-differently. `openedTitle` in `packages/lbp-tracker-web/src/open-level.ts` composes the one line now:
-"FJ's Music Gallery (30) by FJMusic — 1 level, 55 plans, 56 sequencers". The
-level count only appears when there is something to tell it apart from.
-
-⚠️ **A resource is named after its SHA-1**, so the picker's "which file did
-this come from" column is 40 hex digits behind a save folder — 63 characters of
-noise on every row, 56 rows deep for a gallery. `seq-picker.ts` shows the first
-eight; `key` still carries the whole thing, because that is what identity runs
-on.
-
-⚠️ **A uid is unique inside a level and NOT across a backup.** A folder of
-forty routinely holds two sequencers numbered 7, so the picker is keyed on
-`file#uid` and shows the level beside the song when there is more than one. A
-picker keyed on the uid shows one row where there are two and plays the wrong
-song; that is why `SeqRow.key` is a string.
-
-⚠️ **`readEntries` returns a PAGE, not the directory.** It hands back at most
-a hundred entries and has to be called again until it returns none. A reader
-that calls it once opens the first hundred files of a backup and ignores the
-rest — which looks like a backup that is missing levels, not like a bug.
-
-⚠️ **The local header's name and extra fields are its own length**, not the
-central directory's: an archiver may put a timestamp field in one and not the
-other, and using the wrong length lands mid-data. And the central directory is
-the authority: it is at the END of the file and a ZIP is read backwards.
-`packages/cwlib-ts/test/backup.test.ts` builds an archive with mismatched extra fields on purpose.
-
-❗ **A level that will not open is reported, never swallowed.** A backup where
-one of forty fails is a bug in this parser and should look like one, not like a
-level that quietly is not in the list.
-
-❗ **A PS3 save folder opens like anything else.** `BCES00850LEVEL01…` holds
-`0` beside `ICON0.PNG`, `PARAM.PFD` and `PARAM.SFO`; the numbered files are the
-game's own `FAR4` save archive under XXTEA with a constant key, and
-`packages/cwlib-ts/src/savearchive.ts` unpacks them into resources before `readBackup` scans
-the pile. Measured end to end: the real backup gives 28 resources, one level and
-**11 sequencers**, in 102 ms. The format is in
-[lbp-modding-toolchain.md](lbp-modding-toolchain.md).
-
-⚠️ **This page said the opposite for two days, and how it got there matters
-more than the fix.** The claim was "a PS3 save cannot be read", on evidence that
-read "8.000 bits per byte, all 256 values present, no run of four zeros" — all
-true, and all equally true of COMPRESSED data, which is what an LBP resource is
-full of. It did not distinguish the two cases at all. The second round of
-evidence was better and still wrong, because it only ever asked *is this
-ciphertext?*: the answer was yes, and the question that mattered was **whose**.
-The file ends with the four bytes `FAR4` **in the clear**, and they were sitting
-in the hex dump printed to prove it unreadable. See
-[answered-questions.md](answered-questions.md).
-
-❗ **`PARAM.SFO` is not encrypted either**, so a save also says what it is:
-`packages/cwlib-ts/src/psf.ts` reads `SUB_TITLE` and the pages title the drop zone "FJ's Music
-Hub by Festerd_Jester" rather than `32406766.zip`. A save that will not open is
-the only one that gets a sentence, and the sentence says why.
-
-⚠️ **The drop zone takes drops and nothing else.** A click anywhere on it
-opening the file picker looked convenient and was a bug: pressing "open a
-folder" opened BOTH pickers, because `input.click()` dispatches a click on the
-input that bubbles back up to the zone, where it is indistinguishable from a
-click on the background. Two buttons, one job each, and the drag still takes a
-file or a folder.
-
-## What the audio thread costs, and what it does not
-
-`C4K3 S0NG` -- 244 tracks, 13,091 notes, the 32-voice pool saturated -- is the stress test. On the
-audio thread it runs at **11-26%** of one core with no dropouts, and the whole song renders offline
-at 10.7x realtime. Both numbers are after 2026-09-04; see *27. The LFO cadence* in
-[answered-questions.md](answered-questions.md) for what they were and why.
-
-❗ **The cost is the per-frame DSP and nothing else.** Driving the mixer at 128 frames and at 4,096
-costs the same to the millisecond, so there is no per-block overhead to chase: no scratch
-allocation, span object or per-chunk setup shows up against the frame loop. 35 voices, each running
-an envelope, a four-pole ladder with a re-solved cutoff, an LFO and a mipped sample read, is simply
-what this song is.
-
-⚠️ **Uncapping the voice pool nearly doubles it** -- 51 voices sounding instead of 32, and 53.7%
-of a core against 26%. It is not the default and the page says `voice pool uncapped` when it is on,
-but the browser used to restore the checkbox across a reload while everything else reset, which is
-how a session ended up running that way without anyone choosing it. Every control on the live page
-carries `autocomplete="off"` now.
-
-## The live player steals what the renderer steals — checked, 2026-09-04
-
-`packages/lbp-tracker-lib/dev/live-sim.ts` is the check: it builds the plan exactly as the page does and renders it three
-ways — all voices at once, the same voices in 128-frame blocks, and the voices handed over in
-look-ahead bursts with the pool applied live — then compares.
-
-✔ **The live pool decides exactly as `allocateVoices` does.** On `C4K3 S0NG` the live-pool render
-sits at **-56.9 dB** against the direct one, the same as the plain scheduled path; the pool
-contributes nothing of its own. Its offline reference reports `1318 of 13091 notes stolen`, the
-number `packages/lbp-tracker-lib/dev/render-level.ts` reports, so the occupancy reaches the live path unchanged — it travels
-as `where.poolEnd`, and `planOptions()` sets no `releaseTail`, so the page takes the same default the
-renderer does.
-
-⚠️ **It did not, until this was run.** `renderLivePool` still asked the pool once per stack
-**layer** where `packages/lbp-tracker-web/src/live.ts` had been fixed to ask once per note, and that alone put it at
-**-8.9 dB** — a simulator disagreeing with the thing it exists to simulate. If a live-path bug is
-ever hunted with this tool, check that the tool has kept up first.
-
-⚠️ **A -57 dB residual remains in the scheduling path itself**, and it is not the pool's: it is
-there with the pool switched off, and on `Ascetic`, which steals nothing (-59.1 dB). That is 0.14%
-of RMS and inaudible, but the file's own header says the two should be identical. See question 34.
-
-## The live player's settings are applied, not re-planned
-
-⚠️ **Read before adding a control to `packages/lbp-tracker-web/live.html`.** The page builds its plan once — the
-render's whole voice pass, `renderSequencer` with `planOnly` — and a setting that forces that again
-runs it on the thread that also feeds the audio. On `Ascetic`, 1,150 tracks. A listener heard the
-player stutter every time the tempo, the swing, `NumChannels` or a channel fader moved, and the
-450 ms debounce that was there made it happen less often rather than fixing it.
-
-**None of those four changes a voice.** They change where it starts, how long it lasts and how loud
-it is, so the plan holds **musical positions** (`startStep`, `endStep`) and a gain with the channel
-factor divided out, and `pump()` derives frames and gain as it posts each note. Changing one is
-three numbers and a re-point of the playhead.
-
-✅ **Proved rather than argued**: `packages/lbp-tracker-lib/dev/live-settings.ts` builds the plan at a song's own settings,
-applies new ones the way the page does, and compares against a render of a sequencer that had those
-settings all along. **Bit-identical.** Run it after touching either file.
-
-❗ **The one part that has to be rebuilt is the in-note automation.** `automation` and
-`morph.points` carry frames from the voice's own start, and those frames were bent by the tempo AND
-the swing — `swungFrame(step + offset) - swungFrame(step)`. Everything else about a voice is in
-seconds or is a ratio. So the plan carries each control point's step offset (`pointSteps`) and
-`onClock` puts the frames back. Skipping this looks like it works and is **15.9 dB wrong**: the
-notes land in the right places and glide at the old tempo inside themselves.
-
-⚠️ **Tempo is only free of the voice because no instrument the game ships sets `fitBpm`** — 0 of
-68, which `packages/lbp-tracker-lib/test/instrument.test.ts` measures. One that did would have its playback rate scaled by
-the tempo and would need the rebuild after all.
-
-The voice pool was already live for the same reason and by the same route: the plan carries no cuts,
-and `LiveVoicePool` applies the size per note. ❗ Its **score** is not immune, though: the pool is in
-steps and so ignores tempo and swing, but `channelVolume * velocityGain` means a fader changes which
-voice gets stolen. The plan carries `baseScore` for the same reason it carries `baseGain`.
-
-### ⚠️ `nextIndex` must never move backwards — a bug that shipped
-
-Applying the settings live re-points the playhead, and the first version let `nextIndex` land
-**before the end of the look-ahead window `pump` had already handed to the worklet**. Every voice in
-that window was posted a second time, thirty times a second while a slider was held. A listener
-described it exactly: "the notes are played several times and the volume becomes very loud" —
-because they were and it was.
-
-Three things now stop it, and the first two are the fix:
-
-- `nextIndex = Math.max(nextIndex, want)`, so the playhead can move under the transport without the
-  scheduler rewinding;
-- `rebuildPoolTo(nextIndex)` replays the pool **by index rather than by frame**, so what has already
-  been handed over stays in it — rebuilding to the playhead instead would forget the window and
-  then hand it over again;
-- and `pump` skips a plan entry already in `handed`, which is the invariant stated outright.
-  `handed` is cleared only by `seek`, where re-posting is right because the worklet has been told to
-  stop everything.
-
-❗ `handed` stores the note's **step**, not its frame: the tempo can move after a voice was handed
-over, and a frame written under the old clock measures a steal's cut from the wrong place — too
-long a cut leaves a stolen voice sounding, which is more loudness nobody asked for.
-
-`packages/lbp-tracker-lib/dev/live-settings.ts` reproduces a slider drag and counts how many times each note is handed over.
-With the fix, 0 of 163 more than once; with the bug put back, **159 of 163**.
+Read before starting implementation. This describes the shape and the reasoning behind the
+non-obvious choices, so a future session can disagree with the reasoning rather than rediscover
+it. What the game does is in [synth-engine.md](synth-engine.md) and
+[lbp-audio-engine.md](lbp-audio-engine.md); this file is about how *we* reproduce it.
 
 ## The central decision: own the mixer
 
 The obvious way to build a sampler in the browser is one `AudioBufferSourceNode` per voice with
-`playbackRate` set for pitch. **Do not do that for this project.** `playbackRate` resampling is
-performed by the browser's own interpolator; it differs between Chrome, Firefox and Safari, it is
-not specified, and it is not FMOD's. Every pitched note would carry a small, engine-dependent
-timbre error — which is precisely the thing this project exists to avoid.
+`playbackRate` set for pitch. **Do not do that for this project.** `playbackRate` resampling is the
+browser's own interpolator — unspecified, different between Chrome, Firefox and Safari — and the
+game's is a two-tap linear interpolator over octave mipmaps built from an int16 pair average
+([synth-engine.md](synth-engine.md)). Every pitched note would carry a small, engine-dependent
+timbre error, which is precisely the thing this project exists to avoid.
 
-Instead: **one `AudioWorkletProcessor` that is the whole mixer.** It owns the voices, the
-interpolation, the per-channel gain and pan, the two sends and the two effects, and emits final
-stereo frames. That gives us:
-
-- an interpolator we control and can match to `fmod_dsp_resampler.cpp`,
-- sample-accurate note scheduling instead of `setTimeout` drift,
-- deterministic output — the same project renders identically on every browser and every run,
-- offline rendering for export by reusing the same `Mixer`.
+Instead: **one `AudioWorkletProcessor` that is the whole mixer**
+(`packages/lbp-tracker-lib/src/audio/mixer-worklet.ts` around `mixer.ts`). It owns the voices, the
+interpolation, the envelopes, the filter, the LFOs, the per-channel gain and pan, the two sends and
+the effects, and emits final stereo frames. That gives an interpolator matched to the engine,
+sample-accurate scheduling instead of `setTimeout` drift, deterministic output — the same project
+renders identically on every browser and every run — and offline rendering by reusing the same
+`Mixer`.
 
 ⚠️ **Offline export must drive `Mixer` directly, not the worklet.** Measured in Chrome: samples and
 voices posted to an `AudioWorkletNode` port *before* `OfflineAudioContext.startRendering()` never
-reach the processor, and the render comes out silent — the identical sequence in a realtime
-`AudioContext` produces the expected tone (441 Hz at the expected amplitude). Port messages are not
-part of the offline render's ordering guarantees. Since `Mixer` is plain TypeScript with no Web
-Audio, calling it in a loop for export is both simpler and exactly the same code path, so this
-costs nothing. Do not "fix" it by adding delays before `startRendering`.
+reach the processor, and the render comes out silent; the identical sequence in a realtime
+`AudioContext` produces the expected tone (441 Hz at the expected amplitude). Port messages are
+not part of the offline render's ordering guarantees. `Mixer` is plain TypeScript with no Web
+Audio, so calling it in a loop for export is the same code path. Do not "fix" it with delays.
 
-The cost is that we write our own voice allocation and mixing. That is a few hundred lines, and it
-is the part of the project that has to be right anyway.
+`packages/lbp-tracker-lib/src/render.ts` is that loop: the whole pipeline as one platform-neutral
+function, with `packages/lbp-tracker-lib/dev/render-level.ts` the Node wrapper and
+`packages/lbp-tracker-web/src/render-worker.ts` the browser one. ✔ On 2026-09-02 the two produced
+the *same file* — 368 seconds of `This Is Halloween`, 70,704,044 bytes, one SHA-256.
 
-## Module breakdown
+### The mixer's clock is the engine's block
 
-```
-core/           pure, no DOM, no Web Audio — unit-testable, shared with the Node CLI
-  fsb.ts          FSB4 parser  (port of tools/fsb.py)
-  ima.ts          IMA ADPCM decoder → Float32Array
-  stream.ts       big-endian reader/writer + the revision gate — every LBP struct needs both
-  instrument.ts   RInstrument → { slots[8], splitnotes[9], arpeggio, … }
-  sequence.ts     PSequencer + PMicrochip components + PInstrument note chains
-                  → the tracker's own project model
-  voice.ts        note → { slot, playbackRate, gain, pan } using the formula in
-                  steering/sequencer-data-model.md
-audio/
-  mixer-worklet.ts   the AudioWorkletProcessor: voices, interpolation, channels, sends
-  dsp/echo.ts        the game's own delay, ported from fmodextinput.prx 0x0680
-  dsp/reverb.ts      the game's own DSP, ported from fmodsmsreverb.prx (see answered-questions.md)
-  render.ts          OfflineAudioContext wrapper for WAV export
-io/
-  bank-loader.ts     user picks their own .fsb; parse client-side, never upload
-  project-io.ts      our own save format (JSON) + LBP import/export once the note format is known
-ui/
-  grid, instrument editor, mixer strip, transport
-```
-
-Keep `core/` free of Web Audio and DOM so the same code can run in Node against `tools/fsb.py`'s
-output as a golden reference. The Python tools are not throwaway: they are the oracle the
-TypeScript is tested against.
-
-## Playback model
-
-The sequencer is a fixed grid, so the natural clock is **steps, not seconds**. Convert once, at the
-edge of the worklet:
-
-```
-samplesPerStep = outputRate * 60 / (Tempo * stepsPerBeat)
-```
-
-`stepsPerBeat` is very likely 4 — a grid cell is 52.5 world units wide (measured) and holds 16
-steps (ennuo's toolkit), i.e. one bar of 16ths. Not confirmed; see open question 4. Swing offsets
-alternate steps; the exact convention — whether `Swing` is a ratio, a percentage, or a fraction of
-a step — is still unknown. Until both are pinned, put them behind named constants in one place
-rather than sprinkling magic numbers through the scheduler.
-
-A note is **not** `(pitch, start, length, velocity)`. It is a chain of per-step records carrying
-their own pitch, volume and timbre, terminated by an `end` flag — so pitch glide and per-step
-volume/timbre automation are native to the format. Model the chain from the start; retrofitting
-automation onto a flat note struct means rewriting the scheduler and the editor together. See
-[sequencer-data-model.md](sequencer-data-model.md).
-
-Voice allocation: `Numstack` in `RInstrument` suggests a per-instrument voice-stacking limit, and
-`Loops` on `PInstrument` controls repetition. Neither is fully understood; model them explicitly
-rather than assuming "infinite polyphony" and having to unpick it later.
-
-## Build order
-
-Each step is chosen so that it either produces something audible or removes a real unknown. Do not
-reorder 1 and 2 — you want the asset pipeline proven before anything depends on it.
-
-1. ~~**Port `fsb.py` to TypeScript**~~ — **done**, and byte-identical to the Python oracle. Note
-   this turned out to serve the game's *SFX*, not the sequencer; see step 4.
-2. ~~**The voice engine**~~ — **done**: worklet, interpolators, pitch formula, key splits.
-3. ~~**`RInstrument` reading**~~ — **done**. `SampleGuids` resolve through the FileDB
-   (`output/orbisguids.map`) to plain RIFF/WAV `.smp` files in the FARC archives, at 48 kHz 16-bit.
-   All 68 of the game's instruments parse exactly, and the bench page plays them.
-4. ~~**Level import**~~ — **done, both halves.**
-   `packages/cwlib-ts/src/project.ts` turns a dump into sequencers, tracks and a scheduled event list, and it
-   imports the whole corpus: **19 files, 338 sequencers, 129,696 tracks, 2,027,633 notes, zero
-   records falling outside a note.** Tempos run 30–240, grid cells 0–334, rows 0–24. The
-   extraction is `packages/cwlib-ts/src/thing.ts` + `level.ts` + `parts.ts`, and the Java tool that used to do
-   it is deleted. Its output survives as `fixtures/levels/sequencers.jsonl`, the golden fixture
-   `packages/cwlib-ts/dev/verify-levels.ts` checks the walk against — unregenerable, so it covers its own 22 levels
-   and nothing newer.
-
-   **The Thing-graph walk, scoped by measurement rather than by feel** (`tools/PartCensus.java`):
-
-   - The stream is strictly sequential. References are inline ids and parts carry no lengths, so
-     nothing can be skipped: reading a `PSequencer` means parsing every part before it on that
-     Thing.
-   - Across the corpus: **34 distinct part types over 172,139 Things**; over the 10 level files that
-     load, **33 types over 81,946 Things**. Roughly 5,500 lines of serialiser in cwlib's terms.
-   - Only nine part types ever share a Thing with a `SEQUENCER`, in eight combinations across all
-     1,169 of them, and **128,666 of 129,696 instrument Things carry `INSTRUMENT` alone**.
-
-   ⚠️ **This file used to conclude from that second bullet that the walk needs eight part
-   readers. It needs all 33, and the mistake is worth keeping.** The nine-types figure answers
-   "what sits on a sequencer's Thing", which would matter if a Thing could be reached directly. It
-   cannot: parts carry no length, references expand inline at their first mention, and
-   `PWorld.things` is an array of them, so reaching the 443rd Thing means having fully read the 442
-   before it. `PartCensus.java`'s own header said as much — "a TypeScript walk cannot skip
-   anything" — so the tool was right and the inference drawn from its output was not. Two
-   sessions of planning were done against a number that was answering a different question.
-
-   Done, 2026-09-02, in 30 part readers — ⚠️ **50 today**, question 28 having added twenty more
-   to reach LBP1; `partReaders().size` is the number, this sentence is the date. `packages/cwlib-ts/dev/walk-levels.ts` was the loop — it names the next
-   missing part rather than throwing a stack trace — and `packages/cwlib-ts/dev/verify-levels.ts` is the check against
-   the Java dump:
-
-   ```
-   10 levels parsed, 149 music sequencers matched the dump exactly,
-   62158 instrument placements byte for byte, 62158 board cells whole and distinct
-   ```
-
-   62,158 is exactly the `INSTRUMENT` count `PartCensus.java` reports for those ten files.
-
-   ⚠️ **A component on an open circuit board has no stored cell**, and that was the last thing
-   holding the walk to Java. See `boardCell` in `level.ts` and the measurement in
-   `packages/cwlib-ts/dev/board-probe.ts`: the cell is the world-space delta expressed in the **board's** basis —
-   three dot products, no quaternion — and a bare delta gets only 78.93% of the corpus's 1,030
-   open-board placements onto a cell at all.
-5. **Echo and reverb** — both are read out of the game and implemented in `packages/lbp-tracker-lib/src/audio/effects.ts`.
-6. **UI**.
-7. **Round-trip export** back into a game-loadable resource. The feature that makes the project
-   matter to the LBP community, and it depends on step 4.
-
-⚠️ **Step 6 is the editor, not the pages.** The four pages exist and are built with Vue (below), but nothing in them edits a song — they open, play, render and export. A grid, a piano roll and undo are all still ahead.
-
-Steps 1–3 and 5 are done. Step 4 plays a real level end to end, and **the render itself is now in
-the browser**: `packages/lbp-tracker-lib/src/render.ts` holds the pipeline, `packages/lbp-tracker-lib/dev/render-level.ts` is the Node wrapper and
-`packages/lbp-tracker-web/src/render-worker.ts` the browser one, and on 2026-09-02 the two produced the *same file* — 368
-seconds of `This Is Halloween`, 70,704,044 bytes, one SHA-256. **Nothing in the pipeline needs Java
-any more**. Steps 6–7 follow.
-See
-[open-questions.md](open-questions.md) — none of what remains blocks the build, it only affects
-fidelity.
+The engine re-derives everything modulation-driven once per **256-frame block** and the
+AudioWorklet's render quantum is 128, so the grid cannot be "the offset within this call". Three
+things follow, all in `mixer.ts`: `Mixer.clock` counts frames modulo the block and is handed to
+every voice, so a 128-frame live call and a whole-song offline call cross the same boundaries; a
+chunk that *continues* a block must not re-derive (`Voice.derived`); and the oscillators are
+advanced in `stepLfos` by the whole remaining block, never by the part of it a caller asked for.
+`packages/lbp-tracker-lib/test/audio.test.ts` pins "the mixer renders the same audio whatever the
+block size", and it catches a grid mistake within a minute of it being made.
 
 ## The monorepo — three packages, one seam
 
-Three npm workspaces, since 2026-09-06:
-
 | directory | package | what it is |
 |---|---|---|
-| `packages/cwlib-ts` | `@lbptracker/cwlib` | reading LBP's serialised resources: the `LVLb`/`PLNb` container, the Thing graph, its 30 parts, and the saves and archives they arrive in |
+| `packages/cwlib-ts` | `@lbptracker/cwlib` | reading LBP's serialised resources: the container, the Thing graph and its **50** part readers, plans, chunks, saves, archives |
 | `packages/lbp-tracker-lib` | `@lbptracker/lib` | turning that into sound: the sampler, the DSP chain, the render pipeline, MIDI |
 | `packages/lbp-tracker-web` | `@lbptracker/web` | the four pages |
 
-❗ **The split is by dependency direction, not by taxonomy**, and the graph was made to decide it:
-`cwlib` is closed under its own imports and names nothing above it. That is what makes it a package
-rather than a folder — and it is why `scale.ts` and `swing.ts` are in `lib` despite being sequencer
-facts. They are readings of `fmodextinput.prx`, about what the **engine** does with the data, not
-about how the data is written.
+❗ **The split is by dependency direction, not by taxonomy**, and the import graph decided it:
+`cwlib` is closed under its own imports and names nothing above it. That is why `scale.ts` and
+`swing.ts` are in `lib` despite being sequencer facts — they are readings of `fmodextinput.prx`,
+about what the *engine* does with the data — and why `rinstrument.ts` is in `lib` even though
+`INSb` is an LBP resource: it reads into `instrument.ts`'s structures, which are the sampler's. **A
+parser belongs with the model it fills, not with the file format it happens to read.** A test lives
+with the package it exercises; `notes.test.ts` tests `cwlib`'s records but reaches for `lib`'s
+`quantise`, so it sits in `lib` rather than put a `cwlib → lib` edge in a package that must not
+have one.
 
-⚠️ **`rinstrument.ts` is in `lib`, not in `cwlib`**, even though `INSb` is an LBP resource. It reads
-into `instrument.ts`'s structures, and those are the sampler's; putting the parser in `cwlib` would
-have pointed an arrow backwards. A parser belongs with the model it fills, not with the file format
-it happens to read.
-
-A test lives with the package it exercises, and the one that straddles says so: `notes.test.ts`
-tests `cwlib`'s note records but reaches for `lib`'s `quantise`, so it sits in `lib` rather than put
-a `cwlib → lib` edge in a package that must not have one.
+**Platform APIs are injected, never imported into `cwlib`.** `loadResource(bytes, inflate)` takes
+its inflater as an argument: `platform/node.ts` passes `zlib.inflateSync`, `platform/web.ts` a
+`DecompressionStream` wrapper. That is what keeps the same parser running under `node --test`
+against the corpus and in the browser against a file the user picked.
 
 ## The toolchain
 
-Node 24 strips TypeScript types at load, so `node packages/…/whatever.ts` just runs. Node also ships
-a test runner (`node --test`, which finds every `*.test.ts` across the workspaces in one go) and
-zlib. **The two libraries need nothing else**: no build step, no bundler, no transpile — the file
-the browser runs is the file `node --test` runs, which is the property the whole fidelity argument
-rests on.
+Node 24 strips TypeScript types at load, so `node packages/…/whatever.ts` just runs; it also ships
+the test runner (`node --test` finds every `*.test.ts` across the workspaces) and zlib. **The two
+libraries need nothing else**: no build, no bundler, no transpile — the file the browser runs is
+the file `node --test` runs, which is the property the fidelity argument rests on.
 
-⚠️ **`npm install` is now required, and it was not before.** Workspaces resolve
-`@lbptracker/cwlib/level.ts` through symlinks in `node_modules`, so `git clone && node --test` no
-longer works on its own. Nothing is downloaded for the libraries — the install links three
-directories and fetches Vite for the web package alone.
-
-❗ **Node does not strip types inside `node_modules`, and this survives it anyway.** A workspace
-entry is a symlink, and Node resolves the realpath before deciding, so the file it loads is
-`packages/cwlib-ts/src/level.ts` and not a path under `node_modules`. Measured before the split was
-committed, with a two-package probe; if that ever changes, every test in this repo stops loading at
-once and the reason will not be obvious.
-
-⚠️ **`rewriteRelativeImportExtensions` had to go.** It makes `tsc` reject every `.ts` extension on a
-non-relative specifier — TS2877 on all 283 of them — because it cannot rewrite what it does not
-emit. `noEmit` is set and the emit is Vite's, so the option was doing nothing but forbidding the
-package names. `allowImportingTsExtensions` stays and is what allows `.ts` at all.
-
-⚠️ **Typechecking is not optional-in-practice — it found a real bug the tests could not.**
-`loop`, `loopStart` and `loopEnd` belong to `AudioBufferSourceNode`, **not** to `AudioBuffer`.
-Setting them on the buffer is silently ignored, and that left the page's "browser resampler"
-control not looping at all while our own mixer did. `tsconfig.base.json` also sets
-`erasableSyntaxOnly`, which enforces Node's strip-only restriction at compile time instead of
-leaving it to memory. `npm run typecheck` runs the three projects in order.
-
-
-⚠️ **Strip-only type removal bans any TypeScript syntax that emits code.** Node deletes types, it
-does not compile them, so **parameter properties** (`constructor(readonly x: T)`), `enum`,
-`namespace` and decorators all fail at load with `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`. Declare
-fields longhand and use `const` objects with `as const` instead of enums. This is a syntax
-restriction, not a typing one — interfaces, generics and `type` are all fine.
-
-**Platform APIs are injected, never imported into `cwlib`.** `loadResource(bytes, inflate)` takes
-its inflater as an argument: `packages/cwlib-ts/src/platform/node.ts` passes `zlib.inflateSync`,
-`packages/cwlib-ts/src/platform/web.ts` passes a `DecompressionStream` wrapper. That is what keeps the same parser
-running under `node --test` against the corpus and in the browser against a file the user picked.
-Follow the pattern for anything else platform-shaped.
-
-## What exists so far
-
-| module | state |
-|---|---|
-| `packages/cwlib-ts/src/stream.ts` | big-endian reader + `Revision` with the gate helpers. Done |
-| `packages/cwlib-ts/src/resource.ts` | the `LVLb`/`PLNb` container. Done; 22 real levels parse |
-| `packages/cwlib-ts/src/notes.ts` | note records, chaining, duration, automation flags. Done |
-| `packages/lbp-tracker-lib/src/fsb.ts`, `ima.ts`, `wav.ts` | build order step 1. Done, **byte-identical to `tools/fsb.py`** |
-| `packages/lbp-tracker-lib/src/instrument.ts`, `voice.ts` | slots, key splits, pitch/gain/pan math. Done |
-| `packages/lbp-tracker-lib/src/audio/interpolate.ts`, `mixer.ts` | build order step 2: voices, resampling, panning, looping. Done; default is `sinc8` after the first listening test found `linear` audibly broken (open question 7) |
-| `packages/lbp-tracker-lib/src/audio/mixer-worklet.ts` | the AudioWorklet shell around `Mixer`. **Verified in Chrome**: 441 Hz in, 441 Hz out at the expected amplitude |
-| `packages/cwlib-ts/src/platform/node.ts`, `web.ts` | inflate adapters. Done |
-| `packages/lbp-tracker-lib/src/rinstrument.ts` | the `INSb` sampler patch. Parses all 68 instruments exactly |
-| `packages/lbp-tracker-lib/src/wav.ts` | 16-bit PCM RIFF read + write — the sequencer's own sample format |
-| `packages/lbp-tracker-web/index.html`, `packages/lbp-tracker-web/src/app.ts` | the instrument bench: picks any of the game's 68 instruments, loads its real samples, plays them across its key splits |
-| `packages/cwlib-ts/src/thing.ts`, `level.ts`, `parts.ts` | the Thing-graph walk, in TypeScript. **All 10 corpus levels parse, and `packages/cwlib-ts/dev/verify-levels.ts` matches the cwlib dump on 149 music sequencers and 62,158 instrument placements byte for byte** — ⚠️ the dump is `fixtures/levels/sequencers.jsonl`, and `tools/RawDump.java`, which produced it, was deleted 2026-09-02 and cannot regenerate it — every instrument in the corpus |
-| `packages/lbp-tracker-lib/src/render.ts` | the whole pipeline as one platform-neutral function. **Verified 2026-09-02: the Node render and a Chrome render of the same level are byte-identical** — 70,704,044 bytes, SHA-256 `1785d0d8…`. ⚠️ That file predates the voice-pool fix later the same day; the equality does not depend on it |
-| `packages/lbp-tracker-web/render.html`, `render-app.ts`, `render-worker.ts` | the browser renderer: pick any of the corpus's 338 sequencers, render it in a worker, play it and save the WAV. **The level dump is opened by the user**, not served — the same file, opened from disk, renders to the same bytes |
-| echo, reverb | done and measured — see *2 / 2b* and *6 / 14* in [answered-questions.md](answered-questions.md) |
-| `packages/lbp-tracker-web/src/controls/` | the four pages' controls: one spec per page, `kit.ts` turning each into a typed store, five components. Nothing in a page module reads an `<input>` |
-| `packages/lbp-tracker-web/src/widgets/` | what more than one page draws — the song picker, the archive field, the drop zone — each behind the imperative façade its pages call |
-| the tracker's own UI | **not started** (build order step 6). ⚠️ The four pages are benches and players, not the editor: there is no grid, no piano roll and no editing of anything |
+- ⚠️ **`npm install` is required.** Workspaces resolve `@lbptracker/cwlib/level.ts` through
+  symlinks in `node_modules`; nothing is downloaded for the libraries.
+- ❗ **Node does not strip types inside `node_modules`, and this survives it** because a workspace
+  entry is a symlink and Node resolves the realpath before deciding. Measured with a two-package
+  probe before the split; if it ever changes, every test stops loading at once and the reason will
+  not be obvious.
+- ⚠️ **Strip-only type removal bans any syntax that emits code**: parameter properties, `enum`,
+  `namespace` and decorators fail at load with `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`. Declare fields
+  longhand and use `as const` objects. `tsconfig.base.json` sets `erasableSyntaxOnly` to enforce it
+  at compile time.
+- ⚠️ **`rewriteRelativeImportExtensions` had to go**: it makes `tsc` reject every `.ts` extension
+  on a non-relative specifier (TS2877, all 283 of them). `noEmit` is set and the emit is Vite's, so
+  it did nothing but forbid the package names; `allowImportingTsExtensions` is what allows `.ts`.
+- ⚠️ **Typechecking found a bug the tests could not.** `loop`, `loopStart` and `loopEnd` belong to
+  `AudioBufferSourceNode`, not `AudioBuffer`; setting them on the buffer is silently ignored, and
+  the bench's "browser resampler" control was not looping while our mixer did.
+- ⚠️ **`typescript@7` is the native compiler** — a Go binary, no `lib/tsc.js`, no JavaScript API —
+  and Volar, which puts `.vue` files in front of the checker, patches that API, so `vue-tsc` on it
+  dies with `ERR_PACKAGE_PATH_NOT_EXPORTED: './lib/tsc'`. **`typescript-native-bridge`** is a fork
+  carrying a `tsgoChecker` overlay — the API for Volar, tsgo still doing the checking — pinned to
+  the same 7.0.2; `packages/lbp-tracker-web/dev/typecheck.mjs` hands `vue-tsc` its path and it
+  announces itself with `TNB ACTIVE`. It is a third-party fork days old when adopted, which is why
+  it checks **the web package only** and the libraries go through `tsc -p` against the real
+  `typescript`. It was accepted only after being made to fail (a `const x: number = string` in
+  `Fader.vue` and a `max: 'oops'` in a spec both came back as TS2322): **an exit code of 0 from a
+  checker means nothing on its own.**
+- ⚠️ `typescript` and `typescript-native-bridge` both declare `bin: tsc`, so npm installed neither
+  shim and `npm run typecheck` died with `'tsc' is not recognized` — which reads as a broken PATH.
+  The script names `node node_modules/typescript/bin/tsc`.
 
 ## Serving and shipping: Vite, in the web package only
 
 `npm run serve` is `vite` on `127.0.0.1:8173`; `npm run build` writes `dist/`; `npm run preview`
-serves it on `:8174`. The config is `packages/lbp-tracker-web/vite.config.ts` and it is the **only**
-build in the repository — `cwlib` and `lib` are still plain TypeScript that Node runs unaided.
+serves it on `:8174`. `packages/lbp-tracker-web/vite.config.ts` is the **only** build in the
+repository.
 
-### ⚠️ Why the bundler, measured rather than argued
-
-This project ran with **no bundler at all** until 2026-09-06: a hand-rolled dev server stripped
-types per request with `module.stripTypeScriptTypes` and a hand-rolled build did the same ahead
-of time, so the browser ran the same file `node --test` ran. Both were deleted with this change;
-`git log -- packages/lbp-tracker-web/dev` is where they are if they are ever wanted. What killed the design was one
-measurement, not a preference:
-
-❗ **An import map does not reach a Worker or an AudioWorklet.** Probed in Chrome with a page
-carrying `{"@probe/": "./pkg/"}` and three consumers of the same module:
+❗ **Why a bundler at all, measured rather than argued.** The project ran with none until
+2026-09-06 — a hand-rolled dev server stripped types per request and a hand-rolled build did the
+same ahead of time (`git log -- packages/lbp-tracker-web/dev` has them). One measurement killed it,
+probed in Chrome with a page carrying `{"@probe/": "./pkg/"}` and three consumers of one module:
 
 | context | bare specifier |
 |---|---|
@@ -486,42 +122,31 @@ carrying `{"@probe/": "./pkg/"}` and three consumers of the same module:
 | `new Worker(url, {type:'module'})` | ✘ load error |
 | `audioWorklet.addModule(url)` | ✘ `Failed to resolve module specifier` |
 
-Package names are only worth having if every file can use them, and `render-worker.ts` reaches
-`assets.ts`, `render.ts` and `backup.ts` — the worker's module graph is **very nearly the whole
-engine**. Without a bundler every one of those files would have to name its neighbours with a path
-like `../../cwlib-ts/src/project.ts`, and the three packages would be folders with extra steps.
-
-⚠️ **The AudioWorklet needs `?worker&url`, not a path.** `import MIXER_WORKLET_URL from
-'@lbptracker/lib/audio/mixer-worklet.ts?worker&url'` makes Vite resolve and bundle that graph ahead
-of time and hand back a URL. The old code passed the worklet's path to `asset()`, which cannot
-work now: the worklet realm has no import map, so a bare specifier inside it fails to load and the
+`render-worker.ts` reaches `assets.ts`, `render.ts` and `backup.ts` — the worker's module graph is
+very nearly the whole engine. Without a bundler every one of those files would have to name its
+neighbours with a path like `../../cwlib-ts/src/project.ts`, and the packages would be folders with
+extra steps. ⚠️ **The AudioWorklet needs `?worker&url`, not a path**:
+`import MIXER_WORKLET_URL from '@lbptracker/lib/audio/mixer-worklet.ts?worker&url'` makes Vite
+bundle that graph ahead of time; a bare specifier inside the worklet realm fails to load and the
 page goes silent with no error on the main thread.
 
-### What was kept
+What was kept: the libraries have no build (the bundler stops at the web package's edge; `node
+--test` runs 291 tests against the source); the output is relocatable (`base: './'`, every path
+`./assets/…`, checked by grep after each build and by serving `dist/` at a bare root);
+**`fixtures/` is served, never built** — a ten-line middleware serves `/fixtures/…` in dev and
+preview, and `publicDir` was not used because it would copy the lot into `dist/`; and the dev server
+makes **no outbound requests** (below).
 
-- ❗ **The libraries have no build.** The bundler stops at the web package's edge. `node --test`
-  runs 291 tests against the source, and that is what the fidelity work is checked with.
-- ❗ **The output is relocatable**, `base: './'`. Every path in the built HTML is `./assets/…` and no
-  chunk imports from `/`; checked by grep after each build, and by serving `dist/` at a bare root.
-- ⚠️ **`fixtures/` is served, never built.** They are the user's own game data (see *Asset licensing*
-  in [game-assets.md](game-assets.md)), and they live at the repository root, one level above Vite's
-  root. A ten-line middleware in the config serves `/fixtures/…` in dev **and** in preview;
-  `publicDir` was not used, because it would copy the lot into `dist/`.
-- ❗ **No outbound requests.** The dev server still makes none — see the section below, which
-  predates Vite and is unchanged by it.
-
-### ⚠️ `asset()` still anchors on `import.meta.url`, and now depends on chunk depth
-
-`asset(p)` resolves against `new URL('../', import.meta.url)` — the module's own directory, up one —
-because a bare relative URL in a **worker** resolves against the worker's directory and a leading
-slash breaks under a prefix. That still holds, but it now rests on the web package's modules being
-exactly one directory below the site root: `/src/assets.ts` in dev, `/assets/assets-*.js` in the
-build. Both are true and both were checked in the browser. Change `build.rollupOptions.output`
-filenames and the fixtures 404 with no other symptom.
+⚠️ **`asset()` anchors on `import.meta.url` and now depends on chunk depth.** It resolves against
+`new URL('../', import.meta.url)` because a bare relative URL in a **worker** resolves against the
+worker's directory and a leading slash breaks under a prefix — and that rests on the web package's
+modules being exactly one directory below the site root (`/src/assets.ts` in dev, `/assets/assets-*.js`
+in the build). Both checked in the browser; change `build.rollupOptions.output` filenames and the
+fixtures 404 with no other symptom.
 
 ## Vue, and where it is not allowed
 
-The pages are Vue 3 from 2026-09-06, and the first thing to know is the line it does not cross.
+The pages are Vue 3, and the first thing to know is the line it does not cross:
 
 | | |
 |---|---|
@@ -530,157 +155,186 @@ The pages are Vue 3 from 2026-09-06, and the first thing to know is the line it 
 
 ❗ **The real-time layer is called by components, never owned by them.** A note-on writes to a
 `MessagePort`, not to a reactive object; the keyboard toggles a class on 88 elements at key-down
-rate; the meters run at `requestAnimationFrame`. None of that gets faster or clearer for being
-reactive, and some of it gets slower.
+rate; the meters run at `requestAnimationFrame`. ⚠️ **The tracker grid, when it is built, is not a
+`v-for`** — a pattern editor scrolling thousands of cells at 60 fps is a canvas or a virtualised
+list, a custom component registered on Vue. Rendering it as reactive components is the predictable
+way to make the editor slow.
 
-⚠️ **The tracker grid, when it is built, is not a `v-for`.** A pattern editor scrolling thousands
-of cells at 60 fps is a canvas or a virtualised list — a custom component registered on Vue, which
-is the shape agreed before any of it was written. Rendering it as reactive components is the
-predictable way to make step 6 slow.
+**`src/controls/`**: one spec per page (`bench.ts`, `live.ts`, `render.ts`, `midi.ts`) and `kit.ts`
+turning each into a typed store, five components. The win is that **a control is declared once**.
+Every fader used to be written twice — in the HTML with its `min`/`max`/`value`, and in the module
+as a row carrying its formatter, joined by a string id, with `${id}Label` naming a third element —
+and every way of getting it wrong was silent: a mistyped id read the neighbouring control; a
+formatter dividing by 100 beside a reader dividing by 10 showed one number while playing another;
+`setSlider('echoFb', seq.echoFeedback * 100)` had to be the exact inverse of `num('echoFb') / 100`
+350 lines away. Now `Controls<FaderId, CheckId, ChoiceId>` carries the unions from the spec so a
+wrong id will not compile; ❗ **`per` is one number, not two functions** (`value = raw / per`,
+`raw = value * per`), so the inverse cannot disagree; `format` is handed the *engine's* number; the
+watcher that rebuilds the output stage is generated from the `effects` flags. ⚠️ A store belongs to
+one page — ids repeat with different ranges — so components take it through `provide`/`inject`.
+`render.html` was converted least, on purpose: its options live in `.switch` cards beside prose,
+so only the checks moved into a spec.
 
-### What it bought, across all four pages
+**`src/widgets/`**: what more than one page draws — `SeqPicker.vue`, `ArchivePanel.vue`,
+`OpenLevel.vue` — each behind an imperative façade (`seqPicker`, `wireArchiveOpen`, `mountOpen`)
+because the pages drive them from event handlers and none has a Vue root for props to flow down
+from. Converting them found four bugs: the picker's detail column carried **a filename out of the
+opened backup** through `innerHTML` with no escaper, and the archive button exists to download
+other people's zips; the drop zone was written out three times and had drifted; only one page
+cleared its file input, without which choosing the *same* file again fires no `change` at all;
+and `defineExpose` unwraps refs, so `ui.busy.value = true` throws only when the zone is first used.
 
-Markup went from **1,148 lines to 804**, and `src/controls/` — five components and one spec per
-page — is 792. That is not a saving, and it is not meant to be one.
+- ⚠️ **`open-level.ts` must not import Vue, and nothing says so but a crash.** `render-worker.ts`
+  imports `openedTitle` from it; when the mounting lived in the same file the worker pulled in Vue
+  and died with `ReferenceError: document is not defined`. The build is happy either way. The
+  mounting half is `widgets/open-panel.ts`, and the rule is general: **a module a worker imports
+  may not reach the DOM.**
+- ⚠️ **`Symbol.for`, not `Symbol`, for the injection key.** Vite appends `?t=…` to a changed
+  module's URL in dev, so a page can hold both `kit.ts` and `kit.ts?t=…` — two module instances,
+  two distinct `Symbol()`s — and `inject` returns `undefined` in half the tree while the panel
+  still renders correctly.
 
-❗ **The win is that a control is declared once.** Every fader used to be written **twice**: once in
-the HTML as an `<input type="range">` with its `min`, `max` and `value`, once in the page's module
-as a row carrying its formatter, joined by a string id, with `${id}Label` naming a third element.
-Nothing checked that the three agreed, and every way of getting it wrong was silent:
+## Opening a backup, not a level
 
-- a mistyped id read the neighbouring control and the page still worked;
-- a formatter dividing by 100 beside a reader dividing by 10 showed one number while playing
-  another;
-- ⚠️ and on the live player `setSlider('echoFb', seq.echoFeedback * 100)` had to be the exact
-  inverse of `num('echoFb') / 100` — **350 lines apart**, so a song could load at the wrong feedback
-  with the label agreeing.
+A creator's backup is a **pile**: the game writes each resource under its own SHA-1, so "open your
+level" otherwise means "find the right extensionless file among forty and guess". All three pages
+that open levels take a folder, a zip of one, a single file, **or a root level hash out of the
+public archive**, and every route ends in the same `onOpen` with the same `{ name, bytes }[]`.
+The formats are in [level-files.md](level-files.md); this is the behaviour around them.
 
-`kit.ts` makes all three structural rather than avoided:
+- `packages/cwlib-ts/src/backup.ts` reads over `{ name, bytes }[]` and knows nothing about files,
+  directories or archives, because the user's data is read client-side and never uploaded.
+  `zip.ts` reads stored and deflated entries through an `InflateRaw` the platform supplies. ⚠️
+  **`readEntries` returns a PAGE**, at most a hundred entries, and has to be called again until it
+  returns none — a reader that calls it once opens the first hundred files and ignores the rest,
+  which looks like a backup missing levels. ⚠️ **The local header's name and extra fields are its
+  own length**, not the central directory's; `test/backup.test.ts` builds an archive with
+  mismatched extra fields on purpose.
+- ❗ **A level that will not open is reported, never swallowed.** One of forty failing is a bug in
+  this parser and should look like one, not like a level that quietly is not in the list.
+- ⚠️ **"56 levels" was a lie the moment plans opened.** `openedTitle` in `src/open-level.ts`
+  composes the one line — "FJ's Music Gallery (30) by FJMusic — 1 level, 55 plans, 56
+  sequencers" — and the level count appears only when there is something to tell it apart from.
+- ⚠️ A resource is named after its SHA-1, so the picker shows the first eight hex digits and keys
+  on `file#uid`, because a uid is unique inside a level and not across a backup: a picker keyed on
+  the uid shows one row where there are two and plays the wrong song.
+- ⚠️ **The drop zone takes drops and nothing else.** A click anywhere on it opening the picker was
+  a bug: `input.click()` dispatches a click that bubbles back to the zone, so "open a folder"
+  opened BOTH pickers. Two buttons, one job each.
+- ❗ **The archive route needs no server — not even the dev one** — which is why it is a hash and
+  not a search. For one commit the dev server proxied a level search to zaprit.fish (which sends no
+  CORS headers), scraping its HTML; it worked and was removed the same day, deliberately: it only
+  worked on a dev machine, so the tracker's most useful "I have no backup" path would have broken
+  the moment anyone hosted it. **A file server should not also be a proxy**, and a feature that
+  needs a Node process beside the page is the wrong shape for the one route that exists because
+  the listener has nothing set up. The dev server makes no outbound requests at all: a level from
+  the archive is fetched by the page straight from archive.org, which answers any origin.
 
-- `Controls<FaderId, CheckId, ChoiceId>` carries the unions from the page's own spec, so a wrong id
-  will not compile.
-- ❗ **`per` is one number, not two functions**: `value = raw / per` and `raw = value * per`, so the
-  third failure is not expressible. `live.setValue('echoFb', seq.echoFeedback)` has no `* 100` in it
-  any more.
-- `format` is handed the **engine's** number, never the slider position, and the `<output>` has no
-  id for anything else to write.
-- The watcher that rebuilds the output stage is **generated from the `effects` flags**, so a new
-  echo fader cannot move without rebuilding anything.
+## The live player — settings are applied, not re-planned
 
-Three side effects a control used to carry by hand are now fields: `disabledBy` (the live pool's
-slider greys with `unlimited`, the MIDI bend range with `pick it from the music`), a `format` that
-reads a checkbox (`off`, `auto`), and `slotId` for the one list that is genuinely imperative — the
-live player's per-channel strip, which is rebuilt per song.
+⚠️ **Read before adding a control to `packages/lbp-tracker-web/live.html`.** The page builds its
+plan once — the render's whole voice pass, `renderSequencer` with `planOnly` — and a setting that
+forces that again runs it on the thread that also feeds the audio (`Ascetic`: 1,150 tracks). A
+listener heard the player stutter every time the tempo, the swing, `NumChannels` or a fader moved,
+and a 450 ms debounce made it happen less often rather than fixing it.
 
-⚠️ **`render.html` was converted least, on purpose.** It had none of this: no `*Label`, no
-formatters, no scales — five plain checkboxes read once. Its options live in `.switch` cards beside
-the prose explaining each, which is the page's whole idea, so only the checks moved into a spec and
-the markup kept its shape. `from`, `to` and `voices` are free text with validation and stay
-imperative; a fader spec would describe them wrongly.
+**None of those four changes a voice.** They change where it starts, how long it lasts and how loud
+it is, so the plan holds **musical positions** (`startStep`, `endStep`) and a gain with the channel
+factor divided out, and `pump()` derives frames and gain as it posts each note. ✅
+`packages/lbp-tracker-lib/dev/live-settings.ts` proves it: the plan at a song's own settings, new
+ones applied the way the page does, against a render of a sequencer that had them all along —
+**bit-identical**.
 
-### The three shared widgets, and the four bugs converting them found
+- ❗ **The in-note automation has to be rebuilt.** `automation` and `morph.points` carry frames from
+  the voice's start, bent by tempo AND swing (`swungFrame(step + offset) − swungFrame(step)`), so
+  the plan carries each control point's step offset (`pointSteps`) and `onClock` puts the frames
+  back. Skipping this is **15.9 dB wrong**: the notes land in the right places and glide at the old
+  tempo inside themselves.
+- ⚠️ Tempo is only free of the voice because no shipped instrument sets `fitBpm` — 0 of 68,
+  measured by `test/instrument.test.ts`. One that did would need the rebuild after all.
+- The pool is live for the same reason: the plan carries no cuts and `LiveVoicePool` applies the
+  size per note. Its score is not immune — `channelVolume * velocityGain` means a fader changes
+  which voice is stolen — so the plan carries `baseScore` as it carries `baseGain`.
+- ❗ **`nextIndex` must never move backwards — a bug that shipped.** Re-pointing the playhead let it
+  land before the end of the look-ahead window `pump` had already handed to the worklet, and every
+  voice in it was posted again, thirty times a second while a slider was held ("the notes are
+  played several times and the volume becomes very loud"). `nextIndex = Math.max(nextIndex, want)`;
+  `rebuildPoolTo(nextIndex)` replays the pool **by index rather than by frame**; `pump` skips a
+  plan entry already in `handed`, cleared only by `seek`. `handed` stores the note's **step**, not
+  its frame, because the tempo can move after a voice was handed over. `live-settings.ts`
+  reproduces a slider drag: 0 of 163 notes handed over twice with the fix, 159 of 163 without.
 
-`src/widgets/` holds the pieces more than one page draws: `SeqPicker.vue`, `ArchivePanel.vue` and
-`OpenLevel.vue`. Each keeps an **imperative façade** — `seqPicker(host, onPick)`,
-`wireArchiveOpen(opts)`, `mountOpen(at, opts)` — because three pages drive them from event handlers
-and none has a Vue root for props to flow down from. The call sites barely changed; the markup did.
+✔ **The live path steals exactly what the renderer steals.** `packages/lbp-tracker-lib/dev/live-sim.ts`
+builds the plan as the page does and renders it three ways — all voices at once, in 128-frame
+blocks, and handed over in look-ahead bursts with the pool applied live — and all three are
+**bit-identical** to the direct render, with 1,318 of `C4K3 S0NG`'s 13,091 notes stolen either way.
+⚠️ When that file and the renderer disagree, suspect the file first: its −57 dB was the simulator
+rendering 4,800 frames per tick where the worklet renders 128 (*34* in answered-questions.md), and
+before that it asked the pool once per stack *layer* where `live.ts` had been fixed to ask once per
+note (−8.9 dB).
 
-❗ **The picker's `escape()` was covering a real hole, and only half of it.** Its rows were one
-`innerHTML` string, and the song's *name* went through an escaper while the detail column did not —
-and that column carries **a filename out of the opened backup**. A zip holding a file called
-`<img src=x onerror=…>` therefore ran it, and the archive button exists to download other people's
-zips. `{{ }}` is text, so there is no escaper in the component and nothing to forget.
+**What the audio thread costs.** `C4K3 S0NG` — 244 tracks, 13,091 notes, the 32-voice pool
+saturated — runs at **23-60%** of one core with no dropouts; it was 11-26% before one record per
+note (*17b*) put 2,108 more notes into play. ❗ The cost is the per-frame DSP and nothing else: driving the
+mixer at 128 frames and at 4,096 costs the same to the millisecond, hoisting `this.*` into locals
+made it 3% *slower*, and a sampling profiler's per-function attribution inside the hot loop was a
+hint at best — stubbing a thing out and re-timing is what answered every question. ⚠️ Uncapping the
+pool nearly doubles the load, and the browser used to restore that checkbox across a reload while
+everything else reset; every control on the live page carries `autocomplete="off"` now. The meter
+shows **notes**, not sampler voices (a stacked note plays up to five voices from one record, a
+one-shot outlives its gate, a release rings on) and turns red at ⅞ of the pool — reading high by
+design, because the pool gives a record back at the gate while the voice keeps its tag until it has
+finished ringing.
 
-❗ **The drop zone was written out three times and had already drifted.** `live.html` set
-`autocomplete="off"` on the file inputs and the other two did not; `midi.html` styled the zone
-through a class where the others used the id — and its twelve CSS rules were copied into all three
-pages' `<style>` blocks, in both spellings. One component, one block of rules in `ui.css`.
+## Playback model
 
-❗ **Only one page cleared its file input, and the other two had the bug.** `render-app.ts` did
-`fileInput.value = ''` after every pick, with a comment saying why: without it, choosing the *same*
-file again fires no `change` at all, so re-reading a level you have just re-exported from the game
-silently does nothing. The component does it for all three now.
+The sequencer is a fixed grid, so the natural clock is **steps, not seconds**, converted once at the
+edge: `720000 / tempo` frames per step at 48 kHz — four steps to the beat, measured — with alternate
+steps stretched and squeezed by `swing/2` and positions in thirds of a step (`swing.ts`,
+[synth-engine.md](synth-engine.md)). A note is **not** `(pitch, start, length, velocity)`: it is a
+chain of per-step records carrying their own pitch, volume and modulation, terminated by an `end`
+flag, so glides and per-step automation are native to the format and modelled from the start. A
+note occupies one of **32** pool records however many unison layers it plays, and the pool steals
+the quietest (`polyphony.ts`).
 
-⚠️ **`open-level.ts` must not import Vue, and nothing says so but a crash.** `render-worker.ts`
-imports `openedTitle` from it; when the mounting lived in the same file, the worker pulled in Vue
-and died with `ReferenceError: document is not defined` from inside Vue's runtime. The build is
-perfectly happy either way. The mounting half is `widgets/open-panel.ts` for that reason, and the
-rule is general: **a module a worker imports may not reach the DOM.**
+## Build order, and what exists
 
-⚠️ **`defineExpose` unwraps refs.** Exposing `busy` and writing `ui.busy.value = true` gives
-`Cannot create property 'value' on boolean 'false'` — and only when the zone is first used, which
-on the live page is after a level has been read. The components expose setters.
+1. ~~**Port `fsb.py`**~~ — done, byte-identical to the Python oracle; it serves the game's SFX, not
+   the sequencer.
+2. ~~**The voice engine**~~ — done: worklet, the engine's own interpolator and mipmaps, pitch
+   formula, key splits, envelopes, ladder, LFOs, drive, pool.
+3. ~~**`RInstrument` reading**~~ — done: all 68 of the game's instruments parse exactly and the bench
+   plays them from the real `.smp` samples.
+4. ~~**Level import**~~ — done, both halves: `packages/cwlib-ts/src/project.ts` turns a level into
+   sequencers, tracks and a scheduled event list; the whole corpus imports (19 files, 338
+   sequencers, 129,696 tracks, 2,027,633 notes, zero records falling outside a note; tempos 30–240,
+   cells 0–334, rows 0–24), and `dev/verify-levels.ts` matches cwlib's dump on 149 sequencers and
+   62,158 placements byte for byte.
+5. ~~**Echo, reverb, compressor**~~ — done and measured (`audio/effects.ts`, `audio/compressor.ts`).
+6. **The editor.** ⚠️ **Not started.** The four pages are benches and players — they open, play,
+   render and export — and nothing in them edits a song: no grid, no piano roll, no undo.
+7. **Round-trip export** back into a game-loadable resource — the feature that makes the project
+   matter to the LBP community. `cwlib`'s `zip.ts` already writes; the resource writer does not
+   exist yet.
 
-### ⚠️ Two traps, both found by the page breaking
-
-**`Symbol.for`, not `Symbol`, for the injection key.** Vite appends `?t=…` to a changed module's URL
-in dev, so a page can end up holding both `kit.ts` and `kit.ts?t=…` — two module instances, two
-distinct `Symbol()`s. `inject` then returns `undefined` in half the tree and the panel throws
-`Cannot read properties of undefined (reading 'fader')` **while still rendering correctly**, which
-is a confusing way to find out. A registry symbol is the same value in both copies.
-
-**`typescript` and `typescript-native-bridge` both declare `bin: tsc`**, so npm installed neither
-shim and `npm run typecheck` died with `'tsc' is not recognized` — which reads as a broken PATH, not
-as a bin collision. The script names `node node_modules/typescript/bin/tsc` instead.
-
-### ⚠️ Checking `.vue` needs a bridge, because `typescript@7` is native
-
-`typescript@7` is the **native** compiler: its package ships a Go binary and `getExePath.js`, with
-no `lib/tsc.js` and no JavaScript API. Volar — which is what puts `.vue` files in front of the
-checker — patches that API, so `vue-tsc` on it dies with
-`ERR_PACKAGE_PATH_NOT_EXPORTED: './lib/tsc'`, a message that reads like a broken install rather
-than a missing feature.
-
-❗ **`typescript-native-bridge` solves it without giving up the native engine**: a TypeScript fork
-carrying a `tsgoChecker` overlay, so Volar gets its JavaScript API while tsgo still does the
-checking — pinned to the same **7.0.2** the libraries use. `packages/lbp-tracker-web/dev/typecheck.mjs`
-hands `vue-tsc` its path through `run(tscPath)`, which is a supported entry point rather than a
-patch, and it announces itself with `TNB ACTIVE`.
-
-⚠️ **It is a third-party fork**, by Volar's author rather than by Microsoft, and days old when it
-was adopted. That is why it checks **the web package only**: `cwlib-ts` and `lbp-tracker-lib` go
-through `tsc -p` against the real `typescript`, so a fault in the bridge cannot quietly change what
-the libraries are held to.
-
-⚠️ **An exit code of 0 from a checker means nothing on its own**, which is why this was accepted
-only after being made to fail: a `const x: number = string` in `Fader.vue` and a `max: 'oops'` in a
-spec both came back as TS2322. An earlier pass used an aliased TypeScript 5.9 for the same job; the
-bridge replaced it the same day.
-
-## The dev server makes no outbound requests
-
-Vite serves only files inside the repository, plus `fixtures/` through the middleware above, and **makes no outbound requests at all**. Game
-assets never pass through it — the page reads the user's bank through a file picker, in the tab, as
-the licensing story requires — and neither does a level: one opened from the archive is fetched by
-the page straight from archive.org, which answers any origin.
-
-❗ **That is a decision, not an absence.** For one commit the server proxied a level search to
-zaprit.fish, which sends no CORS headers; it worked and was removed the same day. A file server
-should not also be a proxy, a listener's search should not travel through it, and — the part that
-settled it — a feature that needs a Node process beside the page is the wrong shape for the one
-route that exists *because* the listener has nothing set up. See *The search, built and then
-removed* in `lbp-modding-toolchain.md`.
-
-~~**The Thing walk is the big one.**~~ Done, and it was a real port rather than an afternoon:
-reaching a `PInstrument` means deserialising every Thing and every part that precedes it in the
-stream, because parts are variable-length and cannot be skipped without being understood. The Java
-tool sidestepped that by borrowing the toolkit's ~55 part serialisers; `packages/cwlib-ts/src/parts.ts` has 50
-of its own, and the tool's JSONL output stayed the golden reference the whole time it was being
-written — which is exactly how to do the next port of this kind.
+| where | what |
+|---|---|
+| `packages/cwlib-ts/src/` | `stream.ts` (big-endian reader, varints, `Revision` gates), `serializer.ts`, `resource.ts` (container, dependency table), `thing.ts` + `parts.ts` (the walk, 50 readers), `level.ts` (worlds, plans, chunks, `boardCell`), `project.ts` + `notes.ts` (the sequencer as data), `savearchive.ts`, `psf.ts`, `zip.ts`, `backup.ts`, `platform/` |
+| `packages/lbp-tracker-lib/src/` | `render.ts` (the pipeline), `audio/mixer.ts` (voices, resampling, panning, looping, per-chunk re-derivation), `audio/interpolate.ts` + `mipmap.ts` (default `linear`; `sinc8` kept for A/B), `audio/moog.ts`, `audio/lfo.ts`, `audio/effects.ts` (echo, reverb, fold constants), `audio/compressor.ts`, `audio/mixer-worklet.ts`, `rinstrument.ts` + `instrument.ts` + `voice.ts`, `envelope.ts`, `params.ts`, `polyphony.ts`, `scale.ts`, `swing.ts`, `fsb.ts` + `ima.ts` + `wav.ts`, `midi.ts` + `smf.ts` |
+| `packages/lbp-tracker-web/` | `index.html` the instrument bench; `live.html` the live player; `render.html` the offline renderer, in a worker; `midi.html` the MIDI bridge; `src/controls/`, `src/widgets/`, `src/assets.ts`, `src/lbparchive.ts`, `src/footer.ts` |
 
 ## Testing against the corpus
 
-`packages/cwlib-ts/test/resource.test.ts` reads real levels from `LBP_LEVELS` (defaulting to the local toolkit
-checkout) and **skips** when they are absent, so the suite passes on a machine without the game.
-Never commit a fixture derived from game assets or from someone's level; `fixtures/` is ignored for
-locally generated ones.
+The corpus tests read `LBP_LEVELS`, `LBP_RINST`, `LBP_SMP` and `LBP_FSB` and **skip** when they
+are absent, so the suite passes on a machine without the game. Never commit a fixture derived from
+game assets or from someone's level ([level-files.md](level-files.md) has the corpora).
+**Golden-file tests from day one**: render short fixtures and diff the PCM, because fidelity
+regressions are inaudible until they are not, and a diff catches them instantly. ⚠️ A test that
+normalises cannot see a gain error, and several here normalise.
 
-## Things worth deciding early
+## Decided early
 
 - **Our own project format is JSON, not an LBP resource.** Import/export to the game's format is a
-  boundary, not the internal model. Coupling the editor to a format we do not fully understand yet
-  would be a mistake.
-- **No server.** Everything client-side: it keeps the asset-licensing story clean (see
-  [game-assets.md](game-assets.md)) and makes the tool trivially hostable as static files.
-- **Golden-file tests from day one.** Render short fixtures offline and diff the PCM. Fidelity
-  regressions are inaudible until they are not, and a diff catches them instantly.
+  boundary, not the internal model.
+- **No server.** Everything client-side: it keeps the asset-licensing story clean and makes the tool
+  hostable as static files.

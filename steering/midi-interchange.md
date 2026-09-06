@@ -1,19 +1,67 @@
 # What our MIDI file carries — every side channel, and what it costs
 
-Read before changing `packages/lbp-tracker-lib/src/midi.ts`, and before adding a field to `Sequencer` or `Track`.
+Read before changing `packages/lbp-tracker-lib/src/midi.ts`, and before adding a field to
+`Sequencer` or `Track`. `smf.ts` underneath it is the container only — chunks, variable-length
+quantities, running status — and `packages/lbp-tracker-web/midi.html` is the page.
 
 A MIDI file can say *notes*. A music sequencer is a board of placements with a mixer, two sends, a
-key, a scale and per-record automation, and most of that has no MIDI message at all. So the file we
-write is two things layered: **the music, in ordinary MIDI events that any DAW plays**, and
+key, a scale and per-record automation, and most of that has no MIDI message at all. So the file
+we write is two things layered: **the music, in ordinary MIDI events that any DAW plays**, and
 **everything else, in text meta events that any DAW ignores**. This file is the inventory of the
-second layer.
+second layer and the measurement of the whole.
 
-Why measurements in this file can be trusted: they come from `packages/lbp-tracker-lib/dev/verify-midi.ts` and a budget pass
-over the corpus (10 levels, 149 sequencers, 953,791 notes, 62,158 clips, 1,448,224 records),
-2026-09-03. The round-trip results themselves live in
-[lbp-modding-toolchain.md](lbp-modding-toolchain.md).
+Every number here comes from `packages/lbp-tracker-lib/dev/verify-midi.ts` over the ten-level corpus
+(149 sequencers, 62,158 clips, 953,791 notes, 1,448,224 records — [level-files.md](level-files.md)),
+last taken 2026-09-05. Run it after touching either file.
 
-## The budget — where 24.49 MB of corpus goes
+## The result: the round trip is exact, and MIDI alone is close
+
+```
+62,158 clips, 1,448,224 records: 0 came back different
+54 clips carried verbatim, 0 unpatchable, 24.0 MB
+```
+
+It is a **fixed point from the first trip**: three round trips give the same record count and the
+same byte count, with all 149 sequencers identical between trip 1 and trip 2. The music comparison
+reads 0 sequencers disagreeing, worst deviation pitch 0.000, volume 0.000, modulation 0.000 —
+because the records themselves come back.
+
+Four things got it there, in the order they were found: **byte 3's resting bit** (below — dropping
+it made 78% of clips come back different); **the order records are written in** (position
+ascending, then pitch descending on 27,124 of 27,124 tied clips, then the end ascending — sorting
+on position alone left 1,944 clips holding the right notes in the wrong order); **a repeated value
+is a control point** (below); and **a verbatim record patch for the remainder** — 54 clips of
+62,158, 15 kB, 0.063% of the file.
+
+`LBP_MIDI_LOOSE=1` turns the patch off and measures MIDI alone — what a reader that ignores our
+metas hears, and what the file degrades to if a DAW edits it:
+
+| lost without the patch | how much | why |
+|---|---|---|
+| which clip a note sat in | 54 clips of 62,158 hold a different set of notes | clips of one part overlap, so a few notes fit two of them and either answer puts them at the same place on the timeline — *24* in open-questions.md |
+| coincident control points | 302 notes (0.03%) | two records on one position collapse to the later, which is what the engine's `t = span > 0 ? … : 1` does |
+| pitch and volume resolution | within half a unit — worst 0.167 semitones and 0.500 | bend is rounded to whole semitones and positions to thirds of a step, which is the record grid |
+| `Scale`'s own pitch field | 0 placements in the corpus set it | folded into the note numbers so the file plays anywhere; `unquantise` picks the lowest note that snaps to the one written, which always *sounds* right. `Key` is exact — a transposition is invertible where a projection is not |
+| a glide, to a shared channel | **0** | fifteen member channels against thirty-two voices, and lanes hold the difference |
+| `timbre` bits 4-5, volume > 127 | 0 in the corpus | MIDI has seven bits for either; both ride in the patch for free, and `test/midi.test.ts` is the only place either is exercised |
+
+88,893 notes (9.32%) carry a glide and **none loses it, even in the MIDI events alone**.
+
+⚠️ **The two settings are two products, and `MidiExportOptions.exact` chooses.** `LBP-SEQ` and
+`LBP-TRK` describe the *placement* and stay true however the notes are edited. A patch describes
+the *records*, so a DAW that edits the notes leaves it stale and the import hands back the original
+clip rather than the edit. Off is right when the file is going somewhere that will change it, and
+the page says so. **The importer trusts the patch over the note events**, which is why
+`flattened`, `dropped` and `dragged` describe what a *foreign reader* loses, not what a round trip
+loses.
+
+⚠️ **`Track.records` is the file's own bytes and `Track.notes` is not a re-encoding of them.**
+`makeNote` sorts a chain into position order and real files do not always store it that way —
+`Wayward` writes step 28 before step 23 with the end flag on the second — so re-encoding a note can
+move the end flag into the middle of the chain. Every byte-level comparison goes through `records`;
+the first version of the diff did not, and it invented 66% of notes diverging and a 4 MB patch.
+
+## The budget — where 24 MB of corpus goes
 
 `exact` on, which is what the page writes:
 
@@ -31,8 +79,61 @@ over the corpus (10 levels, 149 sequencers, 953,791 notes, 62,158 clips, 1,448,2
 | tempo, time signature, end of track | 0.09% | 5,358 |
 | RPN / MPE configuration | 0.02% | 1,341 |
 
-**The side channels are 6.07% of the file.** Three quarters of that is the cell list, which is what
-gives a level its board back.
+**The side channels are 6.07% of the file.** Three quarters of that is the cell list, which is
+what gives a level its board back.
+
+## The ordinary MIDI
+
+| what | carrier | note |
+|---|---|---|
+| pitch, and the glide | note number + pitch bend | MPE: one channel per sounding note, so the bend is the note's |
+| volume, and its ramp | note-on velocity + channel pressure | ⚠️ the OPENING volume rides on the pressure at the note's own tick, because MIDI has no velocity 0 and `Northern Lights` opens 96 notes there |
+| modulation, and its ramp | CC 74 | the 4-bit nibble ↔ 7-bit controller map is exact over all sixteen values, and `test/midi.test.ts` checks every one |
+| the zone | RPN 6 on the master, RPN 0 for the range | MPE lower zone, master channel 1, members 2..16 |
+| the mixer | CC 7, CC 10, CC 91, CC 90 on the master channel | level, pan, reverb send, echo send — so a DAW plays the level's own mix |
+| the grid | 480 PPQ, 4 steps to the quarter | ⚠️ 480 is what makes a third of a step exactly 40 ticks — triplets land on a tick instead of between two |
+
+⚠️ **CC 90 is undefined in the specification, and that is why it was chosen.** A delay send has no
+controller anywhere in MIDI: 91 is reverb, 92 tremolo, 93 chorus, 94 celeste/detune, 95 phaser.
+94 was tried first — some synths read it as a delay depth — and dropped, because many more read it
+as detune, and a value landing on the wrong one is audibly wrong rather than merely ignored. 90
+sits in the undefined block (85-90): a reader that does not know it ignores it. **Inert everywhere
+beats right sometimes and wrong the rest.** That is a judgement, made deliberately, and recorded as
+one so nobody mistakes it for a fact out of the game.
+
+⚠️ **The bend range is picked from the music, not fixed at MPE's 48.** 582 of the corpus's
+1,448,224 control points glide further than 48 semitones and the widest is 62; nothing reaches 96,
+MIDI's own ceiling. A fixed 48 clamped 1,026 of them, and a clamped bend is a note that arrives at
+the wrong pitch.
+
+### The channel allocation
+
+Every part gets all fifteen member channels: a DAW that imports a format 1 file as one project
+track per MIDI track gives each track its own instrument, which only ever sees its own track's
+events (Reaper does this). The file is written for that reader; `splitSequencerToMidi` is the
+option for one that cannot promise it.
+
+A part whose own polyphony passes fifteen is written across several MIDI tracks — `laneOf` — that
+carry the same identity so the import merges them. It cost **2 extra tracks across the whole
+corpus** (5,058 → 5,060) and took the clip count to exact.
+
+⚠️ **The order notes are allocated in is what keeps glides whole, and it is not obvious.**
+Allocating in plain time order let a flat note take the last free channel a moment before a gliding
+one needed it: 3,593 notes lost a glide where only **1,172 ever arrive while more than fifteen
+glides are already sounding**. `sequencerToMidi` allocates in two passes — the notes that need a
+channel to themselves first — and falls back through a channel nobody is bending, then the master
+channel (which MPE allows to carry notes and where nothing is ever bent), then a channel whose
+glides all began earlier, and only then gives a glide up. ⚠️ **The master goes before the
+earlier-glide case, not after**: our own importer knows whose a bend is, a synth does not, and the
+master is the one placement that cannot be dragged. Deciding is a separate step from writing,
+because displacing a glide has to be able to reach a note placed earlier.
+
+**30 notes of 953,791 still share a channel**, and the polyphony count does not predict them: a
+channel is held for a note's whole life, so **one long note can pairwise overlap fifteen short ones
+without three ever sounding together**. Measured at the moment it happens: 1-2 concurrent, 14-17
+booked ahead, and every one of the 30 is a FLAT note — so `dragged`, `timbred` and `flattened` are
+all 0. ⚠️ Report `dragged`, not `sharedChannel`: the raw sharing count implies a damage that is not
+there.
 
 ## 1. `LBP-SEQ ` — one text meta on the conductor track
 
@@ -41,330 +142,225 @@ Meta type `0x01`, the tag then JSON. **Only what MIDI has no message for**:
 `v` · `uid` · `swing` · `swingBaked` · `echoFeedback` · `echoTime` · `echoMix` · `reverb` · `loop` ·
 `startPoint` · `numChannels` · `volumes` · `boardRows`
 
-⚠️ **`boardRows` joined on 2026-09-05** and it is the clearest case for the rule above: MIDI has no
-circuit board, and the board's height in cells is what bands a track to a mixer channel
-(`channelVolume`). Drop it and a re-imported file routes every track by the fallback modulo instead
-— a different mix, silently.
+`boardRows` is the clearest case for the rule: MIDI has no circuit board, and the board's height in
+cells is what bands a track to a mixer channel (`channelVolume`, *9* in answered-questions.md).
+Drop it and a re-imported file routes every track by the fallback modulo instead — a different mix,
+silently. `test/midi.test.ts` pins the field list, so adding a field to `Sequencer` and forgetting
+it here fails there rather than in a DAW six months later.
 
-✅ **Five fields left in 2026-09-03 because MIDI already says them**, and the rule they taught is
-worth more than the 12 kB: **a duplicated field is a field that can disagree with itself.**
+**Five fields were removed because MIDI already says them**, and the rule they taught is worth more
+than the 12 kB: **a duplicated field is a field that can disagree with itself.**
 
 | was in the header | says it instead | why it had to go |
 |---|---|---|
 | `name` | the conductor's track-name meta | ❗ write the REAL name, empty or not — 10 of the 149 corpus sequencers have none, and a friendly default would rename them on the way back |
-| `tempo` | the tempo event | ⚠️ **it was an actual bug**: exported at 120, re-tempoed to 174 in a DAW, imported at 120, because the meta won. Measured, not suspected |
+| `tempo` | the tempo event | ⚠️ **it was an actual bug**: exported at 120, re-tempoed to 174 in a DAW, imported at 120, because the meta won |
 | `bendRange` | RPN 0 on a **member** channel | ❗ not the master's, which is a different and smaller range — ours writes 2, and reading that one would flatten every glide by 24× |
 | `mpe` | the MCM, RPN 6 on the master | already the fallback; now the only source |
 | `stepsPerQuarter` | nothing | written and never read |
 
 ⚠️ **The tempo message stores microseconds per quarter, so it is not a float you get back.** 174
-BPM reads as 173.99979, and the field would drift on every trip. The import asks which whole BPM
-encodes to exactly the microseconds in the file and takes that one — not a guess, and all 149 corpus
-tempos are whole (70..240). A genuinely fractional tempo keeps its fraction to within 1e-4 BPM,
-which is the one thing this cost.
-
-⚠️ `packages/lbp-tracker-lib/test/midi.test.ts` pins the field list. Adding a field to `Sequencer` and forgetting it here
-fails there, rather than silently in a DAW six months later.
+BPM reads as 173.99979 and the field would drift on every trip. The import asks which whole BPM
+encodes to exactly the microseconds in the file and takes that one; all 149 corpus tempos are whole
+(70..240), and a genuinely fractional tempo keeps its fraction to within 1e-4 BPM.
 
 ## 2. `LBP-TRK ` — one text meta per part track
 
 `guid` · `instrument` · `gridY` · `level` · `pan` · `echoSend` · `reverbSend` · `key` · `scale` ·
-`clips` · `name`? · `rest`? · `lane`? · `fix`?
+`clips` · `name`? · `names`? · `rest`? · `lane`? · `fix`?
 
 A `clips` entry is `[gridX, steps]`, `[gridX, steps, rest]` or `[gridX, steps, rest, bitmap]`.
 
-The first nine are the placement — instrument, mixer row, level, pan, both sends, and the key and
-scale that were folded into the note numbers. The last three are the interesting ones.
-
 ### What a DAW can edit, and what it cannot
 
-Audited 2026-09-04 by making each edit to an exported file and re-importing it. **The rule that
-came out of it: a value with a MIDI message of its own must not have a second copy in a meta that
-wins.** Three fields failed that and were fixed; one cannot be fixed.
+Audited by making each edit to an exported file and re-importing it. **The rule that came out of
+it: a value with a MIDI message of its own must not have a second copy in a meta that wins.** Three
+fields failed that and were fixed; all ten edits survive now.
 
-| edit | survives? | |
-|---|---|---|
-| rename the song | ✅ | the conductor's track name is the only source |
-| **move a part to another row** | ✅ | it is in the track name; there is no MIDI message for a board row at all |
-| **change a part's instrument** | ✅ | ⚠️ **could not be done** — a program change is 7 bits against a six-digit GUID. It is in the track name too, and `midiToSequencer`'s `instrumentGuid` resolver turns it back |
-| change the tempo | ✅ | ⚠️ **was overwritten**; see §1 |
-| transpose the notes | ✅ | `Key` is undone by subtraction, and a transposition composes |
-| move the notes in time | ✅ | the cell list re-fits them; notes outside every declared cell open a new clip |
-| **level, pan, both sends** | ✅ | ⚠️ **were ignored** — now CC 7, CC 10, CC 91 and CC 90 on the master channel, so a DAW plays the level's own mix instead of every part flat and centred, and a fader move comes back |
-**All ten survive.** The one that took a scheme rather than a message is the last two rows:
+| edit | how |
+|---|---|
+| rename the song | the conductor's track name is the only source |
+| move a part to another row | it is in the track name; there is no MIDI message for a board row |
+| change a part's instrument | ⚠️ cannot be a program change — 7 bits against a six-digit GUID. It is in the track name, and `midiToSequencer`'s `instrumentGuid` resolver turns it back |
+| change the tempo | the tempo event wins (it used to be overwritten by the meta) |
+| transpose the notes | `Key` is undone by subtraction, and a transposition composes |
+| move the notes in time | the cell list re-fits them; notes outside every declared cell open a new clip |
+| level, pan, both sends | CC 7, 10, 91 and 90 (they used to be ignored); a fader move comes back |
+
+❗ **The mixer needs BOTH the controller and the meta, and a rule for when they disagree.** Seven
+bits cannot hold the editor's steps: over 62,158 placements `level` is exact at 7 bits on 70.2%,
+`echoSend` on 96.4%, `reverbSend` on 80.5% and **`pan` on 8.9%** — the values are round decimals
+(0.25, 0.35, 0.46). So the meta keeps the exact number and the controller wins only once it stops
+agreeing with it, the same rule the tempo uses. ⚠️ **CC 7 carries `level` alone, not level times
+the channel volume**: folding the mixer stage in would make it un-invertible, and 308 of the
+corpus's 338 sequencers run one channel at a uniform 0.75 — a constant, not a balance.
 
 ### The track name is `row 4 - saw_wave`
 
-Two of a placement's fields have no MIDI message at all — the board row, and the instrument, whose
-GUID is six digits against a program change's seven bits (bank select could be abused into 21 bits,
-but a DAW would then show "bank 1009, program 61", which is worse than honest). So both are in the
-track name, which is the one thing about a track a DAW always lets you edit.
+Two of a placement's fields have no MIDI message at all — the board row, and the instrument (bank
+select could be abused into 21 bits, but a DAW would then show "bank 1009, program 61"). Both are
+in the track name, which is the one thing about a track a DAW always lets you edit.
 
-❗ **The label is cosmetic and a debugging aid; the meta is the carrier.** Everything the label
-says is in the meta as well — `gridY` and, since 2026-09-04, the instrument's `instrument` name
-beside its `guid` — and the label is read only to see whether it says something **different**.
-Measured: every part-track name stripped from the corpus's exports, **62,158 clips of 62,158 still
-correct**. A DAW that renames tracks to its own scheme changes nothing.
+❗ **The label is cosmetic; the meta is the carrier.** Everything the label says is in the meta as
+well — `gridY`, and the instrument's `instrument` name beside its `guid` — and the label is read
+only to see whether it says something **different**. Measured: every part-track name stripped from
+the corpus's exports, **62,158 clips of 62,158 still correct**. Carrying the name beside the GUID
+closed a real hole: before it, any resolver hit overrode the GUID, so a manifest that mapped
+`saw_wave` to a different GUID silently changed the instrument on a file nobody had touched. A
+renamed instrument still needs the caller — only the `.rinst` manifest knows what `piano` is, and
+`instrumentGuid` is that map read backwards; without one, or with a name that resolves to nothing,
+the meta's GUID stands, because **a typo in a track name must not silence a part**.
 
-⚠️ **Carrying the name as well as the GUID is what makes that safe, and it closed a real hole.**
-Before it, any resolver hit overrode the GUID — so a manifest that mapped `saw_wave` to a different
-GUID silently changed the instrument on a file nobody had touched. Now the resolver is not even
-asked unless the label disagrees.
+⚠️ **The label carries the INSTRUMENT, never `Track.name`.** `Track.name` is the Thing's own label,
+carried by 4,353 of the 62,158 placements (7.0%) — but only 23 distinct strings, the editor's own
+defaults (`Synth: Ray Gun`, `Percussion: Acoustic Kit 1`). It rides in the meta, where nothing else
+claims it; 7 parts of 4,909 hold clips whose names disagree, so the meta carries a per-clip `names`
+map as well.
 
-Reading a *renamed* instrument back still needs the caller: only the `.rinst` manifest knows what
-`piano` is, and `midiToSequencer`'s `instrumentGuid` is that map read backwards. Without one, or
-with a name that resolves to nothing, the meta's GUID stands — because **a typo in a track name
-must not silence a part**.
-
-⚠️ **The label carries the INSTRUMENT, never `Track.name`.** The Thing's own label is empty on
-every placement of all 22 corpus levels; putting it in the track name would hide the instrument on
-the one placement that had one, and leave a rename with nothing to mean. It rides in the meta,
-where nothing else claims it.
-
-❗ **A label names two of a placement's eight fields, and half the corpus needed more.** `Ascetic`
-has `row 0 - baiyon_drums_1` twice: the same kit on the same row at pan 0.60 with no reverb, and at
-pan 0.30 with 0.20 of it — two placements to the game, one name to a track list. Measured
-2026-09-04: **2,539 of 4,911 part tracks (51.7%) shared a label**, separated by level (466 groups),
-pan (444), the reverb send (391), the echo send (195) and the key (10). A `#2`, `#3` index settles
-it, and the index says nothing about *what* differs on purpose — the mixer is on CC 7, 10, 91 and
-90 now, so a DAW already shows each track's fader and pan. The label only has to be something you
-can point at. **51.7% → 0%.**
-
-⚠️ A lane's track is `row 3 - saw_wave (2)`, and the suffix comes straight back off — the meta
-says which lane it is, so what to strip is known exactly rather than guessed at with a pattern.
+❗ **A label names two of a placement's eight fields, and half the corpus needed more**: 2,539 of
+4,911 part tracks (51.7%) shared a label, separated by level (466 groups), pan (444), the reverb
+send (391), the echo send (195) and the key (10) — `Ascetic` has `row 0 - baiyon_drums_1` twice, the
+same kit at pan 0.60 with no reverb and at 0.30 with 0.20 of it. A `#2`, `#3` index settles it; the
+mixer is on the controllers, so a DAW already shows what differs. A lane's track is
+`row 3 - saw_wave (2)`, and the meta says which lane it is, so what to strip is known exactly.
 
 ### One track per row — `mergeRows`, on by default
 
-**4,911 tracks become 3,224, a third fewer**: every placement of one board row and one instrument
-goes on a single track, with one `LBP-TRK` meta each and the mixer written as **CC automation at
-the tick each placement's own first clip begins** — which is what a DAW does with a mixer that
-changes during a song.
+**4,911 tracks become 3,224**: every placement of one board row and one instrument goes on a single
+track, with one `LBP-TRK` meta each and the mixer written as **CC automation at the tick each
+placement's own first clip begins** — which is what a DAW does with a mixer that changes during a
+song. It stays exact: the import reads each controller *in force* at that tick and hands each note
+to whichever placement declared the cell it falls in, and **no two placements of a row group ever
+share a cell** — 0 of 62,158. Placements *sounding at the same time* are not merged (one track has
+one mixer state), and over the corpus that is 2 row groups of 850, which is what makes merging free.
+⚠️ Overlapping is a clip started at an earlier cell still sounding when a later one begins — a cell
+is 16 steps and a clip may hold 128 — not two Things in one place.
 
-❗ **It stays exact.** The import reads each controller *in force* at that tick and hands each note
-to whichever placement declared the cell it falls in. Both are unambiguous because **no two
-placements of a row group ever share a cell** — 0 of 62,158 across the corpus. Measured: 62,158
-clips out, **0 came back wrong, 177 patched** — the same as unmerged.
+Two traps, both caught by the corpus rather than by reading the code: **the mixer was read before
+`clips` was parsed**, so every placement looked like it began at cell 0 and the second one on a
+merged track read the first one's pan (0.598 instead of 0.3); and **"the value at that tick" is
+the wrong question** — the exporter skips a controller whose value has not changed, so the value
+*in force* is what to read.
 
-❗ **Placements sounding at the same time are not merged.** One track has one mixer state and
-there is no honest way to give two sounding placements different pans on it, so they fall back to
-separate tracks and the `#2` tells them apart. Over the corpus that is **2 row groups of 850**, and
-it is what makes merging free rather than a trade — which is why it is the default.
+❗ **The tracks come out in board order**, row ascending then cell then GUID. `gridY` is the
+Thing's own y negated, so row 0 is the top of the board and ascending reads top to bottom, the way
+the sequencer draws it. ⚠️ The level's own order is not board order: of 149 sequencers exactly one
+already had its tracks ascending.
 
-⚠️ **Overlapping is not two Things in one place.** It is a clip started at an earlier cell still
-sounding when a later one begins, which a cell of 16 steps and a clip of up to 128 makes easy. In
-`Fugees - Ready Or Not` one placement's cells are 60..74 and the other's are 16, 44, 75, 76, 84 —
-disjoint cells, note spans 960..1216 inside 256..1408.
+### `clips` — the board layout, and why the length is there
 
-⚠️ **Two traps, both caught by the corpus rather than by reading the code:**
+MIDI has no controller for "this note belongs to that clip", and a CC would be the wrong tool
+anyway — seven bits, and a synth would act on it. ⚠️ **The cell alone is not enough — the LENGTH is
+what makes it recoverable.** On cells alone **86.50% of the corpus's notes fit more than one clip**;
+adding each clip's own extent takes that to **0.09%**, for one number per clip. ⚠️ **Emit every
+declared cell, including the empty ones**: 52 corpus placements hold no notes at all — an
+instrument dropped on the board and never written in — and nothing else in the file can bring one
+back. Skipping them made the count 62,106 rather than 62,158, and it looked like an ambiguity
+rather than the omission it was.
 
-- **The mixer was read before `clips` was parsed**, so `part.cells` was still empty and every
-  placement looked like it began at cell 0 — the second one on a merged track read the first one's
-  pan and came back at 0.598 instead of 0.3. It reads `meta.clips` directly now.
-- **"The value at that tick" is the wrong question; "the value in force" is the right one.** The
-  exporter skips a controller whose value has not changed, so a placement whose pan matches its
-  neighbour's writes nothing of its own.
+### `rest` — byte 3's inert bit, per part, per clip, and per record
 
-❗ **The tracks come out in board order**, row ascending then cell then GUID. `gridY` is the Thing's
-own y negated — `boardToGrid` computes `floor(-y / 105)` — so row 0 is the top of the board and
-ascending reads top to bottom, the way the sequencer draws it. The rows run 0..24 and are never
-negative. ⚠️ **The level's own order is not board order**: of the corpus's 149 sequencers,
-exactly **one** already had its tracks ascending, so before this a DAW's track list was in whatever
-order the Thing graph happened to store.
-
-⚠️ **CC 90 is undefined in the specification, and that is why it was chosen.** A delay send has
-no controller of its own anywhere in MIDI: 91 is reverb, 92 tremolo, 93 chorus, 94 celeste/detune,
-95 phaser. **94 was tried first** — some synths read it as a delay depth — and dropped, because
-many more read it as detune, and a value landing on the wrong one of those is audibly wrong rather
-than merely ignored. 90 sits in the undefined block (85-90): a reader that does not know it ignores
-it, and one that does gets the send. **Inert everywhere beats right sometimes and wrong the rest.**
-That is a judgement, made deliberately — not a measurement — and it is recorded here as one so
-nobody later mistakes it for a fact out of the game.
-
-❗ **The mixer needs BOTH the controller and the meta, and a rule for when they disagree.** Seven
-bits cannot hold the editor's steps: over 62,158 corpus placements, `level` is exact at 7 bits on
-70.2%, `echoSend` on 96.4%, `reverbSend` on 80.5% and **`pan` on 8.9%** — the values are round
-decimals (0.25, 0.35, 0.46). So the meta keeps the exact number and the controller wins only once
-it stops agreeing with it, which is the same rule the tempo uses. An untouched file keeps 0.35; an
-edited one gets the fader.
-
-⚠️ **CC 7 carries `level` alone, not level times the channel volume.** Folding the mixer stage
-in would make it un-invertible, and 308 of the corpus's 338 sequencers run one channel at a uniform
-0.75 — a constant, not a balance.
-
-### `clips` — the board layout, `[gridX, steps]` per cell
-
-⚠️ **MIDI has no controller for "this note belongs to that clip"**, and a CC would be the wrong
-tool anyway: seven bits, and a synth would act on it. A text meta is ignored by everything that
-does not know it and exact for everything that does.
-
-⚠️ **The cell alone is not enough — the LENGTH is what makes it recoverable.** On cells alone
-**86.50% of the corpus's notes fit more than one clip**, because clips of a part overlap heavily
-(a cell is 16 steps, a clip may hold 128). Adding each clip's own extent takes that to **0.09%**,
-for one number per clip.
-
-⚠️ **Emit every declared cell, including the empty ones.** 52 corpus placements hold no notes at
-all — an instrument dropped on the board and never written in — and nothing else in the file can
-bring one back.
-
-### `rest` — byte 3's inert bit 6, per part, per clip, and now per record
-
-A third element on a `clips` tuple overrides the part's value. Omitted entirely when it is 1, which
-is what the game's current editor writes and therefore what a file from a DAW should become.
-
-⚠️ Inert to the engine and still a fact about the file: dropping it made **78% of clips** come back
-different. Measured in [sequencer-data-model.md](sequencer-data-model.md).
-
-✅ **And a fourth element, added 2026-09-05: a base64 bitmap, one bit per record.** 31 of the
-corpus's 62,158 clips mix the two values, and they were the largest single family in the verbatim
-patch — an inert bit was costing a whole clip its editability. **93 bytes of bitmap over the whole
-corpus** replaces all 31.
-
-⚠️ **It is the one channel here that degrades rather than breaks.** The bitmap is indexed by record
-in the reconstruction's own order, so a DAW that edits the notes misaligns it — and what lands on
-the wrong record is a bit the engine never reads. That is the whole argument for carrying it this
-way instead of in `fix`.
-
-❌ **A run length would have been the obvious encoding and the data refuses it.** Only 11 of the 31
-are two runs; the rest scatter over as many as eleven, and one reads
-`10110111111111111010101111`.
-
-### `lane` — which MIDI track of a part this is
-
-A part whose own polyphony passes fifteen is written across several MIDI tracks; they carry the
-same identity so the import merges them. It cost **2 extra tracks across the whole corpus**.
+The editor writes a resting value into byte 3's bit 6 that the engine never reads
+([sequencer-data-model.md](sequencer-data-model.md)). A third element on a `clips` tuple overrides
+the part's value; omitted when it is 1, which is what the current editor writes. Inert to the
+engine and still a fact about the file: dropping it made 78% of clips come back different. A fourth
+element is a **base64 bitmap, one bit per record**, for the 31 clips that mix the two values — 93
+bytes over the whole corpus, replacing what used to be the largest family in the verbatim patch.
+⚠️ It is the one channel here that *degrades* rather than breaks: a DAW that edits the notes
+misaligns it, and what lands on the wrong record is a bit the engine never reads. A run length
+would have been the obvious encoding and the data refuses it: only 11 of the 31 are two runs, the
+rest scatter over as many as eleven (`10110111111111111010101111` is a real one).
 
 ### `fix` — the records MIDI could not say, base64, by `gridX`
 
-**What is actually in it**, measured 2026-09-03 with the patch turned off, 649 clips of 62,158:
+The exporter imports its own output, compares clip by clip through `Track.records`, and writes the
+originals for the ones that differ. **54 clips of 62,158**; every clip in it is one family — a note
+that fits two of a part's overlapping clips and went to the other one — and six tie-break rules have
+already been measured against it (*24* in [open-questions.md](open-questions.md)). Carrying every
+clip we could not *prove* would cost 22% of the file; carrying only the measured residue costs
+0.063%. **A self-verifying export is what makes the side channel cheap.**
 
-| | clips | could MIDI say it? |
-|---|---|---|
-| ~~the same notes in a different **order** inside the clip~~ | ~~325~~ **not carried** | 317 of them are in no order the music determines — `Ascetic` has a cell holding steps 64, 0, 96, 32 in that order. `sameNotes` treats two clips holding the same chains as the same clip |
-| ~~a control point where nothing moves~~ | ~~509 notes~~ **0** | **yes, and it is now said in MIDI** — see below |
-| ~~a coincident pair's first volume~~ | ~~23 clips~~ **0** | **yes** — one more channel-pressure message, below |
-| ~~a chain stored out of position order~~ | ~~45 clips~~ **0** | **not carried, and need not be** — below |
-| ~~a ramp re-cut onto the staircase its own rounding makes~~ | ~~73~~ **0** | **yes** — the exporter now states a moving segment's END as well as its start, and the simplifier prefers a whole step at a near tie. See below |
-| ~~byte 3's resting bit on a clip that is not uniform~~ | ~~31~~ **0** | **yes**, as a per-record bitmap in the `clips` tuple — see `rest` above |
-| a note that fits two of a part's overlapping clips and went to the other one | 54 | **no**, and six tie-break rules have been measured against it |
+⚠️ **This is the only side channel that describes the notes rather than the placement, and the
+only one that can go stale.** Edit the notes in a DAW and the import hands back the original clip
+instead of the edit — which is what `exact: false` is for.
 
-❗ **The 54 are open question 24**, with what has already been ruled out:
-[open-questions.md](open-questions.md). They are one family now rather than four.
-
-✅ **The patch went 109 clips → 54 on 2026-09-05**, and 23 kB → **15,069 bytes, 0.063% of the
-file**. The taxonomy above was replaced along with it: bucketing by which record *field* differs —
-forty lines against `decodeRecords` on both sides — said in one command what three sessions of
-theorising had got wrong.
-
-- **A moving segment states both of its ends.** `k === steps` joins `k === 0` in the exporter's
-  de-duplication exemption. A resampled value is rounded, so a ramp reaches its final value one or
-  two thirds *before* the control point the author wrote; suppressing the last sample as a repeat
-  left the end unstated and the importer folded the ramp onto the last change instead. `17:57 →
-  31:46` came back as `30+2/3:46`.
-- **Douglas–Peucker prefers a whole step at a near tie**, within one unit of the field's own
-  tolerance — which is the size of the rounding itself, not a fitted number. Authors write on steps.
-
-  ❗ **Neither is worth anything alone**: the segment end alone moves the count by **0** and the
-  tie-break alone by **3**. Together they are worth **24**. A fix that measures as worthless may be
-  half of one.
-
-✅ **The patch went 177 clips → 109 on 2026-09-04**, and 34 kB → 23 kB (0.10% of the file), by
-finding two more things that could be said after all:
-
-- **A coincident pair states both volumes**, the way it already stated both pitches and both
-  modulations. `Jarred` writes a note as pitch 48 at volume 27 and pitch 75 at volume 96 on one
-  step; the first is replaced in the same instant, so nothing hears it — but it is in the file.
-  ⚠️ **The jumped-to pressure has to sort AFTER the note-on and `rank` cannot see the
-  difference**: pressure ranks 2 against a note-on's 3, so pushing it later was not enough and it
-  sorted in front anyway, leaving the note at 96. CC 74 escaped this only because it shares rank 3.
-  The exporter marks the event instead.
-- **Which record of a chain carries the end flag is not information.** It delimits the chain, and
-  `makeNote` sorts a chain into position order anyway, so two chains holding the same records decode
-  to the same note whatever order the file stored them in — `Wayward` writes step 28 before step 23
-  with the flag on the second. `sameNotes` masks the flag and compares the chain as a set.
-
-### A repeated value is a control point
-
-✅ **The largest category came out of the patch and into MIDI, 2026-09-04**, and it paid for
-itself twice over: the patch fell from **352 clips to 177**, `fix` from 82 kB to **34 kB**, and the
-whole file from 24.38 MB to **23.97 MB**.
+## A repeated value is a control point
 
 The rule is one sentence: **the resampler never sends the same value twice, so a message carrying
 the value already in force can only be a control point.** A rounded ramp is a staircase, so
-resampling naturally produces runs of equal values; suppressing them costs a receiver nothing
-(sending 57 twice is a no-op) and it is what makes the repeat readable. The exporter then emits one
-deliberate repeat wherever a control point sits in a flat run of three, and `simplify` never drops
-a point the file stated outright.
+resampling naturally produces runs of equal values; suppressing them costs a receiver nothing, and
+it is what makes a deliberate repeat readable. The exporter emits one repeat wherever a control
+point sits in a flat run of three, and `simplify` never drops a point the file stated outright.
+That took the patch from 352 clips to 177 and made the whole file *smaller*.
 
-⚠️ **Two traps, both found by the numbers moving the wrong way:**
+Two traps, both found by the numbers moving the wrong way:
 
-- **Marking every stationary point** rather than only those inside a flat run cost **half a
-  megabyte** over the corpus to save forty kilobytes of patch — 281,000 markers where 8,600 were
-  needed. A point where a flat run meets a moving one is a corner and the simplifier keeps it
-  anyway.
-- **De-duplicating the event that OPENS a moving segment** took the patch from 352 clips to
-  **1,077**. That event is a deliberate repeat too: it states where the ramp begins, which is
-  usually where the plateau before it ended. A note that sat at 96 for two steps and then faded
-  came back fading from its very first frame. `k === 0` is exempt.
+- **Marking every stationary point** rather than only those inside a flat run cost half a megabyte
+  to save forty kilobytes of patch — 281,000 markers where 8,600 were needed. A point where a flat
+  run meets a moving one is a corner and the simplifier keeps it anyway.
+- **De-duplicating the event that OPENS a moving segment** took the patch from 352 clips to 1,077.
+  That event states where the ramp begins, which is usually where the plateau before it ended; a
+  note that sat at 96 for two steps and then faded came back fading from its first frame. `k === 0`
+  is exempt — and so is `k === steps`: a resampled ramp reaches its final value one or two thirds
+  *before* the control point the author wrote, and suppressing the last sample left the end
+  unstated (`17:57 → 31:46` came back as `30+2/3:46`).
 
-❗ **Order WITHIN a chain still counts.** `sameNotes` splits on the end flag and keeps each chain's
-bytes verbatim rather than going through `groupNotes`, because `makeNote` sorts a chain into
-position order and a chain stored out of it puts its end flag somewhere else — which is a real
-difference, not an authoring one. Records after the last end flag stay where they are.
+**Douglas–Peucker prefers a whole step at a near tie** (`WHOLE_STEP_BAND`, within one unit of the
+field's own tolerance — the size of the rounding itself, not a fitted number), because authors
+write on steps and the exporter resamples onto thirds. ❗ **Neither this nor the segment end is
+worth anything alone**: the segment end alone moves the patch by 0 and the tie-break alone by 3;
+together they are worth 24. A fix that measures as worthless may be half of one.
 
-✅ **One category came out of it and into MIDI.** A coincident pair's FIRST modulation used to be
-dropped as authoring debris; it is not, because `voice+0x28` is read once at voice start for
-`Params[0..2]` (per-layer detune, spread, random start) before any ramp runs. It now travels as two
-CC 74s — one before the note-on, one after — which is what the engine does and what a synth wants.
+Three more things MIDI turned out able to say, each of which came out of the patch:
 
-⚠️ **What is left is not "MIDI could have said it and we chose a meta".** It is authoring order,
-a genuine placement ambiguity, and control points that are inaudible by construction. A converter
-that wants them has to carry them; one that does not want them should turn `exact` off and lose
-nothing a listener can hear.
+- **A coincident pair states both volumes**, as it already stated both pitches and both
+  modulations — `Jarred` writes a note as pitch 48 at volume 27 and pitch 75 at volume 96 on one
+  step; nothing hears the first, but it is in the file. ⚠️ **The jumped-to pressure has to sort
+  AFTER the note-on and `rank` cannot see the difference**: pressure ranks 2 against a note-on's 3,
+  so the exporter marks the event. CC 74 escaped this only because it shares rank 3.
+- **A coincident pair's first modulation is not authoring debris**: `voice+0x28` is read once at
+  voice start for `Params[0..2]` before any ramp runs, so it travels as two CC 74s, one before the
+  note-on and one after — which is what the engine does and what a synth wants.
+- **Which record of a chain carries the end flag is not information**: it delimits the chain, and
+  `makeNote` sorts a chain anyway, so `sameNotes` masks the flag and compares the chain as a set.
+  Order *within* a chain still counts — a chain stored out of position order puts its end flag
+  somewhere else, which is a real difference — so `sameNotes` keeps each chain's bytes verbatim
+  rather than going through `groupNotes`.
 
+## The traps the round trip found on the way
 
-⚠️ **This is the only side channel that describes the notes rather than the placement, and it is
-the only one that can go stale.** The others stay true however the music is edited. A patch names
-records; edit the notes in a DAW and the import hands back the original clip instead of the edit.
-`MidiExportOptions.exact` is the switch, on by default, and the page says what off is for.
+Each was found by measuring, and none was where it looked:
 
-⚠️ **The importer trusts the patch over the note events**, which is why `flattened`, `dropped`
-and `dragged` describe what a **foreign reader** loses, not what a round trip loses.
-
-The exporter earns it: it imports its own output and patches only what came back wrong. **54 clips
-of 62,158, 15 kB.** Carrying every clip we could not *prove* would cost 22%.
-
-## 3. Track name — meta type `0x03`
-
-`PInstrument` has no name field worth printing, so without the caller's `.rinst` manifest a DAW
-shows `row 4 - guid 148321` and nobody can tell it is the drum kit.
-`MidiExportOptions.instrumentName` is the hook; this module fetches nothing.
-
-⚠️ **`Track.name` is NOT always empty, and this file used to say it was.** Measured 2026-09-04:
-**4,353 of the 62,158 corpus placements (7.0%) carry one**, though only **23 distinct strings** —
-they are the editor's own defaults, `Synth: Ray Gun`, `Percussion: Acoustic Kit 1`. It is the
-Thing's label, not the instrument's, so it rides in the meta and never in the track name. **7 parts
-of 4,909 hold clips whose names disagree**, and their 84 clips came back unnamed until the meta
-gained a per-clip `names` map.
-
-## 4. The ordinary MIDI, for completeness
-
-| what | carrier | note |
-|---|---|---|
-| pitch, and the glide | note number + pitch bend | one channel per sounding note, so the bend is the note's |
-| volume, and its ramp | note-on velocity + channel pressure | ⚠️ the OPENING volume rides on the pressure at the note's own tick, because MIDI has no velocity 0 and `Northern Lights` opens 96 notes there |
-| modulation, and its ramp | CC 74 | the 4-bit nibble ↔ 7-bit controller map is exact over all sixteen values |
-| the zone | RPN 6 on the master, RPN 0 for the range | MPE lower zone, master channel 1, members 2..16 |
-| the grid | 480 PPQ, 4 steps to the quarter | ⚠️ 480 is what makes a third of a step exactly 40 ticks — triplets land on a tick instead of between two |
-
-## What is NOT carried, and would need a new channel
-
-Nothing, over this corpus — both modes read 0 records different. The two fields that would need the
-patch on a level unlike any of the 22 are `timbre` bits 4-5 (the per-block table select) and a
-volume above 127; both are zero in all 1,448,224 records, both ride in `fix` for free, and
-`packages/lbp-tracker-lib/test/midi.test.ts` is the only place either is exercised.
+1. **The pitch was rounded to a whole semitone before the simplifier saw it**, turning the ramp the
+   file drew into a staircase whose treads the simplifier then kept. Keeping the fraction until a
+   record is written took 2,432 differing notes to 592 and the worst pitch deviation to 0.
+2. **Coincident points were collapsed everywhere**, which erased the segment *leading into* one: a
+   dive in `Diode` that arrives and snaps back came out flat. The collapse belongs only at the
+   note's own start, where both samples would land on the note-on's tick.
+3. **`needsChannel` did not count the modulation.** A note whose pitch and volume are flat but
+   whose modulation moves was allocated as flat — 608 undeclared notes. CC 74 belongs to the
+   channel exactly as bend and pressure do.
+4. **A newcomer's CC 74 was landing on the owner's ramp**, and the first fix was one event too
+   greedy: excluding the whole tick threw away the owner's own final ramp sample whenever a note
+   started on the instant a ramp ended (three notes in `Orb` and `Blackfire`). It is the **last**
+   CC 74 before the note-on that belongs to the newcomer, not every one at that tick.
+5. **The verifier was measuring the wrong things, repeatedly — the note pairing most often.** It
+   compared the first record's modulation rather than the one the note sounds; its pairing cost
+   ignored the modulation, so it paired notes that differ only in their filter at random and
+   reported 458 casualties where a diagnostic costing all three found none; and its greedy walk
+   crossed a flattened note with an intact sibling. ⚠️ Levels place the same hit on two components
+   (`Partykill` has the same note twice at step 4308), so the pairing takes **exact matches first**
+   and only then matches what is left by cost; and its key stays loose — step and pitch — because
+   MIDI has no velocity 0, so a note that opened at 0 comes back at 1. The phantom counts, in
+   order: 142 sequencers, 458 notes, then 8. None was real.
+6. ⚠️ `verify-midi.ts` checks the note count against a **range** rather than `before − dropped`,
+   because a dropped note comes back through the patch and the equality blamed `Avian` for a note
+   that had already been restored.
 
 ⚠️ **The general rule, learned the expensive way**: the shape of an exact converter is not more
 MIDI, it is a bigger side channel — but a side channel is only affordable if the exporter *checks*
 rather than assumes. Every attempt to carry a category wholesale priced itself out (22% for the
-records, 0.5% just for a per-clip flag written unconditionally); every attempt that carried only
-the measured residue cost under 1%.
+records, 0.5% for a per-clip flag written unconditionally); every attempt that carried only the
+measured residue cost under 1%. And "do not write a byte-equality test against a round trip; it
+will fail for reasons that are correct" was true until the reasons were enumerated one at a time
+and carrying them as data became cheaper than carrying the argument.

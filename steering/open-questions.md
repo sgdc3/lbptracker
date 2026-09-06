@@ -1,254 +1,62 @@
-# Open questions — ranked, with the anchor to attack each from
+# Open questions — decisions, residues, and what would settle each
 
-Read before planning a work session. Everything here is genuinely unknown or unconfirmed; nothing
-here is a guess dressed up as a fact. When one gets resolved, move the answer into the descriptive
-steering file it belongs to and delete the entry.
+Read before planning a work session. Nothing here is a guess dressed up as a fact, and **nothing
+here blocks the build**: the note format, the containers, the level walk, the asset chain and the
+whole signal path are measured, and import and playback are built. What is left is four
+*decisions* where the project knowingly departs from the measured engine, a short list of measured
+residues nothing models yet, and two questions that are not about fidelity at all. When one gets
+resolved, move the answer into the descriptive file it belongs to and delete the entry.
 
-**Nothing here blocks the build.** `SampleGuids` → audio, the last blocking unknown, was resolved on
-2026-09-01: sequencer samples are plain RIFF/WAV files in the FARC archives, addressed by GUID
-through the game's FileDB. See [game-assets.md](game-assets.md). The note format, the container, the
-level walk and the asset chain are all measured — import and playback can both be built.
+## The decisions — deliberate deviations from the measured engine
 
-What remains below is fidelity work, ranked by how audible a mistake would be. **The synth side is
-now fully recovered.** All 27 `Params` are named and the block turns out to be a small subtractive
-synth — unison stack, 4-pole Moog ladder, two ADSRs, three LFOs, output stage (`packages/lbp-tracker-lib/src/params.ts`).
-The sampler, the envelope, the scale quantiser (six rows at module vaddr `0x80c0`), the three LFO
-destinations and the pan law are all measured; see
-[sequencer-data-model.md](sequencer-data-model.md).
+Each is a listening judgement by the project's owner that outranks a static reading, kept one
+switch away so a capture can settle it. The evidence rule for captures is in
+[project-brief.md](project-brief.md): a shadPS4 capture is trustworthy for *structure* — how many
+voices sound, whether a note is gated — and not for absolute level or spectrum, so every experiment
+below is framed as a structural one.
 
-**The effects are closed.** Both were finished on 2026-09-02 and both are in
-[answered-questions.md](answered-questions.md): *6 / 14. The reverb* (the whole of
-`fmodsmsreverb.prx`) and *2 / 2b. The echo*. Read them before touching `packages/lbp-tracker-lib/src/audio/effects.ts` —
-most of what this file used to say about either was wrong, and the tables of wrong readings are the
-useful part. ~~**What is left is the remaining field semantics**, mainly `Notes.y` / `Splitnotes`
-(question 4)~~ — **answered 2026-09-02**, and it *was* transposing imported levels: `Key` is a real
-transposition and this project ignored it. See *18. `Notes.y`, `Key` and `Splitnotes`* in
-[answered-questions.md](answered-questions.md).
+## 29. The release tail — `RenderOptions.releaseTail`, default **off**
 
-⚠️ **Question 24 is a different kind of thing from the rest of this file** and is deliberately
-last: nothing in it is audible and nothing in it is broken. It asks whether the MIDI converter's
-verbatim record patch can be made smaller, not whether the game has been read correctly.
+The engine frees a voice record when the sound ends, not when the note does — measured six ways in
+`fmodextinput.prx` (the free predicate at `0x20de`–`0x20f1` → `0x3093`, the sample-end free at
+`0x3035`–`0x3069`, the score factors, the gate, a released voice skipping the score update; *29* in
+[answered-questions.md](answered-questions.md)). The tracker frees it at the note's written end,
+because with the tail on a listener rejects `C4K3 S0NG` at **25.85 s** — the choir starts a
+five-note chord and four of the five are stolen the instant they start — and with it off accepts
+the same passage.
 
-❗ **The sampler side is now closed too.** Question 12 — `Params[2]`, the last unresolved thing the
-engine does to a note before it sounds — was answered on 2026-09-05: the stack loop computes a
-random start for every layer and the instruction after it clears layer 0's, which is why six drum
-kits can set the parameter to 1.000 harmlessly. That entry is worth reading for its method failure
-rather than its answer: **the measurement had been in
-[sequencer-data-model.md](sequencer-data-model.md) since the day the loop was first read, two lines
-above a summary table that contradicted it.**
+What is measured about how wrong the decision can be, on that song's uncapped demand:
 
-❗ **And the output stage is closed, the same day.** Question 22 — why the game's centre speaker
-carries the mono average of the front pair — was the last hop of the signal chain that was inferred
-rather than read. It is read now, at `v0xa2599f`, and `PAN_WIDTH = 2 - sqrt2` is a derivation from
-three measured constants instead of a fit. Its entry is the one to read before any vtable hunt in
-this binary: **the eboot has RTTI**, 322 vtables can be named outright, and a session was spent
-enumerating them by shape instead. `tools/ebvtable.py` is what came out of it.
+| | median | p95 | p99 | peak | over 32 |
+|---|---|---|---|---|---|
+| tail off | 21 | 42 | 51 | 61 | **16.0% of the song** |
+| tail on | 25 | 48 | 56 | 75 | **28.7% of the song** |
 
-❗ **And question 3's last piece turned out to be the clock everything runs on.** The engine's DSP
-block is a fixed **256 frames** (`0x0170` calls the block function with `mov esi, 0x100` and refuses
-a length that is not a multiple of it), so the modulation staircase this project holds for a chunk
-was being stepped at the AudioWorklet's 128 rather than the engine's 256. Fixed 2026-09-05, worth
-−50.6 dB of difference at an unchanged RMS. The same read showed that **note onsets land on that
-block** rather than on the sample, which is now the one open *decision* in section 0.
+The song writes more notes than the hardware can play whichever model is used — counted straight
+off the records, 21% of it wants more than 32 — so the engine steals constantly and the ear does
+not hear it; the tail roughly doubles the time over the cap, and in the 12.7% of the song that is
+over the cap only because of it, more than half is one to four records over. A pool of 36, or a
+tail 15% shorter, would erase most of the difference; neither is justified by anything measured.
 
-✔ **And question 15 is withdrawn**, 2026-09-05: the listener says `robot` now sounds right. It is in
-[answered-questions.md](answered-questions.md) with **no cause attached**, which is the point of the
-entry — the one systematic change that reaches `robot` is worth −33 dB and a mere reseed is worth
-−4.6 dB, so the biggest thing that happened to it was its vibrato phases being reshuffled. A
-difference smaller than a reseed is a difference a reshuffle could have produced.
+⚠️ **Be ready for the answer to be uncomfortable.** With the tail the game plays at most 32 notes
+at once; without it this renderer routinely runs 35 to 50. If the tail is right our render is
+*denser* than the game's, which is exactly why it sounds less truncated. The version that sounds
+better may be the wrong one.
 
-❗ **And the chain's last DSP is closed, 2026-09-06 — by running it.** `SMS WaveHammer` turned out
-to be a compressor (not a limiter), configured by a static template (not by `DSP::setParameter`),
-and it does compress (an earlier reading said it collapsed to a constant). All three corrections are
-in *37* in [answered-questions.md](answered-questions.md), which is worth reading for the third:
-**a superset disassembly proved no store to `[reg+0xc0]`, correctly, and the field was still written
-— as `[rbx+0x3c]` through an interior pointer.** `tools/runhammer.py` loads the PRX and runs it,
-which is what settled it and is reusable on the other two plugins.
+**What would settle it**: capture `C4K3 S0NG` from the game around 25.85 s and listen for whether
+the choir chord enters with five voices or one. Two seconds, no counting, and a shadPS4 capture is
+admissible because the voice pool is the game's own plugin executing. `LBP_RELEASE_TAIL=1`.
 
-**Nothing about the engine's signal path is unread any more.** What is left in this file is one
-measured DSP deliberately switched off (38), two decisions with bounded error (section 0), one
-question that is not about fidelity at all (24), and one about files this reader does not claim
-to support (28).
+## 38. The compressor — `compressor`, default **off**
 
-✔ **39 is closed**, 2026-09-06: the stereo fold's gain now runs where FMOD's speaker matrix
-applies it — last, after the clip, the reverb and the compressor — instead of being folded into
-every voice. See *39* in [answered-questions.md](answered-questions.md); the one deliberate
-deviation left in the project is 38.
+`SMS WaveHammer` is read end to end, checked against the module executing, implemented and pinned
+to better than 2e-5 against vectors from that run ([lbp-audio-engine.md](lbp-audio-engine.md)),
+and off on both the offline and the live path because the listener judged it wrong the first time
+it ran. It costs `level-seq723339` 6.94 dB of RMS and 6.93 dB of peak.
 
-Last re-ranked 2026-09-01, after mapping `fmodextinput.prx` and then working outward from it. That
-run closed questions 5 and 7 outright, the whole of 8's `Params`, and the triplet half of 3; it
-opened 5b; and it corrected several things steering had wrong — the state block's pointers, the
-scale table's address, `Numstack`, voice `+0x28`, and the pan law. See
-[lbp-modding-toolchain.md](lbp-modding-toolchain.md) for what came from whom.
-
----
-
-## 0. Leftovers from answered questions
-
-Small residues from questions now in [answered-questions.md](answered-questions.md). None blocks
-anything; all are places where an answer stopped just short.
-
-- **The unison stack and `mime_artist`.** Layers are the same sample, verified on 14 of the 15
-  stacked instruments (`slots == zones`). `mime_artist` is the exception: 4 samples, 1 zone,
-  `Numstack` 5, and its 3 spare slots do not equal `Numstack - 1` either.
-
-  ⚠️ **Half of this is now settled and it is the half that mattered.** `mime_artist`'s bound
-  array in the DSP record is all zeros -- `Splitnotes` is `[87,0,0,…]` and the walk reads `[1..8]`,
-  see *19* in [answered-questions.md](answered-questions.md) -- so `0 <= note` on the first
-  comparison and **every note resolves to slot 0**, the base-81 `pluck_a6`. The other three samples
-  are unreachable as zones, which is what "1 zone, 4 samples" means.
-
-  ✔ **CLOSED 2026-09-05: they are not reachable as layers either, and this project is right.** The
-  `0x98` slot stride appears at exactly four sites in the whole module — `0x1aca`, `0x1d6a`,
-  `0x2c68`, `0x3046` — and every one of them indexes by `voice+0xcc`, the **zone**, which `0x1a83`
-  writes once per note from `note & 7`. `0x2bc2` loads it once into `r12` for the render loop. There
-  is no per-layer slot index anywhere, so a stacked voice plays one slot `Numstack` times, and
-  `mime_artist`'s other three samples are dead weight in the patch. Nothing outstanding.
-- ~~**Per-note modulation across a note's own points.**~~ **SETTLED 2026-09-03: the engine ramps
-  it and re-reads it every chunk.** `sub_0x3930` writes a slide rate for it at `0x3e8a` beside the
-  ones for volume and pitch, and `sub_0x1c60` advances it by `slide × dt` at `0x1f4a` and reads the
-  result four times. The cadence is per chunk per voice, under the DSP read callback at `sub_0x170`.
-  Full chain and addresses in `answered-questions.md` 6d. **Implemented the same day, in full**:
-  `VoiceSpec.morph` carries the ramp, `Voice.render` re-derives per 128-frame chunk, and the echo
-  send follows it too — which turned out to be worth almost nothing, 68 notes in the corpus,
-  because a placement with `echoSend == 0` mutes the instrument's send whatever the modulation
-  does. Nothing outstanding.
-
-- ~~**The `1/3` sub-step and `Swing`.**~~ ✔ **CLOSED 2026-09-05, and the implementation was
-  right.** The block loop recomputes the step length from `floor(position) & 1`, which cannot change
-  inside a step, so the position advances linearly at that step's own swung rate and a note fires
-  when `frac(position)` passes `voice[+0x3e]/3`. A triplet inside a stretched step therefore
-  stretches with it, which is exactly what `swungFrame` does. See *3* in
-  [answered-questions.md](answered-questions.md).
-- ~~**The voice pool did not explain the density report it was found chasing.**~~ **RETIRED
-  2026-09-05.** The report was a listener's impression of one passage, never reproduced, and the
-  pool itself is measured and implemented (*13* and *33*). There is nothing here to measure: what is
-  left is a description of a session, and that belongs to the auto-memory rather than to steering.
-
-- ❗ **Note onsets land on the engine's 256-frame block, and this project renders them
-  sample-accurately.** Not an unknown — `0x1cd4` computes the in-block offset as
-  `trunc((start - frac(p)) / N)`, which is 0 for every block longer than a frame — but a *decision*,
-  like the release tail below. Reproducing it moves every onset later by 0 to 5.33 ms and rests on
-  the block grid being song-aligned, which is an inference. The anchor is a capture of a fast
-  unswung drum pattern: on a 256-frame grid the onset deviation is a sawtooth with a 5.33 ms range,
-  and sample-accurate onsets have none. Full reading in *3* in
-  [answered-questions.md](answered-questions.md).
-
-- **The release tail, question 29's residual.** The question itself is answered — the engine holds a
-  record until the envelope reaches zero, measured six ways — and the model is a *decision*:
-  `RenderOptions.releaseTail` defaults **off**, because a listener rejects the tail on and accepts it
-  off. What is left is not an unknown about the engine but an unrun experiment: **capture
-  `C4K3 S0NG` from the game at 25.85 s and count whether the choir chord enters with five voices or
-  one.** The error the decision can be wrong by is bounded — the tail newly crowds 12.7% of that
-  song, and more than half of that is one to four records over 32. See *29* in
-  [answered-questions.md](answered-questions.md).
-  ✔ **A shadPS4 capture settles this one.** Counting voices in a chord is a question about
-  *structure*, and the voice pool lives in the game's own `fmodextinput.prx`, which the emulator
-  executes — so unlike the withdrawn question 23 this experiment does not need real hardware. See *Provenance
-  rule 2* in [lbp-modding-toolchain.md](lbp-modding-toolchain.md).
-
-## 24. The last 54 clips that need a verbatim record patch
-
-⚠️ **Nothing here is audible, and nothing here is broken.** The MIDI round trip is exact — 0 records
-different in 1,448,224 — *because* the exporter carries these clips' records verbatim in the
-`LBP-TRK` meta's `fix`. The question is only whether the patch can be made smaller, which matters
-because every clip in it is a clip whose bytes go stale the moment a DAW edits its notes. See
-[midi-interchange.md](midi-interchange.md) for what `fix` is and why it exists.
-
-**109 → 54 on 2026-09-05**, and every anchor this entry carried before that was wrong. What follows
-is the state after, with the wrong turns kept because two of the three were wrong in an instructive
-way.
-
-### Where it stands, measured 2026-09-05
-
-`LBP_MIDI_LOOSE=1` turns the patch off so the residue is visible. Bucketed by which record field
-differs — which is a better taxonomy than the one this entry used to carry, and cheap: 40 lines
-against `decodeRecords` on both sides.
-
-| | clips |
-|---|---|
-| the reconstruction has **more** records than the file, or **fewer** | 44 |
-| the same count, different notes | 10 |
-
-**54 of 62,158 clips (0.09%).** ❗ **They are one family, not four**: a part's clips overlap — a
-cell is 16 steps and a clip may hold 128 — and a note that two of them could hold went to the other
-one. `5aa77945` seq 745160 cells 31 and 107 are the same story from both ends, one clip short of
-its last sixteen notes and its neighbour long by them.
-
-⚠️ **That family is already ruled out as tractable**, below: six tie-break rules were measured
-against each other and the best moved the total by 6. Trying a seventh is the thing not to do.
-
-### What closed the other 55
-
-Three changes, and the second and third only work together:
-
-- **A per-record bitmap for byte 3's resting bit** — 31 clips, 93 bytes of bitmap over the whole
-  corpus. `restingBits` in `packages/lbp-tracker-lib/src/midi.ts`; it rides in the `clips` tuple's fourth slot. A DAW
-  that edits the notes misaligns it and puts an inert bit on the wrong record, which is precisely
-  why a bitmap is safe where a verbatim patch is not.
-- **A moving segment now states where it ENDS as well as where it starts** (`k === steps` joins
-  `k === 0` in the exporter's de-duplication exemption). The resampled values are rounded, so a ramp
-  reaches its final value one or two thirds *before* the control point the author wrote; suppressing
-  the last sample as a repeat left the segment's end unstated.
-- **Douglas–Peucker prefers a whole step at a near tie** (`WHOLE_STEP_BAND`). Authors write on
-  steps; the exporter resamples onto thirds; and a corner in a rounded staircase deviates from its
-  chord by almost as much one third early as at the corner itself.
-
-❗ **Neither of the last two is worth anything alone.** Measured: the segment end alone moves the
-count by 0 — the point exists but the simplifier still prefers the neighbouring third — and the
-tie-break alone by 3, because the point it would prefer is not in the file. Together they are worth
-**24**. That is the shape to remember: a fix that measures as worthless may be half of one.
-
-### What has already been ruled out — do not repeat these
-
-- **Six clip-assignment tie-break rules** (nearest, earliest, tightest, loosest, busiest,
-  same-start) were measured against each other and moved the total by 6 at best. Re-measured
-  2026-09-05 on the new baseline: `busiest` gives 52 against `first-empty`'s 54, and the rule as it
-  stands was chosen to stop clips being emptied. **The cell ambiguity is not worth another rule.**
-- **A fourth record-order key does not exist.** Position ascending, then pitch descending, then the
-  end ascending are each 100% over the corpus; among the 254 clips tied on all three, nothing beats
-  98.8% (modulation ascending) and 94.9% (volume descending).
-- **The flat-run markers are carrying their weight.** Turning them off took the patch from 109 clips
-  to 277 on the old baseline.
-
-### The three anchors this entry used to carry, and why each was wrong
-
-Worth more than the fixes, because all three were plausible and all three cost a session's worth of
-belief:
-
-- ❌ **"73 clips are a ramp re-cut onto the staircase its own rounding makes, and the anchor is a
-  whole-step tie-break in Douglas–Peucker."** The tie-break was the right idea and **73 was not a
-  measured number** — it came from a taxonomy that bucketed by a guess rather than by diffing the
-  records. Implemented alone it moved **3**. The real fix was upstream, in the exporter, and the
-  diff found it in one command.
-- ❌ **"31 clips mix byte 3's resting bit; measure whether it is constant across a contiguous run,
-  because a level saved across the editor change would have the old notes first and the new ones
-  after."** Measured: **11** of the 31 are two runs and the rest scatter over as many as **eleven**
-  — `10110111111111111010101111` is a real one. There is no run structure. A bitmap does not care,
-  and one bit per record is smaller than any run-length would have been anyway.
-- ❌ **"Five are not diagnosed; print them before theorising."** There were never five of anything:
-  the old three-way split did not survive contact with a field-by-field diff. **Print them first,
-  not before theorising — the theorising is what produced the buckets.**
-
-## 38. ❗ The compressor is measured, implemented, and switched OFF
-
-Added 2026-09-06. `SMS WaveHammer` is read end to end, checked against the module executing
-(`tools/runhammer.py`), implemented in `packages/lbp-tracker-lib/src/audio/compressor.ts` and pinned by
-`packages/lbp-tracker-lib/test/compressor.test.ts` to better than 2e-5 against vectors from that run. It is nevertheless
-**off by default on both the offline and the live path**, because the listener judged it wrong the
-first time it was switched on.
-
-⚠️ **This is a deliberate deviation from the measured chain**, and it is the only one in the
-project. It is recorded here rather than quietly defaulted because a reader who finds
-`compressor = false` in `packages/lbp-tracker-lib/src/render.ts` deserves to know it is a judgement and not an oversight.
-
-### ❌ The diagnosis this entry first carried was generalised from one song
-
-It said: turning the compressor on costs 6.94 dB, our RMS sits 3.5 dB above its knee, therefore our
-absolute level into the chain is too hot. **The first number is right and the inference is not.**
-Measured 2026-09-06 over four corpus sequencers, against the knee bottom at −21 dBFS (all figures
-after the pan-width removal recorded in *39* in [answered-questions.md](answered-questions.md),
-which raised every one of them by about 1 dB):
+❌ The first diagnosis — "our RMS sits 3.5 dB above its knee, so our level into the chain is too
+hot" — was generalised from one song. Over four corpus sequencers against the knee bottom at
+−21 dBFS:
 
 | sequencer | notes | RMS dBFS | vs knee | peak dBFS | vs knee |
 |---|---|---|---|---|---|
@@ -257,257 +65,121 @@ which raised every one of them by about 1 dB):
 | 732985 | 566 | −22.6 | −1.6 | +0.4 | +21.4 |
 | 730116 | 765 | −22.4 | −1.4 | −2.0 | +19.0 |
 
-❗ **Three of the four sit at or below the knee in RMS.** 723339 is the busiest song in the corpus
-and it is the one the 6.94 dB was measured on; quoting it as "our level" was the same over-reach
-this project keeps catching itself in.
+Three of the four sit at or below the knee in RMS; **every song's peaks sit 7 to 21 dB above it**,
+and the detector's window is 64 samples (1.33 ms) — far too short to follow an RMS. So the
+compressor is riding peaks, and the question is **crest factor**, not loudness: either the game's
+own mixes are as peaky as ours and its WaveHammer takes the same 7 dB off the dense songs, or ours
+are peakier — through the pool, the envelope, the onset grid or the missing release tail — and the
+compressor is fed transients the game never sends it. ❌ The `FOLD_GAIN` lead is retired: the gain
+now runs after the compressor, where FMOD applies it (*39*), so the compressor sees the same signal
+the game's does, and the one song it had "explained" was a coincidence (the other three land 6 to
+13 dB below the knee).
 
-### What the four songs actually say
+**What would settle it**: a capture with a known reference beside it, so the *ratio* is admissible;
+and, cheaper and needing no console, our own render at −0, −6 and −12 dB fed through the real DSP
+with `tools/runhammer.py`, to see how much gain reduction each trim provokes. `LBP_COMPRESSOR=1`, or
+`compressor: true`.
 
-The detector's window is **64 samples, 1.33 ms** — far too short to follow an RMS and short enough
-to follow near-peaks. So the row that matters is the last one, and **every song's peaks sit 7 to
-21 dB above the knee**. The compressor is therefore doing what a compressor does: riding peaks,
-with a long-term cost that follows each song's crest factor rather than its loudness.
+## 39. The stereo narrowing — not applied
 
-That leaves the real question narrower and harder than "are we too loud":
+The 7.1 centre feed folds every pan to `2 − √2` of its width for a stereo listener, derived from
+three read constants and confirmed to six figures ([lbp-audio-engine.md](lbp-audio-engine.md)).
+The fold's **gain** (+4.645 dB) is applied after the whole chain; the **narrowing** is not, because
+the listener asked for the file's own pans. It is still half of a linear operator, and that is
+worth saying plainly: if a capture ever shows the image is wrong, the other half is one line at the
+`pan:` field where the voice spec is built, plus the same at the stack spread. Nothing measurable is
+left of this one.
 
-- If the game's own mixes have the same crest factor as ours, its WaveHammer takes the same 7 dB
-  off the dense ones, and our chain is simply missing that.
-- If ours are peakier — through the voice pool, the envelope, the onset grid, or the missing
-  release tail — the compressor is being fed transients the game never sends it.
+## 3. Note onsets — sample-accurate, where the engine places them on its block
 
-⚠️ **Neither can be told apart from a level match**, which is why the level-matched capture behind the
-withdrawn *23* is useless here, and why the crest factor is the thing to ask a new capture for.
+`0x1cc6`–`0x1cdc` computes the in-chunk onset offset as `trunc((start − frac(p)) / N)`, which is 0
+for every chunk longer than a frame: **a note begins at the first frame of the 256-frame block it
+falls in** ([synth-engine.md](synth-engine.md)), 5.33 ms at 48 kHz. Reproducing it would move every
+onset later by 0 to 5.33 ms and rests on the block grid being song-aligned — `p` is 0 at the first
+block, so it should be, but that is an inference. **What would settle it**: capture a fast unswung
+drum pattern and measure inter-onset intervals against the exact step clock. On a 256-frame grid
+the deviation is a sawtooth with a 5.33 ms range, which is unmistakable; sample-accurate onsets
+have none.
 
-### ❌ The `FOLD_GAIN` lead is retired
+## Residues — measured, not modelled, not audible so far
 
-This entry used to point at `FOLD_GAIN` (+4.645 dB) reaching the compressor before the game's fold
-does, and note that removing it landed 723339's RMS within 0.01 dB of the knee. Two things killed
-it. The 0.01 dB was one song agreeing by coincidence — on the other three it lands them 6 to 13 dB
-**below** the knee. And the placement is fixed: *39* in
-[answered-questions.md](answered-questions.md) moved the gain to where FMOD's speaker matrix
-applies it, after the clip, the reverb and the compressor. ❗ **The compressor now sees the same
-signal the game's does**, so what is left here is crest factor and it needs a capture, not a code
-change.
+- **The reverb's block granularity.** `fmodsmsreverb.prx` works in 256-frame blocks and rounds
+  every delay buffer up to 1 KB, so a tap shorter than 256 samples cannot behave as a plain
+  per-sample delay there. Tap set 10's shortest is 5.019 ms = 241 samples, so preset 3
+  (`ReverbSetting` 0) is the one place this could show.
+- **The filter block's second modulation value.** `0x2a54` onward re-evaluates all four filter
+  parameters with `xmm15` in place of `xmm7` — two modulation values in one call, presumably the
+  two ends of the per-block ramp, but that is a guess (*20* in answered-questions.md).
+- **The ladder's position relative to the drive shaper.** The shaper runs on the sample read,
+  per layer, before the gain and the pan; the filter is not in that per-layer loop, and a later
+  reading could move it across the shaper (*21*).
+- **Whether `q` should reach 3.** With the correct filter reading `musicbox` at full modulation
+  has resonance 0.856 at `freq ≈ 0.019`, and the Stilson/Smith compensation grows as the cutoff
+  falls, so `q ≈ 3.1`. The coefficient formula matches instruction for instruction; the saturation
+  bounding the ladder has only been read as `b4 −= b4³/6`. If a resonant patch howls, look there,
+  not at the four indices (*6b*).
+- **Which playback rate the filter's key tracking is fed.** It is the current rate (`Northern
+  Lights`'s `noise` riser swept 1.83× on the opening rate where the pitch swept 4.76×); the engine
+  reads `[rbp-0xa90]`, the cached `exp2f` result, and `LBP_NO_KEYTRACK` stays because the term may
+  be inert altogether on the instruments that matter.
+- **The piano's loop contour.** A 5.75% flutter at F5's wrap rate was measured before the
+  amplitude envelope existed ([game-assets.md](game-assets.md)); the piano's sustain is 0.070, and
+  whether the flutter survives the envelope has not been re-measured. A sustained F5 captured from
+  the game, run through the same modulation measurement, settles it: if the game flutters too the
+  artefact is in the asset.
+- **`PInstrument + 0x60`.** Copied into the engine's clip as its length in steps and not named by
+  the serialiser walk ([sequencer-data-model.md](sequencer-data-model.md)); what serialises it, if
+  anything, is unread. Nothing in the tracker depends on it yet.
 
-### What would settle it
+## 24. The last 54 clips that need a verbatim record patch
 
-A capture, and this is now the only thing in this file that wants one it cannot get:
+⚠️ **Nothing here is audible and nothing here is broken.** The MIDI round trip is exact — 0 records
+different in 1,448,224 — *because* the exporter carries these clips' records verbatim in the
+`LBP-TRK` meta's `fix` ([midi-interchange.md](midi-interchange.md)). The question is only whether
+the patch can be made smaller, which matters because every clip in it goes stale the moment a DAW
+edits its notes.
 
-1. **A capture with a known reference** — any song recorded from the game together with something
-   whose level we know, so the *ratio* is provenance-legal under rule 2 in
-   [lbp-modding-toolchain.md](lbp-modding-toolchain.md).
-2. **Our own render at several trims through the real DSP.** `tools/runhammer.py` will take any
-   audio; feeding it our render at −0, −6 and −12 dB says how much gain reduction each trim
-   provokes, and the trim whose reduction is small is the one our level should be near if the
-   game's mix is not being squashed. That needs no console at all and is the cheapest next step.
+**54 of 62,158 clips (0.09%), and they are one family**: a part's clips overlap — a cell is 16 steps
+and a clip may hold 128 — and a note that two of them could hold went to the other one.
+`5aa77945` seq 745160 cells 31 and 107 are the same story from both ends, one clip short of its
+last sixteen notes and its neighbour long by them. Bucketed by which record field differs
+(`LBP_MIDI_LOOSE=1`, forty lines against `decodeRecords` on both sides): 44 clips have more or
+fewer records than the file, 10 the same count with different notes.
 
-### The anchor
+**Ruled out — do not repeat:**
 
-`LBP_COMPRESSOR=1 node --experimental-strip-types packages/lbp-tracker-lib/dev/render-level.ts` reproduces it in one
-command, and `compressor: true` does it from code. The measurement of the DSP itself is settled —
-see *37* in [answered-questions.md](answered-questions.md); nothing here reopens it.
+- **Six clip-assignment tie-break rules** (nearest, earliest, tightest, loosest, busiest,
+  same-start) measured against each other moved the total by 6 at best; on the current baseline
+  `busiest` gives 52 against `first-empty`'s 54, and the rule as it stands was chosen to stop clips
+  being emptied. The cell ambiguity is not worth another rule.
+- **A fourth record-order key does not exist**: among the 254 clips tied on all three, nothing
+  beats 98.8%.
+- **The flat-run markers are carrying their weight**: turning them off took the patch from 109
+  clips to 277.
+- ❌ Three anchors this entry once carried were all wrong in the same way — a taxonomy that
+  bucketed by a guess rather than by diffing the records ("73 clips are a ramp re-cut", "31 clips
+  mix the resting bit, look for runs", "five are not diagnosed"). **Print the diff first; the
+  theorising is what produced the buckets.**
 
-## 28. What still will not open — measured over 103 archive levels
+## 28. What still will not open — the archive sweep's leftovers
 
-⚠️ **Re-based twice.** This listed four failures out of six PS3 saves, then 43 levels pulled by
-hand through the browser. It is now **103 levels sampled from the archive's own index**, and the
-sampling is a command rather than an errand: `node packages/cwlib-ts/dev/archive-sample.mjs` reads `dry.db` — the
-10,467,874-slot SQLite the archive publishes — picks an even spread of ids per game, downloads the
-root levels and leaves them for `packages/cwlib-ts/dev/walk-levels.ts`. Ids are chronological, so an even spread over
-them is an even spread over the game's life, which is what puts old revisions in the sample.
+The reader is measured over 103 archive levels: no failure anywhere in the range it claims, and
+19 of 19 LBP1 files identical to cwlib with the bound lowered by hand
+([level-files.md](level-files.md)). What is left is not layout:
 
-### What the sweep finds, 2026-09-05
+- **The allowed-set decision.** `LBP3_MIN_VERSION` is `0x3b7` and all nineteen LBP1 files are
+  refused, deliberately: LBP1 has no Music Sequencer, so opening them buys the tracker nothing
+  musical, and the range `0x272`–`0x3b7` has zero coverage — admitting it wholesale is exactly the
+  plausible-nonsense failure the bound exists to prevent. The right change, if one is wanted, is an
+  **allowed set** — `0x272` plus `0x3b7..0x3ff`, refusing the untested span between — and it is a
+  design decision to take on purpose.
+- **`0x26e`** — one level whose chunk table is not where this reader looks; a container question.
+- **Branch `0x4431`** — one level in the saves, `f331efa7`, version `0x3e2`. Nothing in the archive
+  sample is on it; one file is not enough to reverse a branch from.
+- **A quest of a type other than 5** — never seen in 103 archive levels or the saves; `readQuest`
+  refuses rather than guessing.
+- **One truncated file** — the archive itself stores `0-aaaffe` short. Nothing to fix.
 
-| version | branch | parses |
-|---|---|---|
-| `0x3b7` | `0/0` | **4 of 4** |
-| `0x3b8`–`0x3f9` | `0/0` | **78 of 78** |
-| `0x272` | `4c44` (LEERDAMMER) | **0 of 19** at the shipped bound; ✔ **19 of 19 identical to cwlib** with it lowered by hand |
-| `0x26e` | — | 0 of 1, the chunk table is not where this reader looks |
-| — | — | 1 file the archive stores truncated |
-
-**82 of 103**, and there is not a single failure anywhere in the range the reader claims. The wall
-is at LBP1 and it is sharp.
-
-### ✔ The bound was one revision too high, and that is now measured
-
-`LBP3_MIN_VERSION` was `0x3b8` because that is where the **ten-level corpus** starts — not because
-anything changes there. Two measurements settle it:
-
-- **cwlib has exactly one gate at `0x3b8` in its whole tree**, `PPhysicsTweak`'s
-  `version > 0x3b8 && configuration == 0xd`, and `readPhysicsTweak` has it. A `0x3b7` file therefore
-  takes the older branch because the branch is there.
-- **All four `0x3b7` levels in the sample parse** the moment the bound allows them.
-
-It is `0x3b7` now. ❗ **And the reason the bound cannot simply be dropped is measured too**: at
-`0x272` it is **2 of 19**, which is what "reading an older layout with newer rules and producing
-plausible nonsense" looks like from the outside.
-
-### ❌ The scope note in `serializer.ts` was wrong about its own code
-
-It said cwlib's older branches had been stripped in the port — *"roughly nine tenths of them are
-dead … implementing only that range turns `PSwitch`'s 323 lines into a few dozen"*. Counted:
-`packages/cwlib-ts/src/parts.ts` carries **238 distinct version gates spanning `0x137`–`0x3f0`** and **163
-subVersion gates**. The branches are all there; they have simply never been run against a file old
-enough to take one.
-
-⚠️ **That changes what "widening the range" means.** It is not "add the older branches field by
-field" — it is "find out which of the branches already ported are wrong". The 2-of-19 says at least
-some are.
-
-### ❗ Worked 2026-09-06. The wall moved four times; no LBP1 file reads correctly yet
-
-**Nothing shipped changes.** `LBP3_MIN_VERSION` is still `0x3b7`, all 21 LBP1 files are still
-refused at the bound, and the golden fixture is unmoved at 62,158 placements byte for byte.
-Everything below was measured by lowering the bound to `0x100` by hand.
-
-✔ **First: cwlib reads every one of these files.** 557, 524, 1054, 1475 Things. So they are not
-damaged and the reader is simply wrong — which is worth knowing before spending a session on a hex
-dump, and was not known before.
-
-Four bugs found and fixed, all by reading cwlib rather than bytes:
-
-| | what it was |
-|---|---|
-| `fillThing` | read the UID before the parent for every file. cwlib `Thing.java:96`: below **0x27f** the parent comes first. A comment directly above the line already said so. |
-| `fillThing` | the `0xAA` test marker is gated at `version >= 0x2a1` — and also on **LEERDAMMER from its own revision 5**. Every LBP1 file here is that branch at 0x17, so the marker was being taken as the first byte of the parent reference. |
-| `fillThing` | the parts mask is likewise present on **LEERDAMMER from revision 2** (cwlib's `isCompressed`). Without it the mask was `-1`: every declared part treated as present. |
-| `readPos` | below **0x341** the local matrix is stored as well as the world one. The comment said *"localPosition is regenerated above 0x341"* above a line that read one matrix always — so every pre-0x341 Thing was 64 bytes short. |
-
-And `readShape` was rewritten against cwlib's `PShape`: below LBP3 the colour is four floats rather
-than a packed ARGB, `brightness` does not exist below 0x301, `behavior`/`colorOff`/`brightnessOff`
-below 0x303, `interactPlayMode`/`interactEditMode` exist at or below 0x306, `lethalType` is an
-enum32 at or below 0x345, and below 0x2b5 three bools stand in for the flags word. **Five gates that
-were simply absent.**
-
-⚠️ **The result is progress, not success.** Two files now return Things instead of an error — and
-cwlib says those two hold 26 and 39 Things where this reader returns **4**. So the honest count is
-still **0 of 21 read correctly**. What changed is the *kind* of failure: the marker now catches
-misalignment one Thing later instead of the stream running off the end, so every remaining failure
-names a byte offset inside a part reader.
-
-### ✔ The tool that makes the rest mechanical, and the span diff it gives
-
-`tools/CwlibTrace.java`. cwlib's serialiser already logs every part boundary with its offset;
-`ResourceSystem.LOG_LEVEL` turns it on. `CwlibTrace spans <level>` prints the reference reading and
-`setTrace` in `packages/cwlib-ts/src/thing.ts` prints ours, so a divergence is a diff rather than a hunt — and
-the diff names the part, which names the file to open in cwlib.
-
-That loop closed five more readers on `0-c33a7e`'s second Thing in one pass:
-
-| part | before | cwlib | after |
-|---|---|---|---|
-| `BODY` | 63..82 | 63..82 | agreed already |
-| `POS` | 82..121 | 82..121 | agreed already |
-| `SHAPE` | 121..**248** | 121..233 | **121..233** |
-| `REF` | 248..249 | 233..242 | **233..242** |
-| `GROUP` | 249..250 | 242..288 | **242..288** |
-
-❗ **`SHAPE`'s fifteen bytes were not in `PShape` at all.** They were in `Polygon`: `requiresZ`
-arrives at **0x341**, and below it cwlib returns early with no flag byte and every vertex a `v3`.
-This reader read the flag anyway — one byte — and then picked the vertex width from whatever that
-byte happened to be, which is where the other fourteen went. **A field that does not exist yet costs
-more than its own width when something downstream branches on it.**
-
-`REF` was two bools that went away at 0x321 (`childrenSelectable`, `stripChildren`). `GROUP` was
-three more: below 0x341 there is no flags byte and `COPYRIGHT`, `EDITABLE` and `PICKUP_ALL_MEMBERS`
-are separate bools at three separate gates. And `PMetadata` was written from scratch — it had no
-reader at all, because nothing above `LBP3_MIN_VERSION` ever reaches one.
-
-### ✔ **All 19 LBP1 levels read identically to cwlib**, Thing for Thing
-
-```
-0-011f09  521   0-8a38f8  507   0-935f66   55   0-c33a7e  228   1-139f11  156   1-68e357  510
-0-3edc39  665   0-9320a8 1472   0-99167e  653   0-cad1b2   36   1-248258 2359   1-c8b731 1529
-0-4e5a15   86   0-a0e15f  321   0-beda44   87   0-d8ce66 1856   1-3a66ec 1684   1-dc0925  278
-0-ea18ed   23
-```
-
-⚠️ **Compare the NON-NULL count.** cwlib's `things` list holds nulls and `readWorld` filters them,
-so `CwlibTrace parts` prints both — `825 things (278 non-null)`. Comparing against the total is what
-produced a bogus "0 of 21" in an earlier pass of this entry.
-
-Twelve readers were wrong and are fixed. Every one was found the same way and none needed a hex dump:
-
-| reader | what was wrong below LBP3 |
-|---|---|
-| `fillThing` | UID before parent below **0x27f**; the `0xAA` marker also on LEERDAMMER rev 5; the parts mask also on LEERDAMMER rev 2 |
-| `readPos` | the local matrix is stored too below **0x341** — 64 bytes |
-| `Polygon` | `requiresZ` arrives at **0x341**; below it there is no flag byte and every vertex is a v3 |
-| `readShape` | six gates, including the colour as a v4 below **0x389** and three bools standing in for the flags word below 0x2b5 |
-| `readRef` | `childrenSelectable`, `stripChildren` — both gone at **0x321** |
-| `readGroup` | no flags byte below **0x341**; three separate flag bools instead |
-| `readMetadata` | did not exist. Both branches now: LAMS keys, and the four **translation-tag strings** below LEERDAMMER rev 8 |
-| `readRenderMesh` | `editorColor` as a v4 at or below **0x31a** — 15 bytes |
-| `readTrigger` | `zOffset` only from **0x322**, read always — 4 bytes |
-| `readJoint` | `modDriven`, `interactPlayMode`/`EditMode`, `modScaleActive`; `tweakTarget*` are **ints** at or below 0x280; `behaviour` only from 0x2c4 |
-| `readSwitch` | `oldActivation` below 0x2a0, and the whole **connector block** (`> 0x1fa && < 0x327`), fifty-odd bytes |
-| `readCreature` | the submerged pair, `hasScubaGear` and `outOfWaterJumpBoost` are `version >= X` **or LEERDAMMER** — ten bytes, and fixing them closed the last four files at once |
-
-❗ **Two lessons, and the second is the one that keeps paying.**
-
-`connectorPos` is a `vectorarray`, and cwlib's `vectorarray` returns `Vector4f[]`. Reading it as v3
-was thirteen bytes. **A helper's name does not say its element width.**
-
-And nine of the fifteen divergences were a version gate that exists in the reader's own **comment**
-and not in its code. These parts were ported with their gates documented and then written for the
-LBP3 branch only, so a grep for "at or below", "above 0x" and "regenerated" in `packages/cwlib-ts/src/parts.ts`
-is a work list for anything still unported.
-
-### ⚠️ The bound has NOT been lowered, and that is now a decision to take
-
-`LBP3_MIN_VERSION` is still `0x3b7` and all nineteen files are still refused. The reason is no longer
-"we cannot read them":
-
-- **LBP1 has no Music Sequencer**, so opening these buys the tracker nothing musical. This is reader
-  correctness, not a feature.
-- ❗ **The range between 0x272 and 0x3b7 has zero coverage.** No file in the 103-level archive
-  sample sits there. Lowering the bound to `0x272` would admit that whole untested span, which is
-  exactly the "reading an older layout with newer rules and producing plausible nonsense" the bound
-  exists to prevent — and 2-of-19 at the start of this work is what that looks like.
-
-So the right change is not a lower bound but an **allowed set**: `0x272` plus `0x3b7..0x3ff`, with
-anything between still refused until a file turns up to test it. That is a design decision rather
-than a fix, and it is left to be taken deliberately.
-
-### What is left
-
-✔ **The LBP1 layout is done** — 19 of 19, above. What is left is not layout:
-
-- **`0x26e`** — one level whose **chunk table** is not where this reader looks, so it fails before
-  any Thing is read. A container question, not a part question.
-- **One truncated file** — the archive itself stores `0-aaaffe` short, 4,327 bytes. Nothing to fix.
-- **A quest of a type other than 5** — still never seen in 103 archive levels or the saves.
-  `readQuest` refuses rather than guessing.
-- **Branch `0x4431`** — one level in the saves, `f331efa7`, version 0x3e2. ⚠️ Nothing in the archive
-  is on it: every sampled level is branch `0/0` or `4c44`. One file is not enough to reverse a
-  branch from, and a 103-level sample did not supply a second.
-- **The allowed-set decision**, above: whether to admit `0x272` alongside `0x3b7..0x3ff` now that it
-  is measured, while still refusing the untested span between them.
-
-**None of this is in the way of music**, and the archive sampler is still how the next one gets
-found: every real reader bug since 2026-09-05 came out of a file no PS3 save on this machine
-contains.
-
-### How the four fixed bugs were found — the technique, kept
-
-`setTrace` from `thing.ts` for the part spans; then patch `Serializer.prototype` from a probe so
-**every read is logged with its value** — widths align at any offset, values do not; then read the
-raw bytes at the disagreement.
-
-✔ **The step that cracked it was neither of those**: list every top-level Thing with its span and
-look for the one whose *size* breaks the pattern. Nineteen Things of 575-588 bytes and then one of
-**64** says exactly where to look, and it needs no byte-level reading at all. `0xaa` then a plausible
-uid varint also locates the true next Thing — 11187, not 10633 — which turns "how far off are we"
-into a number.
-
-The four, with what each turned out to be:
-
-| file | was | |
-|---|---|---|
-| `8b904be1` | marker at 120328 | `PStreamingHint.connected` was a **double reference** — `s.references(builder)` reads an id and then the builder reads another. Empty in every corpus file, so the loop never ran |
-| `69318581`, `7c0f1a1d` | marker at 10633 / 158804 | the **part mask lost a bit above 2^53**. `Serializer.u64` returned a `number`; the highest part index is 53, so a Thing with `STREAMING_HINT` *and* a low part cannot be held exactly. ⚠️ `BigInt(s.u64())` does not fix it — the bits have to survive the accumulation, which is what `u64Big` is for |
-| `5576f758` | `no reader for part WORLD` | **`WORLD` was installed on a copy of the reader map.** A level really can carry a second world Thing — this one has one inside a `CREATURE` — so only the outermost may throw `StopParse` |
-
-❗ **A field that is empty or zero everywhere in the corpus is untested, whatever it is declared
-as.** Two of those four are exactly that shape, found on the same day.
+None of it is in the way of music, and `packages/cwlib-ts/dev/archive-sample.mjs` is how the next
+one gets found: every real reader bug since 2026-09-05 came out of a file no PS3 save on this
+machine contains.
