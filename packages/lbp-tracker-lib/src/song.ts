@@ -134,6 +134,8 @@ export const CLIP_STEPS_INCREMENT = 2 * STEPS_PER_BAR;
 export const MAX_PITCH = 127;
 export const MAX_VOLUME = 127;
 export const MAX_TIMBRE = 15;
+/** How many rows a board may have. Ours: the file's own limit is not measured, and this is far past any level seen. */
+export const MAX_BOARD_ROWS = 64;
 /** Six mixer channels serialise; the engine keeps eight records. */
 export const MIXER_CHANNELS = 6;
 
@@ -251,6 +253,26 @@ export function removeClip(song: Song, id: number): boolean {
   if (at < 0) return false;
   song.clips.splice(at, 1);
   return true;
+}
+
+/** One more row at the bottom of the board. False at the limit. */
+export function addRow(song: Song): boolean {
+  if (song.boardRows >= MAX_BOARD_ROWS) return false;
+  song.boardRows += 1;
+  return true;
+}
+
+/**
+ * Take a row out: its chips go, the rows below it move up one. Returns how
+ * many chips went, or -1 when the row is not there or is the board's last.
+ */
+export function removeRow(song: Song, row: number): number {
+  if (row < 0 || row >= song.boardRows || song.boardRows <= 1) return -1;
+  const before = song.clips.length;
+  song.clips = song.clips.filter((c) => c.row !== row);
+  for (const clip of song.clips) if (clip.row > row) clip.row -= 1;
+  song.boardRows -= 1;
+  return before - song.clips.length;
 }
 
 const clampInt = (v: number, lo: number, hi: number) =>
@@ -622,7 +644,7 @@ export function songFromJson(text: string): Song {
   song.numChannels = clampInt(num(raw.numChannels, 1), 1, MIXER_CHANNELS);
   song.volumes = Array.from({ length: MIXER_CHANNELS }, (_, i) =>
     num(Array.isArray(raw.volumes) ? raw.volumes[i] : undefined, 1));
-  song.boardRows = clampInt(num(raw.boardRows, NEW_SONG_DEFAULTS.boardRows), 1, 64);
+  song.boardRows = clampInt(num(raw.boardRows, NEW_SONG_DEFAULTS.boardRows), 1, MAX_BOARD_ROWS);
   song.endSteps = Math.max(0, Math.round(num(raw.endSteps, 0) / STEPS_PER_CELL)) * STEPS_PER_CELL;
   for (const c of raw.clips as Partial<Clip>[]) {
     if (!c || typeof c !== 'object') continue;

@@ -54,6 +54,10 @@ export interface BoardCallbacks {
   onPick?(clip: Clip): void;
   /** The song's end was dragged to a step; the page commits it. */
   onEnd(step: number): void;
+  /** The "+" under the last row. */
+  onAddRow(): void;
+  /** The "x" on the selected row's number. The page asks when the row holds chips. */
+  onRemoveRow(row: number): void;
 }
 
 const CELL_W = 44;
@@ -63,6 +67,10 @@ const GUTTER = 66;
 const MUTE_X = 26;
 const SOLO_X = 46;
 const BUTTON_W = 17;
+/** The strip under the last row that holds the "+" for another one. */
+const ADD_STRIP = CELL_H;
+/** How long a chip, and its row's number, stay lit after a note starts on it. */
+const FLASH_MS = 260;
 const RULER = 18;
 
 export class BoardView {
@@ -87,6 +95,18 @@ export class BoardView {
     | { kind: 'end'; step: number; moved: boolean }
     | null = null;
   private hover: { cell: number; row: number } | null = null;
+  /** The pointer over the gutter: a row's number, or the "+" strip under the last row. */
+  private gutterHover: number | null = null;
+  /**
+   * Notes starting as the playhead passes: the chip and the row light up for
+   * a moment. Keyed by chip id and by row, valued with when the note began.
+   * Found by scanning the song between two playhead positions, not from the
+   * audio: what is drawn is the score, and it stays in step with the sound
+   * to within a frame.
+   */
+  private readonly chipFlash = new Map<number, number>();
+  private readonly rowFlash = new Map<number, number>();
+  private lastPlayStep: number | null = null;
   /** The pointer is on the song's end marker. */
   private overEnd = false;
   private frame = 0;
@@ -112,6 +132,7 @@ export class BoardView {
     canvas.addEventListener('dblclick', this.onDouble);
     canvas.addEventListener('pointerleave', () => {
       this.hover = null;
+      this.gutterHover = null;
       this.schedule();
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -121,10 +142,43 @@ export class BoardView {
     this.schedule();
   }
 
-  /** Move the playhead; `null` hides it. Cheap enough to call per tick. */
+  /** Move the playhead; `null` hides it. Cheap enough to call per frame. */
   setPlayhead(step: number | null): void {
+    const last = this.lastPlayStep;
     this.playStep = step;
+    this.lastPlayStep = step;
+    // Forward by a little: the notes that began in between light their chips.
+    // A seek, a loop or a stop skips the scan rather than lighting a bar's worth.
+    if (step !== null && last !== null && step > last && step - last < 8) this.flashBetween(last, step);
     this.schedule();
+  }
+
+  private flashBetween(from: number, to: number): void {
+    const now = performance.now();
+    for (const clip of this.state.song.clips) {
+      const start = clip.cell * STEPS_PER_CELL;
+      if (start > to || start + clip.steps < from || !this.state.rowAudible(clip.row)) continue;
+      for (const note of clip.notes) {
+        const at = start + note.points[0]!.thirds / 3;
+        if (at > from && at <= to) {
+          this.chipFlash.set(clip.id, now);
+          this.rowFlash.set(clip.row, now);
+          break;
+        }
+      }
+    }
+  }
+
+  /** How lit something is, 0..1, and gone from the map once dark. */
+  private flashOf(map: Map<number, number>, key: number, now: number): number {
+    const t0 = map.get(key);
+    if (t0 === undefined) return 0;
+    const a = 1 - (now - t0) / FLASH_MS;
+    if (a <= 0) {
+      map.delete(key);
+      return 0;
+    }
+    return a;
   }
 
   /** The content x of a step, for the page to scroll the playhead into view. */
@@ -157,6 +211,8 @@ export class BoardView {
     this.frame = window.requestAnimationFrame(() => {
       this.frame = 0;
       this.draw();
+      // Anything still lit fades over the next frames.
+      if (this.chipFlash.size > 0 || this.rowFlash.size > 0) this.schedule();
     });
   }
 
@@ -182,7 +238,7 @@ export class BoardView {
     this.spacer.style.width = `${full.width}px`;
     // Room to scroll past the last row by whatever covers the bottom of the
     // view, so a low row can be brought up from under the chip panel.
-    this.spacer.style.height = `${Math.max(0, full.height - viewH + this.bottomInset)}px`;
+    this.spacer.style.height = `${Math.max(0, full.height + ADD_STRIP - viewH + this.bottomInset)}px`;
     const dpr = window.devicePixelRatio || 1;
     if (this.canvas.width !== Math.round(viewW * dpr) || this.canvas.height !== Math.round(viewH * dpr)) {
       this.canvas.width = Math.round(viewW * dpr);
@@ -196,6 +252,7 @@ export class BoardView {
   private draw(): void {
     this.measure();
     const { ctx, layout, state } = this;
+    const flashNow = performance.now();
     const song = state.song;
     const { width, height } = boardSize(layout);
     const viewW = this.scroller.clientWidth;
@@ -373,8 +430,22 @@ export class BoardView {
         ctx.fillStyle = accent;
         ctx.fillRect(0, y, 3, r.h);
       }
-      ctx.fillStyle = row === state.selection.row ? accent : dim;
-      ctx.fillText(String(row), MUTE_X - 5, y + r.h / 2);
+      const lit = this.flashOf(this.rowFlash, row, flashNow);
+      if (lit > 0) {
+        ctx.fillStyle = `rgba(255,255,255,${(0.22 * lit).toFixed(3)})`;
+        ctx.fillRect(0, y, MUTE_X - 2, r.h);
+      }
+      // The selected row's number turns into an "x" under the pointer: the
+      // way to remove a row without a button that would widen the gutter.
+      const removable = row === state.selection.row && this.gutterHover === row && layout.rows > 1;
+      ctx.fillStyle = removable ? '#ef6b6b' : row === state.selection.row ? accent : dim;
+      if (removable) {
+        ctx.font = 'bold 12px ui-sans-serif, system-ui, sans-serif';
+        ctx.fillText('\u00d7', MUTE_X - 5, y + r.h / 2 + 0.5);
+        ctx.font = '10px ui-monospace, Consolas, monospace';
+      } else {
+        ctx.fillText(String(row), MUTE_X - 5, y + r.h / 2);
+      }
       // Mute and solo: two small boxes, lit when on. A solo anywhere greys
       // the mute boxes, since solos outrank them.
       const muted = state.mutedRows.has(row);
@@ -396,6 +467,21 @@ export class BoardView {
       };
       box(MUTE_X, muted, '#ef6b6b', 'M', soloing && !solo);
       box(SOLO_X, solo, '#e3b341', 'S', false);
+    }
+    // Under the last row: a "+" for one more.
+    {
+      const y = layout.ruler + layout.rows * layout.cellH - sy;
+      if (y < viewH) {
+        const over = this.gutterHover === layout.rows;
+        ctx.fillStyle = over ? 'rgba(111,211,160,0.18)' : 'rgba(255,255,255,0.04)';
+        ctx.fillRect(4, y + 5, layout.gutter - 8, ADD_STRIP - 10);
+        ctx.fillStyle = over ? accent : dim;
+        ctx.font = 'bold 14px ui-sans-serif, system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('+', layout.gutter / 2, y + ADD_STRIP / 2 + 0.5);
+        ctx.textAlign = 'right';
+        ctx.font = '10px ui-monospace, Consolas, monospace';
+      }
     }
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
     ctx.fillRect(layout.gutter - 1, layout.ruler, 1, viewH);
@@ -443,6 +529,12 @@ export class BoardView {
     ctx.fillStyle = info.colour;
     ctx.globalAlpha = alpha * (selected ? 0.34 : 0.2);
     ctx.fill();
+    const lit = this.flashOf(this.chipFlash, clip.id, performance.now());
+    if (lit > 0) {
+      ctx.fillStyle = '#ffffff';
+      ctx.globalAlpha = alpha * 0.3 * lit;
+      ctx.fill();
+    }
     ctx.globalAlpha = alpha;
     ctx.strokeStyle = selected ? '#ffffff' : info.colour;
     ctx.lineWidth = selected ? 2 : 1.2;
@@ -521,11 +613,17 @@ export class BoardView {
       return;
     }
     if (cx < this.layout.gutter) {
-      // The gutter: the mute and solo boxes, or the row number to select the row.
+      // The gutter: the mute and solo boxes, the row number to select the row
+      // (and, on the selected row, to remove it), or the "+" under the last.
       const row = Math.floor((y - this.layout.ruler) / this.layout.cellH);
+      if (row === this.layout.rows && y - this.layout.ruler < this.layout.rows * this.layout.cellH + ADD_STRIP) {
+        this.cb.onAddRow();
+        return;
+      }
       if (row < 0 || row >= this.layout.rows) return;
       if (cx >= MUTE_X && cx < MUTE_X + BUTTON_W) this.state.toggleMute(row);
       else if (cx >= SOLO_X && cx < SOLO_X + BUTTON_W) this.state.toggleSolo(row);
+      else if (row === this.state.selection.row && this.layout.rows > 1) this.cb.onRemoveRow(row);
       else this.state.selectRow(row);
       return;
     }
@@ -591,10 +689,20 @@ export class BoardView {
       return;
     }
     const overEnd = cy >= this.layout.ruler && cx >= this.layout.gutter && this.nearEnd(x);
-    const changed = (at?.cell !== this.hover?.cell) || (at?.row !== this.hover?.row) || overEnd !== this.overEnd;
+    // Over the gutter: which row's number, or the "+" strip (numbered as the row after the last).
+    let gutterHover: number | null = null;
+    if (cx < this.layout.gutter && cy >= this.layout.ruler) {
+      const row = Math.floor((y - this.layout.ruler) / this.layout.cellH);
+      if (row === this.layout.rows) gutterHover = row;
+      else if (row >= 0 && row < this.layout.rows && cx < MUTE_X) gutterHover = row;
+    }
+    const changed = (at?.cell !== this.hover?.cell) || (at?.row !== this.hover?.row)
+      || overEnd !== this.overEnd || gutterHover !== this.gutterHover;
     this.hover = at;
     this.overEnd = overEnd;
-    this.canvas.style.cursor = overEnd ? 'ew-resize' : '';
+    this.gutterHover = gutterHover;
+    const removable = gutterHover !== null && gutterHover === this.state.selection.row && this.layout.rows > 1;
+    this.canvas.style.cursor = overEnd ? 'ew-resize' : (gutterHover !== null && (removable || gutterHover === this.layout.rows)) ? 'pointer' : '';
     if (changed) this.schedule();
   };
 

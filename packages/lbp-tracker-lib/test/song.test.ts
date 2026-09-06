@@ -19,12 +19,14 @@ import { nodeInflate } from '@lbptracker/cwlib/platform/node.ts';
 import {
   addClip,
   addNote,
+  addRow,
   addPoint,
   clipStepsFor,
   movePoint,
   moveNote,
   newSong,
   removePoint,
+  removeRow,
   resizeClip,
   sequencerFromSong,
   setSongEnd,
@@ -214,6 +216,27 @@ test('the end of the song: the last chip, or further when dragged there, in whol
   const back = songFromJson(songToJson(song));
   assert.equal(back.endSteps, 208, 'the end survives the file: 200 rounds to 13 cells');
   void clip;
+});
+
+test('rows: one more at the bottom; a removed row takes its chips and closes the gap', () => {
+  const song = newSong();
+  song.boardRows = 3;
+  const a = addClip(song, { cell: 0, row: 0 }, 1);
+  const b = addClip(song, { cell: 1, row: 1 }, 1);
+  const c = addClip(song, { cell: 2, row: 2 }, 1);
+  assert.equal(addRow(song), true);
+  assert.equal(song.boardRows, 4);
+  assert.equal(removeRow(song, 1), 1);
+  assert.equal(song.boardRows, 3);
+  assert.deepEqual(song.clips.map((x) => [x.id, x.row]), [[a.id, 0], [c.id, 1]]);
+  assert.equal(removeRow(song, 3), -1, 'no such row');
+  assert.equal(removeRow(song, 2), 0, 'an empty row goes too');
+  assert.equal(song.boardRows, 2);
+  assert.equal(removeRow(song, 0), 1);
+  assert.deepEqual(song.clips.map((x) => [x.id, x.row]), [[c.id, 0]]);
+  assert.equal(song.boardRows, 1);
+  assert.equal(removeRow(song, 0), -1, 'the last row stays');
+  void b;
 });
 
 test('clipStepsFor: four bars by default, then two more at a time, never past 128', () => {

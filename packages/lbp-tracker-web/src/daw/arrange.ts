@@ -101,6 +101,12 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     instrument: (guid) => byGuid.get(guid),
     onPick: () => openPanel(),
     onEnd: (step) => state.edit('notes', (s) => setSongEnd(s, step), 'end'),
+    onAddRow: () => state.addRow(),
+    onRemoveRow: (row) => {
+      const held = state.song.clips.filter((c) => c.row === row).length;
+      if (held > 0 && !window.confirm(`Remove row ${row} and the ${held} instrument${held === 1 ? '' : 's'} on it?`)) return;
+      state.removeRow(row);
+    },
   });
   new ResizeObserver(insetBoard).observe(panel);
 
@@ -246,7 +252,23 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     } else roll.setPlayhead(null);
     if (player.playing && opts.isActive()) board.followStep(step);
   }
-  onPlayer({ tick: paint });
+  // The player ticks ten times a second; the playhead and the flashes want
+  // every frame while it plays, and the board's own scan is cheap.
+  let smoothing = false;
+  const smooth = () => {
+    if (!player.playing || !opts.isActive()) {
+      smoothing = false;
+      return;
+    }
+    board.setPlayhead(player.stepAt(player.position()));
+    window.requestAnimationFrame(smooth);
+  };
+  const startSmoothing = () => {
+    if (smoothing || !player.playing) return;
+    smoothing = true;
+    window.requestAnimationFrame(smooth);
+  };
+  onPlayer({ tick: () => { paint(); startSmoothing(); }, playing: startSmoothing });
   onPlan(paint);
   state.onChange((kind) => {
     if (kind === 'settings') paint();

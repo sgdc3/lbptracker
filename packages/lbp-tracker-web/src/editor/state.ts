@@ -16,7 +16,7 @@
  */
 
 import { ref } from 'vue';
-import type { Clip, Song, SongNote, SongPoint } from '@lbptracker/lib/song.ts';
+import { addRow, removeRow, type Clip, type Song, type SongNote, type SongPoint } from '@lbptracker/lib/song.ts';
 
 /**
  * What an edit touched, so the page knows what to do about it: the plan has
@@ -87,6 +87,41 @@ export class EditorState {
   toggleSolo(row: number): void {
     if (!this.soloRows.delete(row)) this.soloRows.add(row);
     this.notify('mix');
+  }
+
+  /** One more row under the last. */
+  addRow(): void {
+    this.edit('settings', (song) => { addRow(song); });
+  }
+
+  /**
+   * Take a row out, chips and all. The mutes and solos below it move up with
+   * their rows; the selection moves to the row now in its place.
+   */
+  removeRow(row: number): void {
+    if (row < 0 || row >= this.song.boardRows || this.song.boardRows <= 1) return;
+    const shift = (rows: Set<number>) => {
+      const next = [...rows].filter((r) => r !== row).map((r) => (r > row ? r - 1 : r));
+      rows.clear();
+      for (const r of next) rows.add(r);
+    };
+    shift(this.mutedRows);
+    shift(this.soloRows);
+    if (this.selection.cursor && this.selection.cursor.row >= row) {
+      this.selection.cursor = this.selection.cursor.row === row
+        ? null
+        : { ...this.selection.cursor, row: this.selection.cursor.row - 1 };
+    }
+    this.edit('notes', (song) => { removeRow(song, row); });
+    // The selection may name the chips that went; a row's worth of them.
+    if (!this.clip()) {
+      this.selection.clipId = null;
+      this.selection.noteIds = new Set();
+      this.selection.point = null;
+    }
+    if (this.selection.row >= row) {
+      this.selectRow(Math.min(this.song.boardRows - 1, Math.max(0, this.selection.row === row ? row : this.selection.row - 1)));
+    }
   }
 
   private notify(kind: ChangeKind): void {

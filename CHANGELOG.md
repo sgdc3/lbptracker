@@ -29,6 +29,8 @@ not before, never how it was done. No `--` or em dash in here; the site's text d
 - Rows select; the note grid follows the chip the playhead is inside on the selected row.
 - Mute and solo on every row; a white line between the mixer channels; the end of the song shown,
   respected by the playhead, and draggable to make room past the last chip.
+- A "+" under the last row adds one; the selected row's number turns into an "x" to remove it,
+  asking first when it holds instruments. Chips and row numbers light up as their notes start.
 - The note grid in a panel that rises over the board, resizable by its top edge: notes as chains
   of points joined by lines, the size of a point its volume and its colour its timbre, a note
   ending at its last point. Triplet grid at three cells to the beat, with the other grid's notes

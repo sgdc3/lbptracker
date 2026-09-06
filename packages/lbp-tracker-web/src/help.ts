@@ -112,7 +112,9 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
         '<kbd>Ctrl+D</kbd> duplicates it into the cursor cell. Instruments may overlap in time, though the game\'s ' +
         'composers rarely let them.') +
       h('Rows, channels and the end') +
-      p('The <strong>M</strong> and <strong>S</strong> boxes beside a row mute it or solo it. When the song has more ' +
+      p('The <strong>+</strong> under the last row adds one. To remove a row, select it and click its number, which ' +
+        'turns into an <strong>&times;</strong> under the pointer; a row that holds instruments asks first. ' +
+        'The <strong>M</strong> and <strong>S</strong> boxes beside a row mute it or solo it. When the song has more ' +
         'than one mixer channel a white line divides the rows into channels, top to bottom. Click the bar numbers to ' +
         'jump there; drag the dashed line at the end of the song to make room past the last instrument.'),
   },
