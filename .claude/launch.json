@@ -3,9 +3,21 @@
   "configurations": [
     {
       "name": "dev",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["dev/serve.mjs", "8173"],
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "serve"
+      ],
       "port": 8173
+    },
+    {
+      "name": "preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "preview"
+      ],
+      "port": 8174
     }
   ]
 }

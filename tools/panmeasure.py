@@ -13,7 +13,7 @@ This is how question 22 was settled. Two captures of LBP3, one instrument at pan
     stereo-right.wav   gain 0.261202  residual 0.0008  correlation 1.000000  lag 0
 
 against **0.261204** predicted beforehand from two interior placements. See
-`steering/answered-questions.md` entry 22, and `PAN_WIDTH` in `src/core/render.ts`.
+`steering/answered-questions.md` entry 22, and `PAN_WIDTH` in `packages/lbp-tracker-lib/src/render.ts`.
 
 ⚠️ **A residual near zero is the load-bearing part, not the gain.** It says the quiet channel is the
 loud one times a constant -- no delay, no decorrelation, no reverb of its own -- which is what makes

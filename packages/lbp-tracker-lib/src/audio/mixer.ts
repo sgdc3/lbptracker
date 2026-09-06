@@ -1,0 +1,1334 @@
+/**
+ * The voice mixer.
+ *
+ * Plain TypeScript with no Web Audio in sight, so it runs under `node --test`
+ * and under OfflineAudioContext for export, and the AudioWorklet is a thin
+ * wrapper around it (packages/lbp-tracker-lib/src/audio/mixer-worklet.ts). Determinism is the point:
+ * the same project must render identically on every browser and every run.
+ */
+
+import { panGains, panGainsInto } from '../voice.ts';
+import type { Adsr } from '../envelope.ts';
+import { ADSR_PARAMS, ADSR_PARAMS_B, Envelope, evaluateAdsr, evaluateParam } from '../envelope.ts';
+import type { InstrumentParam } from '../rinstrument.ts';
+import { LFO_PARAMS, OUTPUT_PARAMS } from '../params.ts';
+import type { Interpolator } from './interpolate.ts';
+import { INTERPOLATORS, DEFAULT_INTERPOLATOR } from './interpolate.ts';
+import type { LfoSettings } from './lfo.ts';
+import { LFO_RATE_SCALE, Lfo, gainFactor, panFold, pitchFactor } from './lfo.ts';
+import type { FilterSettings } from './moog.ts';
+import { FILTER_PARAMS } from './moog.ts';
+import {
+  FILTER_BYPASS_CUTOFF,
+  MoogLadder,
+  filterAt,
+  filterAtInto,
+  ladderCoefficients,
+  ladderCoefficientsInto,
+} from './moog.ts';
+import type { MipChain } from './mipmap.ts';
+import { mipLevelFor, readMipped } from './mipmap.ts';
+
+export interface SampleBuffer {
+  /** One Float32Array per channel, -1..1. */
+  readonly channels: readonly Float32Array[];
+  readonly sampleRate: number;
+  readonly loop?: { readonly start: number; readonly end: number };
+  /**
+   * Optional per-channel mip chains from `buildMipChain`.
+   *
+   * **When present the voice reads through `readMipped`, which is the engine's
+   * own sampler** -- linear, with the source swapped for a pre-decimated copy
+   * above pitch ratio 2 and 4. Without them the voice uses the `Interpolator`
+   * passed to the mixer, which is our reference path and stays available for
+   * A/B. The two differ slightly at the loop wrap; `readMipped` documents how
+   * and why they converge on real material.
+   */
+  readonly mips?: readonly MipChain[];
+}
+
+/**
+ * One control point of a note's automation.
+ *
+ * The engine holds a note's pitch, volume and pan as **(value, slide) pairs**
+ * and rewrites both at every control point, so a note glides linearly from one
+ * point to the next -- see `sub_0x38e0`. That glide is the sequencer's pitch
+ * bend, and it is not a rare flourish: **53.9% of the corpus's 2,027,633 notes
+ * carry more than one control point**, and 6.7% bend in pitch, by up to 95
+ * semitones.
+ */
+export interface AutomationPoint {
+  /** Frames from the voice's start. */
+  readonly frame: number;
+  /**
+   * Semitones relative to the note's base pitch.
+   *
+   * ⚠️ Interpolated **linearly in semitones**, not in playback rate. The engine
+   * ramps `voice.pitch` and only then feeds it to `exp2f`, so a bend is
+   * exponential in rate; linear-in-rate would sag in the middle of every glide.
+   */
+  readonly pitch: number;
+  /** Linear gain relative to the note's base volume. */
+  readonly gain: number;
+}
+
+/**
+ * The waveshaper's coefficient, `k = 2d / (1 - d)`.
+ *
+ * **Measured**, `fmodextinput.prx` `0x1ee0`-`0x1f33`:
+ *
+ * ```
+ * 0x1ee0  d  = broadcast([voice + 0x20])      ; Params[26], already clamped 0..1
+ * 0x1ee7  d  = min(d,  0.95)                  ; and this is what keeps 1 - d
+ * 0x1eef  d  = max(d, -0.95)                  ; off zero
+ * 0x1ef7  a  = d * 2
+ * 0x1f07  b  = 1 - d
+ * 0x1f0b  r  = vrcpps(b), one Newton step     ; 2r - b*r*r, at 0x1f0f-0x1f1b
+ * 0x1f1f  k  = a * r = 2d / (1 - d)
+ * ```
+ *
+ * ⚠️ The engine reciprocates with `vrcpps` plus one Newton-Raphson step rather
+ * than dividing. That lands within an ulp of a true divide and there is no way
+ * to reproduce `vrcpps`'s 12-bit seed from JavaScript, so this divides. It is
+ * the one place in the shaper that is not bit-exact, and it is smaller than the
+ * float rounding either side of it.
+ */
+export function driveCoefficient(drive: number): number {
+  const d = Math.min(Math.max(drive, 0), 0.95);
+  return (2 * d) / (1 - d);
+}
+
+/**
+ * The engine's soft clip, `f(x) = (1 + k)x / (1 + k|x|)`.
+ *
+ * **Measured**, the per-layer loop at `0x2cab`-`0x2cf1`, applied to whatever the
+ * sampler at `0x3780` returned:
+ *
+ * ```
+ * 0x2cab  |x|                                 ; vandps against the sign mask
+ * 0x2cc0  k * |x|
+ * 0x2cc4  1 + k*|x|
+ * 0x2ccc  its reciprocal, vrcpps + a Newton step again
+ * 0x2ce5  (1 + k) * x                         ; 1 + k precomputed at 0x2b4d
+ * 0x2cf1  (1 + k) * x / (1 + k*|x|)
+ * ```
+ *
+ * ⚠️ **`k = 0` is an exact bypass** -- `f(x) = x` with no rounding -- which is
+ * why the 59 instruments that leave `Params[26]` at zero render identically with
+ * this in the chain.
+ *
+ * ⚠️ **Where it sits is measured only relative to the sampler.** `0x2c88` calls
+ * the sample read, the shaper runs on its result, and `0x2d0d`/`0x2d25` then
+ * apply the gain and the pan -- so it is after the sample and before those. The
+ * ladder's position relative to it is *not* established here: that loop is
+ * per-layer and the filter is not in it. This applies the shaper immediately
+ * after the sample read, which keeps it where it was measured.
+ */
+function softClip(x: number, k: number, onePlusK: number): number {
+  return (onePlusK * x) / (1 + k * (x < 0 ? -x : x));
+}
+
+export interface VoiceSpec {
+  readonly sample: SampleBuffer;
+  /** Sample frames advanced per output frame. */
+  readonly playbackRate: number;
+  readonly gain: number;
+  /** 0 = hard left, 0.5 = centre, 1 = hard right. */
+  readonly pan: number;
+  /** Output frame at which this voice starts. Lets a block schedule sample-accurately. */
+  readonly startFrame?: number;
+  /** Output frame at which it stops, or undefined to run to the end of the sample. */
+  readonly endFrame?: number;
+  /**
+   * Output frame at which this voice is **taken away**, whatever it is doing.
+   *
+   * ⚠️ Not the same thing as `endFrame`, and the difference is the whole
+   * point. `endFrame` closes the note's gate -- the envelope releases, and a
+   * one-shot ignores it entirely, because a drum hit is not shortened by how
+   * long the note was written. `cutFrame` is the engine's allocator handing this
+   * voice's record to a later note: `fmodextinput.prx` 0x1640 returns a record
+   * and the caller overwrites it, so whatever was playing there stops mid-sample
+   * with no release. A one-shot cannot ignore that one.
+   *
+   * Leaving it out is what let a stolen one-shot keep sounding. On `Ascetic`
+   * that is `mime_artist` -- five stack layers of a loopless 9,142-frame vocal,
+   * played at rate 0.02 because the note sits 68 semitones under the sample's
+   * base note, so each note occupied five of the engine's 32 voices for **9.5
+   * seconds** and none of them ever went away.
+   */
+  readonly cutFrame?: number;
+  /**
+   * `Params[26]`, the **drive**, 0..0.95 -- a soft-clip waveshaper on the
+   * sampler's output. 0 is a bypass, exactly.
+   *
+   * See `driveCoefficient`. Nine of the game's 68 instruments set it, and for
+   * `e_guitar_power` (0.731) and `e_guitar_distorted` (0.570..0.700) it is the
+   * whole character of the patch.
+   */
+  readonly drive?: number;
+  /**
+   * Frames for which a one-shot's gate is held open regardless of the note.
+   *
+   * ⚠️ This is the whole of question 10, made into a number. `Infinity` is the
+   * rule as it was first written -- a loopless sample is never gated and plays
+   * to its end -- and the corpus refutes that as a universal rule; see
+   * `holdFramesFor` in `packages/lbp-tracker-lib/src/render.ts` for the measurement and for what
+   * this is set to instead. 0 gates a one-shot like anything else.
+   */
+  readonly holdFrames?: number;
+  /**
+   * Frames of linear fade before `endFrame`.
+   *
+   * Needed for looping samples: they never run out on their own, so a voice
+   * that is simply cut at `endFrame` leaves a step in the waveform and clicks.
+   *
+   * ⚠️ A linear fade is a stand-in for the game's own release. The instruments
+   * carry 27 pairs of synth parameters that almost certainly hold an envelope
+   * -- see steering/open-questions.md -- and none of those indices are
+   * identified yet, so this is our shape, not the game's.
+   */
+  readonly release?: number;
+  /**
+   * Exponential decay in dB per second, applied from the voice's start.
+   *
+   * ⚠️ **NOT the game's envelope — ours, and a diagnostic.** The shipped loops
+   * carry their own amplitude contour (`piano_c6`'s spans 1.70 dB peak to
+   * trough), so repeating one modulates the output at the wrap rate whatever
+   * the join does: measured 5.75% at 14.8 Hz on F5, 43.7x above the background,
+   * which is audible as a flutter or click. A decay suppresses it — the same
+   * measurement drops to 1.4x — which is presumably how the game hides it.
+   * Leave this at 0 for faithful output until the real envelope is recovered
+   * from `RInstrument.Params`; see steering/open-questions.md.
+   */
+  readonly decayDbPerSecond?: number;
+  /**
+   * The instrument's ADSR, from `evaluateAdsr`.
+   *
+   * **When present this is what shapes the note, and `release` and
+   * `decayDbPerSecond` are ignored** -- those two were stand-ins for exactly
+   * this, invented while `Params` was unread. A voice with an envelope also
+   * outlives its `endFrame`: that frame closes the gate and the release runs
+   * on from there, which is what stops a held note ending in a step.
+   */
+  readonly envelope?: Adsr;
+  /**
+   * The instrument's low-pass, from `Params[3..10]`.
+   *
+   * `settings` are the static knobs and `envelope` is the **second** ADSR,
+   * which exists to sweep the cutoff. Most acoustic instruments leave the
+   * filter wide open and can omit this entirely; it is what makes the synth
+   * patches -- `saw_wave`, `robot`, `e_guitar_distorted`, the drum kits --
+   * sound like themselves rather than like their raw samples.
+   */
+  readonly filter?: {
+    readonly settings: FilterSettings;
+    readonly envelope: Adsr;
+  };
+  /**
+   * The instrument's three LFOs, `Params[15..23]`, in engine order: **pitch,
+   * gain, pan**. A depth of zero leaves its destination untouched, which is
+   * what 62 or more of the game's 68 instruments choose for each.
+   *
+   * Their phases are randomised per voice, so two notes of the same instrument
+   * modulate differently -- pass `random` to make a render reproducible.
+   */
+  readonly lfos?: readonly [LfoSettings, LfoSettings, LfoSettings];
+  /**
+   * The note's control points, in frame order and relative to its start.
+   *
+   * A single point, or none, means a flat note. Anything past the last point
+   * holds its value, which is what the engine does when it runs out of records.
+   */
+  readonly automation?: readonly AutomationPoint[];
+  /**
+   * The note's modulation ramp, and the `Params` it feeds.
+   *
+   * ⚠️ **The modulation is not a per-voice constant, and treating it as one is
+   * wrong on 3.6% of notes.** It is `voice+0x28` in the engine, the value that
+   * picks a point inside every one of the 27 `Params` ranges, and
+   * `fmodextinput.prx` ramps it exactly as it ramps volume and pitch:
+   * `sub_0x3930` writes its slide rate at `0x3e8a` beside the other two, and
+   * `sub_0x1c60` -- the per-voice renderer, called once per chunk per voice
+   * under the DSP read callback -- advances it at `0x1f4a` and re-reads the
+   * result four times to re-derive the parameters. See
+   * `steering/answered-questions.md` 6d.
+   *
+   * 34,449 corpus notes move it, and on 30,170 of them (87.6%) that moves some
+   * parameter by 0.35 or more; the widest measured swings are cutoff 0.906,
+   * resonance 0.892, level 0.591, drive 0.390. 26 of the 27 parameters move on
+   * some note. So this is not a garnish and it cannot be done for a chosen few.
+   *
+   * Absent means flat, which is what 96.4% of notes are, and a voice without it
+   * takes byte-for-byte the path it took before this existed.
+   */
+  readonly morph?: {
+    readonly params: readonly InstrumentParam[];
+    /** Modulation at each control point, in frames from the voice's start. */
+    readonly points: readonly { readonly frame: number; readonly value: number }[];
+    /**
+     * The placement's echo send as the engine's bipolar offset, `2*send - 1`.
+     *
+     * ❗ The echo send is the only send the modulation touches:
+     * `voice+0x1c = clamp01(bipolar(Params[25], 2*echoSend - 1))`, where
+     * `Params[25]` is the instrument's own and the placement's field bends it.
+     * The reverb is `reverbSend` alone and never moves. See the sends note in
+     * `packages/lbp-tracker-lib/src/render.ts`.
+     */
+    readonly echoOffset: number;
+    /**
+     * `Params[level]` at the modulation the spec's `gain` was built with.
+     *
+     * ❗ The gain carries the track level, the channel volume, the headroom,
+     * the velocity and the stack correction as well, and none of those may move.
+     * So the level travels as a RATIO against this, which is the only factor of
+     * the product the modulation owns.
+     */
+    readonly opening: number;
+  };
+  /**
+   * How much of this voice goes to the echo and reverb buses, 0..1.
+   *
+   * `PInstrument` carries both as real fields (`echoSend`, `reverbSend`), and
+   * 22% and 55% of the corpus's placements set them.
+   *
+   * ⚠️ **Two buses is our arrangement, not a measured one.** The DSP is
+   * 4-in/4-out — one dry stereo pair and one send pair — and `Params[25]` is a
+   * single send level, so the engine very likely sums echo and reverb into that
+   * one pair rather than keeping them apart. Splitting them here is easier to
+   * mix and easier to be wrong about; see steering/open-questions.md.
+   */
+  readonly echoSend?: number;
+  readonly reverbSend?: number;
+  /** Injected so an offline render can be deterministic. */
+  readonly random?: () => number;
+  /**
+   * Sample frame to begin at, rather than 0.
+   *
+   * `Params[2]` gives each layer of a stacked voice its own random start,
+   * `startOffset * sampleLength * U(0, 1)` frames in, which is what stops the
+   * layers from being one louder copy of each other.
+   *
+   * ❗ **Layer 0 always starts at 0**, whatever `Params[2]` says: the engine
+   * draws its offset with the others and then throws it away at `0x1bda`. See
+   * `packages/lbp-tracker-lib/src/render.ts`.
+   */
+  readonly startPosition?: number;
+  /**
+   * Each LFO's start phase in radians, one per LFO — **absolute**, not an
+   * offset.
+   *
+   * The engine draws one base phase per voice *record* and fans a stacked
+   * voice's layers off it by `Params[17|20|23]` times `2 * PI / Numstack` per
+   * layer, so the layers sit at different points of the same cycle rather than
+   * at three independent random ones. Both halves of that are the caller's to
+   * compute; {@link Lfo} takes what it is given. When this is absent the mixer
+   * draws `U(0, 2*PI)` per LFO from {@link random}.
+   */
+  readonly lfoPhase?: readonly [number, number, number];
+  /**
+   * A caller's handle on this voice, for {@link Mixer.release}.
+   *
+   * A sequencer never needs one -- every note it plays already knows when it
+   * ends -- but a keyboard does: the note lasts until the key comes up, and
+   * that moment is not known when the voice starts. Untagged voices are
+   * unaffected by `release`, so nothing that does not ask for this changes.
+   */
+  readonly tag?: number;
+}
+
+/**
+ * How often a morphing voice re-derives what the modulation feeds.
+ *
+ * ✔ **256, and it is measured**, 2026-09-05. `fmodextinput.prx`'s DSP read
+ * callback at `0x0170` asserts its length is a multiple of 256 (`test r14b, r14b`
+ * then `int 0x41`) and then calls the block function `sub_0x0a90` with
+ * **`mov esi, 0x100`** -- a fixed 256 frames per call, looping over the
+ * callback's length. Everything the modulation feeds is re-derived once per that
+ * block, in `sub_0x1c60`; see question 27 in steering/answered-questions.md for
+ * the cadence and *3. The block clock* for the length.
+ *
+ * ⚠️ **It used to be 128, and that was the AudioWorklet's quantum rather than
+ * the engine's block.** The grid below is therefore the *mixer's* running clock
+ * and not the offset within one `render` call: a live render of 128 frames at a
+ * time and an offline render of the whole song must cross the same boundaries,
+ * and 256 no longer divides the live call.
+ */
+const MORPH_FRAMES = 256;
+
+/** What one chunk of a voice wrote, and the sends that were live for it. */
+interface RenderedSpan {
+  readonly begin: number;
+  readonly end: number;
+  readonly echo: number;
+  readonly reverb: number;
+}
+
+/**
+ * The echo send at a given modulation.
+ *
+ * `clamp01(bipolar(Params[25], offset))` — the instrument's own send bent by
+ * the placement's field, which the engine stores as `2*echoSend - 1` so that
+ * 0.5 leaves the instrument alone, 0 mutes it and 1 forces unity. Both halves
+ * of that curve are in `packages/lbp-tracker-lib/src/render.ts`, which builds the opening value.
+ */
+function echoAt(morph: NonNullable<VoiceSpec['morph']>, mod: number): number {
+  const base = evaluateParam(morph.params[OUTPUT_PARAMS.send] ?? { x: 0, y: 0 }, mod);
+  const offset = morph.echoOffset;
+  const blended = offset < 0 ? base + offset * base : base + offset * (1 - base);
+  return blended < 0 ? 0 : blended > 1 ? 1 : blended;
+}
+
+class Voice {
+  position = 0;
+  readonly spec: VoiceSpec;
+  /** Output frames still to wait before this voice starts. */
+  delay: number;
+  /** Output frames remaining before it is cut, or Infinity. */
+  life: number;
+  /** Frames until the allocator takes this voice away; Infinity if it never does. */
+  cut: number;
+  /** Frames of forced gate left on a one-shot. */
+  hold: number;
+  /** Frames of linear fade at the end of that life. */
+  readonly release: number;
+  /** Per-frame multiplier for the optional decay, or 1. */
+  readonly decayPerFrame: number;
+  /** Which mip this voice reads, fixed by its rate. Unused without `mips`. */
+  private readonly mipLevel: number;
+  private readonly env = new Envelope();
+  /** Frames rendered since this voice started, for the automation cursor. */
+  private elapsed = 0;
+  private autoIndex = 0;
+  private readonly lfo: readonly [Lfo, Lfo, Lfo];
+  // The filter envelope and one ladder per channel -- the engine keeps two,
+  // which is what its ten per-voice state floats are.
+  private readonly filterEnv = new Envelope();
+  private readonly ladderL = new MoogLadder();
+  private readonly ladderR = new MoogLadder();
+  private readonly secondsPerFrame: number;
+  private decayGain = 1;
+  /**
+   * What the modulation currently makes of the instrument.
+   *
+   * These shadow the matching `spec` fields, and the render loop reads them
+   * rather than the spec so that a morphing voice needs no branch in the hot
+   * path. Without a `morph` they are set once from the spec and never move, so
+   * the loop behaves exactly as it did before they existed.
+   */
+  private curEnvelope: Adsr | undefined;
+  private curFilterEnv: Adsr | undefined;
+  private curLfos: readonly [LfoSettings, LfoSettings, LfoSettings] | undefined;
+  private curDrive: number;
+  private curGain: number;
+  private curEcho: number;
+  private curReverb: number;
+  /**
+   * Whether this voice has ever re-derived its modulation.
+   *
+   * ⚠️ **Per voice, not per `render` call.** The chunk grid is the mixer's, so a
+   * chunk that continues one already begun must not re-derive -- but a voice's
+   * very first chunk must, wherever its start delay left it. A live render
+   * enters `render` once per 128 frames and would treat every entry as a first
+   * chunk without this.
+   */
+  private derived = false;
+  /**
+   * Whether this voice can ever reach a send bus.
+   *
+   * ⚠️ **A morphing voice's echo send may start at zero and rise**, so the
+   * opening values are not enough to decide whether the buses are needed. This
+   * is the largest the echo gets anywhere along the note's own ramp.
+   */
+  readonly maySend: boolean;
+
+  /**
+   * Live expression: `Mixer.expression`, neutral until something sends some.
+   *
+   * `bendRate` is the multiplier, not the semitones, because the loop wants the
+   * multiplier and a bend arrives thousands of times less often than a frame.
+   */
+  private expressive = false;
+  private bendRate = 1;
+  private pressure = 1;
+  /**
+   * What the ladder actually reads. It ALIASES the spec's settings until a live
+   * timbre offset arrives, so a voice nobody expresses allocates nothing and
+   * every offline render is untouched.
+   */
+  private filterSettings: FilterSettings | undefined;
+  // Not readonly: the modulation moves the output level, so `refreshMorph`
+  // rebuilds the pair. Without a morph they are written once and never again.
+  private left: number;
+  private right: number;
+
+  // Fields are declared and assigned longhand rather than with TypeScript
+  // parameter properties: Node's strip-only type removal rejects any syntax
+  // that emits runtime code. See steering/tracker-architecture.md.
+  constructor(
+    spec: VoiceSpec,
+    delay: number,
+    life: number,
+    cut: number,
+    outputRate: number,
+  ) {
+    // ⚠️ The default has to depend on the sample, not be a flat Infinity: a
+    // LOOPED voice with no `holdFrames` must still be gated by its note, and
+    // holding its gate open forever is what a flat default did -- it broke
+    // `endFrame` for every caller that had never heard of one-shots.
+    this.hold = spec.holdFrames ?? (spec.sample.loop === undefined ? Infinity : 0);
+    this.spec = spec;
+    const automation = spec.automation;
+    this.automationBends =
+      automation !== undefined && automation.some((point) => point.pitch !== automation[0].pitch);
+    this.hasLfo = spec.lfos !== undefined && spec.lfos.some((lfo) => lfo.depth !== 0);
+    this.delay = delay;
+    this.life = life;
+    this.cut = cut;
+    this.release = Number.isFinite(life) ? Math.min(spec.release ?? 0, life) : 0;
+    this.decayPerFrame = spec.decayDbPerSecond
+      ? Math.pow(10, -Math.abs(spec.decayDbPerSecond) / 20 / outputRate)
+      : 1;
+    this.mipLevel = mipLevelFor(spec.playbackRate);
+    // One base phase per record, fanned per layer -- both already done by
+    // whoever built the spec. Drawing here is the fallback for a caller that
+    // has no opinion, and it is per voice rather than per record.
+    const draw = spec.random ?? Math.random;
+    const phase = spec.lfoPhase;
+    this.lfo = [
+      new Lfo(phase?.[0] ?? draw() * 2 * Math.PI),
+      new Lfo(phase?.[1] ?? draw() * 2 * Math.PI),
+      new Lfo(phase?.[2] ?? draw() * 2 * Math.PI),
+    ];
+    this.position = spec.startPosition ?? 0;
+    this.secondsPerFrame = 1 / outputRate;
+    this.filterSettings = spec.filter?.settings;
+    this.curEnvelope = spec.envelope;
+    this.curFilterEnv = spec.filter?.envelope;
+    this.curLfos = spec.lfos;
+    this.curDrive = spec.drive ?? 0;
+    this.curGain = spec.gain;
+    this.curEcho = spec.echoSend ?? 0;
+    this.curReverb = spec.reverbSend ?? 0;
+    let widestEcho = this.curEcho;
+    const morph = spec.morph;
+    if (morph !== undefined) {
+      for (const point of morph.points) {
+        widestEcho = Math.max(widestEcho, echoAt(morph, point.value));
+      }
+    }
+    this.maySend = widestEcho > 0 || this.curReverb > 0;
+    const gains = panGains(spec.pan);
+    this.left = gains.left * spec.gain;
+    this.right = gains.right * spec.gain;
+  }
+
+  /**
+   * Re-derive everything the modulation feeds, at this voice's current position.
+   *
+   * ⚠️ **Every parameter, not a chosen few.** `evaluateParam` is affine in
+   * the modulation, so interpolating the modulation and deriving is the same
+   * arithmetic as deriving at the ends and interpolating -- but the things built
+   * on top are not affine (`evaluateAdsr` squares its times, the ladder squares
+   * the cutoff), so the modulation is what gets interpolated and the derivation
+   * is redone from it, which is what the engine does too.
+   */
+  private refreshMorph(): void {
+    const morph = this.spec.morph;
+    if (morph === undefined) return;
+    const points = morph.points;
+    let i = 0;
+    while (i + 1 < points.length && points[i + 1].frame <= this.elapsed) i += 1;
+    const from = points[i];
+    const to = points[i + 1];
+    let mod = from.value;
+    if (to !== undefined) {
+      const span = to.frame - from.frame;
+      const t = span > 0 ? (this.elapsed - from.frame) / span : 1;
+      mod = from.value + (to.value - from.value) * t;
+    }
+
+    const p = morph.params;
+    const at = (index: number) => evaluateParam(p[index] ?? { x: 0, y: 0 }, mod);
+    this.curEnvelope = this.spec.envelope && evaluateAdsr(p, ADSR_PARAMS, mod);
+    const filter = this.spec.filter;
+    if (filter) {
+      this.curFilterEnv = evaluateAdsr(p, ADSR_PARAMS_B, mod);
+      this.filterSettings = {
+        cutoff: at(FILTER_PARAMS.cutoff),
+        resonance: at(FILTER_PARAMS.resonance),
+        // ❗ The caller may have zeroed the key tracking as an A/B, and the
+        // modulation must not put it back. Its ratio to the spec's own value is
+        // the only honest way to carry that through.
+        keyTrack: filter.settings.keyTrack === 0 ? 0 : at(FILTER_PARAMS.keyTrack),
+        envAmount: at(FILTER_PARAMS.envAmount),
+      };
+    }
+    if (this.spec.lfos) {
+      const lfo = (n: 0 | 1 | 2) => ({
+        rate: at(LFO_PARAMS[n].rate),
+        depth: at(LFO_PARAMS[n].depth),
+        // The spread is a phase, drawn once when the voice starts.
+        spread: this.spec.lfos![n].spread,
+      });
+      this.curLfos = [lfo(0), lfo(1), lfo(2)];
+    }
+    this.curDrive = Math.min(1, Math.max(0, at(OUTPUT_PARAMS.drive)));
+    // ❗ The level is one factor of a gain that also carries the track level,
+    // the channel volume, the headroom, the velocity and the stack correction.
+    // Only its own factor may move, so it moves as a ratio against the value
+    // the spec was built with.
+    const level = at(OUTPUT_PARAMS.level);
+    const opening = morph.opening;
+    this.curGain = opening > 0 ? (this.spec.gain * level) / opening : this.spec.gain;
+    this.curEcho = echoAt(morph, mod);
+    const gains = panGains(this.spec.pan);
+    this.left = gains.left * this.curGain;
+    this.right = gains.right * this.curGain;
+  }
+
+  /**
+   * Move this voice's live expression. See `Mixer.expression` for the contract.
+   *
+   * ⚠️ **The mip level is deliberately NOT re-picked.** It is chosen once from
+   * the opening rate, which is exactly what the engine does for its own note
+   * glides: `automation` moves `rate` every frame and never touches
+   * `this.mipLevel`. A bend that crosses an octave therefore reads the same
+   * copy the note started on, and sounds like the game's glide rather than
+   * like a different sampler cutting in halfway through.
+   */
+  setExpression(bend?: number, pressure?: number, timbre?: number): void {
+    this.expressive = true;
+    if (bend !== undefined) this.bendRate = 2 ** (bend / 12);
+    if (pressure !== undefined) this.pressure = pressure;
+    const filter = this.spec.filter;
+    if (timbre !== undefined && filter) {
+      // A copy, not a mutation: `spec.filter.settings` is the instrument's and
+      // is shared by every voice playing it. Allocated in the message handler,
+      // never in `process`.
+      const cutoff = filter.settings.cutoff + timbre;
+      this.filterSettings = {
+        ...filter.settings,
+        cutoff: cutoff < 0 ? 0 : cutoff > 1 ? 1 : cutoff,
+      };
+    }
+  }
+
+  /**
+   * Whether this voice ignores its note's end and runs to the end of the sample.
+   *
+   * A sample with no loop has no way to sustain, and the game's percussion is
+   * exactly that set. **89.4% of the corpus's 673,037 percussion notes last two
+   * steps or fewer** -- at 180 BPM, 167 ms against samples of 0.5 to 0.8 s. A
+   * one-step kick would be 83 ms of an 806 ms sample, and `a_kit_1.rinst`'s
+   * amplitude envelope is a bare gate (`sustain 1`, `release 0.068`), so gating
+   * would clip essentially every drum hit in every level to a stub.
+   *
+   * ⚠️ **This is inferred, not read.** There is no one-shot flag: the slot
+   * carries only `baseNote`, `baseBpm`, `pitched`, `fitBpm` and `fineTune`, so
+   * the loop's presence in the sample is the only signal the engine has to work
+   * with. What has not been found is the code that acts on it. See open
+   * question 10.
+   */
+  private get oneShot(): boolean {
+    return this.spec.sample.loop === undefined && this.hold > 0;
+  }
+
+  /**
+   * Scratch for the inner loop.
+   *
+   * `filterAt`, `ladderCoefficients` and `panGains` each returned a fresh
+   * object, and the loop calls all three once per frame per voice. Reusing
+   * three objects per voice is the same arithmetic with the allocation
+   * removed -- the rendered output is byte-identical, which is asserted by
+   * hashing a render before and after.
+   */
+  /**
+   * Whether this voice's own automation moves its pitch.
+   *
+   * ⚠️ **Per voice, not per chunk.** It was `automation.some(...)` inside
+   * `renderChunk`, which a morphing voice runs every 128 frames — a closure and
+   * a scan of the note's control points, 375 times a second per voice, for an
+   * answer that cannot change once the note exists.
+   */
+  private readonly automationBends: boolean;
+
+  /**
+   * Whether any of the three LFOs can sound, which decides whether this voice
+   * is rendered in chunks. A morphing voice can raise a depth off zero later,
+   * and it is already chunked for the modulation's own sake.
+   */
+  private readonly hasLfo: boolean;
+
+  private readonly filterScratch = { freq: 0, res: 0 };
+  private readonly ladderScratch = { p: 0, f: 0, q: 0 };
+  private readonly panScratch = { left: 0, right: 0 };
+  /** What {@link stepLfos} last read out of oscillators 1 and 2. */
+  private curLfoRate = 1;
+  private curLfoGain = 1;
+
+  get finished(): boolean {
+    const source = this.spec.sample.channels[0];
+    // Being taken away ends any voice, one-shot or not.
+    if (this.cut <= 0) return true;
+    // A one-shot ends when the sample does, and only then.
+    if (this.oneShot) return this.position >= source.length;
+    // With an envelope the voice ends when the release reaches zero, not when
+    // its life runs out -- life only closes the gate.
+    if (this.spec.envelope ? this.env.finished : this.life <= 0) return true;
+    // ⚠️ **Only a voice with no loop can run out of sample.** This used to be a
+    // bare `position >= source.length`, which is true of a LOOPING voice too for
+    // the one frame its position sits on `loop.end` -- and with the engine's
+    // sampler it does sit there, because that path wraps at `position >
+    // loop.end` rather than `>=`, deliberately, so the second interpolation tap
+    // still has a frame to point at. Loops that end on the last frame of their
+    // sample are the common case, so `loop.end === source.length` and the window
+    // is real.
+    //
+    // Nothing noticed while the only caller was the offline render, which asks
+    // for the whole song in one call and so evaluates this once, at the end.
+    // An AudioWorklet asks every 128 frames, which lands in that one-frame
+    // window often -- a 109-frame loop at rate 0.7071 passes through it every
+    // 154 frames -- and each time it did, the voice was thrown away mid-note.
+    // Measured on `Rotary`: 112 of its first 300 voices died early, the song
+    // came out 4.6 dB down, and it sounded like notes being cut at random.
+    return this.spec.sample.loop === undefined && this.position >= source.length;
+  }
+
+  /**
+   * Render into the output, advancing by `frames`, mixing additively.
+   *
+   * Returns the half-open frame span it actually touched. Callers need that:
+   * a send bus has to clear and accumulate a scratch buffer around each voice,
+   * and doing that over the whole block instead of the voice's own window is
+   * what made a full-length render quadratic -- with tens of thousands of notes
+   * against a sixteen-million-frame block it is the difference between seconds
+   * and hours.
+   */
+  /**
+   * Render `frames`, in chunks if the modulation is moving.
+   *
+   * ⚠️ **The chunking is the whole of how the morph is applied**, and it is why
+   * `renderChunk` needed no branch: every quantity the modulation feeds is
+   * hoisted at the top of that function, so re-deriving between calls is enough.
+   * A voice with no `morph` is handed straight through and runs exactly the code
+   * it ran before this existed.
+   *
+   * `MORPH_FRAMES` is **256, the engine's own block length**; see the note
+   * there. `gridPhase` is the mixer's frame clock modulo it, which is what lets
+   * a 128-frame live call and a whole-song offline call cross the same
+   * boundaries -- they are measured to agree frame for frame, and must keep
+   * doing.
+   */
+  render(
+    outLeft: Float32Array,
+    outRight: Float32Array,
+    frames: number,
+    interpolate: Interpolator,
+    engineSampler: boolean,
+    into?: RenderedSpan[],
+    gridPhase = 0,
+  ): { begin: number; end: number } {
+    // ❗ **A voice with a live LFO chunks too**, because the LFO advances once
+    // per chunk in the engine and holding one value for a whole offline render
+    // would be no modulation at all. Everything else still goes through in one
+    // call and runs exactly the code it ran before any of this existed.
+    if (this.spec.morph === undefined && !this.hasLfo) {
+      const span = this.renderChunk(outLeft, outRight, frames, interpolate, engineSampler);
+      into?.push({ begin: span.begin, end: span.end, echo: this.curEcho, reverb: this.curReverb });
+      return span;
+    }
+    // ⚠️ **The start delay is skipped before the chunking, not inside it.**
+    // `renderChunk` skips it by arithmetic, but a chunked voice would still walk
+    // one iteration per 128 frames of silence to find that out -- and an offline
+    // render hands the whole song in one call, so a voice starting three minutes
+    // in did **78,000 empty iterations** before its first sample. That is the
+    // same quadratic the send buses were once fixed for; it cost 76% of a
+    // full-length render the day LFO voices started chunking.
+    let at = 0;
+    if (this.delay > 0) {
+      const skip = Math.min(this.delay, frames);
+      this.delay -= skip;
+      if (skip >= frames) return { begin: frames, end: frames };
+      at = skip;
+    }
+    let begin = -1;
+    let end = 0;
+    while (at < frames) {
+      // ⚠️ **The chunk grid is the engine's block clock, not the voice's and not
+      // this call's.** Taking a full `MORPH_FRAMES` from wherever the delay
+      // ended would put the boundaries at `delay + 256k`; measuring from `at`
+      // alone would put a live render's boundaries every 128 frames and an
+      // offline one's every 256. `gridPhase + at` is the absolute frame modulo
+      // the block, so both cross the same ones -- see `packages/lbp-tracker-lib/test/audio.test.ts`.
+      const off = (gridPhase + at) % MORPH_FRAMES;
+      const take = Math.min(MORPH_FRAMES - off, frames - at);
+      // ❗ A chunk that continues one already begun must NOT re-derive, or a
+      // live render would step the modulation twice as often as an offline one.
+      // ⚠️ `derived` is per VOICE and not per call, for exactly that reason: a
+      // live render enters here once per 128 frames and would otherwise treat
+      // every entry as a first chunk.
+      if (off === 0 || !this.derived) {
+        this.refreshMorph();
+        // ⚠️ Advanced by the whole remaining block, not by `take`: `take` is cut
+        // short when the caller's buffer ends first, and the oscillators must
+        // not notice how the caller chose to slice the audio.
+        this.stepLfos(MORPH_FRAMES - off);
+      }
+      this.derived = true;
+      const span = this.renderChunk(
+        outLeft.subarray(at),
+        outRight.subarray(at),
+        take,
+        interpolate,
+        engineSampler,
+      );
+      if (span.end > span.begin) {
+        if (begin < 0) begin = at + span.begin;
+        end = at + span.end;
+        // ⚠️ **One span per chunk, with the send that was live for it.** The
+        // buses belong to the mixer, so the voice cannot sum into them itself;
+        // reporting what it wrote and at what send is how a moving echo reaches
+        // them without the mixer having to know about chunks.
+        into?.push({
+          begin: at + span.begin,
+          end: at + span.end,
+          echo: this.curEcho,
+          reverb: this.curReverb,
+        });
+      }
+      // Short of the chunk means the voice ran out inside it.
+      if (span.end < take) break;
+      at += take;
+    }
+    return { begin: begin < 0 ? 0 : begin, end };
+  }
+
+  /**
+   * Advance the three oscillators one block and read them.
+   *
+   * ❗ **Once per block of the mixer's grid**, which is the engine's cadence
+   * (question 27) at the engine's length (`MORPH_FRAMES`). `frames` is the whole
+   * block, never the part of it one `render` call happens to cover -- that is
+   * what keeps a 128-frame live render and a whole-song offline one identical.
+   */
+  private stepLfos(frames: number): void {
+    const lfos = this.curLfos;
+    if (lfos === undefined) return;
+    const dt = frames * this.secondsPerFrame;
+    if (lfos[0].depth !== 0) {
+      this.lfo[0].advance(dt, lfos[0].rate * LFO_RATE_SCALE[0]);
+      this.curLfoRate = pitchFactor(this.lfo[0].value, lfos[0].depth);
+    }
+    if (lfos[1].depth !== 0) {
+      this.lfo[1].advance(dt, lfos[1].rate * LFO_RATE_SCALE[1]);
+      this.curLfoGain = gainFactor(this.lfo[1].value, lfos[1].depth);
+    }
+    if (lfos[2].depth !== 0) {
+      this.lfo[2].advance(dt, lfos[2].rate * LFO_RATE_SCALE[2]);
+      panGainsInto(panFold(this.lfo[2].value, lfos[2].depth, this.spec.pan * 2), this.panScratch);
+    }
+  }
+
+  private renderChunk(
+    outLeft: Float32Array,
+    outRight: Float32Array,
+    frames: number,
+    interpolate: Interpolator,
+    engineSampler: boolean,
+  ): { begin: number; end: number } {
+    const { sample, playbackRate } = this.spec;
+    const chans = sample.channels;
+    const mono = chans.length === 1;
+    const srcL = chans[0];
+    const srcR = mono ? chans[0] : chans[1];
+    const loop = sample.loop;
+    const envelope = this.curEnvelope;
+    const filter = this.spec.filter;
+    const filterEnv = this.curFilterEnv;
+    const lfos = this.curLfos;
+    const automation = this.spec.automation;
+    // With the engine sampler off the voice falls back to `interpolate` over
+    // the full-rate channels, which is the A/B path: it is how a different
+    // interpolator can be heard against the game's own.
+    const mips = engineSampler ? sample.mips : undefined;
+    // Per-voice constants, tested once instead of once per frame.
+    const lfo0 = lfos !== undefined && lfos[0].depth !== 0;
+    const lfo1 = lfos !== undefined && lfos[1].depth !== 0;
+    const lfo2 = lfos !== undefined && lfos[2].depth !== 0;
+
+    // `envFactor` is `1 + envAmount * (envB - 1)`, so at `envAmount === 0` it is
+    // 1 whatever the envelope does -- the cutoff and resonance are then fixed
+    // for the whole voice, and both the filter envelope and the coefficient
+    // solve can leave the loop. Most instruments are in this case at modulation
+    // 0: `piano`, `musicbox`, `a_kit_1`, `ray_gun` and `baiyon_drums_1` all have
+    // `Params[6].x` of exactly zero.
+    // ⚠️ **And a constant rate.** The cutoff is scaled by the voice's playback
+    // rate through `keyTrack`, so a voice whose rate moves has a moving cutoff
+    // even with no filter envelope at all. A note that glides, or an instrument
+    // with LFO 1 on the pitch, has to solve the ladder per frame like any other.
+    // ⚠️ `this.expressive` belongs here: a live bend moves the rate and a live
+    // timbre moves the cutoff, and either one makes the solved-once ladder wrong
+    // for every frame after the first. One flag rather than two because a voice
+    // somebody is expressing is being expressed continuously -- there is no
+    // case worth optimising where the bend moves and the cutoff must not follow.
+    const rateMoves =
+      lfo0 || this.expressive || this.spec.morph !== undefined || this.automationBends;
+    const settings = this.filterSettings;
+    const filterFixed =
+      filter !== undefined && settings !== undefined && settings.envAmount === 0 && !rateMoves;
+
+    // The drive is per note, so its two constants are solved once per voice.
+    // `k === 0` is the bypass and skips the branch entirely.
+    const driveK = driveCoefficient(this.curDrive);
+    const driveOnePlusK = 1 + driveK;
+    let fixedBypass = false;
+    if (settings && filterFixed) {
+      // The envelope level is unused here, so any value gives the same answer.
+      const fixed = filterAtInto(settings, 0, playbackRate, this.filterScratch);
+      fixedBypass = fixed.freq > FILTER_BYPASS_CUTOFF;
+      if (!fixedBypass) ladderCoefficientsInto(fixed.freq, fixed.res, this.ladderScratch);
+    }
+
+    // ❗ **The three LFOs advance once for the whole chunk, not once per frame,
+    // and that is measured.** In `fmodextinput.prx`'s per-voice renderer the
+    // sine lives in the **per-layer** loop at `0x24a0`-`0x28e3`, which sits
+    // entirely before the per-sample loop at `0x2b70`-`0x2df9`:
+    //
+    // ```
+    // 0x27e6  xmm0 = [rbp-0xab0]              ; the chunk's phase increment
+    // 0x27ee  xmm0 += [rbp-0x9d0]             ; plus this layer's running phase
+    // 0x282e  call 0x130                      ; sin(), once per layer
+    // 0x283e  xmm0 = sin * (depth * 0.05)
+    // 0x284e  xmm0 = detune + that            ; pitchFactor, and then the rate
+    // 0x2876  [r14] = the layer's rate, a double, read by the sample loop
+    // ...
+    // 0x28f1  [r12+0x98] += [rbp-0xab0]       ; and the three stored phases
+    // 0x2915  [r12+0x9c] += [rbp-0xab8]       ; advance once, after the loop
+    // 0x293b  [r12+0xa0] += [rbp-0xac4]
+    // ```
+    //
+    // ⚠️ **This was per frame here until it was read**, which cost 1.19 `Math.sin`
+    // calls per voice-frame — 10% of a live render of `C4K3 S0NG` — and produced
+    // a smooth modulation where the game's is a staircase held for a chunk.
+    // Faster and closer, from the same finding.
+    //
+    // ⚠️ The chunk **length** is still `MORPH_FRAMES`, which is our choice and
+    // not a measurement; see the note there. What is measured is the cadence.
+
+    // Skip the start delay by arithmetic. Counting it down a frame at a time
+    // made every voice walk the whole block before its first sample, so a note
+    // near the end of a long render cost as much as one at the beginning.
+    let begin = 0;
+    if (this.delay > 0) {
+      const skip = Math.min(this.delay, frames);
+      this.delay -= skip;
+      if (skip >= frames) return { begin: frames, end: frames };
+      begin = skip;
+    }
+
+    // ⚠️ **The oscillators are advanced by `stepLfos`, not here.** They move
+    // once per block of the engine's grid, and a live render hands this function
+    // half a block at a time -- advancing per call would step them twice as
+    // often as an offline render and the two would stop being identical. What is
+    // left here is reading the values that call left behind.
+    const lfoRate = this.curLfoRate;
+    const lfoGain = this.curLfoGain;
+    // The allocator's cut, by arithmetic rather than a per-frame test: it is
+    // known before the loop and never moves.
+    const last = Number.isFinite(this.cut) ? Math.min(frames, begin + this.cut) : frames;
+
+    let i = begin;
+    for (; i < last; i += 1) {
+      // A one-shot is never released: it is held until the sample runs out.
+      const held = this.hold > 0 || this.life > 0;
+      if (!envelope && !held) break;
+      this.hold -= 1;
+
+      if (loop) {
+        const span = loop.end - loop.start;
+        // The engine wraps only *past* loop.end, because it leaves the second
+        // interpolation tap unwrapped and so still needs the frame at the end
+        // to point somewhere. Our own path wraps both taps and therefore wraps
+        // at loop.end. See readMipped.
+        const past = mips ? this.position > loop.end : this.position >= loop.end;
+        if (span > 0 && past) {
+          this.position = loop.start + ((this.position - loop.start) % span);
+        }
+      }
+      if (!loop && this.position >= srcL.length) break;
+
+      let fade: number;
+      if (envelope) {
+        fade = this.env.advance(this.secondsPerFrame, held, envelope);
+        if (this.env.finished) break;
+      } else {
+        // Linear release ramp over the last `release` frames of the voice's
+        // life, plus the optional decay. Both are ours, and both are what the
+        // envelope above replaces.
+        fade =
+          this.release > 0 && this.life < this.release ? this.life / this.release : 1;
+        if (this.decayPerFrame !== 1) {
+          this.decayGain *= this.decayPerFrame;
+          fade *= this.decayGain;
+        }
+      }
+
+      // Hand the loop to the interpolator only once the voice is inside it.
+      // Before that the taps behind `loop.start` are the attack and are
+      // correct as they stand; wrapping them would corrupt the note's onset.
+      const region = loop && this.position >= loop.start ? loop : undefined;
+      let l = mips
+        ? readMipped(mips[0], this.position, this.mipLevel, region)
+        : interpolate(srcL, this.position, region);
+      let r = l;
+      if (!mono) {
+        r = mips
+          ? readMipped(mips[1] ?? mips[0], this.position, this.mipLevel, region)
+          : interpolate(srcR, this.position, region);
+      }
+      if (driveK !== 0) {
+        l = softClip(l, driveK, driveOnePlusK);
+        if (!mono) r = softClip(r, driveK, driveOnePlusK);
+        else r = l;
+      }
+      let panLeft = this.left;
+      let panRight = this.right;
+      let rate = playbackRate;
+
+      // The note's own bend and volume glide, ahead of the LFOs, which
+      // multiply on top of it exactly as the engine's do.
+      if (automation && automation.length > 0) {
+        while (
+          this.autoIndex + 1 < automation.length &&
+          automation[this.autoIndex + 1].frame <= this.elapsed
+        ) {
+          this.autoIndex += 1;
+        }
+        const from = automation[this.autoIndex];
+        const to = automation[this.autoIndex + 1];
+        let semitones = from.pitch;
+        let gain = from.gain;
+        if (to) {
+          const span = to.frame - from.frame;
+          // A zero-length segment would divide by zero; two records on the same
+          // step is authoring debris, not a glide, so take the later value.
+          const t = span > 0 ? (this.elapsed - from.frame) / span : 1;
+          semitones += (to.pitch - from.pitch) * t;
+          gain += (to.gain - from.gain) * t;
+        }
+        if (semitones !== 0) rate *= 2 ** (semitones / 12);
+        fade *= gain;
+      }
+      // Live expression, on top of the note's own glide and beneath the LFOs --
+      // the same place, and the same two quantities, as the automation above.
+      if (this.expressive) {
+        rate *= this.bendRate;
+        fade *= this.pressure;
+      }
+      this.elapsed += 1;
+      // ❗ **The LFOs were evaluated once for this whole chunk**, above the loop,
+      // because that is what the engine does. See `lfoRate` and the note there.
+      if (lfo0) rate *= lfoRate;
+      if (lfo1) fade *= lfoGain;
+      if (lfo2) {
+        panLeft = this.panScratch.left * this.curGain;
+        panRight = this.panScratch.right * this.curGain;
+      }
+
+      // Filter, then amplitude: the ladder is inside the voice, ahead of the
+      // gain and the pan.
+      // A wide-open lowpass is skipped, not computed: the engine branches on
+      // `cutoff > 0.99` at 0x2ee9 into a loop carrying none of the ladder's
+      // constants. Running it anyway is not free -- this ladder passes a unit
+      // impulse at 0.833 and rings -- and piano sits at exactly 1.0.
+      if (filterFixed) {
+        if (!fixedBypass) {
+          l = this.ladderL.process(l, this.ladderScratch);
+          r = mono ? l : this.ladderR.process(r, this.ladderScratch);
+        }
+      } else if (settings && filter) {
+        const level = this.filterEnv.advance(this.secondsPerFrame, held, filterEnv ?? filter.envelope);
+        // ⚠️ `rate`, not `playbackRate`: the rate the voice is playing at **this
+        // frame**, after the note's own glide and LFO 1. Feeding the constant
+        // opening rate pins the cutoff where the note started, and a filter that
+        // does not follow the pitch is a riser that does not rise.
+        //
+        // `Northern Lights` opens on `noise` -- `kenny_noise.smp`, a one-second
+        // loop -- with `keyTrack` 1.000 and cutoff 0.465..0.120, glided from y34
+        // to y61 over 32 steps. That is +27 semitones, a rate of 4.76, and with
+        // the cutoff pinned the noise stays dull for the whole sweep: measured
+        // by zero-crossing rate it rose 1.83x where the pitch rose 4.76x.
+        //
+        // ⚠️ Which rate the engine feeds this term is the one thing left over from
+        // question 15 (now in `steering/answered-questions.md`), and
+        // `LBP_NO_KEYTRACK` exists because the term may be inert altogether. What
+        // is not in doubt is that between the opening rate and the current one,
+        // only the current one lets a glide sweep.
+        const { freq, res } = filterAtInto(settings, level, rate, this.filterScratch);
+        if (freq <= FILTER_BYPASS_CUTOFF) {
+          const coefficients = ladderCoefficientsInto(freq, res, this.ladderScratch);
+          l = this.ladderL.process(l, coefficients);
+          r = mono ? l : this.ladderR.process(r, coefficients);
+        }
+      }
+
+      outLeft[i] += l * panLeft * fade;
+      outRight[i] += r * panRight * fade;
+
+      this.position += rate;
+      this.life -= 1;
+      this.cut -= 1;
+    }
+    return { begin, end: i };
+  }
+}
+
+export class Mixer {
+  readonly outputRate: number;
+  private voices: Voice[] = [];
+  private interpolate: Interpolator;
+  private engineSampler = true;
+  /**
+   * Frames rendered so far, modulo {@link MORPH_FRAMES}: the engine's DSP block
+   * clock.
+   *
+   * ❗ **It belongs to the mixer and not to a voice**, because the engine's
+   * blocks run from the moment the channel starts and every voice re-derives its
+   * modulation on the same boundaries. A per-voice counter would put a voice
+   * that began mid-block on its own grid, which the engine cannot do -- a voice
+   * there always starts at a block's first frame.
+   */
+  private clock = 0;
+
+  constructor(
+    outputRate: number,
+    interpolate: Interpolator = INTERPOLATORS[DEFAULT_INTERPOLATOR],
+  ) {
+    this.outputRate = outputRate;
+    this.interpolate = interpolate;
+  }
+
+  setInterpolator(interpolate: Interpolator): void {
+    this.interpolate = interpolate;
+  }
+
+  /**
+   * Whether voices read through the engine's own sampler (linear plus octave
+   * mipmaps, `readMipped`) or through the mixer's `Interpolator`.
+   *
+   * **On is the faithful setting and the default.** Off exists so a different
+   * interpolator can be compared against it; it also takes effect only for
+   * samples that were loaded with mip chains.
+   */
+  setEngineSampler(on: boolean): void {
+    this.engineSampler = on;
+  }
+
+  get voiceCount(): number {
+    return this.voices.length;
+  }
+
+  /** Start a voice. `startFrame` is relative to the next render block. */
+  play(spec: VoiceSpec): void {
+    const delay = Math.max(0, spec.startFrame ?? 0);
+    const life =
+      spec.endFrame === undefined ? Infinity : Math.max(0, spec.endFrame - delay);
+    const cut =
+      spec.cutFrame === undefined ? Infinity : Math.max(0, spec.cutFrame - delay);
+    this.voices.push(new Voice(spec, delay, life, cut, this.outputRate));
+  }
+
+  stopAll(): void {
+    this.voices.length = 0;
+  }
+
+  /**
+   * How many voices the pool is holding, split by whether they have started.
+   *
+   * A scheduler posts voices ahead of time with a `startFrame` delay, so "how
+   * many are there" and "how many can be heard" are different questions and a
+   * meter that answered the wrong one would be misleading rather than merely
+   * imprecise. Cheap enough to call at a UI rate; not for the audio path.
+   */
+  counts(): { total: number; sounding: number; notes: number } {
+    let sounding = 0;
+    // ❗ **Voices and notes are different numbers and the difference is large.**
+    // A stacked instrument plays up to five sampler voices out of one of the
+    // engine's records, so a meter that reports only voices reads several times
+    // the polyphony a listener would count. `tag` is what groups them -- the
+    // caller's handle on a note, which `packages/lbp-tracker-web/src/live.ts` sets to the note and the
+    // keyboard sets to the key. An untagged voice counts as one of its own.
+    const tags = new Set<number>();
+    let untagged = 0;
+    for (const voice of this.voices) {
+      if (voice.delay > 0) continue;
+      sounding += 1;
+      const tag = voice.spec.tag;
+      if (tag === undefined) untagged += 1;
+      else tags.add(tag);
+    }
+    return { total: this.voices.length, sounding, notes: tags.size + untagged };
+  }
+
+  /**
+   * Take a tagged voice away in `frames` frames of its own sounding time.
+   *
+   * This is the voice pool's theft rather than a note ending: the record is
+   * handed to somebody else, so the voice stops where it is instead of
+   * releasing. A live scheduler needs it because the pool only learns that a
+   * voice must be cut when the note that steals it arrives, which is after the
+   * victim was handed over.
+   *
+   * ⚠️ `frames` counts SOUNDING frames, not wall frames: a voice still waiting
+   * out its `startFrame` has not spent any of them. That is the same clock
+   * `cutFrame` is converted to in `play`.
+   */
+  cutAt(tag: number, frames: number): void {
+    for (const voice of this.voices) {
+      if (voice.spec.tag === tag) voice.cut = Math.max(0, frames);
+    }
+  }
+
+  /**
+   * Move the live expression of every voice carrying `tag`.
+   *
+   * This is MPE's three dimensions, and it exists because the two the engine
+   * already has -- the note's own pitch glide and volume glide -- are baked
+   * into `VoiceSpec.automation` before the voice is built, which is fine for a
+   * sequencer whose notes know their whole shape in advance and useless for a
+   * keyboard where the shape arrives while the note sounds.
+   *
+   * - `bend` is semitones, signed, and multiplies the rate exactly as a glide
+   *   does. There is no limit here: the range belongs to whoever is reading the
+   *   controller, and 48 semitones is the MPE default.
+   * - `pressure` multiplies the voice gain, 0..1, alongside the glide's own.
+   * - `timbre` is an OFFSET added to the instrument's cutoff, -1..1, clamped
+   *   into range. ⚠️ **This one is not the engine's**: nothing in the game
+   *   moves a cutoff from outside a note. It is here because MPE's Y dimension
+   *   has to land somewhere and brightness is what it conventionally means.
+   *
+   * An omitted field is left where it was, so a controller sending only bend
+   * does not silently reset the pressure it never sent.
+   */
+  expression(tag: number, bend?: number, pressure?: number, timbre?: number): void {
+    for (const voice of this.voices) {
+      if (voice.spec.tag === tag) voice.setExpression(bend, pressure, timbre);
+    }
+  }
+
+  /**
+   * Close the gate on every voice carrying `tag`, as a key coming up does.
+   *
+   * ⚠️ **This is the note's own gate, not a stop.** `life` and `hold` are what
+   * `Voice.render` reads as "still held" (`held = hold > 0 || life > 0`), so
+   * clearing them starts whatever release the voice already has: the amplitude
+   * envelope's if it has one, and otherwise the linear fade. It never truncates
+   * a sound the engine would have let ring.
+   *
+   * Voices are left in the pool to finish releasing; `stopAll` is the one that
+   * takes them away.
+   */
+  release(tag: number): void {
+    for (const voice of this.voices) {
+      if (voice.spec.tag === tag) {
+        voice.life = 0;
+        voice.hold = 0;
+      }
+    }
+  }
+
+  /**
+   * Render one block. `left` and `right` are cleared first, so callers get the
+   * mix rather than an accumulation across blocks.
+   *
+   * `onVoice` is called after each voice is mixed in. It exists because an
+   * offline render of a whole song is one call that runs for many seconds, and
+   * a progress bar that only tracks the phases *around* it is worse than none:
+   * it fills, then freezes for most of the wait. The callback must be cheap and
+   * synchronous -- a worker's `postMessage` is, and reaches the main thread
+   * without this loop yielding.
+   */
+  render(
+    left: Float32Array,
+    right: Float32Array,
+    sends?: {
+      readonly echo?: readonly [Float32Array, Float32Array];
+      readonly reverb?: readonly [Float32Array, Float32Array];
+    },
+    onVoice?: (done: number, total: number) => void,
+  ): void {
+    const frames = Math.min(left.length, right.length);
+    left.fill(0);
+    right.fill(0);
+    sends?.echo?.[0].fill(0);
+    sends?.echo?.[1].fill(0);
+    sends?.reverb?.[0].fill(0);
+    sends?.reverb?.[1].fill(0);
+
+    // A send bus is the same render scaled: rather than render a voice twice,
+    // each voice writes into a scratch pair and that is added to dry and to
+    // each bus at its own level. The scratch is per render, not per voice.
+    const needsSends = sends !== undefined && this.voices.some((v) => v.maySend);
+    const scratchL = needsSends ? new Float32Array(frames) : left;
+    const scratchR = needsSends ? new Float32Array(frames) : right;
+
+    // Reused across voices: one array, cleared per voice, rather than a fresh
+    // one for each of a corpus render's hundreds of thousands.
+    const spans: RenderedSpan[] = [];
+    const total = this.voices.length;
+    let done = 0;
+    // ❗ **The modulation grid belongs to the mixer, not to a render call.** The
+    // engine re-derives once per 256-frame DSP block and those blocks run from
+    // the moment playback starts, so a live render handing over 128 frames at a
+    // time has to know where in that block it is. Every voice gets the same
+    // phase, which is what keeps them stepping together.
+    const phase = this.clock;
+    for (const voice of this.voices) {
+      if (onVoice && (done & 0xff) === 0) onVoice(done, total);
+      done += 1;
+      if (!needsSends || !voice.maySend) {
+        voice.render(left, right, frames, this.interpolate, this.engineSampler, undefined, phase);
+        continue;
+      }
+      // The scratch is left clean by whoever used it last, so only the spans
+      // this voice writes need clearing -- and only those need summing. A voice
+      // whose modulation moves reports one span per chunk, each with its own
+      // echo send; every other voice reports exactly one.
+      spans.length = 0;
+      voice.render(scratchL, scratchR, frames, this.interpolate, this.engineSampler, spans, phase);
+      for (const span of spans) {
+        const { echo, reverb } = span;
+        // ⚠️ **Both sends are hoisted out of the frame loop**, and that is worth
+        // the four lines: they are constant for the span, and testing them per
+        // frame put this loop at 5% of a whole render. The arithmetic is
+        // unchanged and so is the output, to the bit.
+        const echoL = echo > 0 ? sends.echo?.[0] : undefined;
+        const echoR = echo > 0 ? sends.echo?.[1] : undefined;
+        const reverbL = reverb > 0 ? sends.reverb?.[0] : undefined;
+        const reverbR = reverb > 0 ? sends.reverb?.[1] : undefined;
+        for (let i = span.begin; i < span.end; i += 1) {
+          const l = scratchL[i];
+          const r = scratchR[i];
+          left[i] += l;
+          right[i] += r;
+          if (echoL !== undefined) {
+            echoL[i] += l * echo;
+            echoR![i] += r * echo;
+          }
+          if (reverbL !== undefined) {
+            reverbL[i] += l * reverb;
+            reverbR![i] += r * reverb;
+          }
+        }
+        scratchL.fill(0, span.begin, span.end);
+        scratchR.fill(0, span.begin, span.end);
+      }
+    }
+    onVoice?.(total, total);
+    // The engine's block clock advances with the audio, not with the caller's
+    // convenience. Wrapping keeps it exact for a render of any length.
+    this.clock = (this.clock + frames) % MORPH_FRAMES;
+    // A voice that ran out mid-block has already written what it had.
+    this.voices = this.voices.filter((v) => !v.finished);
+  }
+}

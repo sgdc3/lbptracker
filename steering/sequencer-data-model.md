@@ -226,7 +226,7 @@ c8 be 07      varint → 122696   = piano_c5.smp
 …
 ```
 
-⚠️ `src/core/stream.ts` has **no varint support yet** — it was written for the level container,
+⚠️ `packages/cwlib-ts/src/stream.ts` has **no varint support yet** — it was written for the level container,
 whose header is fixed-width. Reading `.rinst` or any Thing data in TypeScript needs it first.
 
 **3. Fields are gated on the file's revision.** A level written by an older build simply does not
@@ -373,8 +373,8 @@ records as raw bytes, one JSON line per instrument. It used only the extraction 
 and none of its musical interpretation, so the statistics above are independent of any prior
 reading of the format. 22 levels, zero load or walk failures.
 
-⚠️ **That tool was deleted on 2026-09-02**, when `src/core/level.ts` took over the extraction. Its
-output survives as `fixtures/levels/sequencers.jsonl`, which `dev/verify-levels.ts` still checks the
+⚠️ **That tool was deleted on 2026-09-02**, when `packages/cwlib-ts/src/level.ts` took over the extraction. Its
+output survives as `fixtures/levels/sequencers.jsonl`, which `packages/cwlib-ts/dev/verify-levels.ts` still checks the
 TypeScript walk against, but it cannot be re-run: to recount any of this over new levels, walk them
 with `readLevel` + `musicSequencers` instead.
 
@@ -530,7 +530,7 @@ the hundreds, which reads as **millibels**; 10 lands on 3000–12000, which read
 `FMOD_DSP_SFXREVERB`'s indices 7 and 9 are `REVERBLEVEL` and `DIFFUSION`, both floats, so a boolean
 there ruled FMOD out — correctly. The DSP is `fmodsmsreverb.prx`, and slots 7 and 9 are the notch
 and damping enables. The full slot table, the topology and the sends are in *6 / 14. The reverb* in
-[answered-questions.md](answered-questions.md); `src/audio/effects.ts` implements it.
+[answered-questions.md](answered-questions.md); `packages/lbp-tracker-lib/src/audio/effects.ts` implements it.
 
 ## The sequencer mixes itself — it is not a set of FMOD voices
 
@@ -851,7 +851,7 @@ else                ratio = exp2f((t·voice.pitchSlide + voice.pitch + slot.fine
 if (slot.tempoSynced)  ratio *= Tempo / slot.nativeTempo
 ```
 
-That replaces the three constants still marked UNMEASURED in `src/core/voice.ts`. The tempo-sync
+That replaces the three constants still marked UNMEASURED in `packages/lbp-tracker-lib/src/voice.ts`. The tempo-sync
 branch is new: some slots stretch with the sequencer's tempo instead of being pitched.
 
 ### The sampler is LINEAR, and it mipmaps by octave
@@ -898,7 +898,7 @@ Two taps. Plain linear. The stereo path (`0x3847`–`0x38a2`) is bilinear: it le
 blend the caller passes, and lerps the two frames by `frac`.
 
 ⚠️ **So `sinc8` is the wrong default for a faithful tracker.** Linear is not a compromise here, it
-is the target. The SNR table in `src/audio/interpolate.ts` still stands — the game simply lives with
+is the target. The SNR table in `packages/lbp-tracker-lib/src/audio/interpolate.ts` still stands — the game simply lives with
 19 dB at 4 kHz, and that roughness is part of the sound being reproduced. What keeps it from being
 as bad as that table implies is the mipmapping, which is the half of the design we were missing.
 
@@ -1322,7 +1322,7 @@ being its top two users is the whole argument; there is no label in the game to 
 | 24..26 | output — level, send, drive |
 
 The block is a small subtractive synth: stack, filter, two envelopes, three LFOs, output. Named in
-`src/core/params.ts`.
+`packages/lbp-tracker-lib/src/params.ts`.
 
 ### Where each LFO goes
 
@@ -1386,7 +1386,7 @@ centre therefore dips about **3 dB** relative to an equal-power law.
 
 ⚠️ **`panGains` was equal-power here for most of the project's life.** Equal-power is the
 conventional choice, it is the better-sounding one, and it is not what the game does — so it does
-not belong in a faithful tracker. Corrected in `src/core/voice.ts`, and the test that had asserted
+not belong in a faithful tracker. Corrected in `packages/lbp-tracker-lib/src/voice.ts`, and the test that had asserted
 constant power now asserts the opposite, with the reason written next to it. Five other tests
 depended on the old `sqrt(1/2)` centre factor and were updated with it; that spread is a fair
 measure of how much a pan law touches.
@@ -1487,7 +1487,7 @@ still carries both thirds — `0x3ee` has 163 records at one third and 166 at tw
 decoding is not an artefact of this.
 
 ⚠️ **It was worth measuring because dropping it is invisible until it isn't.** Nothing sounds
-different, and `src/core/midi.ts` reconstructing byte 3 as `modulation | (subStep === 2 ? 0x40 : 0)`
+different, and `packages/lbp-tracker-lib/src/midi.ts` reconstructing byte 3 as `modulation | (subStep === 2 ? 0x40 : 0)`
 made **78% of the corpus's clips** come back as a different file. It now travels per clip in the
 `LBP-TRK` meta.
 
@@ -1634,7 +1634,7 @@ two records the same function catches all three up by `rate × elapsed`, in thre
 The third one used to be written down here as `panSlide`, because `+0x28` was read as a pan until
 `sub_0x3930` was disassembled. It is the note's modulation — the value that picks a point inside
 every `Params` range — and **the engine ramps it exactly as it ramps volume and pitch**.
-`src/core/render.ts` holds it at the note's opening value and is therefore wrong on the 3.45% of
+`packages/lbp-tracker-lib/src/render.ts` holds it at the note's opening value and is therefore wrong on the 3.45% of
 notes that move it. See open question 2 for what is still unmeasured: what consumes the ramped
 value.
 

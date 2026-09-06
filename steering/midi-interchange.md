@@ -1,6 +1,6 @@
 # What our MIDI file carries — every side channel, and what it costs
 
-Read before changing `src/core/midi.ts`, and before adding a field to `Sequencer` or `Track`.
+Read before changing `packages/lbp-tracker-lib/src/midi.ts`, and before adding a field to `Sequencer` or `Track`.
 
 A MIDI file can say *notes*. A music sequencer is a board of placements with a mixer, two sends, a
 key, a scale and per-record automation, and most of that has no MIDI message at all. So the file we
@@ -8,7 +8,7 @@ write is two things layered: **the music, in ordinary MIDI events that any DAW p
 **everything else, in text meta events that any DAW ignores**. This file is the inventory of the
 second layer.
 
-Why measurements in this file can be trusted: they come from `dev/verify-midi.ts` and a budget pass
+Why measurements in this file can be trusted: they come from `packages/lbp-tracker-lib/dev/verify-midi.ts` and a budget pass
 over the corpus (10 levels, 149 sequencers, 953,791 notes, 62,158 clips, 1,448,224 records),
 2026-09-03. The round-trip results themselves live in
 [lbp-modding-toolchain.md](lbp-modding-toolchain.md).
@@ -63,7 +63,7 @@ encodes to exactly the microseconds in the file and takes that one — not a gue
 tempos are whole (70..240). A genuinely fractional tempo keeps its fraction to within 1e-4 BPM,
 which is the one thing this cost.
 
-⚠️ `test/midi.test.ts` pins the field list. Adding a field to `Sequencer` and forgetting it here
+⚠️ `packages/lbp-tracker-lib/test/midi.test.ts` pins the field list. Adding a field to `Sequencer` and forgetting it here
 fails there, rather than silently in a DAW six months later.
 
 ## 2. `LBP-TRK ` — one text meta per part track
@@ -361,7 +361,7 @@ gained a per-clip `names` map.
 Nothing, over this corpus — both modes read 0 records different. The two fields that would need the
 patch on a level unlike any of the 22 are `timbre` bits 4-5 (the per-block table select) and a
 volume above 127; both are zero in all 1,448,224 records, both ride in `fix` for free, and
-`test/midi.test.ts` is the only place either is exercised.
+`packages/lbp-tracker-lib/test/midi.test.ts` is the only place either is exercised.
 
 ⚠️ **The general rule, learned the expensive way**: the shape of an exact converter is not more
 MIDI, it is a bigger side channel — but a side channel is only affordable if the exporter *checks*

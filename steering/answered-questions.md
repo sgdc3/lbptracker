@@ -274,7 +274,7 @@ voice[+0x0c]` — the channel volume times the note volume, both known from the 
 note asked for, not by how loud it currently is.
 
 WARNING: the running best starts at **1.0**, not infinity, and the best index at **0**. A pool where
-every voice scores 1.0 or more loses voice 0 rather than the quietest. `src/core/polyphony.ts`
+every voice scores 1.0 or more loses voice 0 rather than the quietest. `packages/lbp-tracker-lib/src/polyphony.ts`
 reproduces that rather than tidying it, and a test pins it.
 
 **Exposed as a setting.** `allocateVoices` takes a pool size and `VOICES_UNLIMITED` turns the cap
@@ -301,7 +301,7 @@ Checked while chasing the above, because `mime_artist` (4 samples, 1 zone, `Nums
 otherwise. **14 of the 15 stacked instruments have `slots == zones`** — `piano` 5/5 with `Numstack`
 2, `choir` 5/5 with 5, `e_guitar_power` 7/7 with 5. Only `mime_artist` has spare slots, and its 3
 spares do not equal its `Numstack - 1` either. So layering one sample `Numstack` times, as
-`dev/render-level.ts` does, is right, and `mime_artist` is its own puzzle.
+`packages/lbp-tracker-lib/dev/render-level.ts` does, is right, and `mime_artist` is its own puzzle.
 
 ### A near-miss worth keeping: this note nearly cost the whole file
 
@@ -338,7 +338,7 @@ game's own data.
 
 ⚠️ `mime_artist` is also a warning about the unison stack as implemented: it layers **one**
 sample `Numstack` times, and this instrument has four distinct samples with `Numstack` 5. Whether a
-stack's layers can be different samples is unmeasured, and if they can, `dev/render-level.ts` is
+stack's layers can be different samples is unmeasured, and if they can, `packages/lbp-tracker-lib/dev/render-level.ts` is
 wrong for it.
 
 ### `<` versus `<=` — SETTLED from the engine: strict
@@ -553,7 +553,7 @@ step after it squeezes to `L * (1 - swing/2)`. **The pair still lasts `2L`**, so
 off-beat without ever drifting against the bar. At `swing = 1` the ratio is 3:1, and the field is
 clamped just below 1 rather than at it.
 
-13 of 338 corpus sequencers use it, up to 0.75. `src/core/swing.ts` implements it and every note
+13 of 338 corpus sequencers use it, up to 0.75. `packages/lbp-tracker-lib/src/swing.ts` implements it and every note
 position, duration and automation point in the renderer goes through `swungFrame`.
 
 ### And a constant that was being assumed
@@ -784,7 +784,7 @@ And two more that were process errors rather than misreadings:
   sequencer's **4**. Its read callback `0x23a0` asserts 4 in and 4 out; `0x20e0` de-interleaves
   **channels 2-3 only** and writes `(dry + wet, dry + wet, 0, 0)` back into the same interleaved
   buffer. The two DSPs share one buffer, the send lanes are read in place and then cleared, and
-  `src/audio/effects.ts`'s unity at both ends is right. See *22* for the write-back's instructions
+  `packages/lbp-tracker-lib/src/audio/effects.ts`'s unity at both ends is right. See *22* for the write-back's instructions
   and for why the cleared lanes matter (they are what stops the send reaching the surrounds).
 
 ---
@@ -798,7 +798,7 @@ open in the editor the game promotes its components to real Things parented to t
 just the compact list therefore finds a sequencer with **no instruments at all** — on one corpus
 level that is five sequencers and 1,030 placements silently missing.
 
-`boardCell` in `src/core/level.ts` recovers the pair; `dev/board-probe.ts` is the measurement.
+`boardCell` in `packages/cwlib-ts/src/level.ts` recovers the pair; `packages/cwlib-ts/dev/board-probe.ts` is the measurement.
 
 ### What the answer is
 
@@ -835,7 +835,7 @@ pair of properties is a fingerprint, and it is what makes the open-board result 
 any ground truth to compare against: run the formula over the 1,030 recovered placements and
 **1,030 of 1,030** carry the same signature. A wrong origin, or a wrong scale, could not.
 
-`dev/verify-levels.ts` now also asserts the stronger structural property across the whole corpus —
+`packages/cwlib-ts/dev/verify-levels.ts` now also asserts the stronger structural property across the whole corpus —
 **62,158 board cells whole and distinct**, stored and recovered alike. A board cell holds one
 component, so two components landing in one cell would mean the frame was wrong.
 
@@ -865,7 +865,7 @@ the two in about ten minutes.
 ## 17. What a voice occupies in the 32-voice pool — SETTLED: not what the note says
 
 The engine has 32 voice records and steals the quietest when they run out (question 6's allocator,
-`fmodextinput.prx` 0x1640). `src/core/render.ts` fed that allocator one entry per note, ending at
+`fmodextinput.prx` 0x1640). `packages/lbp-tracker-lib/src/render.ts` fed that allocator one entry per note, ending at
 the note's **written** end. Both halves of that were wrong, and on a dense sequencer the error is
 not subtle.
 
@@ -926,7 +926,7 @@ was. Three separate things, two measured from the corpus and one from the binari
 The toolkit annotates `basenote` as MIDI note numbers and `Splitnotes` as **piano key** numbers —
 20 apart — and this project compared them directly, so one annotation had to give.
 
-`dev/pitch-probe.ts` asks the corpus two questions:
+`packages/lbp-tracker-lib/dev/pitch-probe.ts` asks the corpus two questions:
 
 | | |
 |---|---|
@@ -1036,13 +1036,13 @@ vcvtsi2ss xmm1, xmm0, [r15 + rax + 0x78]
 `Params` at `+0x4e8` is checkable rather than assumed: `Params[11].x`, the amplitude attack, is read
 at `+0x540` (`0x1f8c`), and `0x4e8 + 11*8 = 0x540`.
 
-So **`+0x4c4` is `Splitnotes[1]`**, and `src/core/instrument.ts` had this right all along — its own
+So **`+0x4c4` is `Splitnotes[1]`**, and `packages/lbp-tracker-lib/src/instrument.ts` had this right all along — its own
 `MAX_SPLITS = 9; // 8 zones; [0] is a constant, [1..8] are the bounds` says so. Transcribing the
 walk as indexing from `Splitnotes[0]` is what made the engine appear to disagree.
 
 ### The check that closed it
 
-`test/instrument.test.ts` now runs `resolveSlot` against the loop above over **every instrument the
+`packages/lbp-tracker-lib/test/instrument.test.ts` now runs `resolveSlot` against the loop above over **every instrument the
 game ships and every note**: 68 x 128 = **8,704 comparisons, no disagreement**. It is a test rather
 than a note, because the two implementations are independent and either can drift.
 
@@ -1058,7 +1058,7 @@ than a note, because the two implementations are independent and either can drif
 ### The wrong turn, kept
 
 The literal-from-`[0]` reading was implemented, measured and reverted inside an hour. Measured over
-953,221 corpus notes with `dev/pitch-probe.ts`, the median of (note played − base note of its slot)
+953,221 corpus notes with `packages/lbp-tracker-lib/dev/pitch-probe.ts`, the median of (note played − base note of its slot)
 moved from **0 to 7**, and `woodpecker` went to +35, `nylonguitar` +30, `marimba` +20. The clearest
 single counter-example was `e_guitar_distorted` — bounds `[87,60,1,0,…]`, samples D5 base 62 and E4
 base 52 — where it sent note 65 to the *lower* sample. **A disassembly that contradicts a
@@ -1129,7 +1129,7 @@ and `0x3035` stops the voice:
 
 ### What it settles, and what it does not
 
-- **`Params[2]` scales the playing slot's own sample length.** `src/core/render.ts` already used
+- **`Params[2]` scales the playing slot's own sample length.** `packages/lbp-tracker-lib/src/render.ts` already used
   `slot.wav.channels[0].length`, so the code was right for a reason it did not have.
 - **The old reconciliation stays ruled out.** "If that field is the loop length it is zero for
   loopless percussion and the offset vanishes" was the tidy way out of question 12, and `0x3780`
@@ -1267,7 +1267,7 @@ that has to be taken back out. Implementing the level without the drive made the
 
 - ⚠️ **The engine reciprocates with `vrcpps` plus one Newton step, twice.** That lands within an ulp
   of a true divide, and `vrcpps`'s 12-bit seed cannot be reproduced from JavaScript, so
-  `src/audio/mixer.ts` divides. It is the one place in the shaper that is not bit-exact.
+  `packages/lbp-tracker-lib/src/audio/mixer.ts` divides. It is the one place in the shaper that is not bit-exact.
 - ⚠️ **Its position is measured only relative to the sampler.** `0x2c88` calls the sample read, the
   shaper runs on the result, and the gain and pan follow — that much is certain. The **ladder's**
   position relative to it is not established: that loop is per-layer and the filter is not in it.
@@ -1473,7 +1473,7 @@ L = x[(1-p) + kd],  R = x[p + kd],  so the normalised pan spans 1/(1 + 2kd)
 ```
 
 **`PAN_WIDTH = 2 - Math.SQRT2` is a derivation now**, matching the measured 0.261202 to six figures
-from the other direction. Nothing in `src/core/render.ts` changes; what changes is that it is no
+from the other direction. Nothing in `packages/lbp-tracker-lib/src/render.ts` changes; what changes is that it is no
 longer a fit.
 
 ### ✔ The send channels do NOT leak into the surrounds
@@ -1503,7 +1503,7 @@ That also closes the reverb's own last unknown, which entry *6 / 14* listed as *
 the eboot puts on the connection from the sequencer DSP's channels 2-3 into the reverb, and from the
 reverb's output into the master"*. **There is no connection and no gain**: the two DSPs share one
 4-channel buffer, the reverb reads the send lanes out of its own input and writes the sum back into
-the dry lanes. `src/audio/effects.ts` assumed unity at both ends and unity is what it is.
+the dry lanes. `packages/lbp-tracker-lib/src/audio/effects.ts` assumed unity at both ends and unity is what it is.
 
 ### How it was found, after a session of failing to
 
@@ -1533,7 +1533,7 @@ type_infos, and dumping one prints strings where functions should be. Require sl
 
 ❌ **No longer applied — removed 2026-09-06, see *39* in [open-questions.md](open-questions.md).** The constant and this derivation stand; the renderer takes the file's own pans and keeps only {@link FOLD_GAIN}. What follows describes what it did.
 
-`PAN_WIDTH` in `src/core/render.ts`, applied where the voice spec is built; `LBP_PAN_WIDTH=1`
+`PAN_WIDTH` in `packages/lbp-tracker-lib/src/render.ts`, applied where the voice spec is built; `LBP_PAN_WIDTH=1`
 restores the file's own pans. `panGains` itself stays hard-panning and linear, because that **is**
 the plugin's law at `0x2d21`; the narrowing belongs above it.
 
@@ -1549,7 +1549,7 @@ by `(1 + 2kd)`, the same number. Narrowing without it is a uniform **−4.645 dB
 | 0.50 | 0.853553 | 0.500000 | 0.585786 |
 | 1.00 | 0.353553 | 0.207107 | 0.585786 |
 
-`FOLD_GAIN = 1 / PAN_WIDTH` in `src/core/render.ts` is the missing half, applied once in the voice
+`FOLD_GAIN = 1 / PAN_WIDTH` in `packages/lbp-tracker-lib/src/render.ts` is the missing half, applied once in the voice
 spec's gain. Corpus peaks go 0.547 → 0.934, 0.435 → 0.743, 0.119 → 0.203 with no frame clipped.
 
 ❗ **It is a constant, and the first attempt made it `1 / panWidth` instead.** That is defensible
@@ -1565,7 +1565,7 @@ redistributes between channels, against the 4.6 dB it used to swing.
 one thing; coupling a second to it — however honestly — makes the comparison it exists for
 impossible to hear.
 
-⚠️ **A normalising renderer hid it for two days.** `dev/render-level.ts` normalises its WAV, so
+⚠️ **A normalising renderer hid it for two days.** `packages/lbp-tracker-lib/dev/render-level.ts` normalises its WAV, so
 every offline check came out at full scale and nothing ever looked quiet. It took a listener playing
 the **live** page, which does not normalise, to say "the whole sequencer is quiet" — which is
 exactly what a half-applied fold sounds like. **A test that normalises cannot see a gain error**, and
@@ -1582,7 +1582,7 @@ hard-panned for a day longer than the evidence justified.
 
 ## The PS3 backup that "cannot be read" — RESOLVED 2026-09-04: it reads fine
 
-`32406766.zip` is a PS3 save-game folder. `src/core/backup.ts` reported it as unreadable and the
+`32406766.zip` is a PS3 save-game folder. `packages/cwlib-ts/src/backup.ts` reported it as unreadable and the
 three pages said so on screen. It is not: the numbered files are the game's own `FAR4` save archive
 under XXTEA with a key that is a literal in every tool that touches these files, and unpacking it
 gives 28 resources — 28 of 28 SHA-1s matching — one level, and **11 music sequencers**, one of them
@@ -1632,7 +1632,7 @@ above was spent re-deriving — wrongly — something this project had already w
 ## 25. Plans (`PLNb`) — RESOLVED 2026-09-04: read, and they hold most of the music
 
 A plan is a saved Thing rather than a world — a costume, a vehicle, or a music sequencer copied into
-somebody's popit. `src/core/level.ts`'s `readPlan` opens one, and `readLevelProject` dispatches on
+somebody's popit. `packages/cwlib-ts/src/level.ts`'s `readPlan` opens one, and `readLevelProject` dispatches on
 the resource magic, which is the first four bytes of the file and needs nothing inflated.
 
 `RPlan` is four fields and only the third matters:
@@ -1662,7 +1662,7 @@ Six real PS3 saves (the five in the checkout plus a downloaded backup), 663 reso
 | music sequencers inside the levels beside them | 19 |
 
 **Nine tenths of the music in a creator's backup is in plans, not levels.** A gallery level is a rack
-of speakers pointing at plans; the songs are the plans. `test/plan.test.ts` pins 213/211/172 over the
+of speakers pointing at plans; the songs are the plans. `packages/cwlib-ts/test/plan.test.ts` pins 213/211/172 over the
 checkout alone.
 
 Two proofs the wrapper offsets are right, neither of which needs a plan to hold anything in
@@ -1709,7 +1709,7 @@ RStreamingChunk  StreamingIsland[] (references), then an intvector of chunk code
 ```
 
 **171 chunks, 2,553 islands, 10,837 Things, and 9 music sequencers**, with every island opening and
-the chunk's own stream ending exactly on its last byte. `test/plan.test.ts` pins all four numbers.
+the chunk's own stream ending exactly on its last byte. `packages/cwlib-ts/test/plan.test.ts` pins all four numbers.
 
 ### Three bugs it uncovered, and all three had been invisible for the same reason
 
@@ -1801,7 +1801,7 @@ started chunking, which is how it was found; skipping the delay before the chunk
 ⚠️ **And the chunk grid has to stay the block's, not the voice's.** `at = delay` then
 `at += MORPH_FRAMES` puts the boundaries at `delay + 128k`, so an offline render and a 128-frame
 live one step the modulation at different frames and stop agreeing. `MORPH_FRAMES - (at %
-MORPH_FRAMES)` for the first chunk keeps them on one grid. `test/audio.test.ts`'s "the mixer renders
+MORPH_FRAMES)` for the first chunk keeps them on one grid. `packages/lbp-tracker-lib/test/audio.test.ts`'s "the mixer renders
 the same audio whatever the block size" caught this within a minute of it being written.
 
 ### What the engine actually costs, for the next time this comes up
@@ -1886,10 +1886,10 @@ dressing a right number as a fault teaches a listener to distrust it. Removed 20
 ✔ **The meter shows the notes, 2026-09-04.** Removing the false alarm left "164 sounding" with
 nothing to read it against; the number a listener wants beside the 32 in the voices box is the
 count of notes. `Mixer.counts()` returns it, by counting distinct `VoiceSpec.tag`s among the voices
-that have started (untagged voices count individually), and `dev/live.ts` / `dev/live-sim.ts`
+that have started (untagged voices count individually), and `packages/lbp-tracker-web/src/live.ts` / `packages/lbp-tracker-lib/dev/live-sim.ts`
 therefore **tag by note rather than by layer** — the same grouping the pool already uses, so one
 `cutAt` takes a stolen note's whole stack where a loop over its layers was needed before. The audio
-is untouched: `dev/live-sim.ts` still reports the live pool at −56.9 dB and 1,318 of 13,091 notes
+is untouched: `packages/lbp-tracker-lib/dev/live-sim.ts` still reports the live pool at −56.9 dB and 1,318 of 13,091 notes
 stolen. The sampler voices and the queue were shown beside it for one commit and then moved into
 the tooltip — a listener called them useless once the notes were there, and they are: the voices
 are a consequence of the notes and the queue is an artefact of the page's look-ahead.
@@ -1900,7 +1900,7 @@ The line turns **red at ⅞ of the pool size** (28 at the engine's 32; proportio
 goes down to 1). That alarm is on the right quantity, unlike the one it replaces — but it reads
 high, and by how much is worth knowing before trusting it.
 
-Measured 2026-09-04 by instrumenting `renderLivePool` in `dev/live-sim.ts` to log, per 100 ms
+Measured 2026-09-04 by instrumenting `renderLivePool` in `packages/lbp-tracker-lib/dev/live-sim.ts` to log, per 100 ms
 block, the mixer's tag count against the pool slots actually spanning that block. `C4K3 S0NG`,
 first 60 s, pool 32, 600 blocks:
 
@@ -1923,8 +1923,8 @@ the number a listener hears is the ringing one.
 ### What it touched
 
 `render.ts` allocates per note and applies the decision to every layer; `where.note` and
-`where.layer` are reported so a live scheduler can do the same, and `dev/live.ts` and
-`dev/live-sim.ts` both do. A stolen note takes **all** its layers with it — they were sharing the
+`where.layer` are reported so a live scheduler can do the same, and `packages/lbp-tracker-web/src/live.ts` and
+`packages/lbp-tracker-lib/dev/live-sim.ts` both do. A stolen note takes **all** its layers with it — they were sharing the
 record that was overwritten.
 
 ## 30. `durationSteps` — VERIFIED against the engine's gate, 2026-09-04
@@ -2153,7 +2153,7 @@ sequencer has 32 and that is the number the pool must model.
 
 ## 35. Dependency types — ANSWERED by measurement, 2026-09-05
 
-`dev/archive-panel.ts` opens a level from the public archive by walking its dependency table, and
+`packages/lbp-tracker-web/src/archive-panel.ts` opens a level from the public archive by walking its dependency table, and
 the question was which type a streaming level's chunk file carries. Answered, and four more with it.
 **Every row was checked against the magic of the resource actually downloaded for it** — no enum was
 transcribed:
@@ -2226,7 +2226,7 @@ part.
 
 `[r12+4]` is the same field the allocator scores with, so the second condition is "this voice has
 faded to nothing". **A record is therefore held for the note plus its release tail**, and
-`occupancySteps` in `src/core/render.ts` is the note's written duration and nothing else.
+`occupancySteps` in `packages/lbp-tracker-lib/src/render.ts` is the note's written duration and nothing else.
 
 ### Why it is not simply implemented
 
@@ -2597,13 +2597,13 @@ never tested. Anything that reads a field width should be run against them.
 
 ## 34. The live scheduler's -57 dB — ANSWERED: it was the simulator, 2026-09-05
 
-`dev/live-sim.ts` measured the scheduled path at **-56.8 dB** against the direct render on
+`packages/lbp-tracker-lib/dev/live-sim.ts` measured the scheduled path at **-56.8 dB** against the direct render on
 `C4K3 S0NG` and **-59.1 dB** on `Ascetic`, while its own header said the two should be identical.
 They are. **The fault was in the measuring instrument.**
 
 ### The scheduling tick and the render block are two different cadences
 
-`dev/live.ts` posts notes every `TICK` (0.1 s). The worklet renders **128 frames** per `process()`
+`packages/lbp-tracker-web/src/live.ts` posts notes every `TICK` (0.1 s). The worklet renders **128 frames** per `process()`
 call, whatever the tick is. The simulator rendered `TICK * RATE` = **4,800 frames** per call, which
 is **37.5** of the mixer's 128-frame modulation chunks — so every other burst cut a chunk in half,
 `refreshMorph` ran at a different `elapsed`, and the modulation came out at a different frame.
@@ -2652,7 +2652,7 @@ call, so both sit on the grid. Scanning at 128 reports nothing; scanning at 4,80
 
 ### What it was, as it stood
 
-`dev/live-sim.ts` says the two should be identical: the same voices with the same specs, and only
+`packages/lbp-tracker-lib/dev/live-sim.ts` says the two should be identical: the same voices with the same specs, and only
 the moment each is handed to the mixer differs. Measured 2026-09-04 they are not, by a small
 constant amount:
 
@@ -2664,7 +2664,7 @@ constant amount:
 ✔ **It is not the voice pool.** The figure is the same with the pool off, and `Ascetic` steals
 nothing at all. ✔ **It is not the block size**: the "played once, rendered in 128-frame blocks"
 variant is bit-identical to the direct render (`-Infinity dB`), which is the invariant
-`test/audio.test.ts` pins.
+`packages/lbp-tracker-lib/test/audio.test.ts` pins.
 
 So it is the hand-over itself, and the obvious suspects do not survive a reading: `delay` is
 `round(at - now)` where `at` is already an integer frame and `now` is a block boundary, so it is
@@ -2675,7 +2675,7 @@ simulator on purpose.
 which is why nobody heard it. It is worth a name anyway: a live render that is not bit-identical to
 the offline one is a fact this project would rather know than discover later.
 
-**The anchor**: `LBP_DIFF=<index>` in `dev/live-sim.ts` already bisects one voice's two renders
+**The anchor**: `LBP_DIFF=<index>` in `packages/lbp-tracker-lib/dev/live-sim.ts` already bisects one voice's two renders
 frame by frame. Find a voice near 30.038 s whose scheduled render differs, and it will be one spec
 small enough to put in a unit test.
 
@@ -2720,7 +2720,7 @@ a suspect. So the field LFO 3 writes is the field the pan law consumes, with not
 ✔ **Three layers of pan compose, and all three are now read**: the clip's own pan (`voice + 0x18`,
 written per block by `sub_0x3930` from `[clip + 0x424]`), the unison stack's per-layer spread
 (`voice + layer*4 + 0x7c`, written from `Params[1]` at note start), and LFO 3's triangle on top.
-`src/audio/lfo.ts` and `src/audio/mixer.ts` already do exactly this — the reading was right, and it
+`packages/lbp-tracker-lib/src/audio/lfo.ts` and `packages/lbp-tracker-lib/src/audio/mixer.ts` already do exactly this — the reading was right, and it
 is now a measurement.
 
 ⚠️ **Two buffers, and telling them apart is the whole trick.** The layer loop keeps two
@@ -2869,7 +2869,7 @@ it `U(0,1)` on an assumption since the block was first read; it is a measurement
 `0x1bed`-`0x1c3e` draws three `U(0, 2*PI)` phases into `+0x98`, `+0x9c`, `+0xa0`. **The offsets
 carry no layer index**, so a stacked voice's five layers share one base phase and differ only by
 `Params[17|20|23] * 2*PI / Numstack * layer`. This project drew a fresh phase per layer, which is a
-more diffuse sound and not the engine's; `src/core/render.ts` now draws once per note and `Lfo`
+more diffuse sound and not the engine's; `packages/lbp-tracker-lib/src/render.ts` now draws once per note and `Lfo`
 takes the phase rather than a generator.
 
 ### The voice record's layer arrays tile at exactly five
@@ -2970,7 +2970,7 @@ sends — is re-derived once per that block (question 27 for the cadence; this i
 ⚠️ **`MORPH_FRAMES` was 128 and that was the AudioWorklet's render quantum, not the engine's block.**
 It is 256 now, and because 256 no longer divides a live render's call, the grid had to move from
 "the offset within this `render` call" to a **mixer-wide frame clock**. Three things follow, all in
-`src/audio/mixer.ts`:
+`packages/lbp-tracker-lib/src/audio/mixer.ts`:
 
 - `Mixer.clock` counts frames modulo the block and is handed to every voice, so a 128-frame live
   call and a whole-song offline call cross the same boundaries;
@@ -2981,7 +2981,7 @@ It is 256 now, and because 256 no longer divides a live render's call, the grid 
   often as an offline render and broke the equality outright — it was the first thing to fail.
 
 Worth **−50.6 dB** of difference over 30 s of `Zero` at an unchanged RMS, which is what halving a
-staircase's rate looks like. `dev/live-sim.ts` still renders bit for bit against the direct path.
+staircase's rate looks like. `packages/lbp-tracker-lib/dev/live-sim.ts` still renders bit for bit against the direct path.
 
 ### ✔ Swing and the `1/3` sub-step interact exactly as `swungFrame` assumes
 
@@ -2992,7 +2992,7 @@ whole of step `k`. A note fires when `frac(position)` passes `voice[+0x3e] / 3` 
 constant `0.333333343` at `v0x4558`).
 
 So a triplet at `k + s/3` sounds `L(k)·s/3` frames into step `k`, where `L(k)` is *that step's own
-swung length* — **a triplet inside a stretched step stretches with it**. `src/core/swing.ts` scales
+swung length* — **a triplet inside a stretched step stretches with it**. `packages/lbp-tracker-lib/src/swing.ts` scales
 the fraction by `stepLength(step, …)` for exactly that reason, and it was right.
 
 ### ❗ And note onsets land on the block grid, not on the sample
@@ -3083,7 +3083,7 @@ pan and start offset that layer 0 now takes part in). Measured on `robot` alone 
 this session was its vibrato phases being reshuffled — which changes the rendering and not its
 character. The systematic change is real, small, and cannot be shown to be the one that was heard.
 
-❗ **`LBP_SEED` exists for this**, in `dev/render-level.ts`: reseeding is the null hypothesis, and a
+❗ **`LBP_SEED` exists for this**, in `packages/lbp-tracker-lib/dev/render-level.ts`: reseeding is the null hypothesis, and a
 difference smaller than a reseed is a difference a reshuffle could have produced.
 
 ⚠️ **The original reference was shadPS4**, which the same day's *Provenance rule 2* had already
@@ -3156,8 +3156,8 @@ knee's closed form — the unique Hermite matching value and slope at both ends,
 
 ### ✔ Implemented 2026-09-06, the same day
 
-`src/audio/compressor.ts` runs it on both the offline and the live path, after the reverb sum where
-`Channel::addDSP` put it. `test/compressor.test.ts` pins it against **vectors taken from the running
+`packages/lbp-tracker-lib/src/audio/compressor.ts` runs it on both the offline and the live path, after the reverb sum where
+`Channel::addDSP` put it. `packages/lbp-tracker-lib/test/compressor.test.ts` pins it against **vectors taken from the running
 module**, not against itself: a deterministic LCG signal under a raised cosine, driven through the
 real PRX by `runhammer.py`, with seventeen sampled gains reproduced to better than 2e-5.
 
@@ -3244,7 +3244,7 @@ the image by `PAN_WIDTH = 2 − √2` and raises the sum by `FOLD_GAIN = 1/PAN_W
 
 ❌ **The narrowing is not applied**, on a listening judgement: the listener asked for the file's own
 pans and that outranks a reading here. The measurement is untouched — `PAN_WIDTH` and its derivation
-are in `src/audio/effects.ts` — and restoring it is one line at the `pan:` field where the voice spec
+are in `packages/lbp-tracker-lib/src/audio/effects.ts` — and restoring it is one line at the `pan:` field where the voice spec
 is built, plus the same at the stack spread.
 
 ✔ **The gain is applied, and now in the right place.** FMOD's speaker matrix folds after the whole

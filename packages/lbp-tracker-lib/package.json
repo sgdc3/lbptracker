@@ -1,0 +1,16 @@
+{
+  "name": "@lbptracker/lib",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "LittleBigPlanet 3's Music Sequencer as an engine: the sampler, the DSP chain and the render pipeline, measured against the game.",
+  "license": "MIT",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "@lbptracker/cwlib": "0.1.0"
+  }
+}

@@ -106,8 +106,8 @@ row of that table.
 ### The `RawDump` duplication — found 2026-09-02, and it cost a rendered note
 
 ⚠️ **This is history now** — `tools/RawDump.java` was deleted the same day, once
-`src/core/level.ts` replaced it — but it is kept for the rule at the end, and because
-`fixtures/levels/sequencers.jsonl`, the golden fixture `dev/verify-levels.ts` still reads, **was
+`packages/cwlib-ts/src/level.ts` replaced it — but it is kept for the rule at the end, and because
+`fixtures/levels/sequencers.jsonl`, the golden fixture `packages/cwlib-ts/dev/verify-levels.ts` still reads, **was
 produced before the fix and still contains the duplicates**.
 
 ⚠️ **`RawDump`'s outer loop could emit the same sequencer twice.** It walked `world.things` and dumped
@@ -130,12 +130,12 @@ Why it matters more than a factor of two on the level:
 Both ends were fixed at the time: the tool deduped by Thing UID and identity, and `importLevel`
 dropped any row repeating a `(file, seqUID, instIdx)` it had already seen. A board cell holds one
 component, so two rows with the same `instIdx` cannot be authored content — that is what makes the
-drop exact rather than a heuristic. `dev/verify-levels.ts` still applies it, because the fixture on
+drop exact rather than a heuristic. `packages/cwlib-ts/dev/verify-levels.ts` still applies it, because the fixture on
 disk predates the fix.
 
 The TypeScript walk cannot produce this at all: it reads `PWorld.things` once, in order, and visits
 each Thing once. The number that says so is 62,158 placements over the ten-level corpus — exactly
-`PartCensus.java`'s `INSTRUMENT` count for those files, pinned in `test/project.test.ts`.
+`PartCensus.java`'s `INSTRUMENT` count for those files, pinned in `packages/cwlib-ts/test/project.test.ts`.
 
 **The general rule this earns:** a structural regularity in *our* extraction is a bug until proven
 otherwise. This one was written into steering as a fact about the level ("the composer plays every
@@ -173,8 +173,8 @@ The traversal below is the part of `sequencerdump` worth reusing. Three input sh
 **A loose resource** (`LVLb`/`PLNb`, SHA1-named): read the container (`tools/lbpres.py`), then
 deserialise as `RLevel` or `RPlan`.
 
-❗ **All three shapes are implemented now**, in `src/core/backup.ts`, `src/core/savearchive.ts`
-and `readPlan` in `src/core/level.ts`. The recipe below was written on 2026-09-01 and sat unread
+❗ **All three shapes are implemented now**, in `packages/cwlib-ts/src/backup.ts`, `packages/cwlib-ts/src/savearchive.ts`
+and `readPlan` in `packages/cwlib-ts/src/level.ts`. The recipe below was written on 2026-09-01 and sat unread
 until 2026-09-04, during which this project told its users a PS3 save "cannot be read" — see
 [answered-questions.md](answered-questions.md).
 
@@ -246,11 +246,11 @@ automation, the mixer, the sends, the sampler's key splits — are exactly the t
 
 ## Our own converter, and how far it is trusted
 
-`src/core/midi.ts` is the export and the import, with every row of the table above acted on and the
+`packages/lbp-tracker-lib/src/midi.ts` is the export and the import, with every row of the table above acted on and the
 sixth difference — **a note is a chain of control points, not a value** — handled by exporting MPE,
 a MIDI channel per sounding note, so a bend belongs to the note instead of to the whole part.
-`src/core/smf.ts` underneath it is the container only: chunks, variable-length quantities, running
-status. `dev/midi.html` is the page.
+`packages/lbp-tracker-lib/src/smf.ts` underneath it is the container only: chunks, variable-length quantities, running
+status. `packages/lbp-tracker-web/midi.html` is the page.
 
 ⚠️ **What the MIDI EVENTS carry is the music; the bytes ride in the metas.** `Key` and `Scale`
 are folded into the note numbers on the way out, because a MIDI file has to play in something that
@@ -262,11 +262,11 @@ written differently. Everything above that is a text meta: the mixer and the boa
 fail for reasons that are correct".** That was true and it is not any more, and the way it stopped
 being true is worth keeping: the reasons were enumerated one at a time until only two were left
 that no MIDI event could express, and at that point carrying them as data was cheaper than
-carrying the argument. `dev/verify-midi.ts` now gates on byte equality.
+carrying the argument. `packages/lbp-tracker-lib/dev/verify-midi.ts` now gates on byte equality.
 
 ### The round trip is exact — 0 records different in 1,448,224
 
-Measured 2026-09-03 over the corpus, both channel modes, `dev/verify-midi.ts`:
+Measured 2026-09-03 over the corpus, both channel modes, `packages/lbp-tracker-lib/dev/verify-midi.ts`:
 
 ```
 62.158 clips, 1.448.224 records: 0 came back different
@@ -321,10 +321,10 @@ diverging and a 4 MB patch.
 **Two fields cost nothing only because the corpus never uses them**, and the patch is what carries
 them if a level ever does: `timbre` bits 4-5 — the per-block table select — are zero in all
 1,448,224 records, and no record carries a volume above 127 where MIDI has seven bits.
-`test/midi.test.ts` is the only place either is exercised.
+`packages/lbp-tracker-lib/test/midi.test.ts` is the only place either is exercised.
 
 **`Scale` is now restored too.** It used to be dropped outright, on the grounds that `quantise` is a
-projection with no inverse. It still has none — `unquantise` in `src/core/scale.ts` is a *section*,
+projection with no inverse. It still has none — `unquantise` in `packages/lbp-tracker-lib/src/scale.ts` is a *section*,
 taking the lowest note that snaps to the one the file names — but that always sounds right, and
 where the author wrote off the scale the patch carries the record. 0 placements in the corpus set
 it, so this is measured on fixtures.
@@ -380,10 +380,10 @@ four went the same way — not by finding more MIDI, but by carrying the records
 |---|---|---|
 | ~~glides lost inside one part~~ | ~~825 notes~~ **0** | **done.** A part whose own polyphony passes 15 is written across several MIDI tracks — `laneOf` in the exporter, merged back on the `LBP-TRK` identity. It cost **2 extra tracks across the whole corpus**, 5,058 to 5,060, and took the clip count to exact |
 | ~~control points not identical~~ | ~~2,432 notes~~ → ~~592~~ **0** | **done, in two steps.** Keeping the pitch fractional until a record is written took 2,432 to 592 — rounding it before the simplifier saw it turned the ramp into a staircase and kept the tread rather than the control point. The last 592 were a ramp re-cut onto the staircase the rounding really makes (tighter to the curve than the original, so it could not be loosened away) and a coincident record nothing can hear; both are now carried verbatim. ⚠️ The fear here — "carrying the true points duplicates the note data" — was right about the mechanism and wrong about the size: only the clips that need it are carried, which is **0.73%** |
-| ~~per-point modulation~~ | ~~34,449 notes~~ **8** | **done.** It rides on CC 74, one event per change, resampled with the glides; 34,441 of the 34,449 ramps come back. The 4-bit nibble to 7-bit controller map is exact over all sixteen values and `test/midi.test.ts` checks every one. ⚠️ It stopped being safe to drop the moment the renderer started ramping it — see `answered-questions.md` 6d |
+| ~~per-point modulation~~ | ~~34,449 notes~~ **8** | **done.** It rides on CC 74, one event per change, resampled with the glides; 34,441 of the 34,449 ramps come back. The 4-bit nibble to 7-bit controller map is exact over all sixteen values and `packages/lbp-tracker-lib/test/midi.test.ts` checks every one. ⚠️ It stopped being safe to drop the moment the renderer started ramping it — see `answered-questions.md` 6d |
 | ~~which clip a note sat in~~ | ~~1 clip of 62,158~~ **0** | **done**, as a side effect of the lanes: 62,158 clips out, 62,158 back |
 | ~~coincident points mid-note~~ | ~~2 notes~~ **0** | **done.** The record patch, which needs no special case for a zero-length segment |
-| ~~`timbre` bits 4-5, volume > 127~~ | ~~0 in the corpus~~ **carried** | **done**, for nothing: both ride in the patch that already exists for the clips that need one. `test/midi.test.ts` is the only place either is exercised |
+| ~~`timbre` bits 4-5, volume > 127~~ | ~~0 in the corpus~~ **carried** | **done**, for nothing: both ride in the patch that already exists for the clips that need one. `packages/lbp-tracker-lib/test/midi.test.ts` is the only place either is exercised |
 | ~~`Scale`~~ | ~~0 placements~~ **restored** | **done.** `unquantise` picks the lowest note that snaps to the one written — a section of the projection, not an inverse — which always sounds right, and the patch carries the author's own field where they wrote off the scale |
 | ~~unexplained~~ | ~~2 notes~~ **0** | gone with the rest |
 
@@ -432,7 +432,7 @@ notes at all — an instrument dropped on the board and never written in — and
 can bring one back except the cell list. Skipping them is what made the count 62,106 rather than
 62,158, and it looked like an ambiguity rather than the omission it was.
 
-The measurement, from `dev/verify-midi.ts` over the corpus on 2026-09-03 — run it after touching
+The measurement, from `packages/lbp-tracker-lib/dev/verify-midi.ts` over the corpus on 2026-09-03 — run it after touching
 either file. `LBP_MIDI_LOOSE=1` turns the record patch off so the MIDI-alone numbers stay visible:
 
 | | |
@@ -454,7 +454,7 @@ either file. `LBP_MIDI_LOOSE=1` turns the record patch off so the MIDI-alone num
 - **Two residues that used to sit here are gone.** One read "7 notes in 953,791 (0.0007%) change
   without being declared, and are not explained" — with the records carried, nothing changes at
   all. The other was `Avian`'s single note that MPE could not carry, seventeen copies of one pitch
-  at once: lanes hold it. ⚠️ `dev/verify-midi.ts` still checks the note count against a RANGE
+  at once: lanes hold it. ⚠️ `packages/lbp-tracker-lib/dev/verify-midi.ts` still checks the note count against a RANGE
   rather than against `before - dropped`, because a dropped note comes back through the patch and
   the equality blamed `Avian` for a note that had already been restored.
 
@@ -503,7 +503,7 @@ Measured 2026-09-05, when the pages grew a third way to open a song.
 The Mm servers closed in 2021 and their resource store survives as an Internet Archive dump
 (`@tamiya99/uploads`), indexed by Zaprit's **LBP Search Facility**, <https://zaprit.fish>
 (<https://github.com/Zaprit/LBPSearch>). A listener finds a level there and pastes its **root level
-hash** into the tracker; `dev/lbparchive.ts` turns the hash into a URL and the page downloads it.
+hash** into the tracker; `packages/lbp-tracker-web/src/lbparchive.ts` turns the hash into a URL and the page downloads it.
 
 - **The download URL is a pure function of the hash**, from `SlotHandler` in `handlers.go`:
   `archive.org/download/dry23r<h[0]>/dry<h[0:2]>.zip/<h[0:2]>%2F<h[2:4]>%2F<h>`. That is what makes
@@ -524,13 +524,13 @@ level's own resource; the separate `.plan` resources matter for a creator's *bac
 ⚠️ **`dry.db`, 2.6 GB of SQLite from <https://archive.org/download/dry23db>, 10,467,874 level
 slots.** `lbp-download` uses it and it is on this machine. Its `slot` table carries the 20-byte
 `rootLevel` SHA-1 the archive is keyed by, so **the index plus `rootLevelUrl` is a scriptable corpus
-of every level that survives**. `dev/archive-sample.mjs` is that: pick an even spread of ids per
-game, download, hand the directory to `dev/walk-levels.ts`.
+of every level that survives**. `packages/cwlib-ts/dev/archive-sample.mjs` is that: pick an even spread of ids per
+game, download, hand the directory to `packages/cwlib-ts/dev/walk-levels.ts`.
 
 ❗ **This is what turned question 28 from an errand into a number.** The reader's coverage was
 argued from ten levels of one creator on one console; it is now 103 levels across LBP1, LBP2 and
 LBP3 slots, and the answer is 82 of 103 with **no failure anywhere in the range the reader claims**.
-Every real bug found in `src/core/parts.ts` on 2026-09-05 came out of a file no PS3 save here
+Every real bug found in `packages/cwlib-ts/src/parts.ts` on 2026-09-05 came out of a file no PS3 save here
 contains.
 
 ⚠️ **`slot.game` is which title the slot was PUBLISHED for, not the revision the file carries.** A
@@ -549,7 +549,7 @@ Measured 2026-09-05. The table sits **after** the compressed payload, at the off
 carries at byte 8, and is `u32 count` then per entry `u8 kind` — 1 for a 20-byte SHA-1, 2 for a
 `u32` GUID — followed by a `u32` resource type. ✔ On "Music Gallery #3" the walk of 160
 variable-length entries ended at exactly the last byte of the file (0x52d02 of 0x52d02), which is
-the check that the reading is right. `src/core/resource.ts` `readDependencies` does this.
+the check that the reading is right. `packages/cwlib-ts/src/resource.ts` `readDependencies` does this.
 
 ❗ **A hashed dependency is a USER resource and a GUID one is a GAME asset.** That is the whole
 usefulness of the table to us: the hashed ones are in the public archive under the same URL as the
@@ -582,7 +582,7 @@ contain no sequencer, so they are dropped rather than listed. Checked directly b
 
 ### ❌ The search, built and then removed — 2026-09-05
 
-For one commit the tracker had a real search box: `dev/serve.mjs` proxied `/zaprit/*`, scraped the
+For one commit the tracker had a real search box: the hand-rolled dev server (`dev/serve.mjs`, since replaced by Vite) proxied `/zaprit/*`, scraped the
 site's HTML (there is no API — every route is Go `html/template`) and returned JSON. **It worked**,
 and it was removed the same day, deliberately.
 
@@ -648,7 +648,7 @@ skippable: nothing outside the game needs it, and the FAT alone gets every resou
 
 The archive is cut into **0x240000-byte chunks**, one file each, and each chunk is XXTEA'd on its
 own — so chunk boundaries matter and a wrong one decrypts file `0` correctly and turns the rest to
-noise. ⚠️ **Only single-chunk saves are measured here**; `src/core/savearchive.ts` verifies every
+noise. ⚠️ **Only single-chunk saves are measured here**; `packages/cwlib-ts/src/savearchive.ts` verifies every
 resource against the SHA-1 in the table, which is what turns that unmeasured boundary into a loud
 failure rather than a corrupt level.
 

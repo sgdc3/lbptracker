@@ -27,7 +27,7 @@ Steering files (read on demand, per the hints):
   parser for any LBP resource or archive**: what ennuo's toolkit already solves, what it does not,
   and the rule for turning its readings into facts of ours.
 - [steering/midi-interchange.md](steering/midi-interchange.md) — **read before touching
-  `src/core/midi.ts`, or before adding a field to `Sequencer` or `Track`**: every side channel the
+  `packages/lbp-tracker-lib/src/midi.ts`, or before adding a field to `Sequencer` or `Track`**: every side channel the
   MIDI file carries, what each costs over the corpus, and which one can go stale.
 - [steering/game-assets.md](steering/game-assets.md) — read before touching audio data: where the
   banks are on disk, the FSB4 layout, the codecs (measured), and the asset-licensing stance.
@@ -46,6 +46,32 @@ Steering files (read on demand, per the hints):
   anything**: the questions that are settled and implemented, with their addresses, corpus counts
   and — more useful — the wrong turns taken on the way to each.
 
+## Layout — three npm workspaces, since 2026-09-06
+
+| directory | package | what it is |
+|---|---|---|
+| `packages/cwlib-ts` | `@lbptracker/cwlib` | reading LBP's serialised resources: container, Thing graph, parts, saves |
+| `packages/lbp-tracker-lib` | `@lbptracker/lib` | turning that into sound: sampler, DSP chain, render pipeline, MIDI |
+| `packages/lbp-tracker-web` | `@lbptracker/web` | the four pages |
+
+Each has its own `src/`, `test/` and — for the two libraries — a `dev/` of Node harnesses. Imports
+cross by package name: `import { readWorld } from '@lbptracker/cwlib/level.ts'`.
+
+- `npm install` — **now required**, and it was not before. Workspaces resolve the package names
+  through symlinks in `node_modules`. Nothing is downloaded for the libraries.
+- `npm test` — `node --test`, all three workspaces at once, from the root.
+- `npm run typecheck` — the three `tsc` projects in order.
+- `npm run serve` / `build` / `preview` — Vite, **in the web package only**.
+
+❗ **The two libraries have no build step and must keep it that way.** Node runs their TypeScript
+directly, so the file the browser executes is the file `node --test` executes, which is what the
+fidelity argument rests on. The bundler stops at the web package's edge.
+
+⚠️ **An import map does not reach a Worker or an AudioWorklet** — measured in Chrome, table in
+`steering/tracker-architecture.md`. That is *why* the web package has a bundler, and it is the trap
+to remember before moving anything into `audio/mixer-worklet.ts`'s import graph: a bare specifier in
+there fails to load and the page goes silent with nothing on the main thread to say why.
+
 `tools/` holds the reference implementations. They are Python, deliberately dependency-light, and
 they are the ground truth the JavaScript has to reproduce:
 - `fsb.py` — FSB4 bank reader + IMA ADPCM decoder + WAV writer. **Verified working.**
@@ -53,13 +79,13 @@ they are the ground truth the JavaScript has to reproduce:
   chunk table). **Verified working** on 18 real levels.
 - `PartCensus.java` — which Thing parts a level corpus actually uses, overall and on the Things
   carrying a `SEQUENCER` or an `INSTRUMENT`. Its `INSTRUMENT` count for the ten-level corpus,
-  62,158, is what `test/project.test.ts` pins the TypeScript walk against. ⚠️ The "eight part
+  62,158, is what `packages/cwlib-ts/test/project.test.ts` pins the TypeScript walk against. ⚠️ The "eight part
   readers" its output was once read as scoping the walk down to was a misreading — 30 were needed;
   see `steering/tracker-architecture.md`.
 - `CwlibTrace.java` — **ask cwlib what it reads from a level, and where.** `CwlibTrace parts <level>`
   gives the Thing count and each Thing's decoded part list; `CwlibTrace spans <level>` turns on
   cwlib's own serialiser log and prints every part boundary **with its byte offset**, which
-  `setTrace` in `src/core/thing.ts` prints for our side. ❗ **Reach for this before tracing bytes by
+  `setTrace` in `packages/cwlib-ts/src/thing.ts` prints for our side. ❗ **Reach for this before tracing bytes by
   hand.** Question 28 spent one session on a hex dump and another guessing at version gates; four
   real bugs then came out of `Thing.java`, `PPos.java` and `PShape.java` in an afternoon, and the
   remaining work is now a span diff. ⚠️ `javac` here is JDK 25 and the first `java` on PATH is 1.8 —
@@ -76,7 +102,7 @@ they are the ground truth the JavaScript has to reproduce:
   java -cp "$JAR;out" ExtractGuid <orbisguids.map> <gamedir> fixtures/smp  audio/music/samples
   ```
 
-  Then `node dev/serve.mjs` and open http://127.0.0.1:8173/ to play them.
+  Then `npm run serve` and open http://127.0.0.1:8173/ to play them.
 - `wavehammer.py` / `runhammer.py` — the compressor the game ends its chain with. `wavehammer.py`
   is the model (a literal transcription of the PRX plus the two-line closed form its knee reduces
   to; `check` agrees them to 2.1e-14 dB). **`runhammer.py` loads the actual PRX into this process
@@ -138,19 +164,19 @@ they are the ground truth the JavaScript has to reproduce:
   `0x17000` — which closed question 12. **When a question turns on what a system function does,
   check `sce_module/` before reasoning about the platform.**
 
-`dev/archive-sample.mjs` — **a corpus, from the archive's own index**: `node
-dev/archive-sample.mjs 60` reads `dry.db` (2.6 GB of SQLite from archive.org, 10.5M level slots),
+`packages/cwlib-ts/dev/archive-sample.mjs` — **a corpus, from the archive's own index**: `node
+packages/cwlib-ts/dev/archive-sample.mjs 60` reads `dry.db` (2.6 GB of SQLite from archive.org, 10.5M level slots),
 picks an even spread of ids per game, downloads the root levels into `fixtures/archive/` and leaves
-them for `dev/walk-levels.ts`. ⚠️ **Reach for this before arguing about reader coverage from the
+them for `packages/cwlib-ts/dev/walk-levels.ts`. ⚠️ **Reach for this before arguing about reader coverage from the
 ten-level corpus**, which is one creator on one console generation: the 103-level sweep behind
 `LBP3_MIN_VERSION` took one command, and every real `parts.ts` bug found on 2026-09-05 came out of a
 file no PS3 save here contains. `LBP_DRY_DB` points at the index.
 
 ⚠️ **`RawDump.java` is gone**, deleted 2026-09-02. It walked a level's Thing graph through the
-external toolkit jar and dumped every music sequencer's note records; `src/core/level.ts` does
+external toolkit jar and dumped every music sequencer's note records; `packages/cwlib-ts/src/level.ts` does
 that now, in TypeScript, and nothing in the pipeline needs Java. What it leaves behind is
 `fixtures/levels/sequencers.jsonl` — 129,696 rows over 22 levels, produced by cwlib rather than
-by us, and the golden fixture `dev/verify-levels.ts` still checks the walk against. **That file
+by us, and the golden fixture `packages/cwlib-ts/dev/verify-levels.ts` still checks the walk against. **That file
 can no longer be regenerated**, so it covers its own corpus and nothing newer, and it still
 contains the 23,911 duplicate rows the tool used to emit — see *The `RawDump` duplication* in
 `steering/lbp-modding-toolchain.md` before trusting a raw row count.

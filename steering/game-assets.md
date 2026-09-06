@@ -160,7 +160,7 @@ Most of it is debris (`CDif` from Cool Edit, `bext`, `acid`, `JUNK`), but two ch
   A mean below 1 means the join is smoother than an average pair of adjacent frames, i.e.
   continuous. The literal reading is 5× worse, and that is what a listener heard as a transient on
   high notes — `piano_c6`'s loop is 45 ms and wraps 22 times a second, so a 2× step becomes a
-  22 Hz buzz. `loopRegion()` in `src/core/wav.ts` does the shift; `test/fsb.test.ts` guards the
+  22 Hz buzz. `loopRegion()` in `packages/lbp-tracker-lib/src/wav.ts` does the shift; `packages/lbp-tracker-lib/test/fsb.test.ts` guards the
   0.59× figure.
 
   ⚠️ The metric is meaningless for synthesised waveforms. `kenny_saw_a4` measures 108× because a
@@ -225,7 +225,7 @@ nothing at all for Glockenspiel, Marimba, Vibraphone, Music Box, Clarinet or the
 stock instruments. The handful that do exist there are SFX-bank copies. If the whole instrument
 palette had been in the FSBs, they would all be there.
 
-The FSB reader (`tools/fsb.py`, `src/core/fsb.ts`, `src/core/ima.ts`) is still correct and still
+The FSB reader (`tools/fsb.py`, `packages/lbp-tracker-lib/src/fsb.ts`, `packages/lbp-tracker-lib/src/ima.ts`) is still correct and still
 needed — it is how the game's SFX and ambience are read, and it is verified byte-exact. It is just
 not the sequencer's audio path. Everything below about codecs and bank layout stands; it simply
 describes a different part of the game.
@@ -257,7 +257,7 @@ plus unpitched percussion named plainly: `eDrums_kick_01`, `eDrums_HHHO_01`,
    `piano_C4` misses the exact match and falls through — where **`epiano_C4.wav` contains
    `piano_C4`** and comes first in bank order. That silently loaded the electric piano into the
    acoustic piano's key zone in the first listening test, and nothing about it looks wrong until
-   you hear it. `findSample` in `src/core/fsb.ts` tries exact, then exact + `.wav`, then prefix,
+   you hear it. `findSample` in `packages/lbp-tracker-lib/src/fsb.ts` tries exact, then exact + `.wav`, then prefix,
    and only then substring; a prefix match separates `piano` from `epiano`, a substring cannot.
 
    The real acoustic piano multisample, for reference — note that C6 is recorded at a different
@@ -296,7 +296,7 @@ gitignored and always has been.
 
 **The code's constraint stands: assets arrive at runtime, never baked into a build.** The user
 points the app at their own `sfxbank_compressed.fsb` (file picker or drag-and-drop) and it is parsed
-entirely client-side; `dev/assets.ts` fetches manifests and samples from `../` relative to itself,
+entirely client-side; `packages/lbp-tracker-web/src/assets.ts` fetches manifests and samples from `../` relative to itself,
 which is whatever the deployment's own root is. Retrofitting "bring your own assets" onto a design
 that assumed bundled samples is painful, and it is why the flow was built this way from the first
 commit.
@@ -311,7 +311,7 @@ worth weighing.
 ❗ **Nothing in the app claims either way.** The footer used to say "no game data is included here",
 which was true of a tracker that only read the user's own copy and would not be true of that
 deployment, so it was removed rather than left to become false; `LICENSE` says only that this
-repository contains no game data, which stays true. See `dev/footer.ts`.
+repository contains no game data, which stays true. See `packages/lbp-tracker-web/src/footer.ts`.
 
 ## ⚠️ Two sample GUIDs shared one filename, and one kit played the other's kick
 

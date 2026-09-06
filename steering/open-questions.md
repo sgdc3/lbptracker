@@ -11,14 +11,14 @@ level walk and the asset chain are all measured — import and playback can both
 
 What remains below is fidelity work, ranked by how audible a mistake would be. **The synth side is
 now fully recovered.** All 27 `Params` are named and the block turns out to be a small subtractive
-synth — unison stack, 4-pole Moog ladder, two ADSRs, three LFOs, output stage (`src/core/params.ts`).
+synth — unison stack, 4-pole Moog ladder, two ADSRs, three LFOs, output stage (`packages/lbp-tracker-lib/src/params.ts`).
 The sampler, the envelope, the scale quantiser (six rows at module vaddr `0x80c0`), the three LFO
 destinations and the pan law are all measured; see
 [sequencer-data-model.md](sequencer-data-model.md).
 
 **The effects are closed.** Both were finished on 2026-09-02 and both are in
 [answered-questions.md](answered-questions.md): *6 / 14. The reverb* (the whole of
-`fmodsmsreverb.prx`) and *2 / 2b. The echo*. Read them before touching `src/audio/effects.ts` —
+`fmodsmsreverb.prx`) and *2 / 2b. The echo*. Read them before touching `packages/lbp-tracker-lib/src/audio/effects.ts` —
 most of what this file used to say about either was wrong, and the tables of wrong readings are the
 useful part. ~~**What is left is the remaining field semantics**, mainly `Notes.y` / `Splitnotes`
 (question 4)~~ — **answered 2026-09-02**, and it *was* transposing imported levels: `Key` is a real
@@ -183,7 +183,7 @@ against each other and the best moved the total by 6. Trying a seventh is the th
 Three changes, and the second and third only work together:
 
 - **A per-record bitmap for byte 3's resting bit** — 31 clips, 93 bytes of bitmap over the whole
-  corpus. `restingBits` in `src/core/midi.ts`; it rides in the `clips` tuple's fourth slot. A DAW
+  corpus. `restingBits` in `packages/lbp-tracker-lib/src/midi.ts`; it rides in the `clips` tuple's fourth slot. A DAW
   that edits the notes misaligns it and puts an inert bit on the wrong record, which is precisely
   why a bitmap is safe where a verbatim patch is not.
 - **A moving segment now states where it ENDS as well as where it starts** (`k === steps` joins
@@ -233,14 +233,14 @@ belief:
 ## 38. ❗ The compressor is measured, implemented, and switched OFF
 
 Added 2026-09-06. `SMS WaveHammer` is read end to end, checked against the module executing
-(`tools/runhammer.py`), implemented in `src/audio/compressor.ts` and pinned by
-`test/compressor.test.ts` to better than 2e-5 against vectors from that run. It is nevertheless
+(`tools/runhammer.py`), implemented in `packages/lbp-tracker-lib/src/audio/compressor.ts` and pinned by
+`packages/lbp-tracker-lib/test/compressor.test.ts` to better than 2e-5 against vectors from that run. It is nevertheless
 **off by default on both the offline and the live path**, because the listener judged it wrong the
 first time it was switched on.
 
 ⚠️ **This is a deliberate deviation from the measured chain**, and it is the only one in the
 project. It is recorded here rather than quietly defaulted because a reader who finds
-`compressor = false` in `src/core/render.ts` deserves to know it is a judgement and not an oversight.
+`compressor = false` in `packages/lbp-tracker-lib/src/render.ts` deserves to know it is a judgement and not an oversight.
 
 ### ❌ The diagnosis this entry first carried was generalised from one song
 
@@ -303,7 +303,7 @@ A capture, and this is now the only thing in this file that wants one it cannot 
 
 ### The anchor
 
-`LBP_COMPRESSOR=1 node --experimental-strip-types dev/render-level.ts` reproduces it in one
+`LBP_COMPRESSOR=1 node --experimental-strip-types packages/lbp-tracker-lib/dev/render-level.ts` reproduces it in one
 command, and `compressor: true` does it from code. The measurement of the DSP itself is settled —
 see *37* in [answered-questions.md](answered-questions.md); nothing here reopens it.
 
@@ -311,9 +311,9 @@ see *37* in [answered-questions.md](answered-questions.md); nothing here reopens
 
 ⚠️ **Re-based twice.** This listed four failures out of six PS3 saves, then 43 levels pulled by
 hand through the browser. It is now **103 levels sampled from the archive's own index**, and the
-sampling is a command rather than an errand: `node dev/archive-sample.mjs` reads `dry.db` — the
+sampling is a command rather than an errand: `node packages/cwlib-ts/dev/archive-sample.mjs` reads `dry.db` — the
 10,467,874-slot SQLite the archive publishes — picks an even spread of ids per game, downloads the
-root levels and leaves them for `dev/walk-levels.ts`. Ids are chronological, so an even spread over
+root levels and leaves them for `packages/cwlib-ts/dev/walk-levels.ts`. Ids are chronological, so an even spread over
 them is an even spread over the game's life, which is what puts old revisions in the sample.
 
 ### What the sweep finds, 2026-09-05
@@ -347,7 +347,7 @@ plausible nonsense" looks like from the outside.
 
 It said cwlib's older branches had been stripped in the port — *"roughly nine tenths of them are
 dead … implementing only that range turns `PSwitch`'s 323 lines into a few dozen"*. Counted:
-`src/core/parts.ts` carries **238 distinct version gates spanning `0x137`–`0x3f0`** and **163
+`packages/cwlib-ts/src/parts.ts` carries **238 distinct version gates spanning `0x137`–`0x3f0`** and **163
 subVersion gates**. The branches are all there; they have simply never been run against a file old
 enough to take one.
 
@@ -390,7 +390,7 @@ names a byte offset inside a part reader.
 
 `tools/CwlibTrace.java`. cwlib's serialiser already logs every part boundary with its offset;
 `ResourceSystem.LOG_LEVEL` turns it on. `CwlibTrace spans <level>` prints the reference reading and
-`setTrace` in `src/core/thing.ts` prints ours, so a divergence is a diff rather than a hunt — and
+`setTrace` in `packages/cwlib-ts/src/thing.ts` prints ours, so a divergence is a diff rather than a hunt — and
 the diff names the part, which names the file to open in cwlib.
 
 That loop closed five more readers on `0-c33a7e`'s second Thing in one pass:
@@ -451,7 +451,7 @@ was thirteen bytes. **A helper's name does not say its element width.**
 
 And nine of the fifteen divergences were a version gate that exists in the reader's own **comment**
 and not in its code. These parts were ported with their gates documented and then written for the
-LBP3 branch only, so a grep for "at or below", "above 0x" and "regenerated" in `src/core/parts.ts`
+LBP3 branch only, so a grep for "at or below", "above 0x" and "regenerated" in `packages/cwlib-ts/src/parts.ts`
 is a work list for anything still unported.
 
 ### ⚠️ The bound has NOT been lowered, and that is now a decision to take

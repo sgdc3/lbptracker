@@ -350,13 +350,13 @@ capture the game's eight channels directly.
   downmix into a damped one-pole and a notch, a parallel bank of `tapCount - 2` damped feedback
   combs plus two stereo comb pairs, an output delay, and three panned early-reflection taps. There
   is no Freeverb, no allpass and no `aSfxDsp` in the path. See *6 / 14. The reverb* in
-  [answered-questions.md](answered-questions.md); `src/audio/effects.ts` implements it.
+  [answered-questions.md](answered-questions.md); `packages/lbp-tracker-lib/src/audio/effects.ts` implements it.
 - **Compressor**: **read end to end, and then run.** `SMS WaveHammer` sits last on the sequencer's
   channel with its limiter bypassed and its compressor at −18 dB / 10:1 / 10 ms / 250 ms, over a
   64-sample sliding mean square. Measured by executing the module: **−17.2 dB of gain at −0.9 dBFS,
   −7.2 dB at −12 dBFS, and a floor of −1.84 dB below −21 dBFS.** `tools/wavehammer.py` reproduces
   that to 1e-4 dB and `tools/runhammer.py sweep` is the check. ✔ **Implemented 2026-09-06** in
-  `src/audio/compressor.ts` and pinned by `test/compressor.test.ts` against vectors taken from the
+  `packages/lbp-tracker-lib/src/audio/compressor.ts` and pinned by `packages/lbp-tracker-lib/test/compressor.test.ts` against vectors taken from the
   running module — but ⚠️ **switched off by default**, on a listening judgement, which is the only
   deliberate deviation from the measured chain in this project. It costs a real render **6.94 dB of
   RMS and 6.93 dB of peak**, and it only costs that much because our mix sits 3.5 dB above its knee
