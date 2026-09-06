@@ -22,7 +22,8 @@ import {
 } from '../src/editor/geometry.ts';
 
 const board: BoardLayout = { cellW: 40, cellH: 30, gutter: 24, ruler: 18, cols: 10, rows: 4 };
-const roll: RollLayout = { keys: 50, ruler: 20, stepW: 24, rowH: 12, steps: 32 };
+const roll: RollLayout = { keys: 50, ruler: 20, stepW: 24, rowH: 12, steps: 32, triplets: false };
+const tripletRoll: RollLayout = { ...roll, triplets: true };
 
 test('board: a cell and its rectangle agree, and the gutter is not a cell', () => {
   const r = boardRect(board, 2, 1);
@@ -51,8 +52,11 @@ test('board: rows band into channels the way channelVolume does', () => {
 test('roll: positions and pitches map both ways, pitch 127 at the top', () => {
   assert.equal(rollStepX(roll, 0), 50);
   assert.equal(rollStepX(roll, 1), 74);
-  assert.equal(rollX(roll, 0), 54, 'a point sits in the centre of its third');
-  assert.equal(rollX(roll, 3), 78);
+  assert.equal(rollX(roll, 0), 62, 'a point on a step sits in the centre of the step');
+  assert.equal(rollX(roll, 3), 86);
+  assert.equal(rollX(roll, 1), 62, 'a point on a third sits in the centre of the third');
+  assert.equal(rollX(tripletRoll, 0), 54, 'with a triplet grid every point is in its third');
+  assert.equal(rollX(tripletRoll, 3), 78);
   assert.equal(rollThirdsAt(roll, 74), 3);
   assert.equal(rollThirdsAt(roll, 62), 1.5);
   assert.equal(rollY(roll, 127), 26, 'the top row\'s centre');

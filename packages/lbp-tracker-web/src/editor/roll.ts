@@ -91,7 +91,7 @@ export class RollView {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly state: EditorState;
   private readonly cb: RollCallbacks;
-  private layout: RollLayout = { keys: KEYS, ruler: RULER, stepW: STEP_W, rowH: ROW_H, steps: 32 };
+  private layout: RollLayout = { keys: KEYS, ruler: RULER, stepW: STEP_W, rowH: ROW_H, steps: 32, triplets: false };
   private playStep: number | null = null;
   private drag: Drag | null = null;
   private hoverPitch: number | null = null;
@@ -186,7 +186,7 @@ export class RollView {
 
   private measure(): void {
     const clip = this.state.clip();
-    this.layout = { ...this.layout, steps: clip?.steps ?? 32 };
+    this.layout = { ...this.layout, steps: clip?.steps ?? 32, triplets: this.state.triplets };
     const full = rollSize(this.layout);
     const viewW = this.scroller.clientWidth;
     const viewH = this.scroller.clientHeight;
@@ -243,21 +243,21 @@ export class RollView {
       }
     }
 
-    // Step lines: every step faint, every beat firmer, every 8-step bar firm;
-    // thirds dashed when the grid is set to triplets.
+    // Step lines: every step faint, every beat firmer, every 8-step bar firm.
+    // With the grid set to triplets the cells are thirds, so the lines between
+    // them are the grid, not a decoration over it.
     ctx.lineWidth = 1;
     for (let step = stepLeft; step <= stepRight; step += 1) {
       const x = Math.round(rollStepX(layout, step) - sx) + 0.5;
       const bar = step % STEPS_PER_BAR === 0;
       const beat = step % 4 === 0;
-      ctx.strokeStyle = bar ? 'rgba(255,255,255,0.28)' : beat ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.06)';
+      ctx.strokeStyle = bar ? 'rgba(255,255,255,0.28)' : beat ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.08)';
       ctx.beginPath();
       ctx.moveTo(x, layout.ruler);
       ctx.lineTo(x, viewH);
       ctx.stroke();
       if (state.triplets && step < layout.steps) {
-        ctx.strokeStyle = 'rgba(111,211,160,0.18)';
-        ctx.setLineDash([2, 3]);
+        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
         for (const third of [1, 2]) {
           const tx = Math.round(rollStepX(layout, step + third / 3) - sx) + 0.5;
           ctx.beginPath();
@@ -265,7 +265,6 @@ export class RollView {
           ctx.lineTo(tx, viewH);
           ctx.stroke();
         }
-        ctx.setLineDash([]);
       }
     }
     // Past the clip's end there is nothing to place a note on.
@@ -284,13 +283,24 @@ export class RollView {
     const sel = state.selection.point;
     const px = (t: number) => rollX(layout, t) - sx;
     const py = (p: number) => rollY(layout, p) - sy;
+    /**
+     * A note that belongs to the other grid is drawn through: with the grid
+     * set to triplets, a note whose points are all on whole steps; with whole
+     * steps, a note that uses a third. It is still there and still editable,
+     * it is just not what this grid is for.
+     */
+    const dimmed = (note: SongNote) => {
+      const usesThirds = note.points.some((p) => p.thirds % 3 !== 0);
+      return state.triplets ? !usesThirds : usesThirds;
+    };
     for (const note of clip.notes) {
       const on = selected.has(note.id);
       const pts = note.points;
+      const fade = dimmed(note) ? 0.3 : 1;
       for (let i = 0; i < pts.length - 1; i += 1) {
         const a = pts[i];
         const b = pts[i + 1];
-        ctx.strokeStyle = timbreColour(a.timbre, on ? 1 : 0.8);
+        ctx.strokeStyle = timbreColour(a.timbre, (on ? 1 : 0.8) * fade);
         ctx.lineWidth = on ? 3.5 : 2.5;
         ctx.lineCap = 'round';
         ctx.beginPath();
@@ -305,17 +315,18 @@ export class RollView {
     }
     for (const note of clip.notes) {
       const on = selected.has(note.id);
+      const fade = dimmed(note) ? 0.3 : 1;
       note.points.forEach((p, i) => {
         const r = pointRadius(p.volume, layout.rowH);
         const x = px(p.thirds);
         const y = py(p.pitch);
-        ctx.fillStyle = timbreColour(p.timbre, 1);
+        ctx.fillStyle = timbreColour(p.timbre, fade);
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
         ctx.fill();
         if (i === 0) {
           // The note-on carries a darker core so a chain reads left to right.
-          ctx.fillStyle = 'rgba(0,0,0,0.35)';
+          ctx.fillStyle = `rgba(0,0,0,${0.35 * fade})`;
           ctx.beginPath();
           ctx.arc(x, y, Math.max(1, r * 0.4), 0, Math.PI * 2);
           ctx.fill();

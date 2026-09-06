@@ -26,10 +26,15 @@ The editor draws both, as faithfully as the data allows and no further:
   is *anchored*, under another's tail included.
 - The chip's colour and glyph are **ours**, by instrument family (`src/editor/instruments.ts`).
   The game's icon is a texture this project cannot ship ([game-assets.md](game-assets.md)).
-- A point sits at the **centre of the third of a step it names** (`rollX`), so the three thirds
-  of a triplet spread across the step; a click anywhere inside a cell means that cell, and the
-  "triplet grid" switch only decides whether the cells are steps or thirds. Both are the record's
-  own resolution; the switch does not change what can be stored.
+- A point sits at the **centre of its cell** (`rollX`), as the game draws it: the step, when the
+  grid is whole steps and the point is on one; the third, when the grid is set to triplets or the
+  point sits on a third. A click anywhere inside a cell means that cell; the "triplet grid" switch
+  only decides whether the cells are steps or thirds, both being the record's own resolution.
+  A note that belongs to the other grid is drawn through at 30% -- on the triplet grid one whose
+  points are all on whole steps, on the whole-step grid one that uses a third -- still there and
+  editable, just not what that grid is for.
+  ⚠️ Every point sat at the centre of its *third* for a day — a sixth into the step on a whole-step
+  grid, "all shifted left" — and then, briefly, on the grid lines; the owner settled it here.
 - The volume is the dot's radius (`pointRadius`, 0..127 → 0.18..0.5 of a row) and the timbre
   nibble its colour (`timbreColour`, a straight RGB blend from blue at 0 to orange at 15).
 - A note's end is its last point and nothing more: a one-record note is one point, a held note

@@ -88,6 +88,8 @@ export interface RollLayout {
   readonly rowH: number;
   /** The clip's grid length. */
   readonly steps: number;
+  /** Whether the grid's cells are thirds of a step rather than steps. */
+  readonly triplets: boolean;
 }
 
 export const PITCHES = 128;
@@ -100,11 +102,18 @@ export function rollSize(layout: RollLayout): { width: number; height: number } 
 }
 
 /**
- * A position in thirds of a step to its canvas x: the CENTRE of the third it
- * names, so a note sits inside its cell the way the game's grid draws it,
- * and the three thirds of a triplet spread across the step.
+ * A position in thirds of a step to its canvas x: the CENTRE of its cell, the
+ * way the game's grid draws a note. The cell is the step when the grid is
+ * whole steps and the point is on one; it is the third when the grid is set
+ * to triplets, or when the point sits on a third whatever the grid says.
+ *
+ * ⚠️ For a day every point sat at the centre of its third, which in a
+ * whole-step grid is a sixth of the way into the step -- "all shifted left".
  */
 export function rollX(layout: RollLayout, thirds: number): number {
+  if (!layout.triplets && thirds % 3 === 0) {
+    return layout.keys + (thirds / 3 + 0.5) * layout.stepW;
+  }
   return layout.keys + ((thirds + 0.5) / 3) * layout.stepW;
 }
 
