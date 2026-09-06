@@ -88,7 +88,7 @@ main { max-width: 60rem; margin: 0 auto; }
 
 header { margin-bottom: 1.75rem; }
 h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 .5rem; letter-spacing: -.01em; }
-.sub { color: var(--dim); margin: 0; max-width: 46rem; }
+.sub { color: var(--dim); margin: 0; }
 .sub strong { color: var(--ink); font-weight: 600; }
 
 /* ------------------------------------------------------------------- cards */
