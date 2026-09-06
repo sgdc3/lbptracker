@@ -136,7 +136,11 @@ export function readTrigger(s: Serializer, readers: ReadonlyMap<string, PartRead
  */
 function readPolygon(s: Serializer): void {
   const count = s.i32();
-  const requiresZ = s.bool();
+  // ❗ **`requiresZ` arrives at 0x341, and below it there is no flag byte at
+  // all** -- cwlib `Polygon.serialize` takes an early return where every vertex
+  // is a v3. Reading the flag anyway costs a byte and then picks the vertex
+  // width from whatever that byte happened to be.
+  const requiresZ = s.revision.version < 0x341 ? true : s.bool();
   for (let i = 0; i < count; i += 1) {
     if (requiresZ) s.vector3();
     else {
@@ -275,13 +279,19 @@ function readNetworkPlayerId(s: Serializer): void {
  */
 export function readGroup(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
   const { version } = s.revision;
+  // ❗ Below 0x341 the flags byte does not exist; three separate bools carry
+  // COPYRIGHT, EDITABLE and PICKUP_ALL_MEMBERS instead, each at its own gate.
+  if (version >= 0x18e && version < 0x341) s.bool(); // COPYRIGHT
   readNetworkPlayerId(s); // creator
   s.resource(true); // planDescriptor, a descriptor
+  if (version >= 0x25e && version < 0x341) s.bool(); // EDITABLE
   if (version >= 0x267) {
     readThingRef(s, readers); // emitter
     s.i32(); // lifetime
     s.i32(); // aliveFrames
   }
+  if (version >= 0x26e && version < 0x341) s.bool(); // PICKUP_ALL_MEMBERS
+  if (version >= 0x30f && version < 0x341) s.bool(); // mainSelectableObject
   if (version >= 0x341) s.u8(); // flags
 }
 
@@ -2019,6 +2029,54 @@ function readScriptName(s: Serializer): void {
 }
 
 /** `PQuest`: an adventure's objective marker. */
+/**
+ * `PMetadata`: what an inventory item calls itself.
+ *
+ * ❗ **Only reachable below LBP3**, which is why it had no reader: the walk
+ * refuses at `LBP3_MIN_VERSION` long before a file carrying one is opened. It is
+ * here because it is what nine of the archive's LBP1 levels stop on once the
+ * Thing header is read correctly -- see question 28.
+ *
+ * ⚠️ **The LAMS branch is the only one implemented.** cwlib takes translation
+ * *tags* -- four strings -- when the file predates `LD_LAMS_KEYS` (LEERDAMMER
+ * revision 8) and 0x2ba; every LBP1 level in the sample is LEERDAMMER 0x17, so
+ * the four `u32` keys are what they carry and the tag branch has never been run
+ * against a file. It refuses rather than guessing.
+ */
+function readMetadata(s: Serializer): void {
+  const { version, branchId, branchRevision } = s.revision;
+  const leerdammer = branchId === 0x4c44;
+  // cwlib `hasDepreciatedValue`: a `CValue` struct that LEERDAMMER dropped at
+  // its revision 2 and everyone else at 0x297.
+  const deprecatedValue = leerdammer
+    ? branchRevision < 0x2
+    : version < 0x297;
+  if (deprecatedValue) {
+    throw new SerializerError('PMetadata with the deprecated CValue has no reader');
+  }
+  if (!((leerdammer && branchRevision >= 0x8) || version > 0x2ba)) {
+    throw new SerializerError('PMetadata with translation tags rather than LAMS keys has no reader');
+  }
+  s.u32(); // titleKey
+  s.u32(); // descriptionKey
+  s.u32(); // location
+  s.u32(); // category
+  if (version >= 0x195) s.i32(); // primaryIndex
+  s.i32(); // fluffCost
+  s.i32(); // type, a flags word
+  s.i32(); // subType
+  s.u32(); // creationDate
+  s.resource(); // icon
+  // ⚠️ Never seen non-null on a level: a `PhotoMetadata` belongs to a photo, and
+  // the reference costs one byte when it is null. It refuses if one turns up
+  // rather than reading a struct nothing here has checked.
+  s.reference(() => {
+    throw new SerializerError('PMetadata carries a PhotoMetadata, which has no reader');
+  });
+  if (version >= 0x15f) s.bool(); // referencable
+  if (version >= 0x205) s.bool(); // allowEmit
+}
+
 function readQuest(s: Serializer): void {
   const type = s.i32();
   // ⚠️ cwlib refuses anything but 5 and so does this: the other types carry a
@@ -2333,9 +2391,13 @@ export function readYellowHead(s: Serializer, readers: ReadonlyMap<string, PartR
 
 /** `PRef`: a Thing standing in for a plan that has not been instanced. */
 function readRef(s: Serializer): void {
-  s.resource(true); // plan
+  const { version } = s.revision;
+  s.resource(true); // plan, a GlobalThingDescriptor below 0x160
   s.i32(); // oldLifetime
-  s.i32(); // oldAliveFrames, version >= 0x1c9
+  if (version >= 0x1c9) s.i32(); // oldAliveFrames
+  // Both of these went away at 0x321, which is why LBP3 never sees them.
+  if (version < 0x321) s.bool(); // childrenSelectable
+  if (version >= 0x13d && version < 0x321) s.bool(); // stripChildren
 }
 
 /** `PAnimationTweak`: an animated mesh's playback settings. */
@@ -2485,6 +2547,7 @@ export function partReaders(): Map<string, PartReader> {
   bind('ATMOSPHERIC_TWEAK', readAtmosphericTweak);
   bind('SCRIPT_NAME', readScriptName);
   bind('QUEST', readQuest);
+  bind('METADATA', readMetadata);
   bind('EFFECTOR', readEffector);
   bind('WORMHOLE', readWormhole);
   bind('MATERIAL_OVERRIDE', readMaterialOverride);

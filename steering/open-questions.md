@@ -427,30 +427,45 @@ still **0 of 21 read correctly**. What changed is the *kind* of failure: the mar
 misalignment one Thing later instead of the stream running off the end, so every remaining failure
 names a byte offset inside a part reader.
 
-### ✔ The tool that makes the rest mechanical
+### ✔ The tool that makes the rest mechanical, and the span diff it gives
 
-`tools/CwlibTrace.java`, added the same day. cwlib's serialiser already logs every part boundary
-with its offset; `ResourceSystem.LOG_LEVEL` turns it on. `CwlibTrace spans <level>` prints the
-reference reading's spans and `setTrace` in `src/core/thing.ts` prints ours, so a divergence is a
-diff rather than a hunt:
+`tools/CwlibTrace.java`. cwlib's serialiser already logs every part boundary with its offset;
+`ResourceSystem.LOG_LEVEL` turns it on. `CwlibTrace spans <level>` prints the reference reading and
+`setTrace` in `src/core/thing.ts` prints ours, so a divergence is a diff rather than a hunt — and
+the diff names the part, which names the file to open in cwlib.
 
-```
-0-c33a7e, the second Thing        cwlib          ours
-  BODY                            63..82         63..82     agree
-  POS                             82..121        82..121    agree
-  SHAPE                           121..233       121..248   +15 bytes
-  REF                             233..242       248..249   read as a null
-  GROUP                           242..288       249..250   read as a null
-```
+That loop closed five more readers on `0-c33a7e`'s second Thing in one pass:
 
-❗ **That table is the whole remaining job in one line each.** `SHAPE` is 15 bytes long on this
-file; find the field, and `REF` and `GROUP` stop reading nulls because they stop starting in the
-wrong place. Then take the next Thing, and the next part.
+| part | before | cwlib | after |
+|---|---|---|---|
+| `BODY` | 63..82 | 63..82 | agreed already |
+| `POS` | 82..121 | 82..121 | agreed already |
+| `SHAPE` | 121..**248** | 121..233 | **121..233** |
+| `REF` | 248..249 | 233..242 | **233..242** |
+| `GROUP` | 249..250 | 242..288 | **242..288** |
 
-⚠️ **`readShape` is known to still be wrong** — the row above is measured, not predicted. It is
-kept because its gates come from cwlib and its LBP3 path is provably unchanged (the golden fixture
-is byte for byte), so it is strictly closer than the five missing gates it replaced. Do not read it
-as finished.
+❗ **`SHAPE`'s fifteen bytes were not in `PShape` at all.** They were in `Polygon`: `requiresZ`
+arrives at **0x341**, and below it cwlib returns early with no flag byte and every vertex a `v3`.
+This reader read the flag anyway — one byte — and then picked the vertex width from whatever that
+byte happened to be, which is where the other fourteen went. **A field that does not exist yet costs
+more than its own width when something downstream branches on it.**
+
+`REF` was two bools that went away at 0x321 (`childrenSelectable`, `stripChildren`). `GROUP` was
+three more: below 0x341 there is no flags byte and `COPYRIGHT`, `EDITABLE` and `PICKUP_ALL_MEMBERS`
+are separate bools at three separate gates. And `PMetadata` was written from scratch — it had no
+reader at all, because nothing above `LBP3_MIN_VERSION` ever reaches one.
+
+### Where it stands now
+
+Every LBP1 file gets **far** deeper: the marker used to fail at byte 287 and now fails between 927
+and 8450, or names a part rather than a misalignment. ⚠️ **Still 0 of 21 read to the end**, and the
+remaining failures are the same shape as the ones already fixed — one part reader at a time, each
+one a span diff away from being named.
+
+The one that is not: `1-c8b731` wants `PMetadata`'s **translation-tag** branch, four strings instead
+of the four LAMS keys, which cwlib takes below LEERDAMMER revision 8 and below 0x2ba. Every other
+file in the sample is LEERDAMMER 0x17 and takes the key branch, so the tag branch has no file here
+to check against and `readMetadata` refuses instead of guessing.
 
 ### What is left after that
 
