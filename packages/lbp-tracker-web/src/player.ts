@@ -19,13 +19,14 @@
  * the spec (`lfoPhase`, drawn by the render, one base per note) and cross as
  * they are, so dropping `random` costs the worklet nothing.
  *
- * ❗ **One player, two pages.** This was the body of `live.ts` until the editor
- * needed to play what it edits; it moved here whole rather than being written
- * a second time, because every invariant below was paid for by a listener
- * hearing it broken (`nextIndex` never moving backwards, `handed`, the pool
- * replayed by index) and a second copy would have re-learned each of them.
- * The page owns the DOM and the controls; this owns the clock, the plan, the
- * pool and the worklet, and says what happened through `PlayerEvents`.
+ * ❗ **One player, one app.** This was the body of the live page until the
+ * editor needed to play what it edits; it moved here whole rather than being
+ * written a second time, because every invariant below was paid for by a
+ * listener hearing it broken (`nextIndex` never moving backwards, `handed`,
+ * the pool replayed by index) and a second copy would have re-learned each of
+ * them. `daw/session.ts` owns the one instance and the transport drives it;
+ * this owns the clock, the plan, the pool and the worklet, and says what
+ * happened through `PlayerEvents`.
  */
 
 /**

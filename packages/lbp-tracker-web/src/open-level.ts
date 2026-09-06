@@ -135,11 +135,11 @@ export function isSongFile(file: File | { name: string }): boolean {
 /**
  * Whatever was opened, as the pile of sequencers every page reads.
  *
- * ❗ **One reader for the four pages.** A zip is a backup to unpack; a single
+ * ❗ **One reader for the app's drop zone.** A zip is a backup to unpack; a single
  * `.json` is one of this tracker's own song files, which comes back as a level
  * of one sequencer so that the picker, the player, the renderer and the
  * exporter need not know it was ever anything else; anything else is a pile
- * of resources for `readBackup`. The three pages and the render worker each
+ * of resources for `readBackup`. Three pages and the render worker each
  * carried the zip-or-pile branch before the song file arrived, which is
  * exactly the copy that would have learned about it one page at a time.
  *

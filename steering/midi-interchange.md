@@ -2,7 +2,7 @@
 
 Read before changing `packages/lbp-tracker-lib/src/midi.ts`, and before adding a field to
 `Sequencer` or `Track`. `smf.ts` underneath it is the container only — chunks, variable-length
-quantities, running status — and `packages/lbp-tracker-web/midi.html` is the page.
+quantities, running status — and `packages/lbp-tracker-web/src/daw/convert-view.ts` is the view.
 
 A MIDI file can say *notes*. A music sequencer is a board of placements with a mixer, two sends, a
 key, a scale and per-record automation, and most of that has no MIDI message at all. So the file

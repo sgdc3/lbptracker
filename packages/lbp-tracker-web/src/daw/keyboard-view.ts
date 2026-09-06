@@ -1,5 +1,13 @@
 /**
- * The instrument bench: play the game's own sequencer instruments.
+ * The Keyboard view: play the game's own sequencer instruments.
+ *
+ * ❗ This was `app.ts`, the instrument bench page, until the five pages became
+ * one app on 2026-09-06; the code is the same, mounted into its view, its
+ * element ids prefixed `kb-`, its keys answering only while the view is the
+ * one shown, and its instrument following the chip selected on the board.
+ * It keeps its own `AudioContext` and worklet: the bench A/Bs the engine
+ * against the browser's resampler and loads samples under its own ids, which
+ * the song's player must not see.
  *
  * Every piece of the chain this project has recovered meets here — the FARC
  * extraction, the varint `INSb` reader, the key splits, the pitch formula, the
@@ -23,18 +31,18 @@
  */
 import MIXER_WORKLET_URL from '@lbptracker/lib/audio/mixer-worklet.ts?worker&url';
 import { createApp, h, watch, type Component } from 'vue';
-import { asset } from './assets.ts';
-import ControlPanel from './controls/ControlPanel.vue';
-import Fader from './controls/Fader.vue';
-import Checks from './controls/Checks.vue';
+import { asset } from '../assets.ts';
+import ControlPanel from '../controls/ControlPanel.vue';
+import Fader from '../controls/Fader.vue';
+import Checks from '../controls/Checks.vue';
 import {
   bench,
   effectSettings,
   overrideAdsr,
   overrideFilter,
   overrideLfos,
-} from './controls/bench.ts';
-import { CONTROLS } from './controls/kit.ts';
+} from '../controls/bench.ts';
+import { CONTROLS } from '../controls/kit.ts';
 import { ADSR_PARAMS, ADSR_PARAMS_B, evaluateAdsr } from '@lbptracker/lib/envelope.ts';
 import { FILTER_PARAMS } from '@lbptracker/lib/audio/moog.ts';
 import { LFO_PARAMS, OUTPUT_PARAMS } from '@lbptracker/lib/params.ts';
@@ -44,7 +52,7 @@ import { loadResource } from '@lbptracker/cwlib/resource.ts';
 import { pitchRatio, velocityGain } from '@lbptracker/lib/voice.ts';
 import { loopRegion, readWav, type WavData } from '@lbptracker/lib/wav.ts';
 import { webInflate } from '@lbptracker/cwlib/platform/web.ts';
-import { mountFooter } from './footer.ts';
+import { state } from './session.ts';
 
 interface ManifestRow {
   guid: number;
@@ -77,7 +85,7 @@ const log = (message: string, kind: 'info' | 'bad' = 'info') => {
   const line = document.createElement('div');
   line.className = kind;
   line.textContent = message;
-  $('log').prepend(line);
+  $('kb-log').prepend(line);
 };
 
 let context: AudioContext | undefined;
@@ -139,8 +147,8 @@ function meter(): void {
       if (a > peak) peak = a;
     }
     const over = peak > 1;
-    $('meter').textContent = `pre-master peak ${peak.toFixed(3)}${over ? '  ← OVER 1.0, clipping' : ''}`;
-    $('meter').className = over ? 'bad' : '';
+    $('kb-meter').textContent = `pre-master peak ${peak.toFixed(3)}${over ? '  ← OVER 1.0, clipping' : ''}`;
+    $('kb-meter').className = over ? 'bad' : '';
     requestAnimationFrame(tick);
   };
   tick();
@@ -157,7 +165,7 @@ async function fetchManifest(dir: string): Promise<ManifestRow[]> {
 }
 
 async function loadInstrument(row: ManifestRow): Promise<void> {
-  $('status').textContent = `loading ${row.file}…`;
+  $('kb-status').textContent = `loading ${row.file}…`;
 
   const bytes = new Uint8Array(await fetchAsset(`/fixtures/rinst/${encodeURIComponent(row.file)}`));
   const resource = await loadResource(bytes, webInflate);
@@ -241,13 +249,13 @@ async function loadInstrument(row: ManifestRow): Promise<void> {
         `${b.sustain.toFixed(2)}/${b.release.toFixed(2)} (Params[3..10])`,
     );
   }
-  $('splits').textContent =
+  $('kb-splits').textContent =
     `splitNotes ${instrument.splitNotes.slice(0, slots.length + 1).join(', ')}`;
 
   buildKeyboard();
-  $('octave').textContent = `octave: ${noteName(octaveBase)}`;
-  $('status').textContent = `${row.path.replace(/^gamedata\/audio\/music\/instruments\//, '')}`;
-  $('controls').hidden = false;
+  $('kb-octave').textContent = `octave: ${noteName(octaveBase)}`;
+  $('kb-status').textContent = `${row.path.replace(/^gamedata\/audio\/music\/instruments\//, '')}`;
+  $('kb-controls').hidden = false;
   // Everything a console session needs to tap either engine. `master` matters:
   // it is where the worklet path and the AudioBufferSource path converge, so it
   // is the only place an A/B measurement can hear both.
@@ -381,7 +389,7 @@ function noteOn(note: number, velocity = 96, channel = LOCAL): void {
   // struck halfway up a glide has to start there rather than snap to it.
   sendExpression(channel);
   setKeyDown(note, true);
-  $('detail').textContent = describe(note);
+  $('kb-detail').textContent = describe(note);
 }
 
 function noteOff(note: number, channel = LOCAL): void {
@@ -534,7 +542,7 @@ const PIANO_HIGH = 96; // C7
 const BLACK_AFTER = new Set([0, 2, 5, 7, 9]); // C D F G A
 
 function buildKeyboard(): void {
-  const piano = $('piano');
+  const piano = $('kb-piano');
   piano.textContent = '';
   const whites: number[] = [];
   for (let note = PIANO_LOW; note <= PIANO_HIGH; note += 1) {
@@ -585,7 +593,7 @@ function buildKeyboard(): void {
 
 /** Pointer play: press, glide across keys, release anywhere. */
 function bindPiano(): void {
-  const piano = $('piano');
+  const piano = $('kb-piano');
   let gliding = false;
   let last = -1;
   const noteAt = (target: EventTarget | null): number => {
@@ -631,7 +639,7 @@ function zoneColour(zone: number): string {
 
 /** Light the on-screen key, so the mapping is visible while playing. */
 function setKeyDown(note: number, down: boolean): void {
-  const el = document.querySelector<HTMLElement>(`#piano [data-note="${note}"]`);
+  const el = document.querySelector<HTMLElement>(`#kb-piano [data-note="${note}"]`);
   el?.classList.toggle('down', down);
 }
 
@@ -644,8 +652,8 @@ function flashKey(note: number): void {
 /** Octave changed: let go of everything and redraw the key caps. */
 function shiftedOctave(): void {
   panic();
-  $('octave').textContent = `octave: ${noteName(octaveBase)}`;
-  for (const el of document.querySelectorAll<HTMLElement>('#piano [data-note]')) {
+  $('kb-octave').textContent = `octave: ${noteName(octaveBase)}`;
+  for (const el of document.querySelectorAll<HTMLElement>('#kb-piano [data-note]')) {
     const caps = el.querySelector('.caps');
     if (caps) caps.textContent = capsFor(Number(el.dataset.note));
   }
@@ -705,7 +713,7 @@ let bendRange = 2;
 /** Semitones at full bend on the master channel, which moves the whole zone. */
 let masterBendRange = 2;
 
-const mpeMode = () => $<HTMLSelectElement>('mpeMode').value;
+const mpeMode = () => $<HTMLSelectElement>('kb-mpeMode').value;
 
 /**
  * The three dimensions a note on `channel` is being played with right now.
@@ -788,7 +796,7 @@ function setZone(master: number, count: number): void {
  */
 function setBendRange(semitones: number): void {
   bendRange = Math.max(1, Math.min(96, Math.round(semitones)));
-  const select = $<HTMLSelectElement>('bendRange');
+  const select = $<HTMLSelectElement>('kb-bendRange');
   if (![...select.options].some((o) => Number(o.value) === bendRange)) {
     const option = document.createElement('option');
     option.value = String(bendRange);
@@ -853,7 +861,7 @@ function controlChange(channel: number, cc: number, value: number): void {
 
 /** The zone, in words, under the pickers that set it. */
 function showMpe(): void {
-  const state = $('mpeState');
+  const state = $('kb-mpeState');
   if (zone === undefined) {
     state.textContent =
       mpeMode() === 'auto'
@@ -890,7 +898,7 @@ function showMpeLive(channel: number, bend: number, pressure: number, timbre: nu
   requestAnimationFrame(() => {
     livePending = false;
     const where = liveChannel === LOCAL ? 'local' : `ch ${liveChannel + 1}`;
-    $('mpeLive').textContent =
+    $('kb-mpeLive').textContent =
       `${where} · bend ${liveBend >= 0 ? '+' : ''}${liveBend.toFixed(2)} st · ` +
       `press ${livePress.toFixed(2)} · slide ${liveSlide.toFixed(2)}`;
   });
@@ -918,7 +926,7 @@ function applyMpeMode(): void {
 let midiAccess: MIDIAccess | null = null;
 
 async function enableMidi(): Promise<void> {
-  const state = $('midiState');
+  const state = $('kb-midiState');
   if (typeof navigator.requestMIDIAccess !== 'function') {
     state.textContent = 'not supported by this browser';
     return;
@@ -930,7 +938,7 @@ async function enableMidi(): Promise<void> {
     state.classList.remove('on');
     return;
   }
-  const select = $<HTMLSelectElement>('midiIn');
+  const select = $<HTMLSelectElement>('kb-midiIn');
   const listed = [...(midiAccess?.inputs.values() ?? [])];
   select.innerHTML = '<option value="">none</option>';
   for (const input of listed) {
@@ -954,7 +962,7 @@ function listenTo(id: string): void {
     input.onmidimessage = null;
   }
   const port = [...(midiAccess?.inputs.values() ?? [])].find((p) => p.id === id);
-  const state = $('midiState');
+  const state = $('kb-midiState');
   if (!port) {
     state.textContent = 'no input selected';
     state.classList.remove('on');
@@ -995,14 +1003,15 @@ function bindKeyboard(): void {
    * that cannot be nudged with the arrows is worse than one that steals `Z`.
    * The card claims the keyboard only when the click did not land on a control.
    */
-  const card = $('piano').closest('section');
+  const card = $('kb-piano').closest('section');
   card?.addEventListener('pointerdown', (event) => {
     const target = event.target as HTMLElement | null;
     if (target?.closest('input, select, textarea, button, a')) return;
-    $('piano').focus();
+    $('kb-piano').focus();
   });
 
   window.addEventListener('keydown', (event) => {
+    if (!active()) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
     if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
@@ -1052,19 +1061,36 @@ function bindKeyboard(): void {
 
 function playSequence(notes: number[], step: number): void {
   notes.forEach((n, i) => playNote(n, i * step));
-  $('detail').textContent =
+  $('kb-detail').textContent =
     `${notes.length} notes — ${engine === 'ours' ? 'our mixer' : "the browser's resampler"}`;
+}
+
+let instruments: ManifestRow[] = [];
+let loadedGuid = 0;
+let active: () => boolean = () => true;
+
+/** Load the instrument a chip plays, when it is not the one loaded. */
+function followSelection(): void {
+  const clip = state.clip();
+  const guid = clip?.guid ?? 0;
+  if (!guid || guid === loadedGuid) return;
+  const index = instruments.findIndex((row) => row.guid === guid);
+  if (index < 0) return;
+  loadedGuid = guid;
+  $<HTMLSelectElement>('kb-instrument').value = String(index);
+  void loadInstrument(instruments[index]).catch((e) => log(String(e), 'bad'));
 }
 
 async function init(): Promise<void> {
   try {
-    const [instruments, samples] = await Promise.all([
+    const [rows, samples] = await Promise.all([
       fetchManifest('rinst'),
       fetchManifest('smp'),
     ]);
+    instruments = rows;
     sampleIndex = new Map(samples.map((s) => [s.guid, s]));
 
-    const select = $<HTMLSelectElement>('instrument');
+    const select = $<HTMLSelectElement>('kb-instrument');
     instruments
       .sort((a, b) => a.file.localeCompare(b.file))
       .forEach((row, i) => {
@@ -1075,9 +1101,10 @@ async function init(): Promise<void> {
       });
     select.addEventListener('change', () => {
       const row = instruments[Number(select.value)];
+      loadedGuid = row.guid;
       void loadInstrument(row).catch((e) => log(String(e), 'bad'));
     });
-    $('status').textContent =
+    $('kb-status').textContent =
       `${instruments.length} instruments and ${samples.length} samples ready — pick one`;
     log(`manifest: ${instruments.length} instruments, ${samples.length} samples`);
     // The piano is loaded to begin with, so the page plays the moment it opens
@@ -1086,20 +1113,22 @@ async function init(): Promise<void> {
     const first = Math.max(0, instruments.findIndex((row) => row.file === 'piano.rinst'));
     if (instruments.length > 0) {
       select.value = String(first);
+      loadedGuid = instruments[first].guid;
       void loadInstrument(instruments[first]).catch((e) => log(String(e), 'bad'));
     }
+    followSelection();
   } catch (error) {
-    $('status').textContent = String(error);
+    $('kb-status').textContent = String(error);
     log(String(error), 'bad');
     return;
   }
 
-  $('octaves').addEventListener('click', () => {
+  $('kb-octaves').addEventListener('click', () => {
     // One note per slot, at that slot's own base note: every one plays at
     // ratio 1.0, so they should sound like one instrument.
     playSequence(loadedSlots.map((s) => s.baseNote).reverse(), 0.7);
   });
-  $('scale').addEventListener('click', () => {
+  $('kb-scale').addEventListener('click', () => {
     const major = [0, 2, 4, 5, 7, 9, 11];
     const notes: number[] = [];
     for (let octave = 0; octave < 5; octave += 1) {
@@ -1107,18 +1136,18 @@ async function init(): Promise<void> {
     }
     playSequence(notes, 0.16);
   });
-  $('chromatic').addEventListener('click', () => {
+  $('kb-chromatic').addEventListener('click', () => {
     const notes: number[] = [];
     for (let n = 24; n <= 96; n += 1) notes.push(n);
     playSequence(notes, 0.12);
   });
-  $('stop').addEventListener('click', () => node?.port.postMessage({ type: 'stopAll' }));
+  $('kb-stop').addEventListener('click', () => node?.port.postMessage({ type: 'stopAll' }));
   bindKeyboard();
-  $<HTMLSelectElement>('engine').addEventListener('change', (e) => {
+  $<HTMLSelectElement>('kb-engine').addEventListener('change', (e) => {
     engine = (e.target as HTMLSelectElement).value as 'ours' | 'browser';
     log(`engine: ${engine}`);
   });
-  $<HTMLSelectElement>('interp').addEventListener('change', (e) => {
+  $<HTMLSelectElement>('kb-interp').addEventListener('change', (e) => {
     const name = (e.target as HTMLSelectElement).value;
     node?.port.postMessage({ type: 'interpolator', name });
     log(
@@ -1141,10 +1170,10 @@ async function init(): Promise<void> {
     app.provide(CONTROLS, bench);
     app.mount(at);
   };
-  island(ControlPanel, '#control-panel');
-  island(Fader, '#note-length', { id: 'length' });
-  island(Checks, '#stage-toggles', { group: 'stage' });
-  island(Checks, '#mpe-toggles', { group: 'mpe' });
+  island(ControlPanel, '#kb-control-panel');
+  island(Fader, '#kb-note-length', { id: 'length' });
+  island(Checks, '#kb-stage-toggles', { group: 'stage' });
+  island(Checks, '#kb-mpe-toggles', { group: 'mpe' });
 
   // ❗ **Two things react to the store rather than living in it**, because
   // neither is state: the master gain is an `AudioParam` and has to be ramped
@@ -1158,8 +1187,8 @@ async function init(): Promise<void> {
   );
   watch(bench.effectsSignature, () => pushEffects());
 
-  $<HTMLSelectElement>('mpeMode').addEventListener('change', applyMpeMode);
-  $<HTMLSelectElement>('bendRange').addEventListener('change', (e) => {
+  $<HTMLSelectElement>('kb-mpeMode').addEventListener('change', applyMpeMode);
+  $<HTMLSelectElement>('kb-bendRange').addEventListener('change', (e) => {
     setBendRange(Number((e.target as HTMLSelectElement).value));
   });
   for (const id of ['mpePress', 'mpeSlide']) {
@@ -1167,13 +1196,23 @@ async function init(): Promise<void> {
   }
   showMpe();
 
-  const midiSelect = $<HTMLSelectElement>('midiIn');
+  const midiSelect = $<HTMLSelectElement>('kb-midiIn');
   midiSelect.addEventListener('mousedown', () => {
     if (!midiAccess) void enableMidi();
   }, { once: true });
   midiSelect.addEventListener('change', () => listenTo(midiSelect.value));
 }
 
-void init();
-
-mountFooter();
+export function mountKeyboard(opts: { isActive: () => boolean; onShow: (l: () => void) => void }): void {
+  active = opts.isActive;
+  void init();
+  // The chip selected on the board is the instrument here, whenever the view is
+  // shown or the selection moves while it is.
+  opts.onShow(followSelection);
+  state.onChange(() => {
+    if (active()) followSelection();
+  });
+  // Leaving the view lets go of every held note: a key held across the switch
+  // would otherwise ring until the view came back.
+  opts.onShow(() => {});
+}

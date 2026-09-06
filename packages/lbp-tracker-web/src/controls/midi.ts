@@ -1,5 +1,5 @@
 /**
- * The MIDI page's controls — `midi.html`.
+ * The MIDI export's controls — the Convert view, `daw/convert-view.ts`.
  *
  * ⚠️ **The bend range is the one with the old drift in it.** `bendRangeLabel`
  * read `auto` or `±48` depending on a *checkbox*, written by a `showBend()` that

@@ -22,15 +22,6 @@ import { webInflate } from '@lbptracker/cwlib/platform/web.ts';
 
 export type Manifest = Map<number, { file: string; path?: string }>;
 
-/**
- * Where the MIDI page leaves a song for the live player to pick up.
- *
- * ⚠️ It lives here rather than in either page because both need it and
- * neither can import the other: a page module runs its whole side-effectful
- * body on import, so `live.ts` reaching into `midi-app.ts` for one string would
- * build a second MIDI page inside the live one.
- */
-export const HANDOFF_KEY = 'lbp.importedSequencer';
 
 /**
  * A path under the site root, resolved against this module rather than the page.

@@ -1,0 +1,259 @@
+/**
+ * The one song, and everything every view shares around it.
+ *
+ * ❗ **There is one song open, and every view works on it.** The board and the
+ * roll edit it, the mixer sets it, the renderer writes it out, the converter
+ * exports it and can replace it, the keyboard plays the instrument selected on
+ * it -- and the transport in the top bar plays it, through the one `Player`.
+ * Before 2026-09-06 these were five pages each opening its own level, handing
+ * a song to one another through `sessionStorage`; this module is what made
+ * them one app.
+ *
+ * What lives here: the `EditorState` (the song, the selection, undo), the
+ * `Player` and its plan (rebuilt through the renderer's own voice pass on
+ * every note edit, swapped in under the running transport), the game's
+ * instruments and their loader, the engine switches, and the status line.
+ * The views mount into their own sections and reach all of it through here.
+ */
+
+import { shallowRef, watch } from 'vue';
+import { loaderFor, manifest, type Manifest } from '../assets.ts';
+import type { Sequencer } from '@lbptracker/cwlib/project.ts';
+import { RATE, type InstrumentLoader } from '@lbptracker/lib/render.ts';
+import { VOICES_UNLIMITED } from '@lbptracker/lib/polyphony.ts';
+import {
+  newSong, sequencerFromSong, trackFromClip, type Clip, type Song, type SongNote,
+} from '@lbptracker/lib/song.ts';
+import { engine } from '../controls/engine.ts';
+import { instrumentsFrom, type InstrumentInfo } from '../editor/instruments.ts';
+import { EditorState } from '../editor/state.ts';
+import { Player, type Health } from '../player.ts';
+
+// ------------------------------------------------------------------ the song
+
+export const state = new EditorState(newSong());
+
+/** The game's instruments, once the manifest is in; a `shallowRef` so panels mounted first follow. */
+export const instruments = shallowRef<InstrumentInfo[]>([]);
+export const byGuid = new Map<number, InstrumentInfo>();
+export let rinstIndex: Manifest | null = null;
+export let smpIndex: Manifest | null = null;
+let loader: InstrumentLoader | null = null;
+
+/** Make sure the game's assets are indexed and the loader exists. */
+export async function ensureAssets(): Promise<InstrumentLoader> {
+  if (loader) return loader;
+  [rinstIndex, smpIndex] = await Promise.all([manifest('fixtures/rinst'), manifest('fixtures/smp')]);
+  instruments.value = instrumentsFrom(
+    rinstIndex.values() as Iterable<{ guid: number; file: string; path?: string }>,
+  );
+  byGuid.clear();
+  for (const info of instruments.value) byGuid.set(info.guid, info);
+  loader = await loaderFor(rinstIndex, smpIndex);
+  return loader;
+}
+
+/** The song as the renderer, the exporter and the player read it. */
+export const currentSequencer = (): Sequencer => sequencerFromSong(state.song);
+
+// ------------------------------------------------------------- status, error
+
+type StatusListener = (text: string, bad: boolean) => void;
+const statusListeners = new Set<StatusListener>();
+let errorSink: ((text: string) => void) | null = null;
+
+export function onStatus(listener: StatusListener): void {
+  statusListeners.add(listener);
+}
+
+export function setStatus(text: string, bad = false): void {
+  for (const l of statusListeners) l(text, bad);
+}
+
+export function setErrorSink(sink: (text: string) => void): void {
+  errorSink = sink;
+}
+
+export function setError(text: string): void {
+  errorSink?.(text);
+}
+
+export const clock = (seconds: number): string => {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+  const whole = Math.floor(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+};
+
+// ---------------------------------------------------------------- the player
+
+export interface PlayerListeners {
+  health?(h: Health): void;
+  stolen?(total: number): void;
+  tick?(): void;
+  playing?(on: boolean): void;
+}
+const playerListeners = new Set<PlayerListeners>();
+export function onPlayer(listeners: PlayerListeners): void {
+  playerListeners.add(listeners);
+}
+
+export const player = new Player({
+  health: (h) => {
+    for (const l of playerListeners) l.health?.(h);
+  },
+  stolen: (total) => {
+    for (const l of playerListeners) l.stolen?.(total);
+  },
+  missingSample: (id) => setError(`the worklet has no sample "${id}"`),
+  tick: () => {
+    for (const l of playerListeners) l.tick?.();
+  },
+  playing: (on) => {
+    for (const l of playerListeners) l.playing?.(on);
+  },
+  progress: (phase, done, total) => {
+    setStatus(`preparing — ${phase} ${Math.round((done / Math.max(1, total)) * 100)}%`);
+  },
+});
+
+/** The pool size the engine switches ask for. */
+export const poolSize = (): number => (engine.on('optNoCap') ? VOICES_UNLIMITED : engine.raw('voices'));
+
+export function pushEffects(): void {
+  const song = state.song;
+  player.setEffects({
+    echoTime: song.echoTime,
+    feedback: song.echoFeedback,
+    mix: song.echoMix,
+    reverbSetting: song.reverb,
+    echoOn: engine.on('optEcho'),
+    reverbOn: engine.on('optReverb'),
+    clip: engine.on('optClip'),
+  });
+}
+
+export function pushSettings(): void {
+  const song = state.song;
+  player.setSettings({
+    tempo: song.tempo,
+    swing: song.swing,
+    numChannels: song.numChannels,
+    volumes: song.volumes,
+    boardRows: song.boardRows,
+  });
+}
+
+// ------------------------------------------------------------------ the plan
+
+let replanTimer = 0;
+let replanning = false;
+let replanAgain = false;
+let restartNext = true;
+const planListeners = new Set<() => void>();
+/** Called after every rebuild of the plan: the transport enables itself, the board redraws. */
+export function onPlan(listener: () => void): void {
+  planListeners.add(listener);
+}
+
+/**
+ * Rebuild the plan from the song as it stands, debounced: a drag produces a
+ * change per pixel, and the voice pass over a big song takes a second.
+ */
+export function replanSoon(): void {
+  window.clearTimeout(replanTimer);
+  replanTimer = window.setTimeout(() => void replan(), 180);
+}
+
+async function replan(): Promise<void> {
+  if (replanning) {
+    replanAgain = true;
+    return;
+  }
+  replanning = true;
+  try {
+    const load = await ensureAssets();
+    const seq = currentSequencer();
+    const restart = restartNext;
+    restartNext = false;
+    pushEffects();
+    player.setPool(poolSize());
+    const loaded = await player.load(seq, load, restart);
+    const clips = state.song.clips.length;
+    setStatus(
+      `${clips} instrument${clips === 1 ? '' : 's'}, ` +
+      `${loaded.played.toLocaleString()} note${loaded.played === 1 ? '' : 's'}` +
+      (loaded.skipped ? `, ${loaded.skipped} with no instrument` : '') +
+      ` — ${clock(loaded.seconds)} at ${state.song.tempo} BPM`,
+    );
+    for (const l of planListeners) l();
+  } catch (error) {
+    setStatus('failed', true);
+    setError(String((error as Error).stack ?? error));
+  } finally {
+    replanning = false;
+    if (replanAgain) {
+      replanAgain = false;
+      replanSoon();
+    }
+  }
+}
+
+state.onChange((kind) => {
+  if (kind === 'notes') replanSoon();
+  else if (kind === 'settings') pushSettings();
+  else if (kind === 'effects') pushEffects();
+});
+
+// The engine switches: the output stage is one message, the pool is replayed.
+watch(engine.effectsSignature, () => pushEffects());
+watch(() => [engine.raw('voices'), engine.on('optNoCap')], () => {
+  if (player.hasPlan) player.setPool(poolSize());
+});
+
+/** A song altogether: opened, imported, or started blank. */
+export function openSong(song: Song, how: string): void {
+  player.clear();
+  restartNext = true;
+  state.replace(song);
+  setStatus(`${how} — ${song.clips.length} instrument${song.clips.length === 1 ? '' : 's'}`);
+  replanSoon();
+}
+
+// ----------------------------------------------------------------- audition
+
+/** Play one note of a clip, on its own, through the same pipeline as the song. */
+export function auditionNote(clip: Clip, note: SongNote): void {
+  if (!note.points.length) return;
+  const first = note.points[0].thirds;
+  void playSolo({
+    ...clip,
+    cell: 0,
+    notes: [{ id: 1, points: note.points.map((p) => ({ ...p, thirds: p.thirds - first })) }],
+  });
+}
+
+export function auditionPitch(clip: Clip, pitch: number): void {
+  void playSolo({
+    ...clip,
+    cell: 0,
+    notes: [{ id: 1, points: [{ thirds: 0, pitch, volume: 96, timbre: 0 }] }],
+  });
+}
+
+async function playSolo(solo: Clip): Promise<void> {
+  try {
+    const load = await ensureAssets();
+    // The song's own settings and board, so the note's channel band, key and
+    // scale are the ones it will play under; only the notes are the solo's.
+    const seq: Sequencer = {
+      ...sequencerFromSong({ ...state.song, clips: [] }),
+      tracks: [trackFromClip(solo)],
+      lengthSteps: solo.steps,
+    };
+    await player.audition(seq, load);
+  } catch (error) {
+    setError(String((error as Error).stack ?? error));
+  }
+}
+
+export { RATE };

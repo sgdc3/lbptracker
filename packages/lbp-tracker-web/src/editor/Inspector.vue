@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * The inspector: the song's settings, the selected placement's, and the
- * selected point's -- every field of `PSequencer` and `PInstrument` the game
- * lets a composer set, as a form.
+ * The inspector: the selected placement's settings -- every field of
+ * `PInstrument` the game lets a composer set -- and the selected point's.
+ * The song's own settings are the mixer's (`daw/MixerPanel.vue`).
  *
  * Reads go through `state.version` so the panel follows the canvases; writes
  * go through `state.edit` with a key per control, so a slider drag is one
@@ -10,9 +10,7 @@
  */
 import { computed } from 'vue';
 import { SCALE_NAMES } from '@lbptracker/lib/scale.ts';
-import {
-  CLIP_STEP_CHOICES, MIXER_CHANNELS, highestStep, resizeClip, type ChangeKindLike,
-} from './inspector-support.ts';
+import { CLIP_STEP_CHOICES, highestStep, resizeClip, type ChangeKindLike } from './inspector-support.ts';
 import { STEPS_PER_BAR, barOfCell, noteName, positionLabel } from './geometry.ts';
 import type { InstrumentInfo } from './instruments.ts';
 import type { EditorState } from './state.ts';
@@ -21,10 +19,6 @@ const props = defineProps<{ state: EditorState; instruments: InstrumentInfo[] }>
 const emit = defineEmits<{ duplicate: []; remove: []; status: [text: string] }>();
 
 // Every computed below touches `version` first so that it re-runs on a change.
-const song = computed(() => {
-  void props.state.version.value;
-  return props.state.song;
-});
 const clip = computed(() => {
   void props.state.version.value;
   return props.state.clip();
@@ -33,7 +27,6 @@ const point = computed(() => {
   void props.state.version.value;
   return props.state.point();
 });
-const channels = computed(() => Array.from({ length: song.value.numChannels }, (_, i) => i));
 const stepChoices = CLIP_STEP_CHOICES;
 const keyChoices = [
   { value: 0, label: 'default (C)' },
@@ -42,12 +35,6 @@ const keyChoices = [
 
 const num = (event: Event) => Number((event.target as HTMLInputElement).value);
 const text = (event: Event) => (event.target as HTMLInputElement).value;
-
-const setSong = (kind: ChangeKindLike, key: string, fn: (value: number) => void) => (event: Event) => {
-  const value = num(event);
-  if (!Number.isFinite(value)) return;
-  props.state.edit(kind, () => fn(value), key);
-};
 
 const setClip = (kind: ChangeKindLike, key: string, fn: (value: number) => void) => (event: Event) => {
   // A select with no matching option reports '' -- which `Number` reads as 0,
@@ -85,95 +72,7 @@ const fmt = (v: number, dp = 2) => v.toFixed(dp);
 </script>
 
 <template>
-  <div class="live inspector">
-    <div class="group">
-      <h3>song</h3>
-      <div class="knob">
-        <label for="songName">name</label>
-        <input
-          id="songName"
-          type="text"
-          class="wide"
-          :value="song.name"
-          autocomplete="off"
-          @input="state.edit('selection', (s) => { s.name = text($event); }, 'name')"
-        >
-        <output></output>
-      </div>
-      <div class="knob">
-        <label for="tempo">tempo</label>
-        <input id="tempo" type="range" min="20" max="400" step="1" :value="song.tempo" autocomplete="off"
-               @input="setSong('settings', 'tempo', (v) => { song.tempo = v; })($event)">
-        <output>{{ song.tempo }} BPM</output>
-      </div>
-      <div class="knob">
-        <label for="swing">swing</label>
-        <input id="swing" type="range" min="0" max="99" step="1" :value="Math.round(song.swing * 100)" autocomplete="off"
-               @input="setSong('settings', 'swing', (v) => { song.swing = v / 100; })($event)">
-        <output>{{ fmt(song.swing) }}</output>
-      </div>
-      <div class="knob">
-        <label for="numChannels">channels</label>
-        <input id="numChannels" type="range" min="1" :max="MIXER_CHANNELS" step="1" :value="song.numChannels" autocomplete="off"
-               @input="setSong('settings', 'channels', (v) => { song.numChannels = v; })($event)">
-        <output>{{ song.numChannels }}</output>
-      </div>
-      <div v-for="ch in channels" :key="ch" class="knob">
-        <label :for="`vol${ch}`">ch {{ ch }}</label>
-        <input :id="`vol${ch}`" type="range" min="0" max="150" step="1" :value="Math.round(song.volumes[ch] * 100)" autocomplete="off"
-               @input="setSong('settings', `vol${ch}`, (v) => { song.volumes[ch] = v / 100; })($event)">
-        <output>{{ fmt(song.volumes[ch]) }}</output>
-      </div>
-      <div class="knob">
-        <label for="boardRows">board rows</label>
-        <input id="boardRows" type="range" min="1" max="25" step="1" :value="song.boardRows" autocomplete="off"
-               @input="setSong('settings', 'rows', (v) => { song.boardRows = v; })($event)">
-        <output>{{ song.boardRows }}</output>
-      </div>
-      <p class="hintline">
-        The board is cut into as many bands as there are channels, top to bottom; a row's band is
-        its mixer channel. Rows are added or removed at the bottom.
-      </p>
-    </div>
-
-    <div class="group">
-      <h3>echo &amp; reverb</h3>
-      <div class="knob">
-        <label for="echoTime">echo time</label>
-        <input id="echoTime" type="range" min="0" max="80" step="1" :value="Math.round(song.echoTime * 10)" autocomplete="off"
-               @input="setSong('effects', 'echoTime', (v) => { song.echoTime = v / 10; })($event)">
-        <output>{{ fmt(song.echoTime) }} beats</output>
-      </div>
-      <div class="knob">
-        <label for="echoFeedback">feedback</label>
-        <input id="echoFeedback" type="range" min="0" max="95" step="1" :value="Math.round(song.echoFeedback * 100)" autocomplete="off"
-               @input="setSong('effects', 'echoFb', (v) => { song.echoFeedback = v / 100; })($event)">
-        <output>{{ fmt(song.echoFeedback) }}</output>
-      </div>
-      <div class="knob">
-        <label for="echoMix">mix</label>
-        <input id="echoMix" type="range" min="0" max="100" step="1" :value="Math.round(song.echoMix * 100)" autocomplete="off"
-               @input="setSong('effects', 'echoMix', (v) => { song.echoMix = v / 100; })($event)">
-        <output>{{ fmt(song.echoMix) }}</output>
-      </div>
-      <div class="knob">
-        <label for="reverb">reverb</label>
-        <input id="reverb" type="range" min="0" max="15" step="1" :value="song.reverb" autocomplete="off"
-               @input="setSong('effects', 'reverb', (v) => { song.reverb = v; })($event)">
-        <output>{{ song.reverb }}</output>
-      </div>
-      <div class="row" style="margin-top:.5rem">
-        <label class="check">
-          <input type="checkbox" :checked="song.loop" autocomplete="off"
-                 @change="state.edit('selection', (s) => { s.loop = ($event.target as HTMLInputElement).checked; })"> loop
-        </label>
-      </div>
-      <p class="hintline">
-        The sequencer's own output stage, as the game stores it: the echo's delay is in beats and
-        follows the tempo. Each instrument sends its own amount to both, below.
-      </p>
-    </div>
-
+  <div class="inspector">
     <div class="group" :class="{ off: !clip }">
       <h3>instrument</h3>
       <template v-if="clip">

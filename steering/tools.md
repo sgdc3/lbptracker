@@ -188,7 +188,7 @@ question can be answered in seconds instead of by ear.
 |---|---|
 | `render-level.ts [seqIndex] [seconds]` | one sequencer from a real level to a WAV, through the whole pipeline in `src/render.ts`. The Node half of the wrapper whose browser half is `packages/lbp-tracker-web/src/render-worker.ts`; the two produced the same 70,704,044-byte file on 2026-09-02 |
 | `verify-midi.ts` | the MIDI round trip over the corpus: every sequencer exported and read back, records compared byte for byte, and the loose (no-patch) numbers with `LBP_MIDI_LOOSE=1` |
-| `live-sim.ts` | the live scheduler under Node: the plan built as `live.ts` builds it, fed to a `Mixer` in look-ahead bursts, compared against the plain render. All three variants are bit-identical to the direct render; ⚠️ **when this file and the renderer disagree, suspect this file first** — it has to imitate two cadences at once, and *34* in answered-questions.md is what that cost |
+| `live-sim.ts` | the live scheduler under Node: the plan built as `Player.load` builds it, fed to a `Mixer` in look-ahead bursts, compared against the plain render. All three variants are bit-identical to the direct render; ⚠️ **when this file and the renderer disagree, suspect this file first** — it has to imitate two cadences at once, and *34* in answered-questions.md is what that cost |
 | `live-settings.ts` | that tempo, swing and the channel mixer can be applied live without re-planning: bit-identical against a render that had those settings all along, and 0 of 163 notes handed over twice |
 | `pitch-probe.ts` | that `Notes.y`, `basenote` and `Splitnotes` share one numbering: zones against their own base notes, and the corpus's notes against the samples they resolve to |
 

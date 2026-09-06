@@ -26,25 +26,15 @@
  */
 
 import { loaderFor, manifest, type Manifest } from './assets.ts';
-import { openedTitle, readOpened } from './open-level.ts';
 import {
   RATE,
   renderSequencer,
   toPcm16,
   type LoadedInstrument,
 } from '@lbptracker/lib/render.ts';
-import { sequencersOf, type BackupFile } from '@lbptracker/cwlib/backup.ts';
-import { type LevelProject, type Sequencer } from '@lbptracker/cwlib/project.ts';
+import { type Sequencer } from '@lbptracker/cwlib/project.ts';
 import { writeWav } from '@lbptracker/lib/wav.ts';
 
-let project: LevelProject | null = null;
-/**
- * Every sequencer the open backup holds, by the page's key.
- *
- * ⚠️ A uid is unique inside a level and not across a backup: a folder of
- * forty levels routinely holds two numbered 7, so the key is `file#uid`.
- */
-let songs = new Map<string, Sequencer>();
 let rinstIndex: Manifest | null = null;
 let smpIndex: Manifest | null = null;
 
@@ -56,10 +46,8 @@ const say = (text: string) => post({ type: 'status', text });
 self.onmessage = async (event: MessageEvent) => {
   const message = event.data as {
     type: string;
-    /** The picker's key, `file#uid` -- not a uid; see `packages/cwlib-ts/src/backup.ts`. */
-    key?: string;
-    files?: BackupFile[];
-    label?: string;
+    /** The song to render, as the page holds it. */
+    sequencer?: Sequencer;
     seconds?: number;
     from?: number;
     /**
@@ -81,60 +69,14 @@ self.onmessage = async (event: MessageEvent) => {
     file?: File;
   };
   try {
-    if (message.type === 'load') {
-      const files = message.files ?? [];
-      if (files.length === 0) throw new Error('load needs files');
-      const label = message.label ?? files[0].name;
-      const total = files.reduce((n, f) => n + f.bytes.length, 0);
-      say(`reading ${label}…`);
-      post({ type: 'progress', phase: 'level', done: 0, total });
-      // ❗ A backup is a pile of resources named after their SHA-1, so the
-      // worker reads the pile rather than one file -- a zip, one of this
-      // tracker's song files, or the pile itself, the same way every page does.
-      const result = await readOpened(files);
-      post({ type: 'progress', phase: 'level', done: total, total });
-      songs = new Map();
-      for (const p of result.projects) {
-        for (const seq of p.sequencers) songs.set(`${p.file}#${seq.uid}`, seq);
-      }
-      project = result.projects[0] ?? null;
-      // Busiest first: a sequencer with one instrument in it is rarely the one
-      // somebody opened the file to hear.
-      const list = sequencersOf(result).map((r) => ({
-        key: r.key,
-        name: r.name,
-        tracks: r.tracks,
-        file: result.projects.length > 1 ? r.file : undefined,
-      }));
-      [rinstIndex, smpIndex] = await Promise.all([manifest('fixtures/rinst'), manifest('fixtures/smp')]);
-      post({
-        type: 'loaded',
-        list,
-        levels: result.projects.length,
-        failed: result.failed,
-        saves: result.saves,
-        // ❗ The name a PS3 backup gives itself, which is not the zip's name --
-        // and what came out of it, which is plans as often as levels.
-        title: openedTitle(result, list.length, label),
-        instruments: rinstIndex.size,
-        samples: smpIndex.size,
-      });
-      return;
-    }
-
-    if (message.type === 'song') {
-      // The page keeps no sequencers -- the worker does -- so saving one as a
-      // song file means asking for it back.
-      const seq = songs.get(message.key!);
-      if (!seq) throw new Error(`no sequencer ${message.key}`);
-      post({ type: 'song', key: message.key, sequencer: seq });
-      return;
-    }
-
     if (message.type === 'render') {
-      const key = message.key!;
-      const seq = songs.get(key);
-      if (!seq) throw new Error(`no sequencer ${key}`);
+      // ❗ The song comes with the request: there is one song open and the
+      // page holds it, so the worker keeps no pile of its own any more.
+      const seq = message.sequencer;
+      if (!seq) throw new Error('render needs a sequencer');
+      if (!rinstIndex || !smpIndex) {
+        [rinstIndex, smpIndex] = await Promise.all([manifest('fixtures/rinst'), manifest('fixtures/smp')]);
+      }
 
       const started = performance.now();
       say(`rendering "${seq.name}" — ${seq.tracks.length} tracks, ${seq.lengthSteps} steps…`);
@@ -161,7 +103,6 @@ self.onmessage = async (event: MessageEvent) => {
       post(
         {
           type: 'done',
-          key,
           name: seq.name,
           tempo: seq.tempo,
           tracks: seq.tracks.length,

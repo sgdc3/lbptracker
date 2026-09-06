@@ -53,10 +53,11 @@ Steering files (read on demand, per the hints):
   implementation: the three packages and where the seam runs, why the mixer is ours and lives in
   an AudioWorklet, why the web layer has a bundler and Vue and the libraries have neither, the
   live player's invariants, the build order and what exists.
-- [steering/editor.md](steering/editor.md) — **read before touching `index.html` (the editor), `src/editor/`,
-  `src/player.ts` or `lib/src/song.ts`**: what the editor draws and why it matches the game's two
-  grids, the editable model and its boundary through the record encoder, the shared player and
-  which edits rebuild the plan, the two canvases, how to check it, and what is not there yet.
+- [steering/editor.md](steering/editor.md) — **read before touching `index.html`, `src/daw.ts`,
+  `src/daw/`, `src/editor/`, `src/player.ts` or `lib/src/song.ts`**: the app as one page around
+  one song, what the arrange view draws and why it matches the game's two grids, the editable model
+  and its boundary through the record encoder, the player and which edits rebuild the plan, the two
+  canvases, how to check it, and what is not there yet.
 - [steering/eboot-re.md](steering/eboot-re.md) — **read before opening the eboot or a PRX**: the
   address conventions (the delta trap that costs hours), the techniques that worked, and every
   anchor already mapped.
@@ -76,7 +77,7 @@ Steering files (read on demand, per the hints):
 |---|---|---|
 | `packages/cwlib-ts` | `@lbptracker/cwlib` | reading LBP's serialised resources: container, Thing graph, 50 part readers, saves, archives |
 | `packages/lbp-tracker-lib` | `@lbptracker/lib` | turning that into sound: sampler, DSP chain, render pipeline, MIDI — and `song.ts`, the editable song |
-| `packages/lbp-tracker-web` | `@lbptracker/web` | the five pages — Vite, Vue for the panels, canvases for the editor's grids |
+| `packages/lbp-tracker-web` | `@lbptracker/web` | the app: one page, one song, five views — Vite, Vue for the panels, canvases for the grids |
 
 Each has its own `src/`, `test/` and `dev/`: Node harnesses in the libraries, the typecheck entry
 point in the web package. Imports cross by package name:

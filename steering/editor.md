@@ -1,11 +1,40 @@
-# The editor — the sequencer as a thing you compose in
+# The app — one page, one song, and the sequencer as a thing you compose in
 
-Read before touching `packages/lbp-tracker-web/index.html` (the editor is the site's front page since
-2026-09-06; the instrument bench moved to `keyboard.html`), `src/editor.ts`, `src/editor/*`,
-`src/player.ts` or `packages/lbp-tracker-lib/src/song.ts`. This is how the editor is built and why;
-what the game's data means is in [sequencer-data-model.md](sequencer-data-model.md) and the
-architecture it sits in is [tracker-architecture.md](tracker-architecture.md). Started 2026-09-06;
-what is not there yet is at the end.
+Read before touching `packages/lbp-tracker-web/index.html`, `src/daw.ts`, `src/daw/*`,
+`src/editor/*`, `src/player.ts` or `packages/lbp-tracker-lib/src/song.ts`. This is how the app is
+built and why; what the game's data means is in [sequencer-data-model.md](sequencer-data-model.md)
+and the architecture it sits in is [tracker-architecture.md](tracker-architecture.md). The editor
+started 2026-09-06 and the five pages became one app the same day; what is not there yet is at
+the end.
+
+## One page, one song
+
+❗ **There is one song open and every view works on it.** Until 2026-09-06 the tracker was five
+pages — a bench, a live player, a renderer, a MIDI bridge and the editor — each opening its own
+level and handing a song to another through `sessionStorage`, and the owner asked for a DAW
+instead of disjoint menus. `index.html` is now the one page: a sticky top bar with the views'
+tabs, the song's name, the transport (play, rewind, clock, tempo, volume, the health readout)
+and the file actions (new, open, save .json); "open" is a modal dialog holding the shared drop
+zone and the picker for a level holding several sequencers; a fixed footer carries the status
+line and the audio thread's readout (idle, notes sounding, dropouts); and five views, one shown
+at a time, all reaching the same song through `src/daw/session.ts`:
+
+| view | file | what it does with the song |
+|---|---|---|
+| Arrange | `daw/arrange.ts` | the board, the roll, the chip and point inspector; edits it |
+| Mixer | `daw/mixer.ts`, `daw/MixerPanel.vue` | tempo, swing, channels and faders, board rows, echo, reverb, loop — the song's own fields — plus the engine switches (`controls/engine.ts`) and the meters |
+| Render | `daw/render-view.ts` | hands `sequencerFromSong(song)` to the render worker and plays the WAV back |
+| Convert | `daw/convert-view.ts` | exports it as MIDI, re-run while the view is shown; a MIDI file in *replaces* it, through `openSong` |
+| Keyboard | `daw/keyboard-view.ts` | the instrument bench, following the chip selected on the board |
+
+`session.ts` owns the `EditorState`, the one `Player`, the instruments and their loader, the
+plan (rebuilt through the renderer's voice pass on every note edit and swapped in under the
+running transport), the status line and the audition path; the shell in `daw.ts` owns the tabs,
+the transport and the files. ⚠️ **The Keyboard view keeps its own `AudioContext` and worklet**:
+it A/Bs the engine against the browser's resampler and loads samples under its own ids, which
+the song's player must not see. Each view's keys answer only while it is the one shown (Space
+plays from anywhere but a field). The render worker no longer reads files or keeps a pile: the
+song travels with the render request.
 
 ## What it shows, and what the game shows
 
@@ -85,7 +114,7 @@ sequencer.
 
 The live page's scheduler moved into a class on 2026-09-06 so that the editor could play what it
 edits without a second copy of it: every invariant in that file was paid for by a listener hearing
-it broken, and the reasons travel with the code. `live.ts` is the page around it. The editor
+it broken, and the reasons travel with the code. `daw/session.ts` holds the one instance and
 calls it three ways:
 
 | change | what happens | rebuilds the plan |
@@ -132,7 +161,7 @@ browser is not tracking — a synthetic event, which is what a scripted check di
 was stuck at the drop zone until this existed. The dev server serves `fixtures/`; the deployed site
 serves only `fixtures/rinst` and `fixtures/smp`, so anything else 404s into the page's error line.
 
-`window.__lbpEditor` exposes `state`, `player`, `board` and `roll`. Verified in Chrome 2026-09-06:
+`window.__lbpEditor` exposes `state`, `player`, `board`, `roll` and `showView`. Verified in Chrome 2026-09-06:
 Ascetic's 1,150 clips open and plan; a chip click selects; a drag on empty space draws a two-point
 glide and the plan rebuilds to 14,500 notes; play advances 32 steps in two seconds at 240 BPM;
 Ctrl+Z restores the count; "add an instrument" places a chip at the cursor, the inspector's key select
@@ -140,7 +169,7 @@ writes `Key`, Ctrl+D duplicates into the next free cell, Delete on the board rem
 
 **The row is the unit the roll follows.** `selection.row` — on opening, the row of the chip nearest the start of the song, with that chip selected — is lit across the
 board; clicking a chip, a cell or a row number selects its row. As the song plays, the roll moves
-to the chip the playhead *enters* on that row (`chipUnder` in `editor.ts`): by transition, not
+to the chip the playhead *enters* on that row (`chipUnder` in `daw/arrange.ts`): by transition, not
 by position, so a chip clicked while the playhead sits inside another holds until the playhead
 crosses into a third. The owner asked for this on 2026-09-06: the game's grid is the row being
 watched, and a composer follows one part at a time.
@@ -157,9 +186,9 @@ bar 175 that nothing on screen showed as selected.
 
 ## Not there yet
 
-- **Writing back to a level.** The song leaves as a song file, as MIDI (`sequencerToMidi`), or by
-  handoff to the live player; `sequencerFromSong` produces exactly the records a `PInstrument`
-  holds, so the resource writer is what is missing, not the data.
+- **Writing back to a level.** The song leaves as a song file, as MIDI or as a WAV;
+  `sequencerFromSong` produces exactly the records a `PInstrument` holds, so the resource writer
+  is what is missing, not the data.
 - **`Loop` and `StartPoint`** are carried and edited but not played: the player runs a song from
   the top to the end plus the tail, as the live page does.
 - Marquee selection is by points inside the box; there is no lasso across clips, no copy between

@@ -1,5 +1,5 @@
 /**
- * The renderer's options — `render.html`.
+ * The renderer's options — the Render view, `daw/render-view.ts`.
  *
  * ⚠️ **This page had nothing of the drift the others had**, and the conversion
  * is deliberately smaller for it. There are no `*Label` outputs here, no
@@ -12,7 +12,7 @@
  * text with validation and a `bad` class, not sliders with a range and a
  * default; forcing them into a fader spec would describe them wrongly. They are
  * still coupled to the checks — `optNoCap` disables `voices`, `useRange`
- * enables the other two — and `render-app.ts` now watches the store for that
+ * enables the other two — and `daw/render-view.ts` now watches the store for that
  * instead of listening on the elements.
  */
 

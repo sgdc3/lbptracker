@@ -28,7 +28,7 @@
  *
  * ## The three things this config exists for
  *
- * 1. **Five pages, not one.** Each `.html` at the package root is an entry.
+ * 1. **One page.** `index.html` is the app; the render worker and the worklet are its other entries, found through their imports.
  * 2. **`base: './'`**, so the built site is relocatable — it works at a bucket's
  *    root or under a prefix. That property was tested rather than asserted
  *    before the bundler arrived and is tested the same way after.
@@ -111,10 +111,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: path.join(HERE, 'index.html'),
-        keyboard: path.join(HERE, 'keyboard.html'),
-        live: path.join(HERE, 'live.html'),
-        render: path.join(HERE, 'render.html'),
-        midi: path.join(HERE, 'midi.html'),
       },
     },
   },

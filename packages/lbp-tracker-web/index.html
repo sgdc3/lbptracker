@@ -3,55 +3,86 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LBP Tracker — editor</title>
+<title>LBP Tracker</title>
 <link rel="stylesheet" href="./ui.css">
 <style>
-  /* Only what is particular to the editor; the rest is in ui.css. */
-  main { max-width: 96rem; }
+  /* The one page: a DAW shell around one song. Page-level rules are in ui.css. */
+  body { padding: 0 0 4rem; }
+  main { max-width: none; padding: 0 1rem; }
 
-  /* The board: a viewport-sized sticky canvas over a spacer, like the roll's;
-     resizable in height by its corner handle, never in width. */
+  /* ------------------------------------------------------------- the top bar */
+  .daw-top {
+    position: sticky; top: 0; z-index: 30; background: var(--bg);
+    border-bottom: 1px solid var(--line); padding: .5rem 1rem;
+    display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+  }
+  .daw-top .brand {
+    display: inline-flex; align-items: center; gap: .5rem;
+    font-size: .78rem; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--dimmer); margin-right: .4rem; text-decoration: none;
+  }
+  .tabs { display: flex; gap: .2rem; }
+  .tabs button {
+    background: none; border: 1px solid transparent; color: var(--dim);
+    padding: .35rem .75rem; border-radius: 7px; font-size: .92rem;
+  }
+  .tabs button:hover { color: var(--ink); background: var(--panel); border-color: transparent; }
+  .tabs button[aria-selected="true"] { color: var(--ink); background: var(--panel); border-color: var(--line); }
+  .daw-top .spacer { flex: 1 1 0; min-width: 0; }
+  #songName {
+    font: inherit; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 7px; padding: .35rem .6rem; min-width: 12rem; text-align: left;
+    font-family: inherit;
+  }
+  #dirty { color: var(--warn); font-size: 1.1rem; width: .8rem; text-align: center; }
+  .transport { display: flex; align-items: center; gap: .5rem; }
+  .transport button { padding: .3rem .7rem; line-height: 1.2; min-width: 2.4rem; }
+  #clock { color: var(--dim); font: .9rem/1 ui-monospace, Consolas, monospace; min-width: 6.5rem; }
+  #tempoBox { width: 4.2rem; padding: .3rem .4rem; }
+  #vol { width: 6rem; }
+  .file-bar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+  .file-bar .picker { flex: 1 1 16rem; max-width: 28rem; }
+
+  /* The fixed footer: what the app last did, and what the audio thread is holding. */
+  .daw-foot {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: var(--bg);
+    border-top: 1px solid var(--line); padding: .4rem 1rem;
+    display: flex; align-items: center; gap: 1rem; font-size: .85rem;
+  }
+  .daw-foot .spacer { flex: 1 1 0; min-width: 0; }
+  #status { margin: 0; min-height: 1.4em; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #status.bad { color: var(--bad); }
+  #load { color: var(--dimmer); font: .82rem/1.4 ui-monospace, Consolas, monospace; white-space: nowrap; }
+  #load .bad { color: var(--bad); font-weight: 600; }
+
+  /* ------------------------------------------------------------- the views */
+  .view { margin-top: .8rem; }
+  .view[hidden] { display: none; }
+  .view > section { margin-bottom: .8rem; }
+
+  /* The file dialog: the drop zone and the song picker, opened on demand. */
+  .picker-dialog.file-dialog { width: min(44rem, 94vw); }
+  .file-dialog .drop { padding: 1.2rem 1rem; }
+
+  /* ---------------------------------------------------------------- arrange */
   .board-scroller {
-    position: relative; overflow: auto; height: 32rem; min-height: 8rem; resize: vertical;
+    position: relative; overflow: auto; height: 30rem; min-height: 8rem; resize: vertical;
     background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
   }
   .board-scroller canvas { position: sticky; top: 0; left: 0; display: block; z-index: 1; }
   .board-scroller:focus-visible, .roll-scroller:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-
-  /* The transport sits over the board: play, rewind, the clock, the volume. */
-  #transport {
-    display: flex; align-items: center; gap: .6rem; padding: .5rem .65rem; margin-bottom: .6rem;
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
-  }
-  #transport button { padding: .3rem .7rem; line-height: 1.2; min-width: 2.4rem; }
-  #clock { color: var(--dim); font-size: .9rem; }
-  #load { color: var(--dimmer); font-size: .8rem; }
-  #vol { width: 7rem; }
-
-  /* The piano roll: a viewport-sized sticky canvas over a spacer. */
   .roll-scroller {
-    position: relative; overflow: auto; height: 30rem; background: var(--panel-2);
-    border: 1px solid var(--line); border-radius: 8px;
+    position: relative; overflow: auto; height: 26rem; min-height: 8rem; resize: vertical;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
   }
   .roll-scroller canvas { position: sticky; top: 0; left: 0; display: block; z-index: 1; }
   .roll-toolbar { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; margin-bottom: .6rem; }
   .roll-toolbar .title { font-weight: 600; }
   .roll-toolbar .title small { color: var(--dimmer); font-weight: 400; margin-left: .4rem; }
   #hover { color: var(--dim); font: .8rem/1.5 ui-monospace, Consolas, monospace; min-height: 1.4em; margin-top: .4rem; }
-
-  /* The inspector reuses the live page's knob layout. */
-  .group > h3 {
-    margin: 0 0 .55rem; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase;
-    color: var(--dimmer);
-  }
-  .knob { display: grid; grid-template-columns: 5.6rem 1fr 5.2rem; gap: .5rem; align-items: center; }
-  .knob + .knob { margin-top: .3rem; }
-  .knob label { font-size: .84rem; }
-  .knob input[type="range"], .knob select, .knob input[type="text"] { width: 100%; min-width: 0; }
-  .knob input[type="text"].wide, .knob select.wide { grid-column: 2 / 4; }
-  .knob input[type="text"] { text-align: left; font-family: inherit; }
-  .knob output { font: .78rem/1 ui-monospace, Consolas, monospace; color: var(--dim); text-align: right; }
-  .group.off { opacity: .55; }
+  .arrange-grid { display: grid; grid-template-columns: minmax(0, 1fr) 21rem; gap: .8rem; align-items: start; }
+  @media (max-width: 64rem) { .arrange-grid { grid-template-columns: minmax(0, 1fr); } }
+  .arrange-grid > section { margin: 0; }
 
   /* The "which instrument?" dialog. */
   .picker-dialog {
@@ -70,135 +101,525 @@
   .picker-swatch { width: .7rem; height: .7rem; border-radius: 3px; flex: 0 0 auto; }
   .picker-foot { margin-top: .6rem; }
 
+  /* Knobs, shared by the inspector, the mixer and the keyboard's panel. */
+  .group > h3 {
+    margin: 0 0 .55rem; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--dimmer); display: flex; align-items: center; gap: .5rem;
+  }
+  .group > h3 .check { font-size: .72rem; margin-left: auto; letter-spacing: 0; text-transform: none; }
+  .knob { display: grid; grid-template-columns: 5.6rem 1fr 5.2rem; gap: .5rem; align-items: center; }
+  .knob + .knob { margin-top: .3rem; }
+  .knob label { font-size: .84rem; }
+  .knob input[type="range"], .knob select, .knob input[type="text"] { width: 100%; min-width: 0; }
+  .knob input[type="text"].wide, .knob select.wide { grid-column: 2 / 4; }
+  .knob input[type="text"] { text-align: left; font-family: inherit; }
+  .knob output { font: .78rem/1 ui-monospace, Consolas, monospace; color: var(--dim); text-align: right; }
+  .group.off { opacity: .55; }
+  .group.off .knob { opacity: .6; }
+  .inspector { display: grid; grid-template-columns: 1fr; gap: .8rem; }
+
   kbd {
     font: .78rem ui-monospace, Consolas, monospace; background: var(--panel-2);
     border: 1px solid var(--line); border-radius: 4px; padding: 0 .3rem;
   }
-  #errorCard { display: none; }
+
+  /* ----------------------------------------------------------------- render */
+  #rd-rangeFields { display: inline-flex; gap: .5rem; align-items: center; }
+  #rd-rangeFields.off label { opacity: .4; }
+  .switch-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: .9rem 1.4rem; margin-top: .9rem;
+  }
+  .switch { min-width: 0; }
+  .switch .line { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+  .switch .why { color: var(--dimmer); font-size: .8rem; margin: .25rem 0 0; }
+  #rd-bar {
+    height: 5px; background: var(--panel-2); border-radius: 3px; overflow: hidden;
+    border: 1px solid var(--line); margin-top: .45rem;
+  }
+  #rd-bar div { height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
+  #rd-playerUi { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  #rd-wave { width: 100%; height: 128px; display: block; background: var(--panel-2); cursor: pointer; }
+  #rd-wave.empty { cursor: default; }
+  #rd-wave:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  #rd-transport {
+    display: flex; align-items: center; gap: .6rem; padding: .5rem .65rem;
+    background: var(--panel-2); border-top: 1px solid var(--line);
+  }
+  #rd-transport button { padding: .3rem .7rem; line-height: 1.2; min-width: 2.4rem; }
+  #rd-times { color: var(--dim); font-size: .9rem; }
+  #rd-hint { color: var(--dimmer); font-size: .8rem; }
+  #rd-vol { width: 7rem; }
+  #rd-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: .8rem; }
+  #rd-stats:empty { display: none; }
+  .note-empty { display: none; color: var(--dimmer); font-size: .9rem; margin: 0; }
+  #rd-stats:empty + .note-empty { display: block; }
+  .stat-card {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: .7rem .9rem; min-width: 0;
+  }
+  .stat-card h3 {
+    margin: 0 0 .35rem; font-size: .72rem; font-weight: 600; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--dimmer);
+  }
+  .stat-card .big { font-family: ui-monospace, Consolas, monospace; font-size: 1.35rem; line-height: 1.2; overflow-wrap: anywhere; }
+  .stat-card .big small { font-size: .8rem; color: var(--dim); font-family: inherit; margin-left: .3rem; }
+  .stat-card dl { margin: .5rem 0 0; display: grid; grid-template-columns: auto 1fr; gap: .2rem .8rem; }
+  .stat-card dt { color: var(--dim); font-size: .82rem; white-space: nowrap; }
+  .stat-card dd { margin: 0; font-family: ui-monospace, Consolas, monospace; font-size: .82rem; text-align: right; overflow-wrap: anywhere; }
+  .stat-card.span { grid-column: 1 / -1; }
+  #rd-status, #cv-status, #cv-midiStatus, #kb-status { color: var(--accent); min-height: 1.4em; font-size: .92rem; margin-top: .6rem; }
+  #rd-status.bad, #cv-status.bad, #cv-midiStatus.bad { color: var(--bad); }
+
+  /* ---------------------------------------------------------------- convert */
+  #cv-report, #cv-inReport { margin-top: .8rem; display: none; }
+  #cv-report.on, #cv-inReport.on { display: block; }
+  .tally { display: flex; flex-wrap: wrap; gap: .4rem .9rem; align-items: baseline; }
+  .tally b { font: 600 1.02rem/1.2 ui-monospace, Consolas, monospace; color: var(--ink); }
+  .tally .item { display: flex; gap: .35rem; align-items: baseline; }
+  .tally .item span { color: var(--dimmer); font-size: .82rem; }
+  .tally .item.warn b { color: var(--warn, #e0a44a); }
+  .lost { margin-top: .55rem; }
+  .lost li { color: var(--dim); font-size: .85rem; margin: .15rem 0; }
+  .logbox {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: .75rem; max-height: 14rem; overflow: auto;
+    font-family: ui-monospace, Consolas, monospace; font-size: .8rem; color: var(--dim);
+  }
+  .logbox .bad { color: var(--bad); }
+  #cv-midiFile { display: none; }
+
+  /* --------------------------------------------------------------- keyboard */
+  #kb-piano {
+    position: relative; height: 148px; margin: 0; user-select: none;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    overflow: hidden; touch-action: none; display: flex;
+  }
+  #kb-piano:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .wkey {
+    position: relative; flex: 1 1 0; min-width: 0; height: 100%;
+    background: linear-gradient(#eef1f4, #cdd3da);
+    border-right: 1px solid #9aa3ad; cursor: pointer;
+    display: flex; flex-direction: column; justify-content: flex-end;
+    align-items: center; padding-bottom: .3rem; gap: .15rem;
+  }
+  .wkey:last-child { border-right: 0; }
+  .wkey.down { background: linear-gradient(#9fe3c1, #6fd3a0); }
+  .bkey {
+    position: absolute; top: 0; height: 62%; width: 1.9%; z-index: 2;
+    background: linear-gradient(#2a3138, #12161b);
+    border: 1px solid #05070a; border-top: 0; border-radius: 0 0 3px 3px;
+    cursor: pointer; display: flex; flex-direction: column; justify-content: flex-end;
+    align-items: center; padding-bottom: .25rem; gap: .15rem;
+  }
+  .bkey.down { background: linear-gradient(#4e9c78, #2f7d59); }
+  .zone { width: 62%; height: 4px; border-radius: 2px; }
+  .caps { max-width: 100%; overflow: hidden; white-space: nowrap; }
+  .wkey .caps { font: 600 .62rem/1 ui-monospace, Consolas, monospace; color: #4a525c; }
+  .bkey .caps { font: 600 .58rem/1 ui-monospace, Consolas, monospace; color: #93a0ad; }
+  .wkey .lbl { font: .58rem/1 ui-monospace, Consolas, monospace; color: #78828e; }
+  #kb-splits, #kb-octave, #kb-meter, #kb-detail {
+    font-family: ui-monospace, Consolas, monospace; font-size: .85rem; min-height: 1.4em;
+  }
+  #kb-splits, #kb-meter { color: var(--dim); }
+  #kb-meter.bad { color: var(--bad); font-weight: 600; }
+  #kb-octave { color: var(--ink); }
+  #kb-detail { color: var(--accent); }
+  #kb-midiState { color: var(--dimmer); font-size: .85rem; }
+  #kb-midiState.on { color: var(--accent); }
+  #kb-mpeLive { font: .78rem/1.5 ui-monospace, Consolas, monospace; color: var(--accent); margin-left: auto; white-space: nowrap; }
+  .view .params .knob { grid-template-columns: 5.4rem 1fr 3.4rem; }
+
+  #errorCard { display: none; margin: .8rem 1rem; }
   #errorCard.show { display: block; }
-  #file { display: none; }
+  .site-foot { padding-left: 1rem; padding-right: 1rem; max-width: none; }
 </style>
 </head>
 <body>
-<nav class="nav">
-  <a class="brand" href="./index.html">LBP Tracker</a>
-  <a class="tab" href="./index.html" aria-current="page">Editor</a>
-  <a class="tab" href="./live.html">Live</a>
-  <a class="tab" href="./render.html">Render</a>
-  <a class="tab" href="./midi.html">Converter</a>
-  <a class="tab" href="./keyboard.html">Keyboard</a>
+<header class="daw-top">
+  <a class="brand" href="./">LBP Tracker</a>
+  <div class="tabs" role="tablist" aria-label="Views">
+    <button type="button" role="tab" data-view="arrange" aria-selected="true">Arrange</button>
+    <button type="button" role="tab" data-view="mixer">Mixer</button>
+    <button type="button" role="tab" data-view="render">Render</button>
+    <button type="button" role="tab" data-view="convert">Convert</button>
+    <button type="button" role="tab" data-view="keyboard">Keyboard</button>
+  </div>
   <span class="spacer"></span>
-  <span class="where">everything runs on your machine</span>
-</nav>
-<main>
-  <header>
-    <h1>Compose on the game&rsquo;s own grid</h1>
-    <p class="sub">
-      The Music Sequencer as an editor: a board of instruments, eight steps to a bar, and inside
-      each one a note grid where a note is a chain of points &mdash; the size of a point its volume,
-      its colour its timbre, and a straight line between two points the glide the engine plays.
-      Every change is heard through the same engine as the renderer, at once.
-      <strong>Everything happens on your own computer.</strong>
-    </p>
-  </header>
+  <div class="transport">
+    <button id="rewind" type="button" aria-label="Back to the start" disabled>&#9198;</button>
+    <button id="play" type="button" aria-label="Play" disabled>&#9654;</button>
+    <span id="clock">0:00 / 0:00</span>
+    <label for="tempoBox" class="hintline" style="margin:0">BPM</label>
+    <input id="tempoBox" type="number" min="20" max="400" step="1" value="240" aria-label="Tempo" autocomplete="off">
+    <input id="vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" autocomplete="off">
+  </div>
+  <span class="spacer"></span>
+  <span id="dirty" title="unsaved changes"></span>
+  <input id="songName" type="text" placeholder="untitled" aria-label="Song name" autocomplete="off">
+  <button id="newSong" type="button">new</button>
+  <button id="openToggle" type="button">open&hellip;</button>
+  <button id="save" type="button" class="primary">save .json</button>
+</header>
 
-  <section>
-    <p class="step"><b>1</b> Start from a level, a saved song, or nothing</p>
+<dialog id="fileDialog" class="picker-dialog file-dialog">
+  <div class="picker-box">
+    <p class="picker-title">Open a level, a backup, a zip, a song file, or a level from the online archive</p>
     <div id="open"></div>
-    <div class="row" style="margin-top:.7rem">
-      <button id="newSong" type="button">new empty song</button>
-      <button id="openSong" type="button">open a saved song (.json)…</button>
-      <input id="file" type="file" accept=".json,application/json" autocomplete="off">
-      <span class="spacer"></span>
-      <label for="seq">sequencer</label>
+    <div class="file-bar" style="margin-top:.8rem">
+      <label for="seq">song in the level</label>
       <div id="seq"></div>
     </div>
-    <div id="status">start a new song, or open a level</div>
-  </section>
-
-  <section>
-    <p class="step"><b>2</b> The board &mdash; four bars to a tile, one instrument per chip</p>
-    <div id="transport">
-      <button id="play" aria-label="Play" disabled>&#9654;</button>
-      <button id="rewind" aria-label="Back to the start" disabled>&#9198;</button>
-      <span id="clock" class="mono">0:00 / 0:00</span>
+    <p class="hintline">A level holding several songs lists them here; picking one makes it the song. Unsaved changes are lost.</p>
+    <div class="row picker-foot">
       <span class="spacer"></span>
-      <span id="load">idle</span>
-      <input id="vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" autocomplete="off">
+      <button id="fileClose" type="button">close</button>
     </div>
-    <div id="boardScroller" class="board-scroller" tabindex="0" aria-label="The board">
-      <canvas id="board"></canvas>
-      <div id="boardSpacer"></div>
-    </div>
-    <p class="hintline">
-      One row is selected at a time &mdash; click its number, a chip on it, or a cell &mdash; and
-      as the song plays the grid below follows the chip the playhead is inside on that row.
-      <strong>Drag across empty cells to draw a new chip</strong> as long as the drag &mdash; four
-      bars at least, then two at a time &mdash; and pick its instrument when you let go; a
-      double-click draws a four-bar one. Click a chip to edit its notes below; drag it to another
-      cell. Click the bar numbers to seek; drag the board&rsquo;s bottom-right corner to make it
-      taller. <kbd>Delete</kbd> removes the selected chip when the board has the focus,
-      <kbd>Ctrl+D</kbd> duplicates it into the cursor cell. A chip is as long as its note grid
-      &mdash; four bars, then two more at a time &mdash; and chips may overlap in time, though the
-      game&rsquo;s composers rarely let them; the selected one is drawn on top.
-    </p>
-  </section>
+  </div>
+</dialog>
 
-  <section>
-    <p class="step"><b>3</b> The notes</p>
-    <div class="roll-toolbar">
-      <span class="title" id="rollTitle">no instrument selected</span>
-      <span class="spacer"></span>
-      <label class="check" title="Three cells to the beat instead of four: each is four thirds of a step, which is what the record's thirds are for">
-        <input id="triplets" type="checkbox" autocomplete="off"> triplet grid
-      </label>
-      <button id="fitNotes" type="button" title="Scroll the grid to the notes">find the notes</button>
-    </div>
-    <div id="rollScroller" class="roll-scroller" tabindex="0" aria-label="The note grid">
-      <canvas id="roll"></canvas>
-      <div id="rollSpacer"></div>
-    </div>
-    <div id="hover"></div>
-    <p class="hintline">
-      Click to place a note, drag to give it an end &mdash; sideways for a held note, diagonally
-      for a glide. Drag a point to move it; <kbd>Shift</kbd>+drag up or down for its volume,
-      <kbd>Alt</kbd>+drag for its timbre. Double-click a line to add a point, double-click a point
-      to remove it; right-click removes a point or, on the line, the whole note.
-      <kbd>Shift</kbd>+drag on empty space selects; <kbd>Ctrl</kbd>+click adds to the selection.
-      Arrow keys nudge the selection, <kbd>+</kbd>/<kbd>-</kbd> its volume, <kbd>[</kbd>/<kbd>]</kbd>
-      its timbre, <kbd>Delete</kbd> removes it, <kbd>Ctrl+C</kbd>/<kbd>V</kbd> copy and paste,
-      <kbd>Ctrl+Z</kbd>/<kbd>Y</kbd> undo and redo, <kbd>Space</kbd> plays. The keyboard on the
-      left plays the instrument.
-    </p>
-  </section>
 
-  <section>
-    <p class="step"><b>4</b> Settings</p>
-    <div id="inspector"></div>
-  </section>
+<main>
+  <!-- ================================================================ Arrange -->
+  <div id="view-arrange" class="view">
+    <section>
+      <p class="step"><b>1</b> The board &mdash; four bars to a tile, one instrument per chip</p>
+      <div id="boardScroller" class="board-scroller" tabindex="0" aria-label="The board">
+        <canvas id="board"></canvas>
+        <div id="boardSpacer"></div>
+      </div>
+      <p class="hintline">
+        One row is selected at a time &mdash; click its number, a chip on it, or a cell &mdash; and
+        as the song plays the grid below follows the chip the playhead is inside on that row.
+        <strong>Drag across empty cells to draw a new chip</strong> as long as the drag &mdash; four
+        bars at least, then two at a time &mdash; and pick its instrument when you let go; a
+        double-click draws a four-bar one. Click a chip to edit its notes below; drag it to another
+        cell. Click the bar numbers to seek; drag the board&rsquo;s bottom-right corner to make it
+        taller. <kbd>Delete</kbd> removes the selected chip when the board has the focus,
+        <kbd>Ctrl+D</kbd> duplicates it into the cursor cell. A chip is as long as its note grid and
+        chips may overlap in time, though the game&rsquo;s composers rarely let them; the selected
+        one is drawn on top.
+      </p>
+    </section>
 
-  <section>
-    <p class="step"><b>5</b> Keep it</p>
-    <div class="row">
-      <button id="save" type="button" class="primary">save the song (.json)</button>
-      <button id="toLive" type="button">open in the live player</button>
-      <button id="toMidi" type="button">download as MIDI</button>
-      <span class="spacer"></span>
-      <span id="saveNote" class="hintline" style="margin:0"></span>
+    <div class="arrange-grid">
+      <section>
+        <div class="roll-toolbar">
+          <span class="title" id="rollTitle">no instrument selected</span>
+          <span class="spacer"></span>
+          <label class="check" title="Three cells to the beat instead of four: each is four thirds of a step, which is what the record's thirds are for">
+            <input id="triplets" type="checkbox" autocomplete="off"> triplet grid
+          </label>
+          <button id="fitNotes" type="button" title="Scroll the grid to the notes">find the notes</button>
+        </div>
+        <div id="rollScroller" class="roll-scroller" tabindex="0" aria-label="The note grid">
+          <canvas id="roll"></canvas>
+          <div id="rollSpacer"></div>
+        </div>
+        <div id="hover"></div>
+        <p class="hintline">
+          Click to place a note, drag to give it an end &mdash; sideways for a held note, diagonally
+          for a glide. Drag a point to move it; <kbd>Shift</kbd>+drag up or down for its volume,
+          <kbd>Alt</kbd>+drag for its timbre. Double-click a line to add a point, double-click a point
+          to remove it; right-click removes a point or, on the line, the whole note.
+          <kbd>Shift</kbd>+drag on empty space selects; <kbd>Ctrl</kbd>+click adds to the selection.
+          Arrow keys nudge the selection, <kbd>+</kbd>/<kbd>-</kbd> its volume, <kbd>[</kbd>/<kbd>]</kbd>
+          its timbre, <kbd>Delete</kbd> removes it, <kbd>Ctrl+C</kbd>/<kbd>V</kbd> copy and paste,
+          <kbd>Ctrl+Z</kbd>/<kbd>Y</kbd> undo and redo, <kbd>Space</kbd> plays. The keyboard on the
+          left plays the instrument.
+        </p>
+      </section>
+      <section>
+        <p class="step">Selected</p>
+        <div id="inspector"></div>
+      </section>
     </div>
-    <p class="hintline">
-      The song file is this tracker&rsquo;s own format &mdash; JSON, every note as you placed it.
-      Writing it back into a level the game can load is the next thing to build; until then the
-      MIDI carries the placements and the live player and the renderer play the song as the game
-      would.
-    </p>
-  </section>
+  </div>
+
+  <!-- ================================================================== Mixer -->
+  <div id="view-mixer" class="view" hidden>
+    <section>
+      <p class="step">The song&rsquo;s own settings, and the engine</p>
+      <div id="mixer"></div>
+    </section>
+  </div>
+
+  <!-- ================================================================= Render -->
+  <div id="view-render" class="view" hidden>
+    <section>
+      <p class="step"><b>1</b> Render the song to a WAV</p>
+      <div class="row">
+        <button id="rd-go" class="primary" disabled>Render</button>
+        <button id="rd-save" disabled>Download WAV</button>
+        <span class="spacer"></span>
+        <span id="rd-opt-range" style="display:contents"></span>
+        <span id="rd-rangeFields" class="off">
+          <label for="rd-from">from</label>
+          <input id="rd-from" type="text" inputmode="numeric" placeholder="0:00" size="5" disabled>
+          <label for="rd-to">to</label>
+          <input id="rd-to" type="text" inputmode="numeric" placeholder="end" size="5" disabled>
+        </span>
+      </div>
+      <details id="rd-switches">
+        <summary>Engine switches &mdash; every default is what was measured from the game</summary>
+        <div class="switch-grid">
+          <div class="switch">
+            <div class="line">
+              <label for="rd-voices">voice pool</label>
+              <input id="rd-voices" type="text" inputmode="numeric" size="4">
+              <span id="rd-opt-pool" style="display:contents"></span>
+            </div>
+            <p class="why">
+              The engine&rsquo;s is 32. Uncapping it plays every note, which is not the game &mdash; a
+              level written against the pool depends on the stealing &mdash; but it is how the
+              pool&rsquo;s effect gets measured.
+            </p>
+          </div>
+          <div class="switch">
+            <div class="line"><span id="rd-opt-stage" style="display:contents"></span></div>
+            <p class="why">
+              Take either off to compare against a recording of the game made with that effect
+              disabled. Each removes the effect&rsquo;s return, not its send &mdash; the send still
+              feeds the output clip.
+            </p>
+          </div>
+          <div class="switch">
+            <div class="line"><span id="rd-opt-clip" style="display:contents"></span></div>
+            <p class="why">
+              The plugin hard-clips its own output to &plusmn;1 before the reverb send &mdash; the one
+              nonlinearity in the output stage. Whether it engages depends on our absolute level
+              matching the game&rsquo;s, which has never been checked.
+            </p>
+          </div>
+        </div>
+      </details>
+      <div id="rd-status">nothing rendered yet</div>
+      <div id="rd-bar"><div></div></div>
+    </section>
+
+    <section>
+      <p class="step"><b>2</b> Listen</p>
+      <div id="rd-playerUi">
+        <canvas id="rd-wave" class="empty" width="1200" height="128" tabindex="0" role="slider"
+                aria-label="Seek through the render" aria-valuemin="0" aria-valuemax="0"
+                aria-valuenow="0" aria-valuetext="nothing rendered yet"></canvas>
+        <div id="rd-transport">
+          <button id="rd-playPause" type="button" aria-label="Play" disabled>&#9654;</button>
+          <span id="rd-times" class="mono">0:00 / 0:00</span>
+          <span class="spacer"></span>
+          <span id="rd-hint">click to seek &middot; space to play &middot; arrows to scrub</span>
+          <input id="rd-vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" disabled>
+        </div>
+      </div>
+      <audio id="rd-player" hidden></audio>
+    </section>
+
+    <section>
+      <p class="step"><b>3</b> What the render did</p>
+      <div id="rd-stats"></div>
+      <p class="note-empty">Nothing rendered yet &mdash; the numbers appear here.</p>
+    </section>
+  </div>
+
+  <!-- ================================================================ Convert -->
+  <div id="view-convert" class="view" hidden>
+    <section>
+      <p class="step"><b>1</b> The song out &mdash; as MIDI</p>
+      <div class="row">
+        <button id="cv-save" class="primary" disabled>Download .mid</button>
+        <span id="cv-status" style="margin:0"></span>
+      </div>
+      <div id="cv-options" style="margin-top:.9rem"></div>
+      <div id="cv-report">
+        <div class="tally" id="cv-tally"></div>
+        <ul class="lost" id="cv-lost"></ul>
+      </div>
+    </section>
+
+    <section>
+      <p class="step"><b>2</b> A MIDI file in &mdash; it becomes the song</p>
+      <div class="drop" id="cv-midiDrop">
+        <strong id="cv-midiTitle">Open a .mid</strong>
+        <span id="cv-midiHint">Click here, or drop a MIDI file onto this box. Anything a DAW writes will do.</span>
+        <input id="cv-midiFile" type="file" accept=".mid,.midi,audio/midi">
+      </div>
+      <div id="cv-midiStatus"></div>
+      <div id="cv-inReport">
+        <div class="tally" id="cv-inTally"></div>
+        <p class="hintline">
+          A file that came from here brings its instruments with it; one from a DAW has none, so
+          pick what its parts should sound like, then take it as the song.
+        </p>
+        <div id="cv-assign"></div>
+        <div class="row" style="margin-top:.7rem">
+          <button id="cv-take" class="primary" disabled>Make it the song &rarr;</button>
+          <span class="hintline" style="margin:0">Replaces what is open; unsaved changes are lost.</span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <details>
+        <summary>What survives the trip, and what cannot</summary>
+        <p class="hintline">
+          <strong>The grid.</strong> A step is a sixteenth and a note can sit a third of one late, so
+          the file is written at 480 ticks per quarter: a step is 120 ticks and a third of one is
+          exactly 40. Nothing is rounded.
+        </p>
+        <p class="hintline">
+          <strong>The glides.</strong> A note in this sequencer is a chain of control points and the
+          engine ramps between them. MIDI pitch bend holds its value until the next message, so the
+          export resamples a glide onto the same third-of-a-step grid the records use, and the
+          import folds the samples back to the points they came from.
+        </p>
+        <p class="hintline">
+          <strong>What MIDI has no room for</strong> rides in text meta events: the tempo and swing,
+          the mixer&rsquo;s channels and volumes, and per part its instrument, row, level, pan and
+          sends. A file that goes out and comes back is the same song.
+        </p>
+        <p class="hintline">
+          <strong>What it cannot carry.</strong> An MPE zone has fifteen member channels and this
+          engine has thirty-two voices, so a dense passage runs out; a note that has to share a
+          channel loses its own glide, and the count is always shown. Key and scale are folded into
+          the note numbers on the way out, so an import comes back chromatic, sounding the same.
+        </p>
+      </details>
+    </section>
+
+    <section>
+      <p class="step">Log</p>
+      <div id="cv-log" class="logbox"></div>
+    </section>
+  </div>
+
+  <!-- =============================================================== Keyboard -->
+  <div id="view-keyboard" class="view" hidden>
+    <section>
+      <p class="step"><b>1</b> An instrument &mdash; the selected chip&rsquo;s, or any</p>
+      <div class="row">
+        <label for="kb-instrument">instrument</label>
+        <select id="kb-instrument">
+          <option value="" selected disabled>pick one&hellip;</option>
+        </select>
+        <span class="spacer"></span>
+        <label for="kb-midiIn">MIDI in</label>
+        <select id="kb-midiIn"><option value="">none</option></select>
+        <span id="kb-midiState">not requested</span>
+      </div>
+      <div class="row">
+        <label for="kb-mpeMode">MPE</label>
+        <select id="kb-mpeMode">
+          <option value="auto" selected>auto &mdash; take the zone the controller announces</option>
+          <option value="lower">lower zone &mdash; master ch 1, notes on 2&ndash;16</option>
+          <option value="upper">upper zone &mdash; master ch 16, notes on 1&ndash;15</option>
+          <option value="off">off &mdash; plain MIDI, one channel</option>
+        </select>
+        <label for="kb-bendRange">bend range</label>
+        <select id="kb-bendRange">
+          <option value="1">&plusmn;1</option>
+          <option value="2" selected>&plusmn;2 &mdash; a plain wheel</option>
+          <option value="7">&plusmn;7</option>
+          <option value="12">&plusmn;12</option>
+          <option value="24">&plusmn;24</option>
+          <option value="48">&plusmn;48 &mdash; the MPE default</option>
+          <option value="96">&plusmn;96</option>
+        </select>
+        <span id="kb-mpe-toggles" style="display:contents"></span>
+      </div>
+      <div class="row" style="margin-top:.5rem">
+        <span class="hintline" id="kb-mpeState" style="margin:0"></span>
+        <span id="kb-mpeLive"></span>
+      </div>
+      <div id="kb-status"></div>
+      <div id="kb-splits"></div>
+    </section>
+
+    <div id="kb-controls" hidden>
+      <section>
+        <p class="step"><b>2</b> Play</p>
+        <div id="kb-piano" tabindex="0" role="group" aria-label="Keyboard"></div>
+        <p class="hintline">
+          <kbd>Z S X D C V G B H N J M</kbd> is one octave with its sharps,
+          <kbd>Q 2 W 3 E R 5 T 6 Y 7 U</kbd> the octave above,
+          <kbd>&larr;</kbd> <kbd>&rarr;</kbd> shift octave, <kbd>Esc</kbd> panics.
+          A note lasts as long as the key is down. The keys play only while this view is open.
+        </p>
+        <div class="row" style="margin-top:.7rem">
+          <div id="kb-octave"></div>
+          <span class="spacer"></span>
+          <div id="kb-meter"></div>
+        </div>
+        <div id="kb-detail"></div>
+      </section>
+
+      <section>
+        <p class="step"><b>3</b> Turn things while it sounds</p>
+        <p class="hintline" style="margin-top:-.2rem">Double-click any fader to put it back where it started.</p>
+        <div id="kb-control-panel"></div>
+      </section>
+
+      <section>
+        <p class="step"><b>4</b> Bench</p>
+        <div class="row">
+          <button id="kb-octaves" type="button">Every slot at its base note</button>
+          <button id="kb-scale" type="button">C major, five octaves</button>
+          <button id="kb-chromatic" type="button">Chromatic C1&rarr;C7</button>
+          <button id="kb-stop" type="button">Stop</button>
+        </div>
+        <div class="row">
+          <div id="kb-note-length" style="flex:1 1 19rem; max-width:24rem"></div>
+          <p class="hintline" style="margin:0; flex:1 1 15rem">
+            How long each note of those sequences is held. The keyboard above ignores it.
+          </p>
+        </div>
+        <div class="row">
+          <label for="kb-engine">engine</label>
+          <select id="kb-engine">
+            <option value="ours" selected>our mixer</option>
+            <option value="browser">browser resampler (control)</option>
+          </select>
+          <label for="kb-interp">sampler</label>
+          <select id="kb-interp">
+            <option value="engine" selected>the game's (linear + mipmaps)</option>
+            <option value="sinc8">windowed sinc</option>
+            <option value="cubic">cubic</option>
+            <option value="linear">linear</option>
+            <option value="nearest">nearest</option>
+          </select>
+          <span id="kb-stage-toggles" style="display:contents"></span>
+        </div>
+        <details>
+          <summary>What this bench is for</summary>
+          <p class="hintline">
+            <strong>Every slot at its base note</strong> plays each sample at ratio exactly 1.0 &mdash;
+            they should sound like one instrument, and a timbre step between them means the splits or
+            the pitch formula are wrong. The coloured bar on each key shows which slot it resolves to.
+          </p>
+          <p class="hintline">
+            <strong>The control.</strong> Switching <em>engine</em> to &ldquo;browser resampler&rdquo;
+            plays the identical sample at the identical pitch through the browser&rsquo;s own
+            resampler. Clean there and dirty here means the fault is ours.
+          </p>
+        </details>
+      </section>
+
+      <section>
+        <p class="step">Log</p>
+        <div id="kb-log" class="logbox"></div>
+      </section>
+    </div>
+  </div>
 
   <section id="errorCard">
     <p class="step">Error</p>
     <pre id="error"></pre>
   </section>
 </main>
-<script type="module" src="./src/editor.ts"></script>
+<footer class="daw-foot">
+  <div id="status">start a new song, or open a level</div>
+  <span class="spacer"></span>
+  <span id="load">idle</span>
+</footer>
+<script type="module" src="./src/daw.ts"></script>
 </body>
 </html>

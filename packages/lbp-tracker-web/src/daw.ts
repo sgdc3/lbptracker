@@ -1,0 +1,262 @@
+/**
+ * The app: one page, one song, five views.
+ *
+ * The top bar holds the views' tabs, the transport and the file actions; the
+ * views mount into their sections and share the song through `daw/session.ts`.
+ * This file is the shell: tabs, transport, file panel, status, the global
+ * keys. Everything a view does is in `daw/*`.
+ */
+
+import { sequencersOf, type BackupResult } from '@lbptracker/cwlib/backup.ts';
+import type { Sequencer } from '@lbptracker/cwlib/project.ts';
+import { songFromJson, songFromSequencer, newSong } from '@lbptracker/lib/song.ts';
+import { mountFooter } from './footer.ts';
+import { isSongFile, openedTitle, readOpened, saveNote, type Opened } from './open-level.ts';
+import { seqPicker } from './seq-picker.ts';
+import { saveSongFile } from './song-file.ts';
+import { mountOpen } from './widgets/open-panel.ts';
+import {
+  RATE, clock, ensureAssets, onPlan, onPlayer, onStatus, openSong, player, setError,
+  setErrorSink, setStatus, state,
+} from './daw/session.ts';
+import { mountArrange } from './daw/arrange.ts';
+import { mountMixer } from './daw/mixer.ts';
+import { mountRender } from './daw/render-view.ts';
+import { mountConvert } from './daw/convert-view.ts';
+import { mountKeyboard } from './daw/keyboard-view.ts';
+import type { Health } from './player.ts';
+
+const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+
+// -------------------------------------------------------------------- status
+
+const statusLine = $<HTMLDivElement>('status');
+onStatus((text, bad) => {
+  statusLine.textContent = text;
+  statusLine.classList.toggle('bad', bad);
+});
+const errorCard = $<HTMLElement>('errorCard');
+const errorBox = $<HTMLPreElement>('error');
+setErrorSink((text) => {
+  errorBox.textContent = text;
+  errorCard.classList.toggle('show', text !== '');
+});
+
+// ---------------------------------------------------------------------- tabs
+
+export type ViewName = 'arrange' | 'mixer' | 'render' | 'convert' | 'keyboard';
+const tabs = [...document.querySelectorAll<HTMLButtonElement>('.tabs [data-view]')];
+const viewListeners = new Set<(view: ViewName) => void>();
+let current: ViewName = 'arrange';
+
+export const activeView = (): ViewName => current;
+
+function showView(view: ViewName): void {
+  current = view;
+  for (const tab of tabs) tab.setAttribute('aria-selected', String(tab.dataset.view === view));
+  for (const section of document.querySelectorAll<HTMLElement>('.view')) {
+    section.hidden = section.id !== `view-${view}`;
+  }
+  for (const l of viewListeners) l(view);
+}
+for (const tab of tabs) tab.addEventListener('click', () => showView(tab.dataset.view as ViewName));
+
+// ----------------------------------------------------------------- transport
+
+const playButton = $<HTMLButtonElement>('play');
+const rewindButton = $<HTMLButtonElement>('rewind');
+const clockLabel = $<HTMLSpanElement>('clock');
+const loadLabel = $<HTMLSpanElement>('load');
+const volSlider = $<HTMLInputElement>('vol');
+const tempoBox = $<HTMLInputElement>('tempoBox');
+
+let health: Health = { sounding: 0, notes: 0, queued: 0, audioLoad: null, dropouts: 0, lostMs: 0 };
+function showLoad(): void {
+  const { sounding, notes, queued, dropouts, lostMs } = health;
+  if (!player.playing && sounding === 0 && queued === 0) {
+    loadLabel.textContent = player.hasPlan ? 'ready' : 'idle';
+    return;
+  }
+  const dropped = dropouts === 0
+    ? 'no dropouts'
+    : `${dropouts} dropout${dropouts === 1 ? '' : 's'}${lostMs >= 1 ? ` (${lostMs.toFixed(0)} ms lost)` : ''}`;
+  loadLabel.textContent = `${notes} notes · ${dropped}`;
+}
+function paintClock(): void {
+  clockLabel.textContent = `${clock(player.position() / RATE)} / ${clock(player.songSeconds)}`;
+}
+onPlayer({
+  health: (h) => {
+    health = h;
+    showLoad();
+  },
+  tick: paintClock,
+  playing: (on) => {
+    playButton.textContent = on ? '⏸' : '▶';
+    playButton.setAttribute('aria-label', on ? 'Pause' : 'Play');
+    showLoad();
+  },
+});
+onPlan(() => {
+  playButton.disabled = false;
+  rewindButton.disabled = false;
+  paintClock();
+  showLoad();
+});
+playButton.addEventListener('click', () => (player.playing ? player.stop() : player.play()));
+rewindButton.addEventListener('click', () => player.seek(0));
+volSlider.addEventListener('input', () => player.setVolume(Number(volSlider.value)));
+player.setVolume(Number(volSlider.value));
+
+tempoBox.addEventListener('change', () => {
+  const tempo = Math.max(20, Math.min(400, Math.round(Number(tempoBox.value)) || state.song.tempo));
+  tempoBox.value = String(tempo);
+  if (tempo !== state.song.tempo) state.edit('settings', (s) => { s.tempo = tempo; }, 'tempo');
+});
+
+// ---------------------------------------------------------------- the title
+
+const songName = $<HTMLInputElement>('songName');
+const dirty = $<HTMLSpanElement>('dirty');
+songName.addEventListener('input', () => {
+  state.edit('selection', (s) => { s.name = songName.value; }, 'name');
+});
+function refreshHeader(): void {
+  if (document.activeElement !== songName) songName.value = state.song.name;
+  if (document.activeElement !== tempoBox) tempoBox.value = String(state.song.tempo);
+  dirty.textContent = state.dirty ? '•' : '';
+  document.title = `LBP Tracker${state.dirty ? ' •' : ''} — ${state.song.name || 'untitled'}`;
+}
+state.onChange(refreshHeader);
+
+// ----------------------------------------------------------------- the files
+
+/** What a level gave us, by the picker's key. Picking one makes it the song. */
+let songs = new Map<string, Sequencer>();
+const fileDialog = $<HTMLDialogElement>('fileDialog');
+$('openToggle').addEventListener('click', () => fileDialog.showModal());
+$('fileClose').addEventListener('click', () => fileDialog.close());
+fileDialog.addEventListener('click', (event) => {
+  if (event.target === fileDialog) fileDialog.close();
+});
+
+const picker = seqPicker($<HTMLDivElement>('seq'), (key) => {
+  const seq = songs.get(key);
+  if (!seq) return;
+  if (state.dirty && !window.confirm('Throw away the unsaved changes?')) return;
+  openSong(songFromSequencer(seq), `opened "${seq.name}"`);
+  fileDialog.close();
+});
+
+const drop = mountOpen('#open', { onOpen: (opened) => openLevel(opened) });
+
+async function openLevel(opened: Opened): Promise<void> {
+  setError('');
+  drop.busy(true);
+  setStatus(`reading ${opened.label}…`);
+  try {
+    await ensureAssets();
+    const only = opened.files.length === 1 ? opened.files[0] : undefined;
+    // One of our own song files opens as the song it holds -- ids, names and
+    // grid lengths intact -- rather than through the sequencer it also is.
+    if (only && isSongFile(only)) {
+      openSong(songFromJson(new TextDecoder().decode(only.bytes)), `opened ${only.name}`);
+      drop.loaded(true);
+      drop.say(only.name);
+      songs = new Map();
+      picker.setRows([]);
+      fileDialog.close();
+      return;
+    }
+    const result: BackupResult = await readOpened(opened.files);
+    songs = new Map();
+    for (const p of result.projects) {
+      for (const sequencer of p.sequencers) songs.set(`${p.file}#${sequencer.uid}`, sequencer);
+    }
+    const rows = sequencersOf(result).map((r) => ({
+      key: r.key,
+      name: r.name,
+      tracks: r.tracks,
+      file: result.projects.length > 1 ? r.file : undefined,
+    }));
+    const first = picker.setRows(rows);
+    drop.loaded(true);
+    drop.say(openedTitle(result, rows.length, opened.label));
+    const note = saveNote(result);
+    if (first) {
+      const seq = songs.get(first)!;
+      openSong(songFromSequencer(seq), `opened "${seq.name}"`);
+      // One song: nothing to choose, so the dialog can go. Several: leave the
+      // picker in view, the choice is the point.
+      if (rows.length === 1) fileDialog.close();
+    } else if (note) setStatus(note, true);
+    else if (result.failed.length) setStatus(`nothing to open: ${result.failed[0].why}`, true);
+    else setStatus('no sequencers in there', true);
+    if (result.failed.length > 0) {
+      setError(result.failed.map((f) => `${f.name}: ${f.why}`).join('\n'));
+    }
+  } catch (error) {
+    setStatus('failed', true);
+    setError(String((error as Error).stack ?? error));
+  } finally {
+    drop.busy(false);
+  }
+}
+
+$('newSong').addEventListener('click', () => {
+  if (state.dirty && !window.confirm('Throw away the unsaved changes?')) return;
+  songs = new Map();
+  picker.setRows([]);
+  openSong(newSong(), 'a new song');
+  state.selection.cursor = { cell: 0, row: 0 };
+  state.touch('selection');
+  showView('arrange');
+});
+
+function saveSong(): void {
+  const name = saveSongFile(state.song);
+  state.dirty = false;
+  refreshHeader();
+  setStatus(`saved ${name}`);
+}
+$('save').addEventListener('click', saveSong);
+
+window.addEventListener('beforeunload', (event) => {
+  if (state.dirty) event.preventDefault();
+});
+
+// --------------------------------------------------------------- the views
+
+const isActive = (view: ViewName) => () => current === view;
+const arrange = mountArrange({ isActive: isActive('arrange') });
+mountMixer();
+mountRender({ isActive: isActive('render') });
+mountConvert({ isActive: isActive('convert'), onShow: (l) => viewListeners.add((v) => v === 'convert' && l()) });
+mountKeyboard({ isActive: isActive('keyboard'), onShow: (l) => viewListeners.add((v) => v === 'keyboard' && l()) });
+
+// Space plays and pauses from anywhere but a field.
+window.addEventListener('keydown', (event) => {
+  const target = event.target as HTMLElement | null;
+  if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
+  if (event.code !== 'Space' || !player.hasPlan) return;
+  event.preventDefault();
+  if (player.playing) player.stop();
+  else player.play();
+});
+
+// ---------------------------------------------------------------- start up
+
+// The site opens on the arrange view of an empty song, as the owner asked;
+// the view is not remembered across loads.
+showView('arrange');
+refreshHeader();
+void ensureAssets().catch((error: unknown) => {
+  setStatus('the game\'s instruments are not available: extract them first', true);
+  setError(String((error as Error).stack ?? error));
+});
+mountFooter();
+
+// Everything a console session needs to poke the app, as the bench does.
+(window as unknown as { __lbpEditor: unknown }).__lbpEditor = {
+  state, player, board: arrange.board, roll: arrange.roll, showView,
+};

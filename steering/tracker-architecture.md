@@ -51,7 +51,7 @@ block size", and it catches a grid mistake within a minute of it being made.
 |---|---|---|
 | `packages/cwlib-ts` | `@lbptracker/cwlib` | reading LBP's serialised resources: the container, the Thing graph and its **50** part readers, plans, chunks, saves, archives |
 | `packages/lbp-tracker-lib` | `@lbptracker/lib` | turning that into sound: the sampler, the DSP chain, the render pipeline, MIDI |
-| `packages/lbp-tracker-web` | `@lbptracker/web` | the four pages |
+| `packages/lbp-tracker-web` | `@lbptracker/web` | the app: one page, one song, five views ([editor.md](editor.md)) |
 
 ❗ **The split is by dependency direction, not by taxonomy**, and the import graph decided it:
 `cwlib` is closed under its own imports and names nothing above it. That is why `scale.ts` and
@@ -163,9 +163,9 @@ fixtures 404 with no other symptom.
 `send_metrics` off. `wrangler login` once before the first deploy. Live at
 <https://lbptracker.sgdc3.it> since 2026-09-06 — a Custom Domain in `wrangler.jsonc`, so Cloudflare
 owns the DNS record and the certificate; the `workers.dev` address is off on purpose (313 files
-uploaded on the first deploy, the sourcemaps included). ⚠️ Cloudflare canonicalises `/render.html` to `/render` with a 307 — the
-nav's `./render.html` links still work, one redirect each; `html_handling` is the default
-`auto-trailing-slash` and this is what it means.
+uploaded on the first deploy, the sourcemaps included). ⚠️ Cloudflare canonicalises `/x.html` to
+`/x` with a 307 (`html_handling` is the default `auto-trailing-slash`); since the app became one
+page there is only `/`.
 
 ❗ **The staging step is the one place game data enters `dist/`.** It copies exactly what
 `fixtures/rinst/manifest.json` and `fixtures/smp/manifest.json` name — 286 files, 6.7 MB on
@@ -204,7 +204,7 @@ list, and rendering it as reactive components is the predictable way to make an 
 `src/editor/board.ts` and `src/editor/roll.ts` are those canvases, over a song that is a plain
 object with a version counter the Vue panels read ([editor.md](editor.md)).
 
-**`src/controls/`**: one spec per page (`bench.ts`, `live.ts`, `render.ts`, `midi.ts`) and `kit.ts`
+**`src/controls/`**: one spec per view (`bench.ts`, `engine.ts`, `render.ts`, `midi.ts`) and `kit.ts`
 turning each into a typed store, five components. The win is that **a control is declared once**.
 Every fader used to be written twice — in the HTML with its `min`/`max`/`value`, and in the module
 as a row carrying its formatter, joined by a string id, with `${id}Label` naming a third element —
@@ -216,7 +216,7 @@ wrong id will not compile; ❗ **`per` is one number, not two functions** (`valu
 `raw = value * per`), so the inverse cannot disagree; `format` is handed the *engine's* number; the
 watcher that rebuilds the output stage is generated from the `effects` flags. ⚠️ A store belongs to
 one page — ids repeat with different ranges — so components take it through `provide`/`inject`.
-`render.html` was converted least, on purpose: its options live in `.switch` cards beside prose,
+The render view was converted least, on purpose: its options live in `.switch` cards beside prose,
 so only the checks moved into a spec.
 
 **`src/widgets/`**: what more than one page draws — `SeqPicker.vue`, `ArchivePanel.vue`,
@@ -241,10 +241,11 @@ and `defineExpose` unwraps refs, so `ui.busy.value = true` throws only when the 
 ## Opening a backup, not a level
 
 A creator's backup is a **pile**: the game writes each resource under its own SHA-1, so "open your
-level" otherwise means "find the right extensionless file among forty and guess". All four pages
-that open levels take a folder, a zip of one, a single file, one of this tracker's own `.json`
-song files, **or a root level hash out of the public archive**, and every route ends in the same
-`onOpen` with the same `{ name, bytes }[]`, read by `readOpened` in `src/open-level.ts`.
+level" otherwise means "find the right extensionless file among forty and guess". The app's drop
+zone takes a folder, a zip of one, a single file, one of this tracker's own `.json` song files,
+**or a root level hash out of the public archive**, and every route ends in the same `onOpen`
+with the same `{ name, bytes }[]`, read by `readOpened` in `src/open-level.ts`; a level holding
+several sequencers puts them in the picker, and picking one makes it the song.
 The formats are in [level-files.md](level-files.md); this is the behaviour around them.
 
 - `packages/cwlib-ts/src/backup.ts` reads over `{ name, bytes }[]` and knows nothing about files,
@@ -277,14 +278,14 @@ The formats are in [level-files.md](level-files.md); this is the behaviour aroun
 
 ## The live player — settings are applied, not re-planned
 
-❗ **The player is `packages/lbp-tracker-web/src/player.ts`, one class shared by `live.html` and
-`index.html`, the editor** since 2026-09-06; the invariants below are its, and the pages own only the DOM
-around it. ⚠️ While the scheduler lived in `live.ts` its gain read `channelVolume` without the
+❗ **The player is `packages/lbp-tracker-web/src/player.ts`, one class with one instance in
+`src/daw/session.ts`** since 2026-09-06 — the live page's scheduler, kept whole when the pages
+became one app; the invariants below are its, and the shell owns only the transport around it. ⚠️ While the scheduler lived in `live.ts` its gain read `channelVolume` without the
 board's height, so rows were re-banded by the modulo fallback on the way back in — the plan's gain
 having been divided out under the bands — and every multi-channel song was mixed on the wrong
 channels; `Player.mixerNow` carries `boardRows`.
 
-⚠️ **Read before adding a control to `packages/lbp-tracker-web/live.html`.** The page builds its
+⚠️ **Read before adding a control to the mixer view.** The session builds its
 plan once — the render's whole voice pass, `renderSequencer` with `planOnly` — and a setting that
 forces that again runs it on the thread that also feeds the audio (`Ascetic`: 1,150 tracks). A
 listener heard the player stutter every time the tempo, the swing, `NumChannels` or a fader moved,
@@ -375,7 +376,7 @@ the quietest (`polyphony.ts`).
 |---|---|
 | `packages/cwlib-ts/src/` | `stream.ts` (big-endian reader, varints, `Revision` gates), `serializer.ts`, `resource.ts` (container, dependency table), `thing.ts` + `parts.ts` (the walk, 50 readers), `level.ts` (worlds, plans, chunks, `boardCell`), `project.ts` + `notes.ts` (the sequencer as data), `savearchive.ts`, `psf.ts`, `zip.ts`, `backup.ts`, `platform/` |
 | `packages/lbp-tracker-lib/src/` | `render.ts` (the pipeline), `audio/mixer.ts` (voices, resampling, panning, looping, per-chunk re-derivation), `audio/interpolate.ts` + `mipmap.ts` (default `linear`; `sinc8` kept for A/B), `audio/moog.ts`, `audio/lfo.ts`, `audio/effects.ts` (echo, reverb, fold constants), `audio/compressor.ts`, `audio/mixer-worklet.ts`, `rinstrument.ts` + `instrument.ts` + `voice.ts`, `envelope.ts`, `params.ts`, `polyphony.ts`, `scale.ts`, `swing.ts`, `fsb.ts` + `ima.ts` + `wav.ts`, `midi.ts` + `smf.ts`, `song.ts` (the editable song and its boundary with the records) |
-| `packages/lbp-tracker-web/` | `index.html` the editor, the front page; `live.html` the live player; `render.html` the offline renderer, in a worker ("Render" in the nav); `midi.html` the MIDI bridge ("Converter" in the nav); `keyboard.html` the instrument bench; `src/player.ts` the scheduler the live page and the editor share; `src/editor/` the board, the roll, the state and the panels; `src/controls/`, `src/widgets/`, `src/assets.ts`, `src/lbparchive.ts`, `src/footer.ts` |
+| `packages/lbp-tracker-web/` | `index.html` the app; `src/daw.ts` the shell (tabs, transport, files); `src/daw/session.ts` the one song, player and plan; `src/daw/arrange.ts`, `mixer.ts`, `render-view.ts`, `convert-view.ts`, `keyboard-view.ts` the views; `src/render-worker.ts`; `src/player.ts` the scheduler; `src/editor/` the board, the roll, the state and the panels; `src/controls/`, `src/widgets/`, `src/assets.ts`, `src/lbparchive.ts`, `src/footer.ts` |
 
 ## Testing against the corpus
 
