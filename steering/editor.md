@@ -49,10 +49,14 @@ differ in bytes are the author-ordered ties and the clips with mixed resting bit
 [midi-interchange.md](midi-interchange.md) covers with a bitmap; none differs in a note.
 
 ⚠️ **A clip's grid length is not in the file.** `PInstrument + 0x60` is copied into the engine's
-clip as its length in steps and nothing serialises it ([open-questions.md](open-questions.md)), so
-`clipStepsFor` derives it: the smallest multiple of 16 from 32 up that holds the notes, capped at
-128 because `x` is seven bits. Over the corpus the highest `x` used is 31 in 60,318 of 105,785
-clips and never above 63, which the rule reproduces. `resizeClip` refuses to shrink under a note.
+clip as its length in steps and nothing serialises it ([open-questions.md](open-questions.md)). The
+game's editor gives a placed instrument **4 bars** (64 steps) and lets it grow by **2 bars** at a
+time — 6, then 8, the ceiling `x`'s seven bits allow — reported by the project's owner from the
+game, 2026-09-06, not read out of bytes; `clipStepsFor` derives the smallest of 64, 96 and 128
+that holds the notes. Over the corpus the highest `x` used is 31 in 60,318 of 105,785 clips, 63 in
+the rest and never above 63: 4-bar grids filled half or all of the way, and none extended. On the
+board the extent bar therefore runs four cells past a chip, and chips of one part placed every two
+cells overlap in time, which is what `Ascetic` does. `resizeClip` refuses to shrink under a note.
 
 The project file is JSON — `{ format: "lbptracker-song", version: 1, song }` — as decided at the
 start; `songFromJson` checks the shape rather than trusting it, because a file is the one input

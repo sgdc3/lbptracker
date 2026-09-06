@@ -11,7 +11,7 @@
 import { computed } from 'vue';
 import { SCALE_NAMES } from '@lbptracker/lib/scale.ts';
 import {
-  MAX_CLIP_STEPS, MIXER_CHANNELS, highestStep, resizeClip, type ChangeKindLike,
+  CLIP_STEP_CHOICES, MIXER_CHANNELS, highestStep, resizeClip, type ChangeKindLike,
 } from './inspector-support.ts';
 import { noteName, positionLabel } from './geometry.ts';
 import type { InstrumentInfo } from './instruments.ts';
@@ -34,7 +34,7 @@ const point = computed(() => {
   return props.state.point();
 });
 const channels = computed(() => Array.from({ length: song.value.numChannels }, (_, i) => i));
-const stepChoices = Array.from({ length: MAX_CLIP_STEPS / 16 }, (_, i) => (i + 1) * 16);
+const stepChoices = CLIP_STEP_CHOICES;
 const keyChoices = [
   { value: 0, label: 'default (C)' },
   ...['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'].map((n, i) => ({ value: 12 + i, label: n })),
@@ -194,7 +194,7 @@ const fmt = (v: number, dp = 2) => v.toFixed(dp);
         <div class="knob">
           <label for="clipSteps">grid</label>
           <select id="clipSteps" :value="clip.steps" autocomplete="off" @change="setSteps">
-            <option v-for="s in stepChoices" :key="s" :value="s">{{ s }} steps · {{ s / 16 }} bar{{ s > 16 ? 's' : '' }}</option>
+            <option v-for="s in stepChoices" :key="s" :value="s">{{ s / 16 }} bars · {{ s }} steps</option>
           </select>
           <output></output>
         </div>

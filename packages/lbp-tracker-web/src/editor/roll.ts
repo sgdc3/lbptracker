@@ -91,7 +91,7 @@ export class RollView {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly state: EditorState;
   private readonly cb: RollCallbacks;
-  private layout: RollLayout = { keys: KEYS, ruler: RULER, stepW: STEP_W, rowH: ROW_H, steps: 32 };
+  private layout: RollLayout = { keys: KEYS, ruler: RULER, stepW: STEP_W, rowH: ROW_H, steps: 64 };
   private playStep: number | null = null;
   private drag: Drag | null = null;
   private hoverPitch: number | null = null;
@@ -186,7 +186,7 @@ export class RollView {
 
   private measure(): void {
     const clip = this.state.clip();
-    this.layout = { ...this.layout, steps: clip?.steps ?? 32 };
+    this.layout = { ...this.layout, steps: clip?.steps ?? 64 };
     const full = rollSize(this.layout);
     const viewW = this.scroller.clientWidth;
     const viewH = this.scroller.clientHeight;

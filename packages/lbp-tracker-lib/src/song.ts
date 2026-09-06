@@ -63,7 +63,7 @@ export interface Clip {
   /** Board row, 0 at the top. */
   row: number;
   /**
-   * The note grid's length, in steps: 16..128 in multiples of 16.
+   * The note grid's length, in steps: 64, 96 or 128 -- 4, 6 or 8 bars.
    *
    * ⚠️ Not a field of the file -- see `clipStepsFor`. It is what the editor
    * shows, and a note cannot be placed past it.
@@ -100,10 +100,18 @@ export interface Song {
   nextId: number;
 }
 
-/** A record's `x` is seven bits, so no clip grid can be longer than this. */
+/** A record's `x` is seven bits, so no clip grid can be longer than this: 8 bars. */
 export const MAX_CLIP_STEPS = 128;
-/** The game's own grid: 32 steps, which the corpus's clip lengths agree with. */
-export const DEFAULT_CLIP_STEPS = 32;
+/**
+ * A placed instrument's grid is **4 bars** (64 steps) and grows by **2 bars**
+ * at a time -- 6, then 8, the ceiling `x` allows. Reported by the project's
+ * owner from the game's editor, 2026-09-06; not read out of the bytes, since
+ * nothing in the file carries the length (`clipStepsFor`). The corpus agrees
+ * as far as it can: the highest `x` used is 31 in most clips, 63 in the rest,
+ * and never above 63 -- a 4-bar grid that composers fill half or all of.
+ */
+export const DEFAULT_CLIP_STEPS = 64;
+export const CLIP_STEPS_INCREMENT = 32;
 export const MAX_PITCH = 127;
 export const MAX_VOLUME = 127;
 export const MAX_TIMBRE = 15;
@@ -154,8 +162,8 @@ export function newSong(name = 'untitled'): Song {
 }
 
 /**
- * The grid length a clip needs to hold its notes: the smallest multiple of 16
- * from 32 up, since the game's grid is 32 steps and a clip "may be doubled".
+ * The grid length a clip needs to hold its notes: 4 bars, or the 6 or 8 the
+ * notes reach into.
  *
  * ⚠️ **The file does not say how long a clip's grid is.** The eboot copies a
  * length in steps from `PInstrument + 0x60` into the engine's clip, but the
@@ -165,8 +173,24 @@ export function newSong(name = 'untitled'): Song {
  * reproduces. Steering carries the question.
  */
 export function clipStepsFor(maxStep: number): number {
-  const needed = Math.ceil((maxStep + 1) / STEPS_PER_CELL) * STEPS_PER_CELL;
-  return Math.min(MAX_CLIP_STEPS, Math.max(DEFAULT_CLIP_STEPS, needed));
+  const over = Math.max(0, maxStep + 1 - DEFAULT_CLIP_STEPS);
+  const needed = DEFAULT_CLIP_STEPS + Math.ceil(over / CLIP_STEPS_INCREMENT) * CLIP_STEPS_INCREMENT;
+  return Math.min(MAX_CLIP_STEPS, needed);
+}
+
+/** The grid lengths a clip may have: 64, 96, 128. */
+export const CLIP_STEP_CHOICES: readonly number[] = Array.from(
+  { length: (MAX_CLIP_STEPS - DEFAULT_CLIP_STEPS) / CLIP_STEPS_INCREMENT + 1 },
+  (_, i) => DEFAULT_CLIP_STEPS + i * CLIP_STEPS_INCREMENT,
+);
+
+/** The nearest allowed grid length. */
+export function snapClipSteps(steps: number): number {
+  const n = Math.round((steps - DEFAULT_CLIP_STEPS) / CLIP_STEPS_INCREMENT);
+  return Math.min(
+    MAX_CLIP_STEPS,
+    Math.max(DEFAULT_CLIP_STEPS, DEFAULT_CLIP_STEPS + n * CLIP_STEPS_INCREMENT),
+  );
 }
 
 export function addClip(song: Song, at: { cell: number; row: number }, guid: number, name = ''): Clip {
@@ -342,7 +366,7 @@ export function highestStep(clip: Clip): number {
  * caller sees `false` and the clip is untouched, rather than notes disappearing.
  */
 export function resizeClip(clip: Clip, steps: number): boolean {
-  const wanted = clampInt(steps / STEPS_PER_CELL, 1, MAX_CLIP_STEPS / STEPS_PER_CELL) * STEPS_PER_CELL;
+  const wanted = snapClipSteps(steps);
   if (highestStep(clip) >= wanted) return false;
   clip.steps = wanted;
   return true;
@@ -559,7 +583,7 @@ export function songFromJson(text: string): Song {
   for (const c of raw.clips as Partial<Clip>[]) {
     if (!c || typeof c !== 'object') continue;
     const clip = addClip(song, { cell: num(c.cell, 0), row: num(c.row, 0) }, clampInt(num(c.guid, 0), 0, 0x7fffffff), typeof c.name === 'string' ? c.name : '');
-    clip.steps = clampInt(num(c.steps, DEFAULT_CLIP_STEPS) / STEPS_PER_CELL, 1, MAX_CLIP_STEPS / STEPS_PER_CELL) * STEPS_PER_CELL;
+    clip.steps = snapClipSteps(num(c.steps, DEFAULT_CLIP_STEPS));
     clip.key = clampInt(num(c.key, 0), 0, 23);
     clip.scale = clampInt(num(c.scale, 0), 0, 5);
     clip.level = num(c.level, 1);

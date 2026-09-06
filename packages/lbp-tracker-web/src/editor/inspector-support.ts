@@ -4,5 +4,5 @@
  * once. Nothing here is logic.
  */
 
-export { MAX_CLIP_STEPS, MIXER_CHANNELS, highestStep, resizeClip } from '@lbptracker/lib/song.ts';
+export { CLIP_STEP_CHOICES, MIXER_CHANNELS, highestStep, resizeClip } from '@lbptracker/lib/song.ts';
 export type { ChangeKind as ChangeKindLike } from './state.ts';
