@@ -121,6 +121,13 @@ glide and the plan rebuilds to 14,500 notes; play advances 32 steps in two secon
 Ctrl+Z restores the count; "add an instrument" places a chip at the cursor, the inspector's key select
 writes `Key`, Ctrl+D duplicates into the next free cell, Delete on the board removes the chip.
 
+**The row is the unit the roll follows.** `selection.row` — row 0 on opening — is lit across the
+board; clicking a chip, a cell or a row number selects its row. As the song plays, the roll moves
+to the chip the playhead *enters* on that row (`chipUnder` in `editor.ts`): by transition, not
+by position, so a chip clicked while the playhead sits inside another holds until the playhead
+crosses into a third. The owner asked for this on 2026-09-06: the game's grid is the row being
+watched, and a composer follows one part at a time.
+
 ⚠️ **There is no instrument palette.** One existed for a day — a filtered list with a "most
 used" group beside the board — and the owner had it removed: the inspector's sound select is where
 a sound is chosen, a new chip takes the last one chosen, and the board is the whole width. The

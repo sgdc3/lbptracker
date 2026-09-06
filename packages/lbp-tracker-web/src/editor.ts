@@ -378,6 +378,29 @@ function updateTitle(): void {
 
 // ---------------------------------------------------------------- transport
 
+/**
+ * The chip the playhead was last inside on the selected row.
+ *
+ * ❗ **The roll follows the playhead by transitions, not by position.** When
+ * the playhead enters a chip on the selected row the roll moves to it; while
+ * it stays inside that chip a click on another chip holds, instead of being
+ * snapped back on the next tick. Reset when the row changes, so a new row is
+ * picked up at once.
+ */
+let followed: number | null = null;
+let followedRow = -1;
+
+/** The chip on the selected row that covers a step, if any. */
+function chipUnder(step: number): Clip | undefined {
+  let found: Clip | undefined;
+  for (const c of state.song.clips) {
+    if (c.row !== state.selection.row) continue;
+    const start = c.cell * STEPS_PER_CELL;
+    if (step >= start && step < start + c.steps) found = c;
+  }
+  return found;
+}
+
 function paint(): void {
   const frames = player.position();
   clockLabel.textContent = `${clock(frames / RATE)} / ${clock(player.songSeconds)}`;
@@ -388,6 +411,15 @@ function paint(): void {
   }
   const step = player.stepAt(frames);
   board.setPlayhead(step);
+  if (followedRow !== state.selection.row) {
+    followedRow = state.selection.row;
+    followed = null;
+  }
+  const under = chipUnder(step);
+  if ((under?.id ?? null) !== followed) {
+    followed = under?.id ?? null;
+    if (under && under.id !== state.selection.clipId) state.selectClip(under.id);
+  }
   const clip = state.clip();
   if (clip) {
     const inClip = step - clip.cell * STEPS_PER_CELL;

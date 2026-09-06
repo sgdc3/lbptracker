@@ -26,6 +26,11 @@ import type { Clip, Song, SongNote, SongPoint } from '@lbptracker/lib/song.ts';
 export type ChangeKind = 'notes' | 'settings' | 'effects' | 'selection';
 
 export interface Selection {
+  /**
+   * The board row the roll follows: while the song plays, the chip the
+   * playhead is inside on this row is the one shown. Row 0 to begin with.
+   */
+  row: number;
   /** The clip whose grid the piano roll shows. */
   clipId: number | null;
   /** Note ids within that clip. */
@@ -40,7 +45,7 @@ export class EditorState {
   song: Song;
   /** Ticks on every change; the Vue panels depend on it. */
   readonly version = ref(0);
-  readonly selection: Selection = { clipId: null, noteIds: new Set(), point: null, cursor: null };
+  readonly selection: Selection = { row: 0, clipId: null, noteIds: new Set(), point: null, cursor: null };
   /** The piano roll's grid: thirds of a step when on, whole steps when off. */
   triplets = false;
   dirty = false;
@@ -149,10 +154,11 @@ export class EditorState {
     this.redoStack = [];
     this.lastKey = undefined;
     this.dirty = false;
-    // The chip nearest the start of the song, so the roll opens on something
-    // the board is showing rather than on whatever the file listed first.
-    const first = [...song.clips].sort((a, b) => a.cell - b.cell || a.row - b.row)[0];
-    this.selection.clipId = first?.id ?? null;
+    // The first row, and on it the chip nearest the start of the song, so the
+    // roll opens on something the board is showing rather than on whatever the
+    // file listed first.
+    this.selection.row = 0;
+    this.selection.clipId = this.firstClipOnRow(0)?.id ?? null;
     this.selection.noteIds = new Set();
     this.selection.point = null;
     this.selection.cursor = null;
@@ -196,12 +202,39 @@ export class EditorState {
     return { clip, note, point, index: sel.index };
   }
 
+  /** The chip on a row nearest the start of the song. */
+  firstClipOnRow(row: number): Clip | undefined {
+    return this.song.clips
+      .filter((c) => c.row === row)
+      .sort((a, b) => a.cell - b.cell)[0];
+  }
+
+  /** Select a clip, and with it the row it sits on. */
   selectClip(id: number | null): void {
-    if (this.selection.clipId === id) return;
+    const clip = this.clip(id);
+    if (clip) this.selection.row = clip.row;
+    if (this.selection.clipId === id) {
+      this.notify('selection');
+      return;
+    }
     this.selection.clipId = id;
     this.selection.noteIds = new Set();
     this.selection.point = null;
     this.notify('selection');
+  }
+
+  /**
+   * Select a row: the roll moves to its first chip unless the selected chip
+   * is already on it.
+   */
+  selectRow(row: number): void {
+    const current = this.clip();
+    this.selection.row = row;
+    if (current && current.row === row) {
+      this.notify('selection');
+      return;
+    }
+    this.selectClip(this.firstClipOnRow(row)?.id ?? null);
   }
 
   selectNotes(ids: Iterable<number>, point: Selection['point'] = null): void {

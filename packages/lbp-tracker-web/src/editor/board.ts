@@ -138,12 +138,19 @@ export class BoardView {
 
     ctx.clearRect(0, 0, width, height);
 
-    // Channel bands: the board cut into NumChannels strips, alternately tinted.
+    // Channel bands: the board cut into NumChannels strips, alternately tinted;
+    // and the selected row, the one the roll follows, lit across the board.
     for (let row = 0; row < layout.rows; row += 1) {
       const band = bandOf(row, layout.rows, song.numChannels);
       const r = boardRect(layout, 0, row);
       ctx.fillStyle = band % 2 === 0 ? 'rgba(255,255,255,0.025)' : 'rgba(111,211,160,0.05)';
       ctx.fillRect(layout.gutter, r.y, width - layout.gutter, r.h);
+      if (row === state.selection.row) {
+        ctx.fillStyle = 'rgba(111,211,160,0.13)';
+        ctx.fillRect(0, r.y, width, r.h);
+        ctx.fillStyle = accent;
+        ctx.fillRect(0, r.y, 3, r.h);
+      }
     }
 
     // The grid: rows, and the cells -- a firm line every tile (two cells,
@@ -179,7 +186,7 @@ export class BoardView {
     ctx.textAlign = 'right';
     for (let row = 0; row < layout.rows; row += 1) {
       const r = boardRect(layout, 0, row);
-      ctx.fillStyle = dim;
+      ctx.fillStyle = row === state.selection.row ? accent : dim;
       ctx.fillText(String(row), layout.gutter - 4, r.y + r.h / 2);
     }
     if (song.numChannels > 1) {
@@ -327,6 +334,12 @@ export class BoardView {
       this.cb.onSeek(((x - this.layout.gutter) / this.layout.cellW) * STEPS_PER_CELL);
       return;
     }
+    if (x < this.layout.gutter && y >= this.layout.ruler) {
+      // The row number: select the row.
+      const row = Math.floor((y - this.layout.ruler) / this.layout.cellH);
+      if (row >= 0 && row < this.layout.rows) this.state.selectRow(row);
+      return;
+    }
     const at = boardCellAt(this.layout, x, y);
     if (!at) return;
     const clip = this.clipAt(at.cell, at.row);
@@ -342,7 +355,7 @@ export class BoardView {
       capture(this.canvas, event);
     } else {
       this.state.selection.cursor = at;
-      this.state.touch('selection');
+      this.state.selectRow(at.row);
     }
     this.schedule();
   };
