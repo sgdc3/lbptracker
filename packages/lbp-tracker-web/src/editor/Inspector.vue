@@ -14,6 +14,7 @@ import { computed } from 'vue';
 import { SCALE_NAMES } from '@lbptracker/lib/scale.ts';
 import { CLIP_STEP_CHOICES, highestStep, resizeClip, type ChangeKindLike } from './inspector-support.ts';
 import { STEPS_PER_BAR, barOfCell, noteName, positionLabel } from './geometry.ts';
+import type { Clip } from '@lbptracker/lib/song.ts';
 import type { InstrumentInfo } from './instruments.ts';
 import type { EditorState } from './state.ts';
 
@@ -21,9 +22,14 @@ const props = defineProps<{ state: EditorState; instruments: InstrumentInfo[] }>
 const emit = defineEmits<{ duplicate: []; remove: []; status: [text: string] }>();
 
 // Every computed below touches `version` first so that it re-runs on a change.
+// ⚠️ `clip` is a COPY: the song is a plain object and Vue re-runs a computed's
+// dependents only when its value differs, so returning the clip itself froze
+// the panel after its first render. Reads come from the copy; every write
+// goes through `state.edit` to the clip itself.
 const clip = computed(() => {
   void props.state.version.value;
-  return props.state.clip();
+  const c = props.state.clip();
+  return c ? { ...c } : undefined;
 });
 const point = computed(() => {
   void props.state.version.value;
@@ -37,17 +43,20 @@ const keyChoices = [
 
 const num = (event: Event) => Number((event.target as HTMLInputElement).value);
 
-const setClip = (kind: ChangeKindLike, key: string, fn: (value: number) => void) => (event: Event) => {
+const setClip = (kind: ChangeKindLike, key: string, fn: (value: number, c: Clip) => void) => (event: Event) => {
   // A select with no matching option reports '' -- which `Number` reads as 0,
   // and 0 is a real value for the sound (no instrument). Not a change.
   if ((event.target as HTMLInputElement).value === '') return;
   const value = num(event);
-  if (!Number.isFinite(value) || !clip.value) return;
-  props.state.edit(kind, () => fn(value), key);
+  if (!Number.isFinite(value)) return;
+  props.state.edit(kind, () => {
+    const c = props.state.clip();
+    if (c) fn(value, c);
+  }, key);
 };
 
 const setSteps = (event: Event) => {
-  const c = clip.value;
+  const c = props.state.clip();
   if (!c) return;
   const wanted = num(event);
   let ok = true;
@@ -80,7 +89,7 @@ const fmt = (v: number, dp = 2) => v.toFixed(dp);
         <div class="knob">
           <label for="clipGuid">sound</label>
           <select id="clipGuid" class="wide" :value="clip.guid" autocomplete="off"
-                  @change="setClip('notes', 'guid', (v) => { clip!.guid = v; })($event)">
+                  @change="setClip('notes', 'guid', (v, c) => { c.guid = v; })($event)">
             <option v-if="!instruments.some((i) => i.guid === clip!.guid)" :value="clip.guid">
               {{ clip.guid ? `unknown (${clip.guid})` : '(none)' }}
             </option>
@@ -98,7 +107,7 @@ const fmt = (v: number, dp = 2) => v.toFixed(dp);
         <div class="knob">
           <label for="clipKey">key</label>
           <select id="clipKey" :value="clip.key" autocomplete="off"
-                  @change="setClip('notes', 'key', (v) => { clip!.key = v; })($event)">
+                  @change="setClip('notes', 'key', (v, c) => { c.key = v; })($event)">
             <option v-for="k in keyChoices" :key="k.value" :value="k.value">{{ k.label }}</option>
           </select>
           <output></output>
@@ -106,7 +115,7 @@ const fmt = (v: number, dp = 2) => v.toFixed(dp);
         <div class="knob">
           <label for="clipScale">scale</label>
           <select id="clipScale" :value="clip.scale" autocomplete="off"
-                  @change="setClip('notes', 'scale', (v) => { clip!.scale = v; })($event)">
+                  @change="setClip('notes', 'scale', (v, c) => { c.scale = v; })($event)">
             <option v-for="(name, i) in SCALE_NAMES" :key="i" :value="i">{{ name }}</option>
           </select>
           <output></output>
@@ -114,25 +123,25 @@ const fmt = (v: number, dp = 2) => v.toFixed(dp);
         <div class="knob">
           <label for="clipLevel">level</label>
           <input id="clipLevel" type="range" min="0" max="200" step="1" :value="Math.round(clip.level * 100)" autocomplete="off"
-                 @input="setClip('notes', 'level', (v) => { clip!.level = v / 100; })($event)">
+                 @input="setClip('notes', 'level', (v, c) => { c.level = v / 100; })($event)">
           <output>{{ fmt(clip.level) }}</output>
         </div>
         <div class="knob">
           <label for="clipPan">pan</label>
           <input id="clipPan" type="range" min="0" max="100" step="1" :value="Math.round(clip.pan * 100)" autocomplete="off"
-                 @input="setClip('notes', 'pan', (v) => { clip!.pan = v / 100; })($event)">
+                 @input="setClip('notes', 'pan', (v, c) => { c.pan = v / 100; })($event)">
           <output>{{ fmt(clip.pan) }}</output>
         </div>
         <div class="knob">
           <label for="clipEcho">echo send</label>
           <input id="clipEcho" type="range" min="0" max="100" step="1" :value="Math.round(clip.echoSend * 100)" autocomplete="off"
-                 @input="setClip('notes', 'echoSend', (v) => { clip!.echoSend = v / 100; })($event)">
+                 @input="setClip('notes', 'echoSend', (v, c) => { c.echoSend = v / 100; })($event)">
           <output>{{ fmt(clip.echoSend) }}</output>
         </div>
         <div class="knob">
           <label for="clipReverb">reverb send</label>
           <input id="clipReverb" type="range" min="0" max="100" step="1" :value="Math.round(clip.reverbSend * 100)" autocomplete="off"
-                 @input="setClip('notes', 'reverbSend', (v) => { clip!.reverbSend = v / 100; })($event)">
+                 @input="setClip('notes', 'reverbSend', (v, c) => { c.reverbSend = v / 100; })($event)">
           <output>{{ fmt(clip.reverbSend) }}</output>
         </div>
         <div class="row" style="margin-top:.6rem">

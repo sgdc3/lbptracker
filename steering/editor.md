@@ -167,6 +167,15 @@ glide and the plan rebuilds to 14,500 notes; play advances 32 steps in two secon
 Ctrl+Z restores the count; "add an instrument" places a chip at the cursor, the inspector's key select
 writes `Key`, Ctrl+D duplicates into the next free cell, Delete on the board removes the chip.
 
+**The song ends where its last chip's grid ends, or where the end was dragged to**
+(`songEndSteps`; `Song.endSteps` holds a dragged end, in whole cells, 0 meaning "the last
+chip"), marked on the board with a grip and the area beyond shaded; the marker drags to make room
+past the last chip and snaps back to "the last chip" when dragged onto it. The transport stops
+there — without the render's six-second effects tail,
+which the transport does not need: it stops the clock and not the audio, so the echo and the
+reverb ring on. The notes' own end, `songLengthSteps`, is what the sequencer's `lengthSteps`
+carries.
+
 **Mute and solo are per row and are the listener's, not the song's.** The game has neither, so
 they are kept on `EditorState` and never written to the song file or the MIDI; they decide which
 rows reach the player's plan and the render (`audibleSequencer` in `daw/session.ts`), a solo

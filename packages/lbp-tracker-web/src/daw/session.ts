@@ -22,7 +22,7 @@ import type { Sequencer } from '@lbptracker/cwlib/project.ts';
 import { RATE, type InstrumentLoader } from '@lbptracker/lib/render.ts';
 import { VOICES_UNLIMITED } from '@lbptracker/lib/polyphony.ts';
 import {
-  newSong, sequencerFromSong, trackFromClip, type Clip, type Song, type SongNote,
+  newSong, sequencerFromSong, songEndSteps, trackFromClip, type Clip, type Song, type SongNote,
 } from '@lbptracker/lib/song.ts';
 import { engine } from '../controls/engine.ts';
 import { instrumentsFrom, type InstrumentInfo } from '../editor/instruments.ts';
@@ -187,7 +187,8 @@ async function replan(): Promise<void> {
     restartNext = false;
     pushEffects();
     player.setPool(poolSize());
-    const loaded = await player.load(seq, load, restart);
+    // The transport stops at the end of the last chip, muted or not.
+    const loaded = await player.load(seq, load, restart, songEndSteps(state.song));
     const clips = state.song.clips.length;
     setStatus(
       `${clips} instrument${clips === 1 ? '' : 's'}, ` +

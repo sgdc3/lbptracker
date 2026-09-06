@@ -95,6 +95,14 @@ export interface Song {
   volumes: number[];
   /** The board's height in cells, which bands rows into channels. */
   boardRows: number;
+  /**
+   * Where the song ends, in steps, when the composer has dragged the end past
+   * the last chip; 0 means "at the last chip". Whole cells. Not a field of
+   * the file -- the game's sequencer stops with its last note -- but a
+   * composer laying out a song wants room, and the end is where the transport
+   * stops.
+   */
+  endSteps: number;
   clips: Clip[];
   /** The next `id` to hand out, for clips and notes alike. */
   nextId: number;
@@ -167,6 +175,7 @@ export function newSong(name = 'untitled'): Song {
     loop: false,
     startPoint: 0,
     volumes: new Array<number>(MIXER_CHANNELS).fill(1),
+    endSteps: 0,
     clips: [],
     nextId: 1,
   };
@@ -383,6 +392,29 @@ export function resizeClip(clip: Clip, steps: number): boolean {
   return true;
 }
 
+/**
+ * Where the song ends on the board: the end of the last chip's grid, whether
+ * or not its last bars hold a note. This is the end a composer sees and the
+ * one the transport stops at; `songLengthSteps` is the notes' own end.
+ */
+export function songEndSteps(song: Song): number {
+  let end = song.endSteps;
+  for (const clip of song.clips) end = Math.max(end, clip.cell * STEPS_PER_CELL + clip.steps);
+  return end;
+}
+
+/**
+ * Move the song's end to a step: snapped to whole cells, never before the
+ * last chip -- dragged back that far it becomes "at the last chip" again.
+ */
+export function setSongEnd(song: Song, steps: number): void {
+  const cells = Math.max(0, Math.round(steps / STEPS_PER_CELL));
+  let last = 0;
+  for (const clip of song.clips) last = Math.max(last, clip.cell * STEPS_PER_CELL + clip.steps);
+  const wanted = cells * STEPS_PER_CELL;
+  song.endSteps = wanted > last ? wanted : 0;
+}
+
 /** The last step any clip reaches on the timeline, plus one; 0 when empty. */
 export function songLengthSteps(song: Song): number {
   let end = 0;
@@ -591,6 +623,7 @@ export function songFromJson(text: string): Song {
   song.volumes = Array.from({ length: MIXER_CHANNELS }, (_, i) =>
     num(Array.isArray(raw.volumes) ? raw.volumes[i] : undefined, 1));
   song.boardRows = clampInt(num(raw.boardRows, NEW_SONG_DEFAULTS.boardRows), 1, 64);
+  song.endSteps = Math.max(0, Math.round(num(raw.endSteps, 0) / STEPS_PER_CELL)) * STEPS_PER_CELL;
   for (const c of raw.clips as Partial<Clip>[]) {
     if (!c || typeof c !== 'object') continue;
     const clip = addClip(song, { cell: num(c.cell, 0), row: num(c.row, 0) }, clampInt(num(c.guid, 0), 0, 0x7fffffff), typeof c.name === 'string' ? c.name : '');

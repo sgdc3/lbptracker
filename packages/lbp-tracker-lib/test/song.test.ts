@@ -27,6 +27,8 @@ import {
   removePoint,
   resizeClip,
   sequencerFromSong,
+  setSongEnd,
+  songEndSteps,
   songFromJson,
   songFromSequencer,
   songToJson,
@@ -195,6 +197,23 @@ test('points stay in order and inside the clip; a note goes with its last point'
   assert.equal(clip.notes.length, 1);
   removePoint(clip, note, note.points[0]);
   assert.equal(clip.notes.length, 0, 'the note went with its last point');
+});
+
+test('the end of the song: the last chip, or further when dragged there, in whole cells', () => {
+  const song = newSong();
+  assert.equal(songEndSteps(song), 0);
+  const clip = addClip(song, { cell: 2, row: 0 }, 129085);
+  assert.equal(songEndSteps(song), 2 * 16 + 32, 'the end of the last chip');
+  setSongEnd(song, 100);
+  assert.equal(song.endSteps, 96, 'snapped to a cell');
+  assert.equal(songEndSteps(song), 96);
+  setSongEnd(song, 40);
+  assert.equal(song.endSteps, 0, 'dragged back to the last chip, it is the last chip again');
+  assert.equal(songEndSteps(song), 64);
+  setSongEnd(song, 200);
+  const back = songFromJson(songToJson(song));
+  assert.equal(back.endSteps, 208, 'the end survives the file: 200 rounds to 13 cells');
+  void clip;
 });
 
 test('clipStepsFor: four bars by default, then two more at a time, never past 128', () => {

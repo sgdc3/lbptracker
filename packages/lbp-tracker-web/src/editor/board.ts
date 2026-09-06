@@ -24,7 +24,7 @@
  */
 
 import { STEPS_PER_CELL } from '@lbptracker/cwlib/project.ts';
-import { DEFAULT_CLIP_STEPS, snapClipSteps, type Clip } from '@lbptracker/lib/song.ts';
+import { DEFAULT_CLIP_STEPS, setSongEnd, snapClipSteps, songEndSteps, type Clip } from '@lbptracker/lib/song.ts';
 import {
   bandOf,
   boardCellAt,
@@ -52,6 +52,8 @@ export interface BoardCallbacks {
   instrument(guid: number): InstrumentInfo | undefined;
   /** A chip was clicked -- not merely selected by the playhead. The page opens its panel. */
   onPick?(clip: Clip): void;
+  /** The song's end was dragged to a step; the page commits it. */
+  onEnd(step: number): void;
 }
 
 const CELL_W = 44;
@@ -81,8 +83,12 @@ export class BoardView {
       }
     /** Drawing a new chip: from the cell pressed to the cell under the pointer. */
     | { kind: 'create'; row: number; startCell: number; endCell: number; startX: number; moved: boolean }
+    /** Dragging the song's end: the step it is at now. */
+    | { kind: 'end'; step: number; moved: boolean }
     | null = null;
   private hover: { cell: number; row: number } | null = null;
+  /** The pointer is on the song's end marker. */
+  private overEnd = false;
   private frame = 0;
   private bottomInset = 0;
 
@@ -164,6 +170,7 @@ export class BoardView {
     }
     if (this.state.selection.cursor) lastCell = Math.max(lastCell, this.state.selection.cursor.cell + 1);
     if (this.drag?.kind === 'create') lastCell = Math.max(lastCell, this.drag.endCell + 2);
+    lastCell = Math.max(lastCell, Math.ceil((this.drag?.kind === 'end' ? this.drag.step : songEndSteps(song)) / STEPS_PER_CELL));
     this.layout = {
       cellW: CELL_W, cellH: CELL_H, gutter: GUTTER, ruler: RULER,
       cols: Math.max(24, lastCell + 8),
@@ -220,6 +227,16 @@ export class BoardView {
       if (row === state.selection.row) {
         ctx.fillStyle = 'rgba(111,211,160,0.13)';
         ctx.fillRect(layout.gutter, r.y, width - layout.gutter, r.h);
+      }
+    }
+    // A line between one channel's band and the next, when there is more
+    // than one: the mixer's cut through the board, made visible.
+    if (song.numChannels > 1) {
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      for (let row = 1; row < layout.rows; row += 1) {
+        if (bandOf(row, layout.rows, song.numChannels) === bandOf(row - 1, layout.rows, song.numChannels)) continue;
+        const r = boardRect(layout, 0, row);
+        ctx.fillRect(layout.gutter, r.y - 1, width - layout.gutter, 2);
       }
     }
 
@@ -305,6 +322,26 @@ export class BoardView {
       ctx.strokeStyle = 'rgba(255,255,255,0.18)';
       ctx.lineWidth = 1;
       ctx.strokeRect(r.x + 2.5, r.y + 2.5, r.w - 5, r.h - 5);
+    }
+
+    // The end of the song: the end of the last chip, marked, and the board
+    // beyond it shaded -- there is nothing there to play.
+    const endStep = this.drag?.kind === 'end' ? this.drag.step : songEndSteps(song);
+    const endX = boardX(layout, endStep);
+    if (song.clips.length > 0 || this.drag?.kind === 'end') {
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.fillRect(endX, layout.ruler, width - endX, height - layout.ruler);
+      ctx.strokeStyle = this.drag?.kind === 'end' || this.overEnd ? accent : 'rgba(232,234,238,0.45)';
+      ctx.lineWidth = this.drag?.kind === 'end' || this.overEnd ? 2 : 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(Math.round(endX) + 0.5, layout.ruler);
+      ctx.lineTo(Math.round(endX) + 0.5, height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // A grip at the top of the line, so it reads as something to drag.
+      ctx.fillStyle = this.drag?.kind === 'end' || this.overEnd ? accent : 'rgba(232,234,238,0.6)';
+      ctx.fillRect(Math.round(endX) - 4, layout.ruler, 9, 12);
     }
 
     // The playhead.
@@ -492,6 +529,12 @@ export class BoardView {
       else this.state.selectRow(row);
       return;
     }
+    if (event.button === 0 && this.nearEnd(x)) {
+      this.drag = { kind: 'end', step: songEndSteps(this.state.song), moved: false };
+      capture(this.canvas, event);
+      this.schedule();
+      return;
+    }
     const at = boardCellAt(this.layout, x, y);
     if (!at) return;
     const clip = this.clipAt(at.cell, at.row);
@@ -528,6 +571,15 @@ export class BoardView {
       this.schedule();
       return;
     }
+    if (this.drag?.kind === 'end') {
+      const step = Math.max(0, Math.round((x - this.layout.gutter) / this.layout.cellW)) * STEPS_PER_CELL;
+      if (step !== this.drag.step) {
+        this.drag.step = step;
+        this.drag.moved = true;
+        this.schedule();
+      }
+      return;
+    }
     if (this.drag?.kind === 'create') {
       if (!this.drag.moved && Math.abs(x - this.drag.startX) > 6) this.drag.moved = true;
       // Only the length follows the pointer: the chip stays on the row it started in.
@@ -538,17 +590,28 @@ export class BoardView {
       }
       return;
     }
-    const changed = (at?.cell !== this.hover?.cell) || (at?.row !== this.hover?.row);
+    const overEnd = cy >= this.layout.ruler && cx >= this.layout.gutter && this.nearEnd(x);
+    const changed = (at?.cell !== this.hover?.cell) || (at?.row !== this.hover?.row) || overEnd !== this.overEnd;
     this.hover = at;
+    this.overEnd = overEnd;
+    this.canvas.style.cursor = overEnd ? 'ew-resize' : '';
     if (changed) this.schedule();
   };
+
+  /** Within a few pixels of the song's end marker. */
+  private nearEnd(x: number): boolean {
+    if (this.state.song.clips.length === 0) return false;
+    return Math.abs(x - boardX(this.layout, songEndSteps(this.state.song))) <= 6;
+  }
 
   private onUp = (event: PointerEvent): void => {
     const drag = this.drag;
     if (!drag) return;
     this.drag = null;
     release(this.canvas, event);
-    if (drag.kind === 'move') {
+    if (drag.kind === 'end') {
+      if (drag.moved) this.cb.onEnd(drag.step);
+    } else if (drag.kind === 'move') {
       if (drag.moved && (drag.at.cell !== drag.clip.cell || drag.at.row !== drag.clip.row)) {
         this.cb.onMove(drag.clip, drag.at);
       }

@@ -398,6 +398,14 @@ export class Player {
     original: Sequencer,
     loader: InstrumentLoader,
     restart = true,
+    /**
+     * Where the transport stops, in steps. The sequencer's own `lengthSteps`
+     * is the notes' end; a page with a board passes the end of its last chip.
+     * ⚠️ The render's six-second tail is NOT added: the transport stops at the
+     * end and lets the effects ring on, rather than running past the last
+     * chip into silence.
+     */
+    endStep = original.lengthSteps,
   ): Promise<Loaded> {
     const seq: Sequencer = restart
       ? original
@@ -473,12 +481,12 @@ export class Player {
     // any tempo: swing is monotonic in the step.
     built.sort((a, b) => a.startStep - b.startStep);
     this.plan = built;
-    this.songFrames = result.frames;
-    this.songSeconds = result.seconds;
     this.stepFrames = result.framesPerStep;
     this.liveTempo = seq.tempo;
-    this.songSteps = original.lengthSteps;
-    this.tailFrames = Math.max(0, result.frames - Math.round(original.lengthSteps * this.stepFrames));
+    this.songSteps = Math.max(endStep, original.lengthSteps);
+    this.tailFrames = 0;
+    this.songFrames = Math.round(swungFrame(this.songSteps, this.stepFrames, seq.swing));
+    this.songSeconds = this.songFrames / RATE;
     this.swing = seq.swing;
     this.liveChannels = seq.numChannels;
     this.liveVolumes = seq.volumes;
@@ -503,7 +511,7 @@ export class Player {
       played: result.played,
       skipped: result.skipped,
       samples: new Set(built.map((p) => p.sampleId)).size,
-      seconds: result.seconds,
+      seconds: this.songSeconds,
     };
   }
 
@@ -851,7 +859,9 @@ export class Player {
       this.nextIndex += 1;
     }
     if (now >= this.songFrames) {
-      this.stop();
+      // The end: stop the clock but not the audio, so releases, the echo and
+      // the reverb ring on as they would in the game.
+      this.stop(false);
       this.cursorFrames = this.songFrames;
     }
     this.events.tick?.();

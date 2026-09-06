@@ -10,7 +10,7 @@
 
 import { createApp, h } from 'vue';
 import { STEPS_PER_CELL } from '@lbptracker/cwlib/project.ts';
-import { addClip, duplicateClip, removeClip, type Clip } from '@lbptracker/lib/song.ts';
+import { addClip, duplicateClip, removeClip, setSongEnd, type Clip } from '@lbptracker/lib/song.ts';
 import { BoardView } from '../editor/board.ts';
 import { RollView } from '../editor/roll.ts';
 import { STEPS_PER_BAR, barOfCell } from '../editor/geometry.ts';
@@ -106,6 +106,7 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     onCreate: (at) => void createChip(at),
     instrument: (guid) => byGuid.get(guid),
     onPick: () => openPanel(),
+    onEnd: (step) => state.edit('notes', (s) => setSongEnd(s, step), 'end'),
   });
   new ResizeObserver(insetBoard).observe(panel);
 
