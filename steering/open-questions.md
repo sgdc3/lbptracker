@@ -363,7 +363,7 @@ them is an even spread over the game's life, which is what puts old revisions in
 |---|---|---|
 | `0x3b7` | `0/0` | **4 of 4** |
 | `0x3b8`–`0x3f9` | `0/0` | **78 of 78** |
-| `0x272` | `4c44` (LEERDAMMER) | **0 of 21** at the shipped bound; **2 of 21 correct** with it lowered, matching cwlib exactly, and the rest failing thousands of bytes deeper than they were |
+| `0x272` | `4c44` (LEERDAMMER) | **0 of 19** at the shipped bound; **14 of 19 identical to cwlib** with it lowered by hand |
 | `0x26e` | — | 0 of 1, the chunk table is not where this reader looks |
 | — | — | 1 file the archive stores truncated |
 
@@ -455,36 +455,70 @@ three more: below 0x341 there is no flags byte and `COPYRIGHT`, `EDITABLE` and `
 are separate bools at three separate gates. And `PMetadata` was written from scratch — it had no
 reader at all, because nothing above `LBP3_MIN_VERSION` ever reaches one.
 
-### Where it stands now: two LBP1 levels read correctly
+### Where it stands: **14 of 19 LBP1 levels read identically to cwlib**
 
-✔ `0-ea18ed` and `0-935f66` come out **identical to cwlib** — 26 Things of which 23 are non-null,
-and 321 of which 55 are. The rest still fail, but the marker now catches them between byte 3,343 and
-99,898 rather than 287.
+Thing for Thing, on the archive sample, with `LBP3_MIN_VERSION` lowered by hand:
 
-Two more readers fell to the same span diff:
+```
+0-011f09  521    0-9320a8 1472    0-cad1b2   36    1-248258 2359
+0-4e5a15   86    0-935f66   55    0-d8ce66 1856    1-3a66ec 1684
+0-8a38f8  507    0-beda44   87    0-ea18ed   23    1-68e357  510
+1-139f11  156                                      1-dc0925  278
+```
 
-- **`PRenderMesh`** — `editorColor` is four floats at or below **0x31a** and a packed ARGB above it.
-  Same shape as `PShape`'s colour: the comment said so, the code always read the packed form, and it
-  was **15 bytes short** on every pre-0x31b Thing.
-- **`PTrigger`** — `zOffset` arrives at **0x322** and this reader read it always: **4 bytes long**
-  on everything older. (`hysteresisMultiplier` and `enabled` are gated at 0x19b too, and an `i32`
-  exists below 0x1d5; neither bites at 0x272 but both are implemented now.)
+⚠️ **Compare the NON-NULL count.** cwlib's `things` list holds null entries and `readWorld`
+filters them, so `CwlibTrace parts` prints both — `825 things (278 non-null)`. Comparing against the
+total is what produced a bogus "0 of 21" in an earlier pass of this entry.
 
-⚠️ **"0 of 21" in the last write-up was a measurement error, not a result.** It compared this
-reader's count against cwlib's `things.size()`, which **includes null entries**; `readWorld` filters
-those out. The two numbers were never comparable. `CwlibTrace parts` now prints both — `321 things
-(55 non-null)` — so the mistake cannot repeat.
+Ten readers are now fixed. Every one of them diverged the same way and none needed a hex dump:
+
+| reader | what was wrong at 0x272 |
+|---|---|
+| `fillThing` | UID before parent below **0x27f**; the `0xAA` marker also gated on LEERDAMMER rev 5; the parts mask also on LEERDAMMER rev 2 |
+| `readPos` | the local matrix is stored too below **0x341** — 64 bytes |
+| `Polygon` | `requiresZ` arrives at **0x341**; below it there is no flag and every vertex is a v3 |
+| `readShape` | five gates: colour as v4 below 0x389, no `brightness` below 0x301, no `behavior`/`colorOff` below 0x303, `interactPlayMode`/`EditMode` at or below 0x306, `lethalType` an enum32 at or below 0x345, three bools for the flags word below 0x2b5 |
+| `readRef` | `childrenSelectable` and `stripChildren`, both gone at **0x321** |
+| `readGroup` | no flags byte below **0x341**; `COPYRIGHT`, `EDITABLE`, `PICKUP_ALL_MEMBERS` are separate bools |
+| `readMetadata` | did not exist |
+| `readRenderMesh` | `editorColor` as v4 at or below **0x31a** — 15 bytes |
+| `readTrigger` | `zOffset` arrives at **0x322** and was read always — 4 bytes |
+| `readJoint` | `modDriven`, `interactPlayMode`/`EditMode`, `modScaleActive`; `tweakTarget*` are **ints** at or below 0x280; `behaviour` only from 0x2c4 |
+| `readSwitch` | `oldActivation` below 0x2a0, and the whole **connector block** (`> 0x1fa && < 0x327`) — about fifty bytes that nothing above LBP3's bound has |
+
+❗ **The last one is the one to remember**: `connectorPos` is a `vectorarray`, and cwlib's
+`vectorarray` returns `Vector4f[]`. Reading it as v3 was the final thirteen bytes. **A helper's name
+does not say its element width — open it.**
+
+### What is still failing
+
+- `0-3edc39`, `0-99167e`, `0-a0e15f`, `0-c33a7e` — the marker, at bytes 15,649 to 250,677. Same
+  shape as the ten already fixed; run the loop again.
+- `1-c8b731` — `PMetadata`'s **translation-tag** branch, four strings rather than four LAMS keys,
+  which cwlib takes below LEERDAMMER revision 8. Every other file in the sample is at 0x17 and takes
+  the key branch, so nothing here can check the tag branch and `readMetadata` refuses.
+
+### ⚠️ The bound has NOT been lowered, and that is a decision, not an oversight
+
+`LBP3_MIN_VERSION` is still `0x3b7` and every LBP1 file is still refused. Two reasons:
+
+- **LBP1 has no Music Sequencer**, so opening these levels buys the tracker nothing musical. This
+  work is reader correctness, not a feature.
+- Five files still fail, and the bound is what keeps "we do not support this" from becoming "we
+  read it and produced something".
+
+Lowering it is a one-line change whenever the remaining five are done and somebody wants it.
 
 ### The loop, which is now the whole method
 
-1. `CwlibTrace spans <level>` for the reference offsets, `setTrace` for ours.
-2. Diff. The first part whose span disagrees names the file to open in cwlib.
-3. The disagreement is almost always a **version gate that exists in the comment and not in the
-   code** — five of the seven readers fixed so far were exactly that.
+1. `node --experimental-strip-types dev/trace-level.ts <prefix>` for our spans.
+2. `CwlibTrace spans <level>` for the reference's.
+3. Diff. The first part that disagrees names the file in cwlib's `structs/things/parts/`.
 
-❗ That third point is the finding worth keeping. These readers were ported with their gates
-*documented* and then written for the LBP3 branch only, so the comments are a list of the bugs. A
-grep for "at or below", "above 0x" and "regenerated" in `src/core/parts.ts` is a work list.
+❗ **Nine of the eleven divergences were a version gate that exists in the reader's own comment and
+not in its code.** These parts were ported with their gates documented and then written for the LBP3
+branch only, so a grep for "at or below", "above 0x" and "regenerated" in `src/core/parts.ts` is a
+work list for the rest.
 
 ### What is left after that
 

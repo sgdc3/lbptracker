@@ -95,13 +95,28 @@ export function readJoint(s: Serializer, readers: ReadonlyMap<string, PartReader
   s.f32(); // modStartFrames
   s.f32(); // modDeltaFrames
   s.f32(); // modScale
+  const { version: jv } = s.revision;
+  if (jv < 0x2c4) s.bool(); // modDriven
+  if (jv < 0x307) {
+    s.u8(); // interactPlayMode
+    s.u8(); // interactEditMode
+  }
   s.f32(); // renderScale
-  s.i32(); // jointSoundEnum
-  s.f32(); // tweakTargetMaxLength
-  s.f32(); // tweakTargetMinLength
-  s.bool(); // currentlyEditing
-  s.bool(); // hideInPlayMode
-  s.i32(); // behaviour
+  if (jv > 0x169) s.i32(); // jointSoundEnum
+  // ❗ A pair of floats above 0x280 and a pair of **integers** at or below it.
+  // Same width on paper, different width in a compressed stream: the ints are
+  // varints and the floats are four bytes each.
+  if (jv > 0x280) {
+    s.f32(); // tweakTargetMaxLength
+    s.f32(); // tweakTargetMinLength
+  } else if (jv > 0x21c) {
+    s.i32();
+    s.i32();
+  }
+  if (jv > 0x21e) s.bool(); // currentlyEditing
+  if (jv > 0x22f && jv < 0x2c4) s.bool(); // modScaleActive
+  if (jv > 0x25c) s.bool(); // hideInPlayMode
+  if (jv > 0x2c3) s.i32(); // behaviour
   if (s.revision.subVersion >= 0xed) {
     const count = s.i32();
     for (let i = 0; i < count; i += 1) s.vector3(); // railKnotVector
@@ -714,6 +729,7 @@ export function readSwitch(s: Serializer, readers: ReadonlyMap<string, PartReade
     }
   }
 
+ 
   if (version < 0x398 && version >= 0x140) s.resource(true); // stickerPlan
 
   if (version > 0x197) s.bool(); // hideInPlayMode
@@ -740,8 +756,23 @@ export function readSwitch(s: Serializer, readers: ReadonlyMap<string, PartReade
   }
 
   if (version > 0x1a4 && version < 0x368) s.f32(); // platformVisualFactor
+  if (version > 0x1a4 && version < 0x2a0) s.f32(); // oldActivation
   if (version > 0x1a4) s.s32(); // activationHoldTime
   if (version > 0x1a4) s.bool(); // requireAll
+  // ❗ **The connector block, gone at 0x327 and about fifty bytes wide.** Nothing
+  // above `LBP3_MIN_VERSION` has it, so it was never ported; it is most of why
+  // an LBP1 switch was read 91 bytes short.
+  if (version > 0x1fa && version < 0x327) {
+    const positions = s.i32();
+    // ⚠️ cwlib `vectorarray` returns Vector4f[], so these are v4 and not v3.
+    for (let i = 0; i < positions; i += 1) s.vector4(); // connectorPos
+    const grabbed = s.i32();
+    for (let i = 0; i < grabbed; i += 1) s.bool(); // connectorGrabbed
+    s.vector4(); // portPosOffset
+    s.vector4(); // looseConnectorPos
+    s.vector4(); // looseConnectorBaseOffset
+    s.bool();
+  }
 
   let includeTouching = 0;
   if (version > 0x23d) {
