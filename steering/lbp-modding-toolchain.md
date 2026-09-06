@@ -22,8 +22,9 @@ carries**:
 - `lib/cwlib/` — **ennuo's**. Hand-written serialisers for LBP resource types and Thing parts,
   each carrying field order, per-field revision gates and defaults. A decade of community use
   behind it. This is the part worth treating as a serious independent reading of the format.
-- `tools/sequencerdump/` — **this project's own author wrote it** (fork at
-  `https://github.com/sgdc3/toolkit`, local checkout at `C:\Users\sgdc3\Desktop\LBP\toolkit\`).
+- **`sequencerdump`** — **this project's own author wrote it**. ⚠️ It is **not in this
+  repository**: fork at `https://github.com/sgdc3/toolkit`, local checkout at
+  `C:\Users\sgdc3\Desktop\LBP\toolkit\`, and every path below is relative to that.
   It walks a level or `.plan`, finds every **music** sequencer, and exports to MIDI or Ableton ALS.
 
 ⚠️ **The author's own instruction: trust its level-extraction logic, ignore its sequencer parsing.**
@@ -92,7 +93,7 @@ row of that table.
 | `structs/things/parts/PInstrument.java` | the instrument part; revision gates, defaults |
 | `structs/things/parts/PSequencer.java` | the sequencer part, **including three fields we had not recovered** |
 | `structs/things/parts/PMicrochip.java` + `structs/things/components/CompactComponent.java` | how instruments are placed on the timeline |
-| `tools/sequencerdump/MidiDumper.java` | the whole import pipeline, end to end |
+| `MidiDumper.java` (in that checkout) | the whole import pipeline, end to end |
 | `enums/ResourceType.java` | `INSTRUMENT = 48`, `SAMPLE = 49` — independent confirmation of our own table |
 | `io/streams/MemoryInputStream.java` | endianness: defaults to **big**, with a per-stream override |
 
@@ -582,7 +583,8 @@ contain no sequencer, so they are dropped rather than listed. Checked directly b
 
 ### ❌ The search, built and then removed — 2026-09-05
 
-For one commit the tracker had a real search box: the hand-rolled dev server (`dev/serve.mjs`, since replaced by Vite) proxied `/zaprit/*`, scraped the
+For one commit the tracker had a real search box: the hand-rolled dev server (since deleted, and
+replaced by Vite) proxied `/zaprit/*`, scraped the
 site's HTML (there is no API — every route is Go `html/template`) and returned JSON. **It worked**,
 and it was removed the same day, deliberately.
 
@@ -673,7 +675,7 @@ encryption is something the download **acquires**, not something it has to shed.
 ## The level corpus — our regression suite
 
 There is a local checkout at `C:\Users\sgdc3\Desktop\LBP\toolkit\`, and its
-`tools\sequencerdump\data*\` directories hold **18 real LBP2/LBP3 level resources**, SHA1-named,
+that checkout's `data*\` directories hold **18 real LBP2/LBP3 level resources**, SHA1-named,
 revisions `0x3b8`–`0x3f9`, one of them on the LBP3 branch `0x0213`. Two of the `data*` folders are
 PS3 save-game directories (`BCES00850…`, `BCES01663…`) rather than loose resources.
 

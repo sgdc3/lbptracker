@@ -470,9 +470,10 @@ build in the repository — `cwlib` and `lib` are still plain TypeScript that No
 
 ### ⚠️ Why the bundler, measured rather than argued
 
-This project ran with **no bundler at all** until 2026-09-06: `dev/serve.mjs` stripped types per
-request with `module.stripTypeScriptTypes` and `dev/build.mjs` did the same ahead of time, so the
-browser ran the same file `node --test` ran. Both are gone. What killed the design was one
+This project ran with **no bundler at all** until 2026-09-06: a hand-rolled dev server stripped
+types per request with `module.stripTypeScriptTypes` and a hand-rolled build did the same ahead
+of time, so the browser ran the same file `node --test` ran. Both were deleted with this change;
+`git log -- packages/lbp-tracker-web/dev` is where they are if they are ever wanted. What killed the design was one
 measurement, not a preference:
 
 ❗ **An import map does not reach a Worker or an AudioWorklet.** Probed in Chrome with a page
@@ -491,7 +492,7 @@ like `../../cwlib-ts/src/project.ts`, and the three packages would be folders wi
 
 ⚠️ **The AudioWorklet needs `?worker&url`, not a path.** `import MIXER_WORKLET_URL from
 '@lbptracker/lib/audio/mixer-worklet.ts?worker&url'` makes Vite resolve and bundle that graph ahead
-of time and hand back a URL. The old code passed `asset('src/audio/mixer-worklet.ts')`, which cannot
+of time and hand back a URL. The old code passed the worklet's path to `asset()`, which cannot
 work now: the worklet realm has no import map, so a bare specifier inside it fails to load and the
 page goes silent with no error on the main thread.
 

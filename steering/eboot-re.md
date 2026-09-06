@@ -89,10 +89,17 @@ reference to a `Z:\LBP\sdk\fmod\...cpp` string sits inside FMOD code. Collect th
 FMOD's extent (`v0x9c5da3`–`v0xab6397`) and, per callee, which source file it belongs to. The same
 trick works for the CWLib paths on the game side.
 
-Other tools live in `C:\Users\sgdc3\Desktop\shadPS4\lbp3-re\`: `ebrela.py` (binding table),
-`ebseg.py` (program headers — run this first on any new binary), `ebxref.py` (rip-relative xrefs in
-file-offset space), `ebschema.py` (recover a serialised struct's field names and offsets),
-`ebstr.py` (string scan; ⚠️ its `v=` column uses a stale delta, ignore it).
+⚠️ **`ebxref.py` is two different scripts, and the one you want is this repository's.**
+`tools/ebxref.py` answers *who references this address* — `refs <vaddr>` for rip-relative
+references and `calls <vaddr>` for direct calls, clustered by caller and marked game-side or
+FMOD-internal, all in **vaddr** space. An older script of the same name in the scratch checkout
+below works in **file-offset** space and predates the delta being fixed. Reach for `tools/`.
+
+The rest of that older set is still worth knowing about and still only lives in
+`C:\Users\sgdc3\Desktop\shadPS4\lbp3-re\`, outside this repository: `ebrela.py` (binding table),
+`ebseg.py` (program headers — run this first on any new binary), `ebschema.py` (recover a
+serialised struct's field names and offsets), `ebstr.py` (string scan; ⚠️ its `v=` column uses a
+stale delta, ignore it).
 
 ## Techniques that worked here
 
