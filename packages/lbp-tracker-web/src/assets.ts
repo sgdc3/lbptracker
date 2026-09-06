@@ -20,7 +20,7 @@ import { readInstrument, usedSlots } from '@lbptracker/lib/rinstrument.ts';
 import { readWav, loopRegion } from '@lbptracker/lib/wav.ts';
 import { webInflate } from '@lbptracker/cwlib/platform/web.ts';
 
-export type Manifest = Map<number, { file: string }>;
+export type Manifest = Map<number, { file: string; path?: string }>;
 
 /**
  * Where the MIDI page leaves a song for the live player to pick up.

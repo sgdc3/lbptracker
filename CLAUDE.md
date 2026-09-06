@@ -53,6 +53,10 @@ Steering files (read on demand, per the hints):
   implementation: the three packages and where the seam runs, why the mixer is ours and lives in
   an AudioWorklet, why the web layer has a bundler and Vue and the libraries have neither, the
   live player's invariants, the build order and what exists.
+- [steering/editor.md](steering/editor.md) — **read before touching `editor.html`, `src/editor/`,
+  `src/player.ts` or `lib/src/song.ts`**: what the editor draws and why it matches the game's two
+  grids, the editable model and its boundary through the record encoder, the shared player and
+  which edits rebuild the plan, the two canvases, how to check it, and what is not there yet.
 - [steering/eboot-re.md](steering/eboot-re.md) — **read before opening the eboot or a PRX**: the
   address conventions (the delta trap that costs hours), the techniques that worked, and every
   anchor already mapped.
@@ -71,8 +75,8 @@ Steering files (read on demand, per the hints):
 | directory | package | what it is |
 |---|---|---|
 | `packages/cwlib-ts` | `@lbptracker/cwlib` | reading LBP's serialised resources: container, Thing graph, 50 part readers, saves, archives |
-| `packages/lbp-tracker-lib` | `@lbptracker/lib` | turning that into sound: sampler, DSP chain, render pipeline, MIDI |
-| `packages/lbp-tracker-web` | `@lbptracker/web` | the four pages — Vite, and Vue for the panels |
+| `packages/lbp-tracker-lib` | `@lbptracker/lib` | turning that into sound: sampler, DSP chain, render pipeline, MIDI — and `song.ts`, the editable song |
+| `packages/lbp-tracker-web` | `@lbptracker/web` | the five pages — Vite, Vue for the panels, canvases for the editor's grids |
 
 Each has its own `src/`, `test/` and `dev/`: Node harnesses in the libraries, the typecheck entry
 point in the web package. Imports cross by package name:
@@ -80,7 +84,7 @@ point in the web package. Imports cross by package name:
 
 - `npm install` — **required**: workspaces resolve the package names through symlinks in
   `node_modules`. Nothing is downloaded for the libraries.
-- `npm test` — `node --test`, all three workspaces at once, from the root (291 tests, 2026-09-06);
+- `npm test` — `node --test`, all three workspaces at once, from the root (306 tests, 2026-09-06);
   `npm test -w @lbptracker/lib` for one package.
 - `npm run typecheck` — fans out to each package's own `typecheck` script: `tsc -p .` in the two
   libraries, `vue-tsc` for the web package. ⚠️ **The web package checks `.vue` through

@@ -28,7 +28,7 @@
  *
  * ## The three things this config exists for
  *
- * 1. **Four pages, not one.** Each `.html` at the package root is an entry.
+ * 1. **Five pages, not one.** Each `.html` at the package root is an entry.
  * 2. **`base: './'`**, so the built site is relocatable — it works at a bucket's
  *    root or under a prefix. That property was tested rather than asserted
  *    before the bundler arrived and is tested the same way after.
@@ -112,6 +112,7 @@ export default defineConfig({
       input: {
         index: path.join(HERE, 'index.html'),
         live: path.join(HERE, 'live.html'),
+        editor: path.join(HERE, 'editor.html'),
         render: path.join(HERE, 'render.html'),
         midi: path.join(HERE, 'midi.html'),
       },

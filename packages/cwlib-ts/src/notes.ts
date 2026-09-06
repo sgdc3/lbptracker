@@ -182,3 +182,82 @@ export function groupNotes(records: readonly NoteRecord[]): GroupResult {
 export function readNotes(bytes: Uint8Array): GroupResult {
   return groupNotes(decodeRecords(bytes));
 }
+
+// ------------------------------------------------------------- writing notes
+
+/**
+ * One control point of a note about to be written, in the record's own units.
+ *
+ * `timbre` here is the **nibble** -- 0..15, the value the engine scales by 1/15
+ * into a modulation -- and not the raw fourth byte, because the other bits of
+ * that byte are not the caller's to choose: bit 6 is decided by the sub-step
+ * and the file's resting value, and bits 4..5 are thrown away by the game.
+ */
+export interface WritePoint {
+  readonly step: number;
+  readonly subStep: 0 | 1 | 2;
+  readonly pitch: number;
+  /** 0..127. */
+  readonly volume: number;
+  /** 0..15. */
+  readonly timbre: number;
+}
+
+/** A note to write: its control points, sorted by position. */
+export interface WriteNote {
+  readonly points: readonly WritePoint[];
+}
+
+/** A point's position in thirds of a step. */
+export const thirdsOf = (p: { step: number; subStep: number }): number => p.step * 3 + p.subStep;
+
+/**
+ * Write notes as the game's editor would: the inverse of `readNotes`.
+ *
+ * ❗ **The order is measured, not chosen** (steering/sequencer-data-model.md,
+ * *The order records are written in*): notes by position ascending, then by
+ * pitch **descending** for notes sharing a position (27,124 of 27,124 corpus
+ * clips), then by their end ascending -- the shorter note first (333 of 333).
+ * A fourth key would be a guess, and the 8 corpus clips still tied after three
+ * keep the author's own order, which is the order the caller passed.
+ *
+ * `rest` is the value of byte 3's bit 6 on a record at sub-step 0, where the
+ * engine never reads it and the editor writes it anyway; every level saved
+ * since revision 0x3e7 sets it, so 1 is the default. ⚠️ It is NOT applied to a
+ * record at sub-step 1 or 2: there the bit IS the sub-step's high half.
+ */
+export function encodeNotes(notes: readonly WriteNote[], rest: 0 | 1 = 1): Uint8Array {
+  const spanOf = (n: WriteNote) => ({
+    start: thirdsOf(n.points[0]),
+    end: thirdsOf(n.points[n.points.length - 1]),
+    pitch: n.points[0].pitch,
+  });
+  const ordered = notes
+    .filter((n) => n.points.length > 0)
+    .map((n, index) => ({ n, index, ...spanOf(n) }))
+    .sort((a, b) => a.start - b.start || b.pitch - a.pitch || a.end - b.end || a.index - b.index);
+  const count = ordered.reduce((sum, o) => sum + o.n.points.length, 0);
+  const out = new Uint8Array(count * NOTE_RECORD_SIZE);
+  let at = 0;
+  for (const { n } of ordered) {
+    n.points.forEach((p, i) => {
+      const clamp7 = (v: number) => Math.max(0, Math.min(127, Math.round(v)));
+      const high = p.subStep === 1 ? 0 : p.subStep === 2 ? 0x40 : rest * 0x40;
+      encodeRecord(
+        {
+          step: p.step,
+          subStep: p.subStep,
+          pitch: clamp7(p.pitch),
+          volume: clamp7(p.volume),
+          timbre: (Math.max(0, Math.min(15, Math.round(p.timbre))) & 0x0f) | high,
+          modulation: 0, // derived from `timbre` on the way back; not written
+          end: i === n.points.length - 1,
+        },
+        out,
+        at,
+      );
+      at += NOTE_RECORD_SIZE;
+    });
+  }
+  return out;
+}

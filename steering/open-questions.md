@@ -129,7 +129,24 @@ have none.
   artefact is in the asset.
 - **`PInstrument + 0x60`.** Copied into the engine's clip as its length in steps and not named by
   the serialiser walk ([sequencer-data-model.md](sequencer-data-model.md)); what serialises it, if
-  anything, is unread. Nothing in the tracker depends on it yet.
+  anything, is unread — `readInstrumentPart` reads nothing for it, so it is derived at load. The
+  editor needs a grid length to draw and derives its own (`clipStepsFor` in
+  [editor.md](editor.md): the smallest multiple of 16 from 32 up that holds the notes), which
+  reproduces the corpus's 31-then-63 distribution but is a rule, not a reading. **What would settle
+  it**: find the writer of `+0x60` in the eboot — the likeliest sources are the component's
+  `scaleX` on the board and the highest `x` in `Notes` — or save a level with an empty
+  double-length grid and see whether anything in the file changes.
+
+## 40. What a new sequencer starts at — the editor's defaults are the corpus's modes
+
+Nothing has been read out of the game about the values a freshly placed Music Sequencer or
+Instrument holds. `NEW_SONG_DEFAULTS` in `packages/lbp-tracker-lib/src/song.ts` uses the corpus's
+mode for the tempo (240, ahead of 125 — which is the *engine's* default in `fmodextinput.prx`, so
+the two are not the same thing) and the corpus medians for the echo (2.00 beats, feedback 0.45,
+mix 0.5), on the reasoning that a mode that strong across 338 user sequencers is most likely the
+value the editor starts at. A decision, not a measurement. **What would settle it**: place a new
+sequencer in the game, save, and read its `PSequencer`; the toolkit's field initialisers are the
+other source, and they are a reading of the same kind as this one.
 
 ## 24. The last 54 clips that need a verbatim record patch
 

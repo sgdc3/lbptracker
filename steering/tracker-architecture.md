@@ -137,8 +137,13 @@ extra steps. ⚠️ **The AudioWorklet needs `?worker&url`, not a path**:
 bundle that graph ahead of time; a bare specifier inside the worklet realm fails to load and the
 page goes silent with no error on the main thread.
 
+`?open=fixtures/levels/x.lvl` on any page fetches that file from the site and opens it as if
+dropped (`widgets/open-panel.ts`): a file input cannot be filled from a script, and it is how the
+pages are checked in an automated browser. The deployed site serves no levels, so there it 404s
+into the page's error line.
+
 What was kept: the libraries have no build (the bundler stops at the web package's edge; `node
---test` runs 291 tests against the source); the output is relocatable (`base: './'`, every path
+--test` runs 306 tests against the source); the output is relocatable (`base: './'`, every path
 `./assets/…`, checked by grep after each build and by serving `dist/` at a bare root);
 **`fixtures/` is served, never built** — a ten-line middleware serves `/fixtures/…` in dev and
 preview, and `publicDir` was not used because it would copy the lot into `dist/`; and the dev server
@@ -193,10 +198,11 @@ The pages are Vue 3, and the first thing to know is the line it does not cross:
 
 ❗ **The real-time layer is called by components, never owned by them.** A note-on writes to a
 `MessagePort`, not to a reactive object; the keyboard toggles a class on 88 elements at key-down
-rate; the meters run at `requestAnimationFrame`. ⚠️ **The tracker grid, when it is built, is not a
+rate; the meters run at `requestAnimationFrame`. ⚠️ **The editor's two grids are canvases, not a
 `v-for`** — a pattern editor scrolling thousands of cells at 60 fps is a canvas or a virtualised
-list, a custom component registered on Vue. Rendering it as reactive components is the predictable
-way to make the editor slow.
+list, and rendering it as reactive components is the predictable way to make an editor slow.
+`src/editor/board.ts` and `src/editor/roll.ts` are those canvases, over a song that is a plain
+object with a version counter the Vue panels read ([editor.md](editor.md)).
 
 **`src/controls/`**: one spec per page (`bench.ts`, `live.ts`, `render.ts`, `midi.ts`) and `kit.ts`
 turning each into a typed store, five components. The win is that **a control is declared once**.
@@ -269,6 +275,13 @@ The formats are in [level-files.md](level-files.md); this is the behaviour aroun
   the archive is fetched by the page straight from archive.org, which answers any origin.
 
 ## The live player — settings are applied, not re-planned
+
+❗ **The player is `packages/lbp-tracker-web/src/player.ts`, one class shared by `live.html` and
+`editor.html`** since 2026-09-06; the invariants below are its, and the pages own only the DOM
+around it. ⚠️ While the scheduler lived in `live.ts` its gain read `channelVolume` without the
+board's height, so rows were re-banded by the modulo fallback on the way back in — the plan's gain
+having been divided out under the bands — and every multi-channel song was mixed on the wrong
+channels; `Player.mixerNow` carries `boardRows`.
 
 ⚠️ **Read before adding a control to `packages/lbp-tracker-web/live.html`.** The page builds its
 plan once — the render's whole voice pass, `renderSequencer` with `planOnly` — and a setting that
@@ -349,8 +362,10 @@ the quietest (`polyphony.ts`).
    cells 0–334, rows 0–24), and `dev/verify-levels.ts` matches cwlib's dump on 149 sequencers and
    62,158 placements byte for byte.
 5. ~~**Echo, reverb, compressor**~~ — done and measured (`audio/effects.ts`, `audio/compressor.ts`).
-6. **The editor.** ⚠️ **Not started.** The four pages are benches and players — they open, play,
-   render and export — and nothing in them edits a song: no grid, no piano roll, no undo.
+6. **The editor.** Started 2026-09-06 — `editor.html`: the board and the piano roll as canvases,
+   an editable song model whose boundary is the game's own record encoder, undo, a project file,
+   and playback of every edit through the shared player. [editor.md](editor.md) has it, including
+   what is not there yet.
 7. **Round-trip export** back into a game-loadable resource — the feature that makes the project
    matter to the LBP community. `cwlib`'s `zip.ts` already writes; the resource writer does not
    exist yet.
@@ -358,8 +373,8 @@ the quietest (`polyphony.ts`).
 | where | what |
 |---|---|
 | `packages/cwlib-ts/src/` | `stream.ts` (big-endian reader, varints, `Revision` gates), `serializer.ts`, `resource.ts` (container, dependency table), `thing.ts` + `parts.ts` (the walk, 50 readers), `level.ts` (worlds, plans, chunks, `boardCell`), `project.ts` + `notes.ts` (the sequencer as data), `savearchive.ts`, `psf.ts`, `zip.ts`, `backup.ts`, `platform/` |
-| `packages/lbp-tracker-lib/src/` | `render.ts` (the pipeline), `audio/mixer.ts` (voices, resampling, panning, looping, per-chunk re-derivation), `audio/interpolate.ts` + `mipmap.ts` (default `linear`; `sinc8` kept for A/B), `audio/moog.ts`, `audio/lfo.ts`, `audio/effects.ts` (echo, reverb, fold constants), `audio/compressor.ts`, `audio/mixer-worklet.ts`, `rinstrument.ts` + `instrument.ts` + `voice.ts`, `envelope.ts`, `params.ts`, `polyphony.ts`, `scale.ts`, `swing.ts`, `fsb.ts` + `ima.ts` + `wav.ts`, `midi.ts` + `smf.ts` |
-| `packages/lbp-tracker-web/` | `index.html` the instrument bench; `live.html` the live player; `render.html` the offline renderer, in a worker; `midi.html` the MIDI bridge; `src/controls/`, `src/widgets/`, `src/assets.ts`, `src/lbparchive.ts`, `src/footer.ts` |
+| `packages/lbp-tracker-lib/src/` | `render.ts` (the pipeline), `audio/mixer.ts` (voices, resampling, panning, looping, per-chunk re-derivation), `audio/interpolate.ts` + `mipmap.ts` (default `linear`; `sinc8` kept for A/B), `audio/moog.ts`, `audio/lfo.ts`, `audio/effects.ts` (echo, reverb, fold constants), `audio/compressor.ts`, `audio/mixer-worklet.ts`, `rinstrument.ts` + `instrument.ts` + `voice.ts`, `envelope.ts`, `params.ts`, `polyphony.ts`, `scale.ts`, `swing.ts`, `fsb.ts` + `ima.ts` + `wav.ts`, `midi.ts` + `smf.ts`, `song.ts` (the editable song and its boundary with the records) |
+| `packages/lbp-tracker-web/` | `index.html` the instrument bench; `live.html` the live player; `editor.html` the editor; `render.html` the offline renderer, in a worker; `midi.html` the MIDI bridge; `src/player.ts` the scheduler the live page and the editor share; `src/editor/` the board, the roll, the state and the panels; `src/controls/`, `src/widgets/`, `src/assets.ts`, `src/lbparchive.ts`, `src/footer.ts` |
 
 ## Testing against the corpus
 
