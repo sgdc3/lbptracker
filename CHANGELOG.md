@@ -10,13 +10,14 @@ not before, never how it was done. No `--` or em dash in here; the site's text d
 - The five pages are one app: Arrange, Song/Mixer, Render, Import/Export and Keyboard are views
   on the same song, and switching between them never stops the music.
 - A top bar with the views, the transport (play, stop, loop), the clock, the tempo, the volume
-  under a stereo VU meter, the song's name, and new, open and save. Space plays from any view.
+  under a stereo VU meter, the song's name, and new, open and save. Space plays from any view, and
+  the loop goes round without a gap.
 - A status bar at the bottom: what is going on, the notes sounding, the audio load and any
   dropouts, and the version, which opens this list.
 - A home page behind the brand, with the app presented in a few lines; the site opens on it, and
   reading it does not lose the song.
 - "Open" is a dialog: a level of your own, a save backup, a zip, a song file or a level from the
-  public archive, dropped or picked, with the list of songs when a level holds several.
+  public archive, dropped or picked, with a searchable list of the songs when a level holds several.
 - A song file (.json) saves the song as it is here and opens again anywhere a level would.
 - A "?" beside every card opens the help for it; the views themselves carry little prose.
 - An icon of its own for each of the 68 sounds, on the chips, in the picker and in the sound fields.
@@ -62,8 +63,9 @@ not before, never how it was done. No `--` or em dash in here; the site's text d
   instrument picked for each part.
 
 ### Keyboard
-- Follows the chip selected on the board, and opens with the piano already loaded. The first card
-  is two groups: the instrument, and the MIDI controller.
+- Follows the chip selected on the board, and opens with the piano already loaded; the sound is
+  picked from the same searchable list as on the board. The first card is two groups: the
+  instrument, and the MIDI controller.
 
 ## 0.1.0 (2026-09-06)
 
