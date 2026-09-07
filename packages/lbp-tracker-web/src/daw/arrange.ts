@@ -46,8 +46,11 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
   // moves the selection, and stays where it was dragged to.
 
   /** The board gets to scroll under the panel by the panel's height. */
+  // The scroller ends where the panel begins, so its horizontal scrollbar sits
+  // just above the panel instead of under it; the view is shorter, not padded.
   const insetBoard = () => {
-    board.setBottomInset(panel.hidden ? 0 : panel.getBoundingClientRect().height);
+    boardScroller.style.bottom = panel.hidden ? '0' : `${panel.getBoundingClientRect().height}px`;
+    board.setBottomInset(0);
   };
   const openPanel = () => {
     if (!panel.hidden) return;
