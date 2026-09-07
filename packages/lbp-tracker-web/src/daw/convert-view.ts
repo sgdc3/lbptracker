@@ -15,6 +15,7 @@
  * song, through the same `openSong` a level goes through.
  */
 
+import { confirmDialog } from '../confirm.ts';
 import { createApp, watch } from 'vue';
 import ControlPanel from '../controls/ControlPanel.vue';
 import { midi } from '../controls/midi.ts';
@@ -278,10 +279,10 @@ export function mountConvert(opts: { isActive: () => boolean; onShow: (l: () => 
     }
   }
 
-  takeButton.addEventListener('click', () => {
+  takeButton.addEventListener('click', async () => {
     const seq = assigned();
     if (!seq) return;
-    if (state.dirty && !window.confirm('Throw away the unsaved changes?')) return;
+    if (state.dirty && !(await confirmDialog('Throw away the unsaved changes?', 'throw them away'))) return;
     openSong(songFromSequencer(seq), `took "${seq.name}" from the MIDI file`);
     log(`the song is now ${seq.name || 'the imported file'}`);
   });

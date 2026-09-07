@@ -36,6 +36,7 @@ import {
 } from './geometry.ts';
 import { MISSING_INSTRUMENT, drawIcon, type InstrumentInfo } from './instruments.ts';
 import { capture, release } from './pointer.ts';
+import { Follow } from './follow.ts';
 import type { EditorState } from './state.ts';
 
 export interface BoardCallbacks {
@@ -83,6 +84,8 @@ export class BoardView {
   private layout: BoardLayout = { cellW: CELL_W, cellH: CELL_H, gutter: GUTTER, ruler: RULER, cols: 24, rows: 8 };
   /** The playhead, in timeline steps, or null when there is nothing to show. */
   private playStep: number | null = null;
+  /** Following the playhead, unless the person scrolled away from it. */
+  private readonly follow: Follow;
   private drag:
     | {
         kind: 'move'; clip: Clip; startX: number; startY: number; at: { cell: number; row: number };
@@ -137,6 +140,11 @@ export class BoardView {
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     scroller.addEventListener('scroll', () => this.schedule());
+    this.follow = new Follow(scroller, () => {
+      if (this.playStep === null) return true;
+      const x = this.xOfStep(this.playStep) - scroller.scrollLeft;
+      return x >= this.layout.gutter && x <= scroller.clientWidth;
+    });
     new ResizeObserver(() => this.schedule()).observe(scroller);
     state.onChange(() => this.schedule());
     this.schedule();
@@ -196,14 +204,20 @@ export class BoardView {
     this.schedule();
   }
 
-  /** Keep a step in view while the song plays. */
+  /** Keep a step in view while the song plays, unless the person scrolled away. */
   followStep(step: number): void {
+    if (!this.follow.on) return;
     const x = this.xOfStep(step);
     const left = this.scroller.scrollLeft;
     const width = this.scroller.clientWidth;
     if (x - left > width - 30 || x - left < this.layout.gutter) {
-      this.scroller.scrollLeft = Math.max(0, x - this.layout.gutter - 60);
+      this.follow.scrollTo(Math.max(0, x - this.layout.gutter - 60));
     }
+  }
+
+  /** A seek or a play: follow again from wherever the view is. */
+  followAgain(): void {
+    this.follow.resume();
   }
 
   schedule(): void {

@@ -40,7 +40,7 @@ export interface SeqPickerHandle {
  */
 export function seqPicker(
   host: HTMLElement,
-  onPick: (key: string) => void,
+  onPick: (key: string) => void | Promise<void>,
   onSave?: (key: string) => void,
 ): SeqPickerHandle {
   const state = pickerState();

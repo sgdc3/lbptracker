@@ -11,6 +11,7 @@
 import { createApp, h } from 'vue';
 import { STEPS_PER_CELL } from '@lbptracker/cwlib/project.ts';
 import { addClip, duplicateClip, removeClip, setSongEnd, type Clip } from '@lbptracker/lib/song.ts';
+import { confirmDialog } from '../confirm.ts';
 import { BoardView } from '../editor/board.ts';
 import { RollView } from '../editor/roll.ts';
 import { STEPS_PER_BAR, barOfCell } from '../editor/geometry.ts';
@@ -91,7 +92,12 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
   });
 
   const board = new BoardView($<HTMLCanvasElement>('board'), boardScroller, $<HTMLDivElement>('boardSpacer'), state, {
-    onSeek: (step) => player.hasPlan && player.seek(player.frameAt(Math.max(0, step))),
+    onSeek: (step) => {
+      if (!player.hasPlan) return;
+      player.seek(player.frameAt(Math.max(0, step)));
+      board.followAgain();
+      roll.followAgain();
+    },
     onMove: (clip, to) => {
       state.edit('notes', () => {
         clip.cell = to.cell;
@@ -103,9 +109,14 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     onPick: () => openPanel(),
     onEnd: (step) => state.edit('notes', (s) => setSongEnd(s, step), 'end'),
     onAddRow: () => state.addRow(),
-    onRemoveRow: (row) => {
+    onRemoveRow: async (row) => {
       const held = state.song.clips.filter((c) => c.row === row).length;
-      if (held > 0 && !window.confirm(`Remove row ${row} and the ${held} instrument${held === 1 ? '' : 's'} on it?`)) return;
+      if (held > 0) {
+        const ok = await confirmDialog(
+          `Remove row ${row} and the ${held} instrument${held === 1 ? '' : 's'} on it?`, 'remove the row',
+        );
+        if (!ok) return;
+      }
       state.removeRow(row);
     },
   });
@@ -269,7 +280,17 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     smoothing = true;
     window.requestAnimationFrame(smooth);
   };
-  onPlayer({ tick: () => { paint(); startSmoothing(); }, playing: startSmoothing });
+  onPlayer({
+    tick: () => { paint(); startSmoothing(); },
+    playing: (on) => {
+      // Play pressed: the view follows again from wherever it was left.
+      if (on) {
+        board.followAgain();
+        roll.followAgain();
+      }
+      startSmoothing();
+    },
+  });
   onPlan(paint);
   state.onChange((kind) => {
     if (kind === 'settings') paint();

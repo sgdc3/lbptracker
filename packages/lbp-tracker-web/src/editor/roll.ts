@@ -61,6 +61,7 @@ import {
   type RollLayout,
 } from './geometry.ts';
 import { capture, release } from './pointer.ts';
+import { Follow } from './follow.ts';
 import type { EditorState } from './state.ts';
 
 export interface RollCallbacks {
@@ -96,6 +97,8 @@ export class RollView {
   private readonly cb: RollCallbacks;
   private layout: RollLayout = { keys: KEYS, ruler: RULER, stepW: STEP_W, rowH: ROW_H, steps: 32, triplets: false };
   private playStep: number | null = null;
+  /** Following the playhead, unless the person scrolled away from it. */
+  private readonly follow: Follow;
   private drag: Drag | null = null;
   private hoverPitch: number | null = null;
   private heldKey: number | null = null;
@@ -129,6 +132,11 @@ export class RollView {
       this.schedule();
     });
     scroller.addEventListener('scroll', () => this.schedule());
+    this.follow = new Follow(scroller, () => {
+      if (this.playStep === null) return true;
+      const x = rollStepX(this.layout, this.playStep) - scroller.scrollLeft;
+      return x >= this.layout.keys && x <= scroller.clientWidth;
+    });
     new ResizeObserver(() => this.schedule()).observe(scroller);
     state.onChange(() => {
       const clip = state.clip();
@@ -177,12 +185,18 @@ export class RollView {
 
   /** Keep a step in view while the song plays. */
   followStep(stepInClip: number): void {
+    if (!this.follow.on) return;
     const x = rollStepX(this.layout, stepInClip);
     const left = this.scroller.scrollLeft;
     const width = this.scroller.clientWidth;
     if (x - left > width - 40 || x - left < this.layout.keys) {
-      this.scroller.scrollLeft = Math.max(0, x - this.layout.keys - 40);
+      this.follow.scrollTo(Math.max(0, x - this.layout.keys - 40));
     }
+  }
+
+  /** A seek or a play: follow again from wherever the view is. */
+  followAgain(): void {
+    this.follow.resume();
   }
 
   // ----------------------------------------------------------------- drawing

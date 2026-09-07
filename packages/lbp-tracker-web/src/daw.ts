@@ -12,6 +12,7 @@ import type { Sequencer } from '@lbptracker/cwlib/project.ts';
 import { songFromJson, songFromSequencer, newSong } from '@lbptracker/lib/song.ts';
 import { mountFooter } from './footer.ts';
 import { mountHelp } from './help.ts';
+import { confirmDialog } from './confirm.ts';
 import { APP_VERSION } from './version.ts';
 import { isSongFile, openedTitle, readOpened, saveNote, type Opened } from './open-level.ts';
 import { seqPicker } from './seq-picker.ts';
@@ -209,10 +210,10 @@ fileDialog.addEventListener('click', (event) => {
   if (event.target === fileDialog) fileDialog.close();
 });
 
-const picker = seqPicker($<HTMLDivElement>('seq'), (key) => {
+const picker = seqPicker($<HTMLDivElement>('seq'), async (key) => {
   const seq = songs.get(key);
   if (!seq) return;
-  if (state.dirty && !window.confirm('Throw away the unsaved changes?')) return;
+  if (state.dirty && !(await confirmDialog('Throw away the unsaved changes?', 'throw them away'))) return;
   openSong(songFromSequencer(seq), `opened "${seq.name}"`);
   fileDialog.close();
 });
@@ -274,8 +275,8 @@ async function openLevel(opened: Opened): Promise<void> {
   }
 }
 
-const startNew = () => {
-  if (state.dirty && !window.confirm('Throw away the unsaved changes?')) return;
+const startNew = async () => {
+  if (state.dirty && !(await confirmDialog('Throw away the unsaved changes?', 'throw them away'))) return;
   songs = new Map();
   picker.setRows([]);
   openSong(newSong(), 'a new song');
@@ -283,8 +284,8 @@ const startNew = () => {
   state.touch('selection');
   showView('arrange');
 };
-$('newSong').addEventListener('click', startNew);
-$('homeNew').addEventListener('click', startNew);
+$('newSong').addEventListener('click', () => void startNew());
+$('homeNew').addEventListener('click', () => void startNew());
 
 function saveSong(): void {
   const name = saveSongFile(state.song);
