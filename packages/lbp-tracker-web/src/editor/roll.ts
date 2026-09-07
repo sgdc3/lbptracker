@@ -42,6 +42,8 @@ import {
   lastThirds,
   moveNote,
   movePoint,
+  movePoints,
+  pointShiftLimits,
   removeNote,
   removePoint,
   sortPoints,
@@ -68,7 +70,6 @@ import {
   rollX,
   rollY,
   segmentDistance,
-  segmentMeetsRect,
   snapThirds,
   timbreColour,
   type RollLayout,
@@ -96,9 +97,9 @@ const HIT = 4;
 
 type Drag =
   | { mode: 'create'; note: SongNote; startThirds: number; startPitch: number; extended: boolean }
-  | { mode: 'point'; note: SongNote; point: SongPoint; moved: boolean; lastThirds: number; lastPitch: number }
-  | { mode: 'volume' | 'timbre'; note: SongNote; point: SongPoint; startY: number; startValue: number; moved: boolean }
-  | { mode: 'note'; notes: SongNote[]; startThirds: number; startPitch: number; lastThirds: number; lastPitch: number; moved: boolean }
+  /** Dragging the selected points. One mode, whether that is one point or fifty. */
+  | { mode: 'move'; startThirds: number; startPitch: number; lastThirds: number; lastPitch: number; moved: boolean }
+  | { mode: 'volume' | 'timbre'; startY: number; startValues: Map<string, number>; moved: boolean }
   | { mode: 'marquee'; x0: number; y0: number; x1: number; y1: number; add: boolean };
 
 export class RollView {
@@ -353,7 +354,7 @@ export class RollView {
     ctx.beginPath();
     ctx.rect(layout.keys, layout.ruler, viewW - layout.keys, viewH - layout.ruler);
     ctx.clip();
-    const selected = state.selection.noteIds;
+    const selected = state.selection.points;
     const sel = state.selection.point;
     const px = (t: number) => rollX(layout, t) - sx;
     const py = (p: number) => rollY(layout, p) - sy;
@@ -365,6 +366,8 @@ export class RollView {
      */
     const dimmed = (note: SongNote) => !onGrid(note.points, state.triplets);
     for (const note of clip.notes) {
+      // A line is lit when any of the note's points is in the selection; the
+      // rings below say which ones, since the selection is of points.
       const on = selected.has(note.id);
       const pts = note.points;
       const fade = dimmed(note) ? 0.3 : 1;
@@ -417,7 +420,7 @@ export class RollView {
       // point that was not there, and the owner had it removed.
     }
     for (const note of clip.notes) {
-      const on = selected.has(note.id);
+      const chosen = selected.get(note.id);
       const fade = dimmed(note) ? 0.3 : 1;
       note.points.forEach((p, i) => {
         const r = pointRadius(p.volume, layout.rowH);
@@ -434,9 +437,10 @@ export class RollView {
           ctx.arc(x, y, Math.max(1, r * 0.4), 0, Math.PI * 2);
           ctx.fill();
         }
-        if (on) {
-          ctx.strokeStyle = sel && sel.noteId === note.id && sel.index === i ? accent : '#ffffff';
-          ctx.lineWidth = sel && sel.noteId === note.id && sel.index === i ? 2.5 : 1.5;
+        if (chosen?.has(i)) {
+          const focused = sel && sel.noteId === note.id && sel.index === i;
+          ctx.strokeStyle = focused ? accent : '#ffffff';
+          ctx.lineWidth = focused ? 2.5 : 1.5;
           ctx.beginPath();
           ctx.arc(x, y, r + 1.5, 0, Math.PI * 2);
           ctx.stroke();
@@ -520,7 +524,7 @@ export class RollView {
     // Topmost drawn last, so search backwards; selected notes first so a
     // point can be grabbed out from under an overlapping note.
     const order = [...clip.notes].sort((a, b) =>
-      Number(this.state.selection.noteIds.has(a.id)) - Number(this.state.selection.noteIds.has(b.id)));
+      Number(this.state.selection.points.has(a.id)) - Number(this.state.selection.points.has(b.id)));
     for (let n = order.length - 1; n >= 0; n -= 1) {
       const note = order[n];
       for (let i = note.points.length - 1; i >= 0; i -= 1) {
@@ -551,38 +555,32 @@ export class RollView {
   }
 
   /**
-   * The notes a rectangle catches: one with a point inside it, **or with a
-   * line crossing it**. A held note's two points can both sit outside a
-   * rectangle drawn straight across the middle of it, and leaving that note
-   * out is not what the drag meant.
+   * **The points a rectangle catches**, as `[note id, index]` pairs.
+   *
+   * ⚠️ Points, not notes, and not the lines between them. A rectangle used to
+   * take a whole note if any part of it was caught, which meant the tail of a
+   * glide could not be grabbed without its head -- and shaping one end of a
+   * held note against the other is most of what a chain of control points is
+   * for. A rectangle drawn across the middle of a held note now catches
+   * nothing, which is the honest answer: there is no point there.
    */
-  private notesInRect(
+  private pointsInRect(
     clip: Clip,
     r: { x0: number; y0: number; x1: number; y1: number },
-  ): number[] {
+  ): [number, number][] {
     const x0 = Math.min(r.x0, r.x1);
     const x1 = Math.max(r.x0, r.x1);
     const y0 = Math.min(r.y0, r.y1);
     const y1 = Math.max(r.y0, r.y1);
-    const ids: number[] = [];
+    const out: [number, number][] = [];
     for (const note of clip.notes) {
-      const pts = note.points;
-      let caught = false;
-      for (const p of pts) {
+      note.points.forEach((p, i) => {
         const px = rollX(this.layout, p.thirds);
         const py = rollY(this.layout, p.pitch);
-        if (px >= x0 && px <= x1 && py >= y0 && py <= y1) { caught = true; break; }
-      }
-      for (let i = 0; !caught && i < pts.length - 1; i += 1) {
-        caught = segmentMeetsRect(
-          rollX(this.layout, pts[i].thirds), rollY(this.layout, pts[i].pitch),
-          rollX(this.layout, pts[i + 1].thirds), rollY(this.layout, pts[i + 1].pitch),
-          x0, y0, x1, y1,
-        );
-      }
-      if (caught) ids.push(note.id);
+        if (px >= x0 && px <= x1 && py >= y0 && py <= y1) out.push([note.id, i]);
+      });
     }
-    return ids;
+    return out;
   }
 
   private snapped(x: number, steps: number): number {
@@ -612,12 +610,12 @@ export class RollView {
     if (event.button === 2) {
       if (hitP) {
         state.edit('notes', () => removePoint(clip, hitP.note, hitP.point));
-        state.selectNotes(clip.notes.some((n) => n === hitP.note) ? [hitP.note.id] : []);
+        state.selectPoints([]);
       } else {
         const hitL = this.hitLine(clip, x, y);
         if (hitL) {
           state.edit('notes', () => removeNote(clip, hitL.note.id));
-          state.selectNotes([]);
+          state.selectPoints([]);
         }
       }
       return;
@@ -625,35 +623,36 @@ export class RollView {
     if (event.button !== 0) return;
     capture(this.canvas, event);
     if (hitP) {
-      const { note, point, index } = hitP;
+      const { note, index } = hitP;
+      const here = { noteId: note.id, index };
       if (event.ctrlKey || event.metaKey) {
-        const ids = new Set(state.selection.noteIds);
-        if (ids.has(note.id)) ids.delete(note.id);
-        else ids.add(note.id);
-        state.selectNotes(ids, ids.has(note.id) ? { noteId: note.id, index } : null);
+        // Ctrl on a point puts that one point in or takes it out.
+        const points = [...state.selection.points]
+          .flatMap(([id, set]) => [...set].map((i) => [id, i] as [number, number]));
+        const was = state.isSelected(note.id, index);
+        state.selectPoints(was ? points.filter(([id, i]) => id !== note.id || i !== index)
+                               : [...points, [note.id, index]],
+                           was ? null : here);
         return;
       }
-      if (!state.selection.noteIds.has(note.id)) state.selectNotes([note.id], { noteId: note.id, index });
-      else state.selectNotes(state.selection.noteIds, { noteId: note.id, index });
+      // A point that is not in the selection becomes the selection; one that is
+      // keeps it, so a set can be dragged by any of its dots.
+      if (!state.isSelected(note.id, index)) state.selectPoints([[note.id, index]], here);
+      else state.selectPoints([...state.selection.points]
+        .flatMap(([id, set]) => [...set].map((i) => [id, i] as [number, number])), here);
       state.beginDrag();
-      if (event.shiftKey) {
-        this.drag = { mode: 'volume', note, point, startY: y, startValue: point.volume, moved: false };
-      } else if (event.altKey) {
-        this.drag = { mode: 'timbre', note, point, startY: y, startValue: point.timbre, moved: false };
-      } else if (state.selection.noteIds.size > 1) {
-        /**
-         * **A point of a note inside a set drags the whole set.** The dots are
-         * what the pointer lands on, so a selection that can only be moved by
-         * grabbing the thin line between them is a selection that cannot be
-         * moved. To shape one point again, drop the selection first (Esc, or
-         * a click on empty grid) and grab it on its own.
-         */
-        const notes = clip.notes.filter((n) => state.selection.noteIds.has(n.id));
+      if (event.shiftKey || event.altKey) {
+        // Volume and timbre take the whole selection, each point from its own
+        // starting value, so a set keeps the shape it had.
+        const startValues = new Map<string, number>();
+        for (const { note: n, indices } of state.selectedPoints()) {
+          for (const i of indices) startValues.set(`${n.id}:${i}`, event.shiftKey ? n.points[i].volume : n.points[i].timbre);
+        }
+        this.drag = { mode: event.shiftKey ? 'volume' : 'timbre', startY: y, startValues, moved: false };
+      } else {
         const t = this.snapped(x, clip.steps);
         const p = rollPitchAt(this.layout, y);
-        this.drag = { mode: 'note', notes, startThirds: t, startPitch: p, lastThirds: t, lastPitch: p, moved: false };
-      } else {
-        this.drag = { mode: 'point', note, point, moved: false, lastThirds: point.thirds, lastPitch: point.pitch };
+        this.drag = { mode: 'move', startThirds: t, startPitch: p, lastThirds: t, lastPitch: p, moved: false };
       }
       this.cb.onAudition(clip, note);
       return;
@@ -661,19 +660,21 @@ export class RollView {
     const hitL = this.hitLine(clip, x, y);
     if (hitL) {
       const { note } = hitL;
+      // A line is the note as a whole: every one of its points.
+      const all = note.points.map((_, i) => [note.id, i] as [number, number]);
       if (event.ctrlKey || event.metaKey) {
-        const ids = new Set(state.selection.noteIds);
-        if (ids.has(note.id)) ids.delete(note.id);
-        else ids.add(note.id);
-        state.selectNotes(ids);
+        const points = [...state.selection.points]
+          .flatMap(([id, set]) => [...set].map((i) => [id, i] as [number, number]));
+        state.selectPoints(state.isNoteSelected(note)
+          ? points.filter(([id]) => id !== note.id)
+          : [...points.filter(([id]) => id !== note.id), ...all]);
         return;
       }
-      if (!state.selection.noteIds.has(note.id)) state.selectNotes([note.id]);
-      const notes = clip.notes.filter((n) => state.selection.noteIds.has(n.id));
+      if (!state.isNoteSelected(note)) state.selectPoints(all);
       state.beginDrag();
       const t = this.snapped(x, clip.steps);
       const p = rollPitchAt(this.layout, y);
-      this.drag = { mode: 'note', notes, startThirds: t, startPitch: p, lastThirds: t, lastPitch: p, moved: false };
+      this.drag = { mode: 'move', startThirds: t, startPitch: p, lastThirds: t, lastPitch: p, moved: false };
       this.cb.onAudition(clip, note);
       return;
     }
@@ -691,7 +692,7 @@ export class RollView {
       created = addNote(song, clip, { thirds, pitch });
     });
     const note = created!;
-    state.selectNotes([note.id], { noteId: note.id, index: 0 });
+    state.selectPoints([[note.id, 0]], { noteId: note.id, index: 0 });
     this.drag = { mode: 'create', note, startThirds: thirds, startPitch: pitch, extended: false };
     this.cb.onAudition(clip, note);
   };
@@ -719,17 +720,17 @@ export class RollView {
         this.cb.onHover(
           `${noteName(p.pitch)} (${p.pitch}) at ${positionLabel(p.thirds)} · volume ${p.volume} · timbre ${p.timbre}` +
           ` · point ${hitP.index + 1} of ${hitP.note.points.length}`
-          + (this.state.selection.noteIds.size > 1 && this.state.selection.noteIds.has(hitP.note.id)
-            ? `  ·  drag moves all ${this.state.selection.noteIds.size}` : ''),
+          + (this.state.selectedCount > 1 && this.state.isSelected(hitP.note.id, hitP.index)
+            ? `  ·  drag moves all ${this.state.selectedCount}` : ''),
         );
       } else {
         const t = this.snapped(x, clip.steps);
-        const n = this.state.selection.noteIds.size;
+        const n = this.state.selectedCount;
         // With something selected the line says what the keys will do to it:
         // the commands are otherwise only in the help.
         this.cb.onHover(n === 0
-          ? `${noteName(pitch ?? 0)} at ${positionLabel(t)}  ·  shift+drag selects`
-          : `${noteName(pitch ?? 0)} at ${positionLabel(t)}  ·  ${n} note${n === 1 ? '' : 's'} selected`
+          ? `${noteName(pitch ?? 0)} at ${positionLabel(t)}  ·  shift+drag selects points`
+          : `${noteName(pitch ?? 0)} at ${positionLabel(t)}  ·  ${n} point${n === 1 ? '' : 's'} selected`
             + '  ·  ctrl+D duplicate, ctrl+X cut, ctrl+C copy, ctrl+V paste, Delete removes');
       }
       return;
@@ -749,44 +750,54 @@ export class RollView {
         });
         break;
       }
-      case 'point': {
-        const thirds = this.snapped(x, clip.steps);
-        const pitch = rollPitchAt(this.layout, y);
-        if (thirds === drag.lastThirds && pitch === drag.lastPitch) return;
-        drag.lastThirds = thirds;
-        drag.lastPitch = pitch;
-        drag.moved = true;
-        state.during(() => movePoint(clip, drag.note, drag.point, { thirds, pitch }));
-        break;
-      }
-      case 'volume': {
-        const value = Math.round(drag.startValue + (drag.startY - y) / 2);
-        if (value === drag.point.volume) return;
-        drag.moved = true;
-        state.during(() => movePoint(clip, drag.note, drag.point, { volume: value }));
-        this.cb.onHover(`volume ${drag.point.volume}`);
-        break;
-      }
-      case 'timbre': {
-        const value = Math.round(drag.startValue + (drag.startY - y) / 8);
-        if (value === drag.point.timbre) return;
-        drag.moved = true;
-        state.during(() => movePoint(clip, drag.note, drag.point, { timbre: value }));
-        this.cb.onHover(`timbre ${drag.point.timbre}`);
-        break;
-      }
-      case 'note': {
+      case 'move': {
         const thirds = this.snapped(x, clip.steps);
         const pitch = rollPitchAt(this.layout, y);
         const dt = thirds - drag.lastThirds;
         const dp = pitch - drag.lastPitch;
         if (dt === 0 && dp === 0) return;
+        drag.moved = true;
+        /**
+         * The whole selection shifts by the same step, so it keeps its shape:
+         * the delta each note *could* take is worked out first and the
+         * smallest of them is what every note gets. Letting each note clamp
+         * itself would slide a chord apart against the clip's edge.
+         */
+        const chosen = state.selectedPoints();
+        let dtOk = dt;
+        let dpOk = dp;
+        for (const { note, indices } of chosen) {
+          const limits = pointShiftLimits(clip, note, indices);
+          dtOk = Math.max(limits.minThirds, Math.min(limits.maxThirds, dtOk));
+          dpOk = Math.max(limits.minPitch, Math.min(limits.maxPitch, dpOk));
+        }
         drag.lastThirds = thirds;
         drag.lastPitch = pitch;
-        drag.moved = true;
+        if (dtOk === 0 && dpOk === 0) break;
         state.during(() => {
-          for (const note of drag.notes) moveNote(clip, note, dt, dp);
+          for (const { note, indices } of chosen) movePoints(clip, note, indices, dtOk, dpOk);
         });
+        break;
+      }
+      case 'volume':
+      case 'timbre': {
+        const field = drag.mode;
+        const step = field === 'volume' ? 2 : 8;
+        const delta = Math.round((drag.startY - y) / step);
+        let last = 0;
+        state.during(() => {
+          for (const { note, indices } of state.selectedPoints()) {
+            for (const i of indices) {
+              const from = drag.startValues.get(`${note.id}:${i}`);
+              if (from === undefined) continue;
+              movePoint(clip, note, note.points[i], { [field]: from + delta });
+              last = note.points[i][field];
+            }
+          }
+        });
+        drag.moved = true;
+        const n = state.selectedCount;
+        this.cb.onHover(`${field} ${last}${n > 1 ? ` on ${n} points` : ''}`);
         break;
       }
       case 'marquee': {
@@ -794,8 +805,8 @@ export class RollView {
         drag.y1 = y;
         // The count comes from the same test the drop will use, so the hint
         // cannot say one thing and the selection do another.
-        const n = this.notesInRect(clip, drag).length;
-        this.cb.onHover(`${n} note${n === 1 ? '' : 's'}${drag.add ? ' to add' : ''}`);
+        const n = this.pointsInRect(clip, drag).length;
+        this.cb.onHover(`${n} point${n === 1 ? '' : 's'}${drag.add ? ' to add' : ''}`);
         this.schedule();
         break;
       }
@@ -818,20 +829,25 @@ export class RollView {
       case 'create':
         state.endDrag('notes', true);
         break;
-      case 'point':
-        if (drag.moved && clip) sortPoints(drag.note);
-        state.endDrag('notes', drag.moved);
-        break;
+
       case 'volume':
       case 'timbre':
-      case 'note':
+        state.endDrag('notes', drag.moved);
+        break;
+      case 'move':
+        if (drag.moved) for (const { note } of state.selectedPoints()) sortPoints(note);
         state.endDrag('notes', drag.moved);
         break;
       case 'marquee': {
         if (!clip) break;
-        const ids = this.notesInRect(clip, drag);
+        const caught = this.pointsInRect(clip, drag);
         // Ctrl held: the rectangle adds to what is already selected.
-        state.selectNotes(drag.add ? new Set([...state.selection.noteIds, ...ids]) : ids);
+        const before: [number, number][] = drag.add
+          ? [...state.selection.points].flatMap(([id, set]) => [...set].map((i) => [id, i] as [number, number]))
+          : [];
+        const last = caught[caught.length - 1];
+        state.selectPoints([...before, ...caught],
+          last ? { noteId: last[0], index: last[1] } : state.selection.point);
         break;
       }
     }
@@ -863,70 +879,86 @@ export class RollView {
   // --------------------------------------------------------------- commands
   // The page's keyboard reaches these; they act on the selection.
 
+  /**
+   * Take the selected **points** away. A note whose last point goes with them
+   * goes too (`removePoint` does that), so deleting every point of a note is
+   * the same as deleting the note.
+   */
   deleteSelection(): void {
     const state = this.state;
     const clip = state.clip();
-    if (!clip) return;
-    const sel = state.point();
-    if (sel && state.selection.noteIds.size === 1) {
-      state.edit('notes', () => removePoint(clip, sel.note, sel.point));
-      state.selectNotes(clip.notes.includes(sel.note) ? [sel.note.id] : []);
-      return;
-    }
-    if (state.selection.noteIds.size === 0) return;
-    const ids = new Set(state.selection.noteIds);
+    if (!clip || state.selectedCount === 0) return;
+    const chosen = state.selectedPoints();
     state.edit('notes', () => {
-      for (const id of ids) removeNote(clip, id);
+      for (const { note, indices } of chosen) {
+        // Backwards, so an index still names the point it named before.
+        for (const i of [...indices].sort((a, b) => b - a)) {
+          const point = note.points[i];
+          if (point) removePoint(clip, note, point);
+        }
+      }
     });
-    state.selectNotes([]);
+    state.selectPoints([]);
   }
 
-  /** Move the selected notes by a grid unit and/or a semitone. */
+  /** Move the selected points by a grid unit and/or a semitone, as one. */
   nudge(dSteps: number, dPitch: number): void {
     const state = this.state;
     const clip = state.clip();
-    if (!clip || state.selection.noteIds.size === 0) return;
+    if (!clip || state.selectedCount === 0) return;
     const dt = dSteps * gridUnit(state.triplets);
+    const chosen = state.selectedPoints();
+    // The smallest allowance decides, so the selection keeps its shape.
+    let dtOk = dt;
+    let dpOk = dPitch;
+    for (const { note, indices } of chosen) {
+      const limits = pointShiftLimits(clip, note, indices);
+      dtOk = Math.max(limits.minThirds, Math.min(limits.maxThirds, dtOk));
+      dpOk = Math.max(limits.minPitch, Math.min(limits.maxPitch, dpOk));
+    }
+    if (dtOk === 0 && dpOk === 0) return;
     state.edit('notes', () => {
-      for (const note of clip.notes) {
-        if (state.selection.noteIds.has(note.id)) moveNote(clip, note, dt, dPitch);
-      }
+      for (const { note, indices } of chosen) movePoints(clip, note, indices, dtOk, dpOk);
     }, 'nudge');
   }
 
-  /** Volume or timbre of the selected point, or of every point of the selected notes. */
+  /** Volume or timbre of every selected point. */
   adjust(field: 'volume' | 'timbre', delta: number): void {
     const state = this.state;
     const clip = state.clip();
-    if (!clip) return;
-    const sel = state.point();
+    if (!clip || state.selectedCount === 0) return;
+    const chosen = state.selectedPoints();
     state.edit('notes', () => {
-      if (sel) {
-        movePoint(clip, sel.note, sel.point, { [field]: sel.point[field] + delta });
-        return;
-      }
-      for (const note of clip.notes) {
-        if (!state.selection.noteIds.has(note.id)) continue;
-        for (const p of note.points) movePoint(clip, note, p, { [field]: p[field] + delta });
+      for (const { note, indices } of chosen) {
+        for (const i of indices) {
+          const p = note.points[i];
+          if (p) movePoint(clip, note, p, { [field]: p[field] + delta });
+        }
       }
     }, `adjust-${field}`);
   }
 
+  /** Every point of every note in the chip. */
   selectAll(): void {
     const clip = this.state.clip();
     if (clip) this.state.selectNotes(clip.notes.map((n) => n.id));
   }
 
-  /** The selected notes, each point's position relative to the earliest of them. */
+  /**
+   * The selection as notes, relative to its earliest point.
+   *
+   * ⚠️ A note contributes **only its selected points**, so half a glide copies
+   * as half a glide. Points of one note that are not next to each other still
+   * come out as one note: they are what was selected, and a chain with a gap
+   * in it is the same chain.
+   */
   private lift(): SongNote[] {
-    const clip = this.state.clip();
-    if (!clip) return [];
-    const notes = clip.notes.filter((n) => this.state.selection.noteIds.has(n.id));
-    if (!notes.length) return [];
-    const first = Math.min(...notes.map((n) => n.points[0].thirds));
-    return notes.map((n) => ({
+    const chosen = this.state.selectedPoints();
+    if (!chosen.length) return [];
+    const first = Math.min(...chosen.map(({ note, indices }) => note.points[indices[0]].thirds));
+    return chosen.map(({ note, indices }) => ({
       id: 0,
-      points: n.points.map((p) => ({ ...p, thirds: p.thirds - first })),
+      points: indices.map((i) => ({ ...note.points[i], thirds: note.points[i].thirds - first })),
     }));
   }
 
@@ -957,21 +989,19 @@ export class RollView {
     this.insert(lifted, this.afterSelection());
   }
 
-  /** The earliest point of the selection, or 0 when nothing is selected. */
+  /** The earliest selected point, or 0 when nothing is selected. */
   private selectionStart(): number {
-    const clip = this.state.clip();
-    if (!clip) return 0;
-    const selected = clip.notes.filter((n) => this.state.selection.noteIds.has(n.id));
-    return selected.length ? Math.min(...selected.map((n) => n.points[0].thirds)) : 0;
+    const chosen = this.state.selectedPoints();
+    return chosen.length
+      ? Math.min(...chosen.map(({ note, indices }) => note.points[indices[0]].thirds))
+      : 0;
   }
 
-  /** One step past the last point of the selection, on a whole step. */
+  /** One step past the last selected point, on a whole step. */
   private afterSelection(): number {
-    const clip = this.state.clip();
-    if (!clip) return 0;
-    const selected = clip.notes.filter((n) => this.state.selection.noteIds.has(n.id));
-    const end = selected.length
-      ? Math.max(...selected.map((n) => n.points[n.points.length - 1].thirds))
+    const chosen = this.state.selectedPoints();
+    const end = chosen.length
+      ? Math.max(...chosen.map(({ note, indices }) => note.points[indices[indices.length - 1]].thirds))
       : -3;
     return Math.ceil((end + 3) / 3) * 3;
   }
@@ -1003,7 +1033,7 @@ export class RollView {
   paste(atThirds?: number): void {
     if (!this.state.clip() || !this.clipboard.length) return;
     const at = atThirds
-      ?? (this.state.selection.noteIds.size ? this.afterSelection() : this.clipboardAt);
+      ?? (this.state.selectedCount ? this.afterSelection() : this.clipboardAt);
     this.insert(this.clipboard, at);
   }
 

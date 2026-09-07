@@ -33,9 +33,18 @@ export interface Selection {
   row: number;
   /** The clip whose grid the piano roll shows. */
   clipId: number | null;
-  /** Note ids within that clip. */
-  noteIds: Set<number>;
-  /** One point of one of those notes, for the inspector. */
+  /**
+   * **The selection is a set of points, not of notes**: for each note id, the
+   * indices of its selected points. A note counts as selected when every one
+   * of its points is in here, which is what clicking its line does.
+   *
+   * ⚠️ It was a set of note ids until 2026-09-07. The rectangle then took
+   * whole notes, so there was no way to grab the tail of a glide and leave
+   * its head alone -- which is most of what editing a chain of control points
+   * is for.
+   */
+  points: Map<number, Set<number>>;
+  /** The one point the inspector edits: the last one touched. */
   point: { noteId: number; index: number } | null;
   /** The board's cursor: where the next instrument goes. */
   cursor: { cell: number; row: number } | null;
@@ -45,7 +54,7 @@ export class EditorState {
   song: Song;
   /** Ticks on every change; the Vue panels depend on it. */
   readonly version = ref(0);
-  readonly selection: Selection = { row: 0, clipId: null, noteIds: new Set(), point: null, cursor: null };
+  readonly selection: Selection = { row: 0, clipId: null, points: new Map(), point: null, cursor: null };
   /** The piano roll's grid: thirds of a step when on, whole steps when off. */
   triplets = false;
   /**
@@ -116,7 +125,7 @@ export class EditorState {
     // The selection may name the chips that went; a row's worth of them.
     if (!this.clip()) {
       this.selection.clipId = null;
-      this.selection.noteIds = new Set();
+      this.selection.points = new Map();
       this.selection.point = null;
     }
     if (this.selection.row >= row) {
@@ -221,7 +230,7 @@ export class EditorState {
     this.selection.clipId = first?.id ?? null;
     this.mutedRows.clear();
     this.soloRows.clear();
-    this.selection.noteIds = new Set();
+    this.selection.points = new Map();
     this.selection.point = null;
     this.selection.cursor = null;
     this.notify('notes');
@@ -232,11 +241,11 @@ export class EditorState {
     const clip = this.clip();
     if (!clip) {
       this.selection.clipId = this.song.clips[0]?.id ?? null;
-      this.selection.noteIds = new Set();
+      this.selection.points = new Map();
       this.selection.point = null;
     } else {
       const ids = new Set(clip.notes.map((n) => n.id));
-      this.selection.noteIds = new Set([...this.selection.noteIds].filter((id) => ids.has(id)));
+      for (const id of [...this.selection.points.keys()]) if (!ids.has(id)) this.selection.points.delete(id);
       if (this.selection.point && !ids.has(this.selection.point.noteId)) this.selection.point = null;
     }
     this.dirty = true;
@@ -280,7 +289,7 @@ export class EditorState {
       return;
     }
     this.selection.clipId = id;
-    this.selection.noteIds = new Set();
+    this.selection.points = new Map();
     this.selection.point = null;
     this.notify('selection');
   }
@@ -299,9 +308,63 @@ export class EditorState {
     this.selectClip(this.firstClipOnRow(row)?.id ?? null);
   }
 
-  selectNotes(ids: Iterable<number>, point: Selection['point'] = null): void {
-    this.selection.noteIds = new Set(ids);
+  // ------------------------------------------------------------ selecting
+
+  /** Replace the selection with these points, and say which one the inspector shows. */
+  selectPoints(points: Iterable<readonly [number, number]>, point: Selection['point'] = null): void {
+    const next = new Map<number, Set<number>>();
+    for (const [noteId, index] of points) {
+      const set = next.get(noteId) ?? new Set<number>();
+      set.add(index);
+      next.set(noteId, set);
+    }
+    this.selection.points = next;
     this.selection.point = point;
     this.notify('selection');
+  }
+
+  /** Select whole notes: every point of each. The gesture for clicking a line. */
+  selectNotes(ids: Iterable<number>, point: Selection['point'] = null): void {
+    const clip = this.clip();
+    const next = new Map<number, Set<number>>();
+    for (const id of ids) {
+      const note = clip && this.note(clip, id);
+      if (!note) continue;
+      next.set(id, new Set(note.points.map((_, i) => i)));
+    }
+    this.selection.points = next;
+    this.selection.point = point;
+    this.notify('selection');
+  }
+
+  isSelected(noteId: number, index: number): boolean {
+    return this.selection.points.get(noteId)?.has(index) ?? false;
+  }
+
+  /** Whether every point of a note is in the selection: the note as a whole. */
+  isNoteSelected(note: SongNote): boolean {
+    const set = this.selection.points.get(note.id);
+    return !!set && note.points.every((_, i) => set.has(i));
+  }
+
+  /** How many points are selected, across every note. */
+  get selectedCount(): number {
+    let n = 0;
+    for (const set of this.selection.points.values()) n += set.size;
+    return n;
+  }
+
+  /** The selection as [note, indices] pairs, resolved against the clip. */
+  selectedPoints(): { note: SongNote; indices: number[] }[] {
+    const clip = this.clip();
+    if (!clip) return [];
+    const out: { note: SongNote; indices: number[] }[] = [];
+    for (const [id, set] of this.selection.points) {
+      const note = this.note(clip, id);
+      if (!note) continue;
+      const indices = [...set].filter((i) => i < note.points.length).sort((a, b) => a - b);
+      if (indices.length) out.push({ note, indices });
+    }
+    return out;
   }
 }

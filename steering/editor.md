@@ -92,32 +92,30 @@ The editor draws both, as faithfully as the data allows and no further:
   (the slide rates at `+0x2c` in [synth-engine.md](synth-engine.md)), so the ribbon's thickness and
   hue at any x are the volume and modulation that will sound there. A segment whose ends share a
   timbre — 96.1% of notes automate nothing — skips the gradient and fills flat.
-- **Selecting and editing a set of notes.** Shift+drag on empty space draws a rectangle;
-  it catches a note by a point inside it **or by a line crossing it** (`segmentMeetsRect` in
-  `geometry.ts`, `notesInRect` in `roll.ts`), because a held note's two points can both sit
-  outside a rectangle drawn across its middle and leaving it out is not what the drag meant. Ctrl
-  with it adds to the selection; Ctrl on a point or a line puts one note in or takes it out. The
-  commands at the end of `RollView` are what the page's keys reach: `deleteSelection`, `nudge`,
-  `adjust`, `selectAll`, `copy`, `cut`, `paste`, `duplicateSelection`, all of them one entry in
-  the undo stack. `lift` and `insert` are the single copy path underneath, so a duplicate and a
-  paste cannot drift apart; a duplicate lands one step past the selection and *selects the copy*,
-  so pressing it again walks on down the grid, and it leaves the clipboard alone. A paste with
-  nothing selected goes back where the clipboard was lifted from, which makes cut then paste a
-  round trip. ⚠️ Ctrl+D is shared with the board, which duplicates the chip: the roll takes it
-  only when the pointer is not over the board and notes are selected, the same rule Delete uses.
-  ⚠️ **A point of a note inside a selection drags the whole selection**, not that point alone: the
-  dots are what a pointer lands on, and a selection movable only by the thin line between them is
-  one a composer cannot move. Shaping a single point again means dropping the selection first
-  (Esc); a selection of one behaves as it always did.
-- **"Find the notes" looks for the window that shows the most of them** (`bestNoteWindow` in
-  `geometry.ts`, exact rather than a search: a note is visible from a rectangle of scroll origins,
-  so a 2D difference array and a prefix sum give the count for every origin at once). ⚠️ It used
-  to centre the pitch *range*, and a chip with a bass line and one high note has a midpoint no
-  note is near: measured on such a chip, the old rule showed **0 of 9** notes and this one shows
-  8. A tie leaves the view where it was, and the horizontal axis is chosen the same way instead of
-  being reset to step 0. ⚠️ The origins a note is visible from are the *overlap* rectangle,
-  `[rowMin - rows + 1, rowMax]`; the containment rectangle is empty for a note taller than the
-  window, which drops exactly the notes worth finding.
+- **The selection is a set of POINTS, not of notes** (`Selection.points`, a note id to the indices
+  of its chosen points). Shift+drag draws a rectangle and it catches the points inside it;
+  clicking a line takes every point of that note, which is how a whole note is still moved; Ctrl
+  puts one point in or out, and Ctrl with the rectangle adds. ⚠️ **It was a set of note ids until
+  2026-09-07**, and the rectangle took whole notes, so the tail of a glide could not be grabbed
+  without its head -- which is most of what a chain of control points is for. The old rectangle
+  also caught a note whose *line* crossed it (`segmentMeetsRect`, now gone): that rule was
+  note-shaped and a rectangle over the middle of a held note now catches nothing, which is the
+  honest answer, because there is no point there.
+- **Moving a set of points needs its own primitive.** `pointShiftLimits` and `movePoints`
+  (`song.ts`) shift chosen points together; ⚠️ clamping each against its immediate neighbour, the
+  way `movePoint` does, **pins a group**, because the neighbour has not moved yet. The bound for a
+  selected point is the nearest *unselected* point on either side, and the roll intersects the
+  limits across every note in the selection before applying, so a chord keeps its shape against
+  the clip's edge instead of sliding apart. `test/song.test.ts` holds both.
+- The commands at the end of `RollView` are what the page's keys reach: `deleteSelection`,
+  `nudge`, `adjust`, `selectAll`, `copy`, `cut`, `paste`, `duplicateSelection`, all of them one
+  entry in the undo stack, and all of them over the selected points. Delete takes the points and a
+  note whose last point goes with them goes too. `lift` and `insert` are the single copy path, so
+  a duplicate and a paste cannot drift apart, and **a note contributes only its selected points**,
+  so half a glide copies as half a glide. A duplicate lands one step past the selection and
+  selects the copy; a paste with nothing selected goes back where the clipboard was lifted from.
+  ⚠️ Ctrl+D is shared with the board, which duplicates the chip: the roll takes it only when the
+  pointer is not over the board and something is selected, the same rule Delete uses.
 - A note's end is its last point and nothing more: a one-record note is one point, a held note
   two joined by a line, as the game draws them. ⚠️ A faint one-step tail past the last point --
   where the gate does close (`duration = lastStep − firstStep + 1`) -- was drawn for a day and

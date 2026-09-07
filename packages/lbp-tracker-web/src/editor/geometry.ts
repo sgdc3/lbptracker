@@ -299,30 +299,6 @@ export function bestNoteWindow(
   return best;
 }
 
-/**
- * Whether a segment meets an axis-aligned rectangle, for the marquee.
- *
- * A note is a chain, and a rectangle drawn over the middle of a held note
- * touches none of its points -- so testing the points alone leaves that note
- * out of a selection drawn straight across it, which is not what the person
- * dragging the rectangle meant.
- */
-export function segmentMeetsRect(
-  ax: number, ay: number, bx: number, by: number,
-  x0: number, y0: number, x1: number, y1: number,
-): boolean {
-  const inside = (x: number, y: number) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
-  if (inside(ax, ay) || inside(bx, by)) return true;
-  // Away with it early when the segment's own box misses the rectangle.
-  if (Math.max(ax, bx) < x0 || Math.min(ax, bx) > x1) return false;
-  if (Math.max(ay, by) < y0 || Math.min(ay, by) > y1) return false;
-  // Both ends outside and the boxes overlap: it crosses only if the rectangle's
-  // corners do not all sit on one side of the segment's line.
-  const side = (x: number, y: number) => Math.sign((bx - ax) * (y - ay) - (by - ay) * (x - ax));
-  const s = side(x0, y0);
-  return s !== side(x1, y0) || s !== side(x0, y1) || s !== side(x1, y1);
-}
-
 /** Distance from a point to a segment, for hit-testing a note's line. */
 export function segmentDistance(
   px: number, py: number, ax: number, ay: number, bx: number, by: number,

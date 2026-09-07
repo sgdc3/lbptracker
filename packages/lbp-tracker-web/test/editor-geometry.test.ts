@@ -17,7 +17,6 @@ import {
   rollY,
   segmentDistance,
   bestNoteWindow,
-  segmentMeetsRect,
   snapThirds,
   timbreColour,
   type BoardLayout,
@@ -111,26 +110,6 @@ test('colours and distances', () => {
   assert.equal(segmentDistance(3, 4, 0, 0, 0, 0), 5, 'a zero-length segment is a point');
 });
 
-test('the marquee catches a line that crosses it, not only the points inside it', () => {
-  // The rectangle 10..20 by 10..20, and segments around it.
-  const rect = [10, 10, 20, 20] as const;
-  const meets = (ax: number, ay: number, bx: number, by: number) =>
-    segmentMeetsRect(ax, ay, bx, by, ...rect);
-
-  assert.equal(meets(15, 15, 16, 16), true, 'wholly inside');
-  assert.equal(meets(0, 15, 30, 15), true, 'straight through, both ends outside');
-  assert.equal(meets(15, 0, 15, 30), true, 'and the other way');
-  assert.equal(meets(0, 0, 30, 30), true, 'corner to corner through it');
-  assert.equal(meets(5, 15, 15, 15), true, 'one end inside');
-  assert.equal(meets(0, 0, 5, 5), false, 'wholly outside, up and left');
-  assert.equal(meets(0, 30, 30, 40), false, 'below it');
-  assert.equal(meets(0, 25, 25, 0), true, 'a diagonal cutting the near corner off');
-  assert.equal(meets(5, 12, 12, 5), false,
-    'both boxes overlap on both axes, but the line passes outside the corner');
-  assert.equal(meets(10, 10, 10, 10), true, 'a point on the edge');
-  assert.equal(meets(0, 0, 0, 0), false, 'a point outside');
-});
-
 test('find the notes: the window that shows the most of them, not the middle of the range', () => {
   const view = { rows: 10, cols: 8, rowCount: 128, stepCount: 32 };
   // A bass cluster low down and one lonely note six octaves above it: the

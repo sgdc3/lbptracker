@@ -4,6 +4,13 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.14 (2026-09-07)
+
+- The rectangle you drag in the note grid now selects **points**, not whole notes. You can take
+  the tail of a glide and leave its head where it is, then move, nudge, delete or change the
+  volume of just those points; half a glide copies as half a glide. Clicking a note's line still
+  takes the whole note, and dragging any selected point moves everything selected with it.
+
 ## 0.2.13 (2026-09-07)
 
 - Every sound now shows the icon the game gives it. The 68 pictures come from the game itself, so

@@ -396,6 +396,68 @@ export function movePoint(
   if (to.timbre !== undefined) point.timbre = clampInt(to.timbre, 0, MAX_TIMBRE);
 }
 
+/**
+ * How far a chosen set of a note's points may shift, in thirds and semitones.
+ *
+ * ⚠️ **The points that are not moving are the walls.** Clamping each point
+ * against its immediate neighbours one at a time, the way `movePoint` does,
+ * makes a group of points pin itself: the second point cannot pass the first
+ * until the first has moved, and it has not moved yet. So the bound for a
+ * selected point is the nearest *unselected* point on either side, and a run
+ * of selected points moves as one.
+ */
+export function pointShiftLimits(
+  clip: Clip,
+  note: SongNote,
+  indices: Iterable<number>,
+): { minThirds: number; maxThirds: number; minPitch: number; maxPitch: number } {
+  const chosen = new Set(indices);
+  const points = note.points;
+  let minThirds = -Infinity;
+  let maxThirds = Infinity;
+  let minPitch = -Infinity;
+  let maxPitch = Infinity;
+  for (const at of chosen) {
+    const p = points[at];
+    if (!p) continue;
+    let lo = 0;
+    for (let i = at - 1; i >= 0; i -= 1) {
+      if (!chosen.has(i)) { lo = points[i].thirds; break; }
+    }
+    let hi = lastThirds(clip);
+    for (let i = at + 1; i < points.length; i += 1) {
+      if (!chosen.has(i)) { hi = points[i].thirds; break; }
+    }
+    minThirds = Math.max(minThirds, lo - p.thirds);
+    maxThirds = Math.min(maxThirds, hi - p.thirds);
+    minPitch = Math.max(minPitch, -p.pitch);
+    maxPitch = Math.min(maxPitch, MAX_PITCH - p.pitch);
+  }
+  if (minThirds === -Infinity) return { minThirds: 0, maxThirds: 0, minPitch: 0, maxPitch: 0 };
+  return { minThirds, maxThirds, minPitch, maxPitch };
+}
+
+/** Shift a chosen set of a note's points together, within `pointShiftLimits`. */
+export function movePoints(
+  clip: Clip,
+  note: SongNote,
+  indices: Iterable<number>,
+  dThirds: number,
+  dPitch: number,
+): void {
+  const chosen = [...new Set(indices)];
+  const limits = pointShiftLimits(clip, note, chosen);
+  const dt = Math.max(limits.minThirds, Math.min(limits.maxThirds, dThirds));
+  const dp = Math.max(limits.minPitch, Math.min(limits.maxPitch, dPitch));
+  if (dt === 0 && dp === 0) return;
+  for (const at of chosen) {
+    const p = note.points[at];
+    if (!p) continue;
+    p.thirds += dt;
+    p.pitch += dp;
+  }
+}
+
 /** Shift a whole note by `dThirds` and `dPitch`, as far as the clip allows. */
 export function moveNote(clip: Clip, note: SongNote, dThirds: number, dPitch: number): void {
   const first = note.points[0].thirds;

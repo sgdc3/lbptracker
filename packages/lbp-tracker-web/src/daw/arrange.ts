@@ -370,7 +370,7 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     switch (event.code) {
       case 'Escape':
         // Once to drop the selection, again to close the panel.
-        if (state.selection.noteIds.size === 0 && state.selection.point === null && !panel.hidden) {
+        if (state.selectedCount === 0 && state.selection.point === null && !panel.hidden) {
           closePanel();
           return;
         }
@@ -457,9 +457,9 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
       }
       case 'KeyD':
         event.preventDefault();
-        // The board's key duplicates the chip; with notes selected in the roll
+        // The board's key duplicates the chip; with points selected in the roll
         // it duplicates those, the way Delete already tells the two apart.
-        if (!onBoard && state.selection.noteIds.size > 0) roll.duplicateSelection();
+        if (!onBoard && state.selectedCount > 0) roll.duplicateSelection();
         else duplicateSelected();
         break;
       default:
