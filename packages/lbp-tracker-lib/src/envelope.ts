@@ -1,5 +1,5 @@
 /**
- * The instrument's ADSR -- `Params[11..14]`, reproduced from `sub_0x1690` in
+ * The instrument's ADSR -- `Params[11..14]`, reproduced from `0x16b0` in
  * `fmodextinput.prx`.
  *
  * This is the envelope the project went four sessions without: until it was
@@ -32,7 +32,7 @@ export interface Adsr {
  * `Params` indices for the amplitude envelope.
  *
  * Established three ways that agree: the four are loaded together at `0x1ed3`
- * and passed to `sub_0x1690` in this order; `Params[13]` separates struck from
+ * and passed to `0x16b0` in this order; `Params[13]` separates struck from
  * sustained instruments at Cohen's d = -3.54, further than anything else in the
  * block; and its values are exactly 1.0 on `choir`, `brass` and `clarinet`,
  * exactly 0.0 on `glockenspiel`, `marimba` and `vibraphone`, and 0.070 on the
@@ -41,11 +41,13 @@ export interface Adsr {
 export const ADSR_PARAMS = { attack: 11, decay: 12, sustain: 13, release: 14 } as const;
 
 /**
- * A second envelope with the same shape, at `Params[7..10]`.
+ * A second envelope with the same shape, at `Params[7..10]`: the **filter**
+ * envelope.
  *
- * ⚠️ **Its destination is not established.** Its results are broadcast into the
- * same SIMD path as `Params[3..6]`, so a filter envelope is the obvious
- * reading, and a reading is all it is.
+ * ✔ Measured: `0x21ef`-`0x220d` interpolate these four and `0x2227` calls the
+ * same evaluator with them; its return, kept at `[rbp-0xb70]`, is the
+ * `envelopeB` of `filterAt`'s `envFactor` (`0x2a28`). See `FILTER_PARAMS` in
+ * `audio/moog.ts` for how it was told apart from the key tracking.
  */
 export const ADSR_PARAMS_B = { attack: 7, decay: 8, sustain: 9, release: 10 } as const;
 
@@ -72,14 +74,14 @@ export const ADSR_PARAMS_B = { attack: 7, decay: 8, sustain: 9, release: 10 } as
  * because that is the only value that makes the engine's own `dt` equal real
  * time.
  *
- * ⚠️ The 250x-smaller constant is the block *start*, i.e. a thousandth of a
- * block -- "where the envelope is now" -- which is the reading this comment
- * already had, now with the second call beside it to compare against.
+ * ⚠️ The 250x-smaller constant is the block *start* -- a 250th of the block,
+ * "where the envelope is now" -- and it is not a plain read: the call advances
+ * the state by that much, so the engine's envelopes run a 250th faster than
+ * its clock, and an attack of zero stands at full level from the first frame.
  *
- * ⚠️ **This project still evaluates the envelope once per frame, not twice per
- * block with a ramp between.** For an envelope that is a straight line in each
- * stage the two agree; where they differ is at a stage boundary inside a block,
- * by at most one block of 256 frames -- 5.3 ms.
+ * ✔ `Voice` in `audio/mixer.ts` makes the same two calls per segment and ramps
+ * the gain between their two levels, which is the engine's arithmetic. Where a
+ * stage turns inside a segment the ramp cuts the corner, as the engine's does.
  */
 export const ENVELOPE_SECONDS_PER_UNIT = 4;
 

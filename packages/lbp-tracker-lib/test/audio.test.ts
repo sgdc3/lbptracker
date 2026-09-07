@@ -823,8 +823,9 @@ test('a moving modulation moves what it feeds', async () => {
   const mixer = new Mixer(48000);
   mixer.play({
     sample: flat, playbackRate: 1, pan: 0.5,
-    // The gain the spec was built with, i.e. at the opening modulation.
-    gain: 1,
+    // The gain the spec was built with, i.e. at the opening modulation. Low
+    // enough that four times it stays under the record's ±1 clip (`0x2e00`).
+    gain: 0.25,
     morph: {
       params,
       // 0.5 in the placement means "leave the instrument's own send alone", and
@@ -839,15 +840,21 @@ test('a moving modulation moves what it feeds', async () => {
   mixer.render(left, right);
 
   // `panGains(0.5)` is the linear law's half and half, so the level shows up
-  // halved. ❗ **Read at block starts: the morph is re-derived once per 256
-  // frames**, which is the engine's own DSP block (`0x0170` calls the block
-  // function with `mov esi, 0x100`). The value is held flat across the block, so
-  // frame 255 still carries what frame 0 was given.
-  assert.ok(Math.abs(left[0] - 0.5) < 1e-6, `opening: ${left[0]}`);
-  assert.ok(Math.abs(left[255] - 0.5) < 1e-6, `held to the block's end: ${left[255]}`);
-  assert.ok(Math.abs(left[256] - 0.5 * 2.5) < 1e-6, `half way: ${left[256]}`);
-  assert.ok(Math.abs(left[512] - 0.5 * 4) < 1e-6, `arrived: ${left[512]}`);
-  assert.ok(Math.abs(left[639] - 0.5 * 4) < 1e-6, `and holds: ${left[639]}`);
+  // halved. ❗ **Derived at both ends of each 256-frame block and ramped
+  // between**: the engine's own DSP block (`0x0170` calls the block function
+  // with `mov esi, 0x100`), evaluated at its start and its end modulation and
+  // stepped per sample (`0x2d78`). So frame 255 is one step short of what
+  // frame 256 opens on, not what frame 0 was given -- that was this test's
+  // earlier reading, and it was a staircase the engine does not have.
+  const k = 0.25 * 0.5;
+  assert.ok(Math.abs(left[0] - k) < 1e-6, `opening: ${left[0]}`);
+  assert.ok(
+    Math.abs(left[255] - k * (1 + 1.5 * (255 / 256))) < 1e-6,
+    `ramped to the block's end: ${left[255]}`,
+  );
+  assert.ok(Math.abs(left[256] - k * 2.5) < 1e-6, `half way: ${left[256]}`);
+  assert.ok(Math.abs(left[512] - k * 4) < 1e-6, `arrived: ${left[512]}`);
+  assert.ok(Math.abs(left[639] - k * 4) < 1e-6, `and holds: ${left[639]}`);
 });
 
 test('a modulation that does not move changes nothing at all', async () => {

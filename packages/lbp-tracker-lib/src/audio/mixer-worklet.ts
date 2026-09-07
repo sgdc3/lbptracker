@@ -326,6 +326,14 @@ export class MixerProcessor extends AudioWorkletProcessor {
 
     if (!this.echo && !this.reverb && !this.clip && !this.compressor && !this.master) {
       this.mixer.render(left, right);
+      // The fold's gain is FMOD's speaker matrix, not one of the switchable
+      // effects: it stays on with everything else off, or the level would jump
+      // by 4.645 dB on the last switch.
+      const stereo = right !== left;
+      for (let i = 0; i < left.length; i += 1) {
+        left[i] *= FOLD_GAIN;
+        if (stereo) right[i] *= FOLD_GAIN;
+      }
       if (output.length > 1 && right === left) right.set(left);
       this.report(left.length, began);
       return true;

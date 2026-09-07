@@ -356,11 +356,10 @@ export interface ScheduledNote {
    * The first control point's modulation, 0..1 -- the value that picks a point
    * inside every `Params` range.
    *
-   * ⚠️ **The first point's, not a curve.** 3.45% of the corpus's 2,027,633
-   * notes change modulation across their own points, and those are rendered at
-   * their opening value. Pitch and volume are interpolated between points;
-   * modulation is not, because it feeds parameters that are read once when the
-   * voice starts (the envelopes' times, the filter settings, the stack).
+   * ⚠️ **The opening value only.** The engine ramps the modulation between a
+   * note's points exactly as it ramps pitch and volume, and the renderer takes
+   * the curve from `points[].modulation`; this is the one number a caller that
+   * wants one number gets. 3.45% of the corpus's 2,027,633 notes move it.
    */
   readonly modulation: number;
   /**

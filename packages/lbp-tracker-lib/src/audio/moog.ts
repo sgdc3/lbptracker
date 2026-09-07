@@ -17,10 +17,11 @@
  * ⚠️ **Its input domain is `[-1, +1]`, and past about ±1.4 it runs away to
  * NaN.** That is a property of the approximation, not a bug in the
  * transcription -- the reference documents the same domain and the engine
- * carries the same cube. A voice's samples are `int16 / 32768` and linear
- * interpolation cannot exceed its inputs, so they never leave the domain; the
- * boundary is pinned in packages/lbp-tracker-lib/test/moog.test.ts so that stays true deliberately
- * rather than by luck. Do not add a clamp the engine does not have.
+ * carries the same cube. What keeps the engine inside it is a hard clip:
+ * `0x2e00`-`0x2e2d` clamps the record's summed layers to ±1 before the two
+ * ladders see them, and `Voice` in `mixer.ts` does the same. The boundary is
+ * pinned in packages/lbp-tracker-lib/test/moog.test.ts. Do not add a clamp
+ * *inside* the ladder, which the engine does not have.
  */
 
 /** The two coefficients the ladder actually runs on. */
@@ -84,7 +85,9 @@ export function ladderCoefficientsInto(
  * One ladder. Five states, `b0` being the previous input.
  *
  * Coefficients are passed per sample rather than held, because the engine ramps
- * them across a block whenever they change (its `0x332b` path) -- holding them
+ * them across a block whenever they change (`0x33d6` onward re-derives the
+ * coefficients per sample from a linear ramp of `freq` and `res`; `0x310b` is
+ * the constant path taken when the block's two ends agree) -- holding them
  * would quantise a filter sweep to the block size, which is audible on exactly
  * the patches that sweep.
  */

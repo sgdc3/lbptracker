@@ -340,18 +340,18 @@ function currentLfos() {
  * including layer 0, a start offset that layer 0 draws and then throws away,
  * and the LFO phases fanned across the layers from one draw per note.
  */
-function stackLayers(baseRate: number, basePan: number, frames: number) {
+function stackLayers(basePan: number, frames: number) {
   const layers = Math.max(1, instrument?.numStack ?? 1);
   const P = (i: number) => instrument?.params[i].x ?? 0;
-  const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
   const bipolar = () => Math.random() * 2 - 1;
   const basePhase = [0, 1, 2].map(() => Math.random() * 2 * Math.PI);
   const out = [];
   for (let layer = 0; layer < layers; layer += 1) {
     const start = P(STACK_PARAMS.startOffset) * frames * Math.random();
     out.push({
-      playbackRate: baseRate * (1 + 0.05 * P(STACK_PARAMS.detune) * bipolar()),
-      pan: clamp01(basePan + 0.5 * P(STACK_PARAMS.spread) * bipolar()),
+      detune: 1 + 0.05 * P(STACK_PARAMS.detune) * bipolar(),
+      // Unclamped, as in `render.ts`: the mixer folds it the engine's way.
+      pan: basePan + 0.5 * P(STACK_PARAMS.spread) * bipolar(),
       startPosition: layer === 0 ? 0 : start,
       lfoPhase: [0, 1, 2].map(
         (n) => basePhase[n] + P(LFO_PARAMS[n].spread) * ((2 * Math.PI) / layers) * layer,
@@ -404,32 +404,29 @@ function noteOn(note: number, velocity = 96, channel = LOCAL): void {
   const adsr = overrideAdsr() ?? currentAdsr();
   // Every layer carries the note's own tag, which is what lets one `release`
   // -- and one `expression` -- close over the whole stack.
-  const stack = stackLayers(v.playbackRate, bench.value('pPan'), v.s.wav.channels[0].length);
-  for (const layer of stack.out) {
-    node.port.postMessage({
-      type: 'play',
-      sampleId: `slot${v.zone}`,
-      voice: {
-        playbackRate: layer.playbackRate,
-        gain:
-          velocityGain(velocity) * 2 *
-          (instrument?.params[OUTPUT_PARAMS.level].x ?? 0.5) * stack.stackGain,
-        pan: layer.pan,
-        startPosition: layer.startPosition,
-        lfoPhase: layer.lfoPhase,
-        drive: bench.value('pDrive'),
-        echoSend: bench.value('echoSend'),
-        reverbSend: bench.value('reverbSend'),
-        // No `endFrame`: the gate stays open until `release` closes it.
-        release: adsr ? 0 : Math.round(0.12 * context.sampleRate),
-        envelope: adsr,
-        filter: overrideFilter() ?? currentFilter(),
-        lfos: overrideLfos() ?? currentLfos(),
-        tag,
-      },
-    });
-  }
-  // ⚠️ **An MPE controller sends the note's opening bend, press and slide
+  const stack = stackLayers(bench.value('pPan'), v.s.wav.channels[0].length);
+  node.port.postMessage({
+    type: 'play',
+    sampleId: `slot${v.zone}`,
+    voice: {
+      playbackRate: v.playbackRate,
+      gain:
+        velocityGain(velocity) * 2 *
+        (instrument?.params[OUTPUT_PARAMS.level].x ?? 0.5) * stack.stackGain,
+      pan: bench.value('pPan'),
+      // The whole stack in one voice: one of the engine's records.
+      layers: stack.out,
+      drive: bench.value('pDrive'),
+      echoSend: bench.value('echoSend'),
+      reverbSend: bench.value('reverbSend'),
+      // No `endFrame`: the gate stays open until `release` closes it.
+      release: adsr ? 0 : Math.round(0.12 * context.sampleRate),
+      envelope: adsr,
+      filter: overrideFilter() ?? currentFilter(),
+      lfos: overrideLfos() ?? currentLfos(),
+      tag,
+    },
+  });  // ⚠️ **An MPE controller sends the note's opening bend, press and slide
   // BEFORE the note-on**, so the channel is already holding them here: a note
   // struck halfway up a glide has to start there rather than snap to it.
   sendExpression(channel);
@@ -511,40 +508,37 @@ function playNote(note: number, atSeconds = 0): void {
     source.stop(at + held + 0.15);
     return;
   }
-  const stack = stackLayers(v.playbackRate, 0.5, v.s.wav.channels[0].length);
-  for (const layer of stack.out) {
-    node.port.postMessage({
-      type: 'play',
-      sampleId: `slot${v.zone}`,
-      voice: {
-        playbackRate: layer.playbackRate,
-        // The instrument's own level, Params[24], times sqrt(1/Numstack) -- the
-        // equal-power correction the engine folds in for the stack this loop
-        // now actually plays.
-        gain:
-          velocityGain(96) * 2 *
-          (instrument?.params[OUTPUT_PARAMS.level].x ?? 0.5) * stack.stackGain,
-        pan: layer.pan,
-        startPosition: layer.startPosition,
-        lfoPhase: layer.lfoPhase,
-        startFrame: Math.round(atSeconds * context.sampleRate),
-        // The samples loop, so a voice never ends on its own -- it has to be
-        // released. Without this, low notes ring on and high notes cut off with
-        // the sample rather than with the note.
-        // With the instrument's own ADSR the end frame is the GATE, not the end:
-        // the release runs on past it. Without it, the stand-in applies -- a
-        // fixed 0.12 s linear fade.
-        endFrame: Math.round(
-          (atSeconds + held + (adsr ? 0 : 0.12)) * context.sampleRate,
-        ),
-        release: adsr ? 0 : Math.round(0.12 * context.sampleRate),
-        envelope: adsr,
-        filter,
-        lfos,
-      },
-    });
-  }
-}
+  const stack = stackLayers(0.5, v.s.wav.channels[0].length);
+  node.port.postMessage({
+    type: 'play',
+    sampleId: `slot${v.zone}`,
+    voice: {
+      playbackRate: v.playbackRate,
+      // The instrument's own level, Params[24], times sqrt(1/Numstack) -- the
+      // equal-power correction the engine folds in for the stack this loop
+      // now actually plays.
+      gain:
+        velocityGain(96) * 2 *
+        (instrument?.params[OUTPUT_PARAMS.level].x ?? 0.5) * stack.stackGain,
+      pan: 0.5,
+      // The whole stack in one voice: one of the engine's records.
+      layers: stack.out,
+      startFrame: Math.round(atSeconds * context.sampleRate),
+      // The samples loop, so a voice never ends on its own -- it has to be
+      // released. Without this, low notes ring on and high notes cut off with
+      // the sample rather than with the note.
+      // With the instrument's own ADSR the end frame is the GATE, not the end:
+      // the release runs on past it. Without it, the stand-in applies -- a
+      // fixed 0.12 s linear fade.
+      endFrame: Math.round(
+        (atSeconds + held + (adsr ? 0 : 0.12)) * context.sampleRate,
+      ),
+      release: adsr ? 0 : Math.round(0.12 * context.sampleRate),
+      envelope: adsr,
+      filter,
+      lfos,
+    },
+  });}
 
 function describe(note: number): string {
   const v = voiceFor(note);

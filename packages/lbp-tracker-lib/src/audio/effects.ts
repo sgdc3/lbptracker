@@ -19,7 +19,7 @@
  * | field | source | used for |
  * |---|---|---|
  * | `voice+0x1c` | the instrument's Params pair at `+0x5b0`/`+0x5b4`, interpolated by the note's modulation, then offset by the placement's `2*echoSend - 1` and clamped to 0..1 | the **echo** send |
- * | `voice+0x20` | the instrument's Params pair at `+0x5b8`/`+0x5bc` | **nothing — it is written and never read** |
+ * | `voice+0x20` | the instrument's Params pair at `+0x5b8`/`+0x5bc`, clamped to 0..1 | the **drive** -- a soft clip on each layer's sample read (`softClip` in `mixer.ts`), not a send |
  * | `voice+0x24` | the placement's `reverbSend`, clamped to 0..1 | the **reverb** send |
  *
  * The mixer at `0x2f00`-`0x2f8f` writes `L, R` into channels 0-1 of the DSP's
@@ -245,12 +245,11 @@ export const PAN_WIDTH = 2 - Math.SQRT2;
  * it was, which is the least surprising half to keep. It is a hybrid: the
  * game's downmixed **level** with the game's internal **image**.
  *
- * ⚠️ **And it is applied in the wrong place for a faithful chain.** The fold
- * happens in FMOD's speaker matrix, *after* the whole DSP chain — after the
- * reverb and after `SMS WaveHammer`. This gain is folded into each voice, so it
- * reaches our compressor 4.645 dB before the game's would. That is the largest
- * single lead on why the compressor sounds wrong: see question 38 in
- * `steering/open-questions.md`.
+ * ✔ **Applied where FMOD applies it**: in the speaker matrix, *after* the
+ * whole DSP chain — after the plugin's own clip, the reverb and `SMS
+ * WaveHammer`. `render.ts` and `mixer-worklet.ts` both multiply it in last. It
+ * was once folded into each voice, which put our clip and our compressor
+ * 4.645 dB hotter than the game's (*39* in steering/answered-questions.md).
  *
  * ⚠️ **A narrow image is quieter, and that is the pan law rather than this.**
  * `panGains` is linear (`0x2d21`/`0x2d40`), so a voice at the centre carries
@@ -270,20 +269,17 @@ export const FOLD_GAIN = 1 / PAN_WIDTH;
  * frame. Channels 0-1 are what reaches the master and 2-3 are the reverb send,
  * so both are clipped — the reverb is fed a clipped signal.
  *
- * ⚠️ **It is the plugin's own clip and NOT the end of the game's chain.** Read
- * 2026-09-05: the channel carries two more DSPs after this one —
- * `Channel::addDSP` is called at `v0x3e67f9` for "SMS Reverb" and at `v0x3e6976`
- * for **"SMS WaveHammer"**, and `addDSP` inserts at the head, so the signal path
- * is `Sequencer → Reverb → WaveHammer → mixer`. This function models the first
- * arrow and nothing models the third.
+ * ⚠️ **It is the plugin's own clip and NOT the end of the game's chain.** The
+ * channel carries two more DSPs after this one — `Channel::addDSP` is called at
+ * `v0x3e67f9` for "SMS Reverb" and at `v0x3e6976` for **"SMS WaveHammer"**, and
+ * `addDSP` inserts at the head, so the signal path is `Sequencer → Reverb →
+ * WaveHammer → mixer`. The reverb is `Reverb` below; the WaveHammer is a
+ * compressor (−18 dB, 10:1, a 64-sample mean square, the limiter bypassed),
+ * `compressor.ts`, pinned against the module running and **off by default** on
+ * a listening judgement — *38* in `steering/open-questions.md`.
  *
- * ❗ **The WaveHammer is a compressor, and it is measured** — read end to end and
- * then executed on 2026-09-06 (`tools/runhammer.py` loads the real PRX). It
- * ships with `LimitBypass = 1` and the compressor at −18 dB / 10:1 over a
- * 64-sample sliding mean square, giving **−17.2 dB of gain at −0.9 dBFS, −7.2 dB
- * at −12 dBFS, and a floor of −1.84 dB below −21 dBFS**. So the end of the chain
- * is soft, and nothing here models it. See *The end of the chain* in
- * `steering/lbp-audio-engine.md` and `tools/wavehammer.py`.
+ * ⚠️ **Nor is it the only clip in the plugin.** `0x2e00`-`0x2e2d` clamps each
+ * record's summed layers to ±1 before its ladder; see `Voice` in `mixer.ts`.
  *
  * Whether this clip engages also depends on our absolute level matching the
  * game's, which is not independently verified. `packages/lbp-tracker-lib/dev/render-level.ts` reports how
@@ -565,9 +561,10 @@ class DelayLine {
  *   1 KB, so a tap shorter than 256 samples cannot behave as a plain per-sample
  *   delay there. Tap set 10's shortest is 5.019 ms = 241 samples, so preset 3
  *   (`ReverbSetting` 0) is the one place this could show.
- * - What gain, if any, the eboot puts on the connection from the sequencer DSP's
- *   channels 2-3 into this DSP, and from this DSP's output into the master. This
- *   class assumes unity at both ends.
+ *
+ * The connection gains are not a question: the two DSPs share one buffer, this
+ * one reads lanes 2-3 in place and writes `(dry + wet, dry + wet, 0, 0)` back
+ * (`0x2335`-`0x235d`), so unity at both ends is what the game does.
  */
 export class Reverb {
   private readonly monoCombs: Comb[] = [];

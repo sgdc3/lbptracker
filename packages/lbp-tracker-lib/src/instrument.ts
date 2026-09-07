@@ -2,10 +2,9 @@
  * The sampler patch: 8 sample slots and the key splits between them.
  *
  * Field names, offsets and stream order come from the game's own serialisers,
- * and the split and stacking semantics from all 68 instruments the game ships
- * -- see steering/sequencer-data-model.md. What is NOT yet settled is flagged
- * inline and tracked in steering/open-questions.md; nothing here silently
- * invents a rule.
+ * and the split and stacking semantics from the engine's own zone walk and
+ * stack loop, checked against all 68 instruments the game ships -- see
+ * steering/sequencer-data-model.md and steering/synth-engine.md.
  */
 
 export const MAX_SLOTS = 8;
@@ -19,12 +18,7 @@ export interface SampleSlot {
   readonly baseNote: number;
   /** The sample's own tempo, for loops. */
   readonly baseBpm: number;
-  /**
-   * Fine pitch offset.
-   *
-   * ⚠️ Units unconfirmed -- cents or semitones, both consistent with an f32.
-   * `pitchRatio` assumes cents and says so. Open question 5.
-   */
+  /** Fine pitch offset, in **semitones** -- measured, see `pitchRatio`. */
   readonly fineTune: number;
   /** Pitch-shift with the note, or play at a fixed rate (percussion). */
   readonly pitched: boolean;
@@ -47,8 +41,8 @@ export interface Instrument {
    * most 8-slot drum kits have `numStack` 1. Use `sampleGuids[i] !== 0` to find
    * the slots that exist.
    *
-   * It **is** an array length, just not of the slots: `sub_0x1a50` in
-   * `fmodextinput.prx` loops `numStack` times filling one playback position,
+   * It **is** an array length, just not of the slots: the stack loop at `0x1a70`
+   * in `fmodextinput.prx` runs `numStack` times filling one playback position,
    * one detune and one spread per layer, so a note plays that many overlapping
    * copies of the same slot. It runs to 5 in the corpus, and at five the three
    * arrays tile the voice record exactly. See steering/sequencer-data-model.md.

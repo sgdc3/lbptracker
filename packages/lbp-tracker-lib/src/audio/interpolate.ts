@@ -7,7 +7,7 @@
  * steering/tracker-architecture.md.
  *
  * ⚠️ **The game's answer is `linear`, and it was measured.** The sequencer's
- * sampler is not `fmod_dsp_resampler.cpp` at all -- it is `sub_0x3740` in
+ * sampler is not `fmod_dsp_resampler.cpp` at all -- it is `0x3780` in
  * `fmodextinput.prx`, and it is two taps:
  *
  * ```
@@ -19,8 +19,8 @@
  * other half of the design: the game holds **three pre-decimated copies** of
  * every sample and switches to the /2 copy once the pitch ratio reaches 2.0 and
  * the /4 copy at 4.0, so the ratio actually fed to this lerp never exceeds 2.
- * See steering/sequencer-data-model.md. **That mipmapping is not implemented
- * here yet** -- until it is, high notes will alias more than the game's do.
+ * That sampler, mipmaps and all, is `readMipped` in `mipmap.ts` and it is the
+ * path the mixer takes by default; the family here is the A/B beside it.
  */
 
 /** The half-open loop region a voice is currently inside, if any. */

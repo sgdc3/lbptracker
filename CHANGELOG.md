@@ -4,6 +4,29 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.19 (2026-09-08)
+
+- Sounds with a pan wobble (Ghost, Noise, Synth Strings, Power Guitar, Mosquito, Synth Bell,
+  Record Static) sit where the song puts them again. A slip doubled their pan on the way into the
+  wobble, which pushed a centred note to the right wall and ran the wobble at twice its speed.
+- Stacked sounds that go through the filter (Choir, Brass, Synth Strings, Ghost, Space Piano and
+  eight more) are filtered the way the game filters them: once, on the sum of their layers, after
+  the game's own clip of that sum. Each layer used to get its own filter before the pan, which is
+  not the same thing with this filter.
+- Everything the game ramps inside a block is ramped here too instead of stepping every 256
+  frames: vibrato, tremolo, the pan wobble, a note's own glides and the modulation swept between
+  its control points. Filter sweeps follow per sample as well.
+- A layer's pan spread past the edge turns back, as in the game, instead of sticking to the wall.
+- Long samples carry the same faint roughness the game gives them: the game reads its sample
+  position in single precision, and so does the tracker now.
+- A note on a channel whose fader sits at zero takes no voice, as in the game, instead of holding
+  one of the 32 and stealing from the others.
+- A note written at volume zero that stays there takes no voice and never sounds, as in the
+  game; one that opens at zero and rises still fades in.
+- With swing on, a glide bends at every step the way the game's does, instead of running straight
+  in time across the stretched and squeezed steps.
+- Turning every output switch off no longer drops the level by 4.6 dB.
+
 ## 0.2.18 (2026-09-07)
 
 - The Keyboard view plays an instrument's full stack of layers, so sounds that share their samples

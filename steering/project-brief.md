@@ -23,9 +23,9 @@ the file named is where the measurement lives.
 | # | aspect | fidelity | how it is known |
 |---|---|---|---|
 | 1 | sample data | **bit-exact** | the sequencer's samples are 16-bit PCM RIFF `.smp` files in the FARC archives, with the sound designer's loop points in their `smpl` chunks — [game-assets.md](game-assets.md) |
-| 2 | pitch | **exact** | `exp2f((pitch + fineTune − rootNote)/12)`, `fineTune` in semitones, read out of `fmodextinput.prx` — [synth-engine.md](synth-engine.md) |
+| 2 | pitch | **exact** | `exp2f((pitch + fineTune − rootNote)/12)`, `fineTune` in semitones, read out of `fmodextinput.prx` — [synth-engine.md](synth-engine.md). ⚠️ No sample-rate term in it: 42 of 216 `.smp` are 44.1 kHz and whether the game resamples them is unread — *43* in open-questions.md |
 | 3 | timing: tempo, swing, triplets, loop, start point | **exact** | `720000/tempo` frames per step, alternate steps stretched and squeezed by `swing/2`, positions in thirds of a step — [synth-engine.md](synth-engine.md). ⚠️ Note *onsets* are the one deviation, below |
-| 4 | the synth block: unison stack, ladder filter, two envelopes, three LFOs, drive, level | **exact** | all 27 `Params` named and read instruction by instruction — [synth-engine.md](synth-engine.md) |
+| 4 | the synth block: unison stack, ladder filter, two envelopes, three LFOs, drive, level | **exact** | all 27 `Params` named and read instruction by instruction; since 2026-09-08 one ladder pair per record on the ±1-clipped sum of its layers, and every ramp per sample between the chunk's two evaluations — [synth-engine.md](synth-engine.md) |
 | 5 | resampling | **exact in arithmetic** | two-tap linear interpolation over ÷2/÷4 mip copies built the engine's way (an int16 pair average). The one operation JavaScript cannot reproduce is the drive shaper's `vrcpps` reciprocal, which lands within an ulp |
 | 6 | volume, pan, mixer channels, sends | **exact** | a linear pan law, rows banded into `NumChannels` channels, both sends read — [synth-engine.md](synth-engine.md) |
 | 7 | echo | **exact** | not an FMOD DSP but a delay inside `fmodextinput.prx`; `EchoTime` is a delay in **beats** — [synth-engine.md](synth-engine.md) |

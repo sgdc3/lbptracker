@@ -134,12 +134,11 @@ have none.
   every delay buffer up to 1 KB, so a tap shorter than 256 samples cannot behave as a plain
   per-sample delay there. Tap set 10's shortest is 5.019 ms = 241 samples, so preset 3
   (`ReverbSetting` 0) is the one place this could show.
-- **The filter block's second modulation value.** `0x2a54` onward re-evaluates all four filter
-  parameters with `xmm15` in place of `xmm7` — two modulation values in one call, presumably the
-  two ends of the per-block ramp, but that is a guess (*20* in answered-questions.md).
-- **The ladder's position relative to the drive shaper.** The shaper runs on the sample read,
-  per layer, before the gain and the pan; the filter is not in that per-layer loop, and a later
-  reading could move it across the shaper (*21*).
+- **The chunk bounds inside a block.** The engine splits a 256-frame block into chunks at the
+  step clock's `frac(4 · position)` bounds and evaluates its ramps per chunk; the tracker's
+  segments end on the block grid and at the voice's own events. Both are piecewise-linear ramps
+  between the same curve's values, and only the knots differ, by less than a block. Reproducing
+  the engine's bounds needs the sequencer clock inside the mixer, which the keyboard has none of.
 - **Whether `q` should reach 3.** With the correct filter reading `musicbox` at full modulation
   has resonance 0.856 at `freq ≈ 0.019`, and the Stilson/Smith compensation grows as the cutoff
   falls, so `q ≈ 3.1`. The coefficient formula matches instruction for instruction; the saturation
@@ -164,6 +163,20 @@ have none.
   reading of the length. **What would settle it**: find the writer of `+0x60` in the eboot — the
   likeliest sources are the component's `scaleX` on the board and the highest `x` in `Notes` —
   or save a level with an empty six-bar grid and see what changes in the file.
+
+## 43. The 44.1 kHz samples — does the game resample them, or play them sharp?
+
+**42 of the 216 shipped `.smp` files are 44100 Hz** (all mono 16-bit PCM; the other 174 are
+48000), measured 2026-09-08 over `fixtures/smp`. They belong to seven instruments: `8bit_kit_1`,
+`dubstep_kit`, `electronic_kit`, `hand_percussion`, `junk_kit` — one-shots — and **`record_static`
+and `ukulele`**, which are looped and pitched. The engine's rate is `exp2f((pitch + fineTune −
+rootNote)/12)` and nothing else (`0x1d8c`–`0x1dc2`; the tempo-sync branch never runs, `fitBpm` is
+0 on all 278 slots), and the slot has no sample-rate field, so **either the eboot resamples to
+48 kHz when it decodes the `RSample`, or the game plays these 8.8% fast — +1.47 semitones and
+shorter**. `render.ts` and the player multiply by `sample.sampleRate / RATE`, i.e. they assume the
+first, on no reading. **What would settle it**: a capture of the ukulele against its own sample,
+or the `RSample` loader in the eboot (the preload worker at `v0x1c38aa` is where type 49 is
+loaded). A two-second listen; the difference is a semitone and a half on an instrument in tune.
 
 ## 40. What a new sequencer starts at — the editor's defaults are the corpus's modes
 

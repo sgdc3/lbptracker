@@ -116,9 +116,8 @@ interface Planned {
   /** What the voice pool needs, in its own units. */
   poolStart: number;
   poolEnd: number;
-  /** The note, and which stack layer of it: the pool counts notes. */
+  /** The note: one entry per note, its layers inside the spec. */
   note: number;
-  layer: number;
   score: number;
   /** Frames per step, so a pool decision in steps becomes a cut in frames. */
   index: number;
@@ -147,7 +146,6 @@ const planResult = await renderSequencer(seq, loadInstrument, {
     for (const field of STRIP) delete stripped[field];
     plan.push({
       note: where.note,
-      layer: where.layer,
       poolStart: where.poolStart,
       poolEnd: where.poolEnd,
       score: where.score,
@@ -170,10 +168,9 @@ const cutFrameAt = (step: number) => Math.round(swungFrame(step, stepFrames, swi
 // applied to the uncapped plan. `renderDirect` then renders exactly what the
 // renderer would write at this pool size.
 if (process.env.LBP_LIVEPOOL === '1') {
-  // ❗ **One record per NOTE, not per stack layer** -- the engine plays every
-  // layer of a note out of the one record. Asking per layer steals two and a
-  // half times as often on a stacked song; see question 17.
-  const firsts = plan.filter((p) => p.layer === 0);
+  // ❗ **One record per NOTE** -- the engine plays every layer of a note out
+  // of the one record, and a plan entry is a note with its layers inside.
+  const firsts = plan;
   const decided = allocateVoices(
     firsts.map((p) => ({ start: p.poolStart, end: p.poolEnd, score: p.score })),
     POOL,
@@ -192,7 +189,7 @@ if (process.env.LBP_LIVEPOOL === '1') {
     // The one-call reference plays `spec` verbatim, so its cut has to be
     // there too -- in absolute frames, which is what that render counts in.
     (p.spec as unknown as { cutFrame?: number }).cutFrame = abs;
-    if (p.layer === 0) stolen += 1;
+    stolen += 1;
   }
   console.log(`pool ${POOL}: ${stolen} of ${cutOf.size + (firsts.length - cutOf.size)} notes stolen offline`);
 }
@@ -410,18 +407,12 @@ function renderLivePool(): [Float32Array, Float32Array] {
     const until = now + LOOKAHEAD * RATE;
     while (next < plan.length && plan[next].at < until) {
       const p = plan[next];
-      let end: number;
-      let stole: { index: number; at: number } | undefined;
-      if (p.layer === 0) {
-        ({ end, stole } = pool.add(p.note, {
-          start: p.poolStart,
-          end: p.poolEnd,
-          score: p.score,
-        }));
-        noteEnd.set(p.note, end);
-      } else {
-        end = noteEnd.get(p.note) ?? p.poolEnd;
-      }
+      const { end, stole } = pool.add(p.note, {
+        start: p.poolStart,
+        end: p.poolEnd,
+        score: p.score,
+      });
+      noteEnd.set(p.note, end);
       const delay = Math.max(0, Math.round(p.at - now));
       const cutFrames = end < p.poolEnd ? cutFrameAt(end) - p.at : undefined;
       mixer.play({

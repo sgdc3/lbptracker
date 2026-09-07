@@ -122,3 +122,72 @@ test('LFO 3 moves the stereo balance', () => {
   const still = render([off, off, off]);
   assert.ok(Math.abs((still.left[0] - still.right[0]) - (still.left[4799] - still.right[4799])) < 1e-6);
 });
+
+// ❌ `this.spec.pan * 2` reached the fold from 2026-09-01 to 2026-09-08. The
+// fold is the identity on 0..1, so doubling the pan sent a centred voice to the
+// right wall (RMS 0.087 left against 0.422 right, 13.7 dB) and folded the
+// sweep through 1 at twice the rate, on the seven shipped instruments with a
+// pan LFO. The engine takes `clipPan + spread[layer]` as written
+// (`0x25ab`-`0x25b2`, `0x2670`-`0x2677`).
+test('LFO 3 swings about the written pan, not about the right wall', () => {
+  const rate = 48000;
+  const mixer = new Mixer(rate);
+  const dc = new Float32Array(4800).fill(0.5);
+  mixer.play({
+    sample: { channels: [dc], sampleRate: rate, loop: { start: 0, end: 4800 } },
+    playbackRate: 1,
+    gain: 1,
+    pan: 0.5,
+    lfos: [off, off, { rate: 0.63, depth: 0.24, spread: 0 }],
+    lfoPhase: [0, 0, 0],
+  });
+  // 0.63 * 50 rad/s is 5.01 Hz: five cycles, near enough whole for an RMS.
+  const frames = rate;
+  const left = new Float32Array(frames);
+  const right = new Float32Array(frames);
+  mixer.render(left, right);
+  let el = 0;
+  let er = 0;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = 0; i < frames; i += 1) {
+    el += left[i] ** 2;
+    er += right[i] ** 2;
+    lo = Math.min(lo, left[i] - right[i]);
+    hi = Math.max(hi, left[i] - right[i]);
+  }
+  const ratio = Math.sqrt(el / er);
+  assert.ok(Math.abs(ratio - 1) < 0.02, `a centred voice should balance, got L/R ${ratio.toFixed(3)}`);
+  // Pan 0.26..0.74 on a 0.5 DC is a balance of ±0.24, crossing the centre.
+  assert.ok(lo < -0.2 && hi > 0.2, `the sweep should cross the centre, got ${lo.toFixed(3)}..${hi.toFixed(3)}`);
+});
+
+// The engine has no clamp on `clipPan + spread`: the sum goes through LFO 3's
+// triangle fold whether or not that LFO has any depth (`0x25ab`-`0x2657`), so
+// a layer spread past the wall turns back. `render.ts` and the keyboard both
+// used to clamp it.
+test('a pan past 1 turns back rather than sticking to the wall', () => {
+  const rate = 48000;
+  const one = (pan: number) => {
+    const mixer = new Mixer(rate);
+    mixer.play({
+      sample: { channels: [new Float32Array(64).fill(1)], sampleRate: rate },
+      playbackRate: 1,
+      gain: 1,
+      pan,
+    });
+    const l = new Float32Array(16);
+    const r = new Float32Array(16);
+    mixer.render(l, r);
+    return { l: l[0], r: r[0] };
+  };
+  const folded = one(1.2);
+  const plain = one(0.8);
+  assert.ok(Math.abs(folded.l - plain.l) < 1e-12 && Math.abs(folded.r - plain.r) < 1e-12);
+  const mirrored = one(-0.3);
+  const inside = one(0.3);
+  assert.ok(Math.abs(mirrored.l - inside.l) < 1e-12, 'the fold takes the absolute value first');
+  // And 0..1 is untouched: the fold is the identity there.
+  const centre = one(0.5);
+  assert.ok(Math.abs(centre.l - 0.5) < 1e-12 && Math.abs(centre.r - 0.5) < 1e-12);
+});

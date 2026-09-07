@@ -15,9 +15,9 @@ import type { Instrument, SampleSlot } from './instrument.ts';
 import { resolveSlot } from './instrument.ts';
 
 /**
- * **MEASURED: `fineTune` is in semitones.** `sub_0x1c40` in `fmodextinput.prx`
- * adds the slot's f32 straight into the semitone sum, alongside the note and
- * the root note, before the single division by 12:
+ * **MEASURED: `fineTune` is in semitones.** `0x1d8c`-`0x1dc2` in
+ * `fmodextinput.prx` adds the slot's f32 straight into the semitone sum,
+ * alongside the note and the root note, before the single division by 12:
  *
  * ```
  * xmm1  = t * voice.pitchSlide + voice.pitch    // semitones
@@ -30,7 +30,11 @@ import { resolveSlot } from './instrument.ts';
  */
 export const FINETUNE_PER_SEMITONE = 1;
 
-/** ⚠️ UNMEASURED. See open question 3 -- inferred from clip lengths, not the engine. */
+/**
+ * ✔ Measured: the engine's step is `720000 / tempo` frames (`0x0bf7`), and at
+ * its default tempo of 125 that is `48000 * 60 / (125 * 4)` -- four steps to
+ * the beat at 48 kHz. `swing.ts` has the reading.
+ */
 export const STEPS_PER_BEAT = 4;
 
 export interface VoiceParams {
@@ -75,8 +79,12 @@ export interface VoiceRequest {
  *
  * **This shape is confirmed against the engine**, not inferred: the branch
  * structure, the order of the terms and the `tempo / baseBpm` factor all match
- * `sub_0x1c40` in `fmodextinput.prx` exactly. See
- * steering/sequencer-data-model.md.
+ * `0x1d71`-`0x1e1f` in `fmodextinput.prx` exactly. See steering/synth-engine.md.
+ *
+ * ⚠️ **There is no sample-rate term in it.** The engine's ratio is this one
+ * and nothing else; `render.ts` multiplies by `sample.sampleRate / RATE` on
+ * top, and 42 of the 216 shipped `.smp` files are 44.1 kHz. Whether the game
+ * resamples them on load is unread -- *43* in steering/open-questions.md.
  */
 export function pitchRatio(
   slot: SampleSlot,
@@ -98,9 +106,10 @@ export function pitchRatio(
 /**
  * Note velocity to linear gain.
  *
- * ⚠️ UNMEASURED curve. The record's `volume` is 0..127 with a default of 0x60
- * (96). Linear in amplitude is assumed here; the game may well apply a curve.
- * Kept as one function so a measurement replaces it in one place.
+ * ✔ Measured: `0x3c29`-`0x3c3a` takes bits 16..23 of the note word with
+ * `bextr` and multiplies by `1/127` (`v0x45a0`), linear in amplitude, once per
+ * block from the current control point. The default written by the editor is
+ * 0x60 (96).
  */
 export function velocityGain(volume: number): number {
   return Math.max(0, Math.min(127, volume)) / 127;

@@ -19,7 +19,7 @@
  * xmm1 = 720000 / tempo             ; the step's nominal length
  * xmm3 = xmm1 * swing * 0.5
  * eax  = (int)floor(position) & 1   ; which half of the pair
- * xmm3 = xmm3 * table[eax]          ; v0x4530 = [1, -1]
+ * xmm3 = xmm3 * table[eax]          ; v0x44f0 = [1, -1]
  * xmm1 = xmm1 + xmm3                ; this step's actual length
  * ```
  *

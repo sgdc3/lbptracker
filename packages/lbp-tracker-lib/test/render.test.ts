@@ -155,3 +155,69 @@ test('the effects reach the mix, and turning the clip off changes the output', a
   }
   assert.equal(noClip.clippedFrames, 0, 'a disabled clip counts nothing');
 });
+
+// ------------------------------------------------------------- the ramps
+
+/**
+ * The engine's slides are per unit of STEPS (`0x3930` sets `(next - current) /
+ * span` with the span in thirds; the renderer adds `t * slide` with `t` the
+ * chunk's advance in steps), so under swing a glide bends at every step
+ * boundary in frame time. `render.ts` cuts every ramp at the integer steps it
+ * crosses, which is exact because `swungFrame` is linear inside a step.
+ */
+test('a glide is linear in steps, so under swing it bends at every step it crosses', async () => {
+  const { groupNotes } = await import('@lbptracker/cwlib/notes.ts');
+  const { DEFAULT_SLOT } = await import('../src/instrument.ts');
+  const { swungFrame } = await import('../src/swing.ts');
+  const { samplesPerStep } = await import('../src/voice.ts');
+  const rec = (step: number, pitch: number, end: boolean) => ({
+    step, pitch, volume: 96, timbre: 0, modulation: 0, subStep: 0 as const, end,
+  });
+  const { notes } = groupNotes([rec(0, 60, false), rec(3, 72, true)]);
+  const seq: Sequencer = {
+    uid: 1, name: 'ramp', tempo: 120, swing: 0.5,
+    echoFeedback: 0, echoTime: 1, echoMix: 0, reverb: 5,
+    loop: false, startPoint: 0, numChannels: 1, volumes: [1, 1, 1, 1, 1, 1], boardRows: 0,
+    tracks: [{
+      guid: 1, name: 't', gridX: 0, gridY: 0, stepOffset: 0, level: 1, pan: 0.5,
+      echoSend: 0.5, reverbSend: 0, key: 0, scale: 0, notes,
+      records: new Uint8Array(0), trailingRecords: 0,
+    }],
+    lengthSteps: 8,
+  };
+  const params = Array.from({ length: 27 }, () => ({ x: 0, y: 0 }));
+  params[13] = { x: 1, y: 1 };
+  params[24] = { x: 1, y: 1 };
+  const loader = async () => ({
+    inst: {
+      slots: [DEFAULT_SLOT], sampleGuids: [1], splitNotes: [87, 0, 0, 0, 0, 0, 0, 0, 0],
+      numStack: 1, params, arpeggio: [], arpeggiate: false,
+    },
+    slots: [{
+      wav: { channels: [new Float32Array(4800).fill(0.5)], sampleRate: RATE, loop: { start: 0, end: 4800 } },
+      base: 60,
+    }],
+  });
+  let automation: readonly { frame: number; pitch: number; gain: number }[] | undefined;
+  let steps: readonly number[] = [];
+  await renderSequencer(seq, loader, {
+    planOnly: true,
+    onVoice: (voice, where) => {
+      automation = voice.automation;
+      steps = where.pointSteps;
+    },
+  });
+  // Two points three steps apart become four: one at every integer step, the
+  // semitones shared out evenly in steps.
+  assert.deepEqual(steps, [0, 1, 2, 3]);
+  assert.deepEqual(automation?.map((p) => p.pitch), [0, 4, 8, 12]);
+  // And each sits where the swung clock puts that step, so the frame ramp
+  // between two of them is the engine's step ramp inside that step.
+  const fps = samplesPerStep(RATE, 120);
+  assert.deepEqual(
+    automation?.map((p) => p.frame),
+    [0, 1, 2, 3].map((s) => Math.round(swungFrame(s, fps, 0.5))),
+  );
+  const frames = automation!.map((p) => p.frame);
+  assert.ok(frames[1] - frames[0] > frames[2] - frames[1], 'the stretched step is longer than the squeezed one');
+});

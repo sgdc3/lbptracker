@@ -24,12 +24,14 @@
  *
  * So: **take the first free voice; when none is free, steal the quietest.**
  *
- * The score is the product of two voice fields, and both are known from the
- * gain chain at `0x23c1`-`0x2408`: `+0x04` is the channel volume (written at
- * `0x3b52` as the mixer channel's level times the note's `bits 28..29` table
- * factor) and `+0x0c` is the note's own volume. **Neither the instrument's
- * `Params[24]` nor the amplitude envelope is in it** -- the engine ranks by
- * what the note asked for, not by how loud it currently happens to be.
+ * The score is the product of two voice fields, both rewritten once per block
+ * by `0x3930`: `+0x04` is the mixer channel's volume times the clip's `Level`
+ * (`0x3afc`-`0x3b12`) and `+0x0c` is the **current control point's** velocity
+ * over 127 (`0x3c29`-`0x3c3a`). **Neither the instrument's `Params[24]` nor
+ * the amplitude envelope is in it** -- the engine ranks by what the note asked
+ * for, not by how loud it currently happens to be. ⚠️ `allocateVoices` scores
+ * a note once, at its opening velocity: a note whose volume automation falls
+ * becomes the cheaper victim in the engine and not here.
  *
  * ⚠️ The initial best is **1.0**, not infinity, and the initial best index is
  * **0**. A pool in which every voice scores 1.0 or more therefore loses voice

@@ -95,3 +95,31 @@ test('two points on the same frame take the later value, not NaN', () => {
   ]);
   for (const v of out) assert.ok(Number.isFinite(v), 'no NaN from a zero-length segment');
 });
+
+// `0x209a`/`0x20de` in `fmodextinput.prx`: the renderer compares the volume
+// ramp at the END of each chunk with zero and frees the record after a chunk
+// that reaches it. A note that opens at 0 and holds it is therefore gone
+// after one block and never sounds -- 3,132 corpus notes -- while one that
+// opens at 0 and rises has a positive chunk-end ramp and lives.
+test('a volume held at zero frees the voice after one block; a fade-in lives', () => {
+  const held = render([
+    { frame: 0, pitch: 0, gain: 0 },
+    { frame: 1000, pitch: 0, gain: 0 },
+    { frame: 2000, pitch: 0, gain: 1 },
+  ]);
+  assert.ok(held.every((v) => v === 0), 'the rise at frame 2000 never plays: the record is gone');
+
+  const fade = render([
+    { frame: 0, pitch: 0, gain: 0 },
+    { frame: 1000, pitch: 0, gain: 1 },
+  ]);
+  assert.ok(fade[1200] > 0.45, `a fade-in from silence still arrives: ${fade[1200]}`);
+
+  // And a fade-out to zero is rendered to its end, then the voice is freed --
+  // nothing rings past the point, whatever the sample would have done.
+  const out = render([
+    { frame: 0, pitch: 0, gain: 1 },
+    { frame: 1000, pitch: 0, gain: 0 },
+  ]);
+  assert.ok(out[500] > 0.2 && out[1500] === 0 && out[4000] === 0);
+});

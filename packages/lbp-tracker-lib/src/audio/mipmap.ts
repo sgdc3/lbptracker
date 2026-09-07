@@ -3,9 +3,9 @@
  *
  * `packages/lbp-tracker-lib/src/audio/interpolate.ts` holds interpolators as a family so they can be
  * compared. This file holds something different: **one function that does what
- * `sub_0x3740` in `fmodextinput.prx` does**, including the parts that are not
+ * `0x3780` in `fmodextinput.prx` does**, including the parts that are not
  * "quality" choices at all -- the octave mipmapping and the exact shape of the
- * loop wrap. See the PRX section of steering/sequencer-data-model.md.
+ * loop wrap. See *The sampler* in steering/synth-engine.md.
  *
  * The two halves of the design only make sense together. Linear interpolation
  * alone measures 19 dB SNR at 4 kHz, which is poor; the game never asks it to
@@ -25,7 +25,8 @@ export const MIP_LEVELS = 3;
 
 /**
  * Pitch ratios at which the source is swapped, **measured** from rodata:
- * `v0x4538 = 2.0` selects the /2 copy and `v0x4530 = 4.0` the /4 copy.
+ * `v0x458c = 2.0` selects the /2 copy (compared at `0x37de`) and `v0x4584 = 4.0`
+ * the /4 copy (`0x37d4`).
  */
 export const MIP_THRESHOLDS = [2, 4] as const;
 
@@ -39,22 +40,22 @@ export function mipLevelFor(playbackRate: number): number {
 /**
  * **MEASURED: the copies are a pair average.**
  *
- * The builder is `fmodextinput.prx` `0x1320`, and it is a plain average of
+ * The builder is `fmodextinput.prx` `0x12e0`, and it is a plain average of
  * adjacent frames:
  *
  * ```
- * 0x1340  len/2 -> [rdi+0x28], [rdi+0x40]      ; the halved copy's length
- * 0x134d  len/4 -> [rdi+0x50], [rdi+0x68]      ; and the quartered one's
- * 0x13ae  esi = (int16)src[2i]
- * 0x13b9  edx = (int16)src[2i | 2]             ; the next frame of that channel
- * 0x13bd  edx += esi
- * 0x13f4  ebx = edx; ebx >>>= 31; ebx += edx; ebx >>= 1
- * 0x13fd  dst[i] = (int16)ebx
+ * 0x1303  len/2 -> [rdi+0x28], [rdi+0x40]      ; the halved copy's length (stored 0x131f, 0x132b)
+ * 0x1310  len/4 -> [rdi+0x50], [rdi+0x68]      ; and the quartered one's (0x132f, 0x133b)
+ * 0x136e  esi = (int16)src[2i]
+ * 0x1379  edx = (int16)src[2i | 2]             ; the next frame of that channel
+ * 0x137d  edx += esi
+ * 0x13b4  ebx = edx; ebx >>>= 31; ebx += edx; ebx >>= 1
+ * 0x13bd  dst[i] = (int16)ebx
  * ```
  *
  * The `| 2` rather than `+ 1` is because the buffer is **interleaved stereo**:
  * elements `2i` and `2i|2` are consecutive frames of the same channel, and
- * `0x1400`-`0x1429` repeats the whole thing on the odd elements for the other.
+ * `0x13c0` onward repeats the whole thing on the odd elements for the other.
  * Per channel it is exactly `(a + b) / 2`.
  *
  * ⚠️ **The arithmetic is int16 and rounds toward zero.** The `shr` by one after
@@ -113,7 +114,7 @@ export interface LoopSpan {
  * loop arithmetic never has to know which copy is being read.
  *
  * ⚠️ **Two details here are the engine's, not conventional sampler practice.**
- * Both were read off `sub_0x3740` and both are audible at the wrap:
+ * Both were read off `0x3780` and both are audible at the wrap:
  *
  * 1. **Only the integer index is wrapped; the second tap is not.** At the last
  *    frame of the loop the engine interpolates towards the frame that follows
@@ -132,8 +133,17 @@ export function readMipped(
   loop?: LoopSpan,
 ): number {
   const full = chain[0];
-  let index = Math.trunc(position);
-  const frac = position - Math.floor(position);
+  // ❗ **The engine hands the sampler a float32.** The voice keeps its position
+  // as a double (`+0x40 + 8i`, stepped by `vaddsd` at `0x2d59`) but the call at
+  // `0x2c72` converts it with `vcvtsd2ss`, and `0x3780` truncates, floors and
+  // subtracts in single precision. So the interpolation fraction has the
+  // precision of a float at that position: a 256th of a frame between 32,768
+  // and 65,535, a 32nd of a frame past 131,072 -- a small, real roughness on
+  // long samples that a double would not have. `Math.fround` is that
+  // conversion exactly; the difference below it is representable.
+  const at32 = Math.fround(position);
+  let index = Math.trunc(at32);
+  const frac = at32 - Math.floor(at32);
 
   if (loop) {
     const span = loop.end - loop.start;
@@ -151,7 +161,9 @@ export function readMipped(
     const divisor = 1 << level;
     source = chain[Math.min(level, chain.length - 1)];
     at = Math.trunc(index / divisor);
-    t = (frac + (index % divisor)) / divisor;
+    // `0x3825`/`0x384c`: the sum is a float add, so it rounds like one; the
+    // scale by 0.25 or 0.5 is exact either way.
+    t = Math.fround(frac + (index % divisor)) / divisor;
   }
 
   const a = at >= 0 && at < source.length ? source[at] : 0;

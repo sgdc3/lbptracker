@@ -36,12 +36,16 @@ the *same file* — 368 seconds of `This Is Halloween`, 70,704,044 bytes, one SH
 
 ### The mixer's clock is the engine's block
 
-The engine re-derives everything modulation-driven once per **256-frame block** and the
-AudioWorklet's render quantum is 128, so the grid cannot be "the offset within this call". Three
-things follow, all in `mixer.ts`: `Mixer.clock` counts frames modulo the block and is handed to
-every voice, so a 128-frame live call and a whole-song offline call cross the same boundaries; a
-chunk that *continues* a block must not re-derive (`Voice.derived`); and the oscillators are
-advanced in `stepLfos` by the whole remaining block, never by the part of it a caller asked for.
+The engine derives everything modulation-driven at both ends of a **256-frame block** and ramps
+across it, and the AudioWorklet's render quantum is 128, so the grid cannot be "the offset within
+this call". Three things follow, all in `mixer.ts`: `Mixer.clock` counts frames modulo the block
+and is handed to every voice, so a 128-frame live call and a whole-song offline call evaluate on
+the same boundaries; a voice evaluates a *segment* — the rest of the block, cut short only at its
+own absolute events (the gate, a cut, our fade) — once, and a caller's slice merely continues it
+(`Voice.segLeft`); and a voice whose envelope ended inside a segment still renders that segment to
+its end before it is dropped, or the ladder's tail would stop at the slice boundary (−33 dB when
+it did). A voice is one of the engine's records and carries its layers inside it
+(`VoiceSpec.layers`), so the pool, the tag and the segment are all per note.
 `packages/lbp-tracker-lib/test/audio.test.ts` pins "the mixer renders the same audio whatever the
 block size", and it catches a grid mistake within a minute of it being made.
 
@@ -344,8 +348,8 @@ made it 3% *slower*, and a sampling profiler's per-function attribution inside t
 hint at best — stubbing a thing out and re-timing is what answered every question. ⚠️ Uncapping the
 pool nearly doubles the load, and the browser used to restore that checkbox across a reload while
 everything else reset; every control on the live page carries `autocomplete="off"` now. The meter
-shows **notes**, not sampler voices (a stacked note plays up to five voices from one record, a
-one-shot outlives its gate, a release rings on) and turns red at ⅞ of the pool — reading high by
+shows **notes** (a voice is one record with its layers inside since 2026-09-08; a one-shot outlives
+its gate, a release rings on) and turns red at ⅞ of the pool — reading high by
 design, because the pool gives a record back at the gate while the voice keeps its tag until it has
 finished ringing.
 

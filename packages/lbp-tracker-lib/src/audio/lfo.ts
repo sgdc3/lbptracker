@@ -1,10 +1,9 @@
 /**
  * The instrument's three LFOs — `Params[15..23]`.
  *
- * Recovered from the renderer's per-layer loop in `fmodextinput.prx`; see
- * steering/sequencer-data-model.md for the trace and for which parts are
- * measured. Each LFO is a (rate, depth, layer spread) triple, and the three
- * have fixed destinations:
+ * Recovered from the renderer's per-layer loop in `fmodextinput.prx`
+ * (`0x24a0`-`0x28e3`); see steering/synth-engine.md. Each LFO is a (rate,
+ * depth, layer spread) triple, and the three have fixed destinations:
  *
  * | LFO | params | rate scale | goes to |
  * |---|---|---|---|
@@ -131,11 +130,12 @@ export function gainFactor(osc: number, depth: number): number {
  * factor. The fold makes a triangle: it rises to 1, turns, and comes back,
  * where a raw sine would sit still at the extremes.
  *
- * ✔ **The fold is measured instruction for instruction**, `0x26cb`-`0x2713`:
+ * ✔ **The fold is measured instruction for instruction**, twice per chunk --
+ * `0x25fe`-`0x2657` at the chunk's start phase and `0x26cb`-`0x2713` at its end:
  *
  * ```
  * 0x26cb  s = sin * depth
- * 0x26db  s = base + s
+ * 0x26db  s = base + s             ; base = clipPan + spread[layer], 0x2670-0x2677
  * 0x26df  s = |s|                  ; vandps against the sign mask
  * 0x26e7  s = s * 0.5
  * 0x26ef  f = floor(s)             ; vroundss, mode 1
@@ -144,14 +144,15 @@ export function gainFactor(osc: number, depth: number): number {
  * 0x26fd  if (t > 1) t = 2 - t     ; the triangle
  * ```
  *
- * which is this function, line for line.
+ * which is this function, line for line. `base` is the pan **as written**, not
+ * scaled: the fold is the identity on `[0, 1]`, so with the depth at zero it
+ * returns the pan, and a layer spread past 1 turns back. There is no branch on
+ * the depth -- every record's pan goes through it.
  *
- * ⚠️ **What stays a reading is only the destination.** The fold's `t` is
- * broadcast to four lanes at `0x272b` and written through a pointer, in the same
- * shape the gain LFO uses at `0x2578`-`0x25a5`; the last hop into the two
- * per-channel factors was not read end to end. Pan is the reading because `t` is
- * in `0..1` and `panGains` — which *is* measured — is the only consumer of a
- * `0..1` in this voice.
+ * ✔ **And the destination is measured**: the two values become a `{start,
+ * step}` pair (`0x2730`-`0x274f`) that the sample loop spends as the pan of the
+ * linear law at `0x2d21`-`0x2d50` (`L += (1 - p)·x`, `R += p·x`), stepping it
+ * every frame at `0x2d8f`.
  */
 export function panFold(osc: number, depth: number, base = 0): number {
   const v = Math.abs(osc * depth + base) * 0.5;

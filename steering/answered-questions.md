@@ -239,6 +239,14 @@ its pointer to the sample loop names the wrong destination. The oscillator at st
 and `1` is the sine was not pinned and measurably does not matter — all six calls pass 0 and the
 phases are randomised, so sine versus cosine is a constant offset on an already-random phase.
 
+❌ **The fold was right and its call site was wrong for a week** (2026-09-01 to 2026-09-08): the
+mixer fed it `2 × pan`, on no reading, and the fold being the identity on `[0, 1]` that put every
+centred voice on the right wall — RMS 0.087 left against 0.422 right — and folded the sweep
+through 1 at twice the rate, on the seven shipped instruments with a pan LFO. `lfo.test.ts` pinned
+`panFold` and never what was passed to it. ⚠️ A test of a pure function proves nothing about its
+call site; the test that catches this renders a centred voice with the LFO on and checks the
+balance, and it is there now.
+
 ## 21. `Params[26]` — a soft-clip drive on the sampler's output
 
 **Answer**: `f(x) = (1 + k)·x / (1 + k·|x|)` with `k = 2d/(1 − d)`, per layer, on the sample read,
@@ -253,11 +261,13 @@ output levels in the game (0.088, 0.161), which is what you would expect if the 
 that has to be taken back out. Implementing the level without the drive made them quiet *and*
 clean — two errors partly cancelling, so nothing sounded obviously broken.
 
-## 27. The LFO cadence — once per layer per block, not per sample
+## 27. The LFO cadence — twice per layer per chunk, not per sample
 
-**Answer**: the six `call 0x130` sit in the per-layer loop, the phases advance once after it, and
-the layer's rate is written as a double the sample loop reads as a constant —
-[synth-engine.md](synth-engine.md). `stepLfos`.
+**Answer**: the six `call 0x130` sit in the per-layer loop — **two per LFO**, at the phase and at
+the phase plus the chunk's increment — the phases advance once after it, and each pair becomes a
+`{value, step}` the sample loop ramps — [synth-engine.md](synth-engine.md). `Voice.startSegment`.
+❌ The 2026-09-05 reading of this entry took the double at `[r14-8]` for a constant rate and did
+not ask what the second double at `[r14]` was; *44*.
 
 **What it was worth** on `C4K3 S0NG` (244 tracks, 13,091 notes, 3,634 stolen at the time): the
 live path's 30 busiest seconds 4,183 → 3,235 ms, the whole song offline 35.8 → 20.2 s, audio-thread
@@ -276,6 +286,39 @@ profiler's per-function attribution inside a hot inlined loop is a hint, not a m
 extending the fixed-filter path to `keyTrack === 0` would reach 7% of voice-frames against 3%.
 The engine's cost, for the next time: 50.3 M voice-frames per 30 s at 80 ns each, and nothing is
 idling.
+
+## 44. The ramp inside a chunk — read as a staircase for four days
+
+**Answer**: everything the renderer derives, it derives at both ends of the chunk and ramps per
+sample between them — rate, gain and pan as `{value, step}` pairs, the filter's cutoff and
+resonance re-derived per sample from their own ramp, the envelopes from two calls; only the drive
+and the two sends are chunk constants — [synth-engine.md](synth-engine.md).
+`Voice.startSegment` / `renderSegment` in `mixer.ts`.
+
+❌ **A measured cadence was taken for a measured value.** *27* read the six sine calls as one per
+LFO and the layer's rate as "a double the sample loop reads as a constant", and the mixer held
+each value flat for 256 frames. Both halves of the answer were in the same disassembly — six calls
+for three oscillators, and two `f64` per layer at `[r14-8]`/`[r14]`, which the commit that first
+traced them on 2026-09-01 had already called "a start value and the step to walk it to the end of
+the block". A later, narrower reading replaced a broader earlier one because it was newer. ⚠️
+Count the calls before naming the cadence; when a stack slot holds two of something, ask what the
+second one is; and when a reading contradicts an older commit message, read the older one first.
+
+## 45. Where the ladder sits — one pair per record, after the sum and a clip
+
+**Answer**: the per-sample loop accumulates every layer, post-gain and post-pan, into one
+interleaved L/R buffer; `0x2e00`–`0x2e2d` clamps it to ±1; the two ladders run on its L and R —
+[synth-engine.md](synth-engine.md). `Voice.renderSegment`.
+
+❌ **The answer was in the record layout for a week.** The ten state floats at `+0xa4`..`+0xc8`
+had been named "two ladders, one per channel" since the filter was read, and the mixer still ran a
+ladder pair per *layer*, before the gain and the pan, because each layer was its own voice. For a
+linear filter that is the same thing; for one with a cube in its loop it is not, on the 13 shipped
+instruments that are both stacked and filtered (`choir`, `brass`, `synth_strings`, `ghost`,
+`e_guitar_power`, `space_piano`, `mime_artist`, `mosquito`, `noise`, `electric_piano`, `ray_gun`,
+`record_static`, `woodpecker`). The clip before it was never seen because nobody read past the pan
+law to where the layer loop ends. ⚠️ When a state count and an implementation's count disagree,
+the implementation is wrong, not the count — and "one per channel" means *after* the pan.
 
 ## 3 / 3b. Grid resolution, swing, triplets and the block clock
 

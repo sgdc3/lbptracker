@@ -34,7 +34,13 @@ import {
   reverbPreset,
 } from './audio/effects.ts';
 import { MasterBus, type MasterSettings } from './audio/master.ts';
-import { Mixer, type SampleBuffer, type VoiceSpec } from './audio/mixer.ts';
+import {
+  BLOCK_FRAMES,
+  Mixer,
+  type LayerSpec,
+  type SampleBuffer,
+  type VoiceSpec,
+} from './audio/mixer.ts';
 import { FILTER_PARAMS } from './audio/moog.ts';
 import {
   ADSR_PARAMS,
@@ -201,16 +207,15 @@ export interface RenderOptions {
       poolEnd: number;
       score: number;
       /**
-       * The note this voice belongs to, and which of its stack layers it is.
+       * The note this voice is.
        *
-       * ❗ **A stacked note is several voices in ONE of the engine's 32
-       * records**, so a live scheduler running the pool itself must call it once
-       * per note -- `layer === 0` -- and give every other layer the same answer.
-       * `sub_0x1c60` is called once per record and loops over the layers inside
-       * it; see question 17 in `steering/answered-questions.md`.
+       * ❗ **One call per note, its every layer inside `voice.layers`**: one
+       * `VoiceSpec` is one of the engine's 32 records, and `0x1c60` plays all
+       * of a record's layers out of it (question 17 in
+       * `steering/answered-questions.md`), so a live scheduler running the pool
+       * itself asks it once per call.
        */
       note: number;
-      layer: number;
       /**
        * What a live scheduler needs to re-place this voice without re-planning.
        *
@@ -232,6 +237,14 @@ export interface RenderOptions {
       row: number;
       /** `channelVolume`'s factor, already inside `voice.gain`. */
       channelGain: number;
+      /**
+       * The placement's `Level`, on its own.
+       *
+       * `0x04d4`: the engine allocates no record when `channelVolume × Level`
+       * is not positive, so a live scheduler with the faders in its hands has
+       * to make that test itself, per note, as the faders stand.
+       */
+      level: number;
       /**
        * Each control point's offset from the note's start, **in steps**.
        *
@@ -475,6 +488,23 @@ export async function renderSequencer(
     // it doing exactly that -- which squeezed the quietest instrument in the
     // song out of the pool. `stretched` is that length, in output frames.
     const runsOut = slot.wav.loop === undefined ? stretched / framesPerStep : Infinity;
+    // ❗ **And a volume ramp that reaches zero gives the record back too.**
+    // `0x209a`/`0x20de`: the renderer frees a record after the chunk whose
+    // end-of-chunk volume -- the velocity ramp -- is not positive. That is a
+    // point at velocity 0 whose successor is absent or also 0; a rising
+    // successor keeps the chunk-end ramp above zero, so a fade-in from 0 lives.
+    // An opening zero that holds costs one block: 3,132 corpus notes are
+    // written that way and never sound in the game. `Voice.silentAfter` is the
+    // mixer's half of the same rule.
+    let silentAt = Infinity;
+    for (let k = 0; k < event.points.length; k += 1) {
+      const point = event.points[k];
+      const next = event.points[k + 1];
+      if (point.volume === 0 && (next === undefined || next.volume === 0)) {
+        silentAt = point.step + BLOCK_FRAMES / framesPerStep;
+        break;
+      }
+    }
     prepared.push({
       loaded,
       note,
@@ -499,6 +529,7 @@ export async function renderSequencer(
       occupancySteps: Math.min(
         Math.max(event.durationSteps, oneShotSteps) + (withReleaseTail ? releaseTail : 0),
         runsOut,
+        silentAt,
       ),
     });
   }
@@ -515,9 +546,20 @@ export async function renderSequencer(
   // iterating `Numstack` times, with the three LFO phases stored once per record
   // at `[r12+0x98..0xa0]` and a per-layer spread added on top. One record plays
   // every layer of its note. See question 17 in `steering/answered-questions.md`.
+  // ❗ **`0x04d4`: a note whose `channelVolume × Level` is not positive never
+  // takes a record.** It is neither pooled nor played; it is still offered to
+  // `onVoice`, because a live player holds the faders and decides for itself.
+  // 0 of 74,864 corpus clips set `Level` to zero and none sit on a silent
+  // channel, so on real data this is inert; a fader at zero in the editor is
+  // where it shows.
+  const audible = (e: (typeof events)[number]): boolean => {
+    const track = seq.tracks[e.track];
+    return channelVolume(seq, track) * track.level > 0;
+  };
   const entries: { eventIndex: number }[] = [];
   const pooled = allocateVoices(
-    events.map((e, i) => {
+    events.flatMap((e, i) => {
+      if (!audible(e)) return [];
       const track = seq.tracks[e.track];
       const prep = prepared[i];
       const note = {
@@ -550,7 +592,7 @@ export async function renderSequencer(
         score: channelVolume(seq, track) * track.level * velocityGain(e.volume),
       };
       entries.push({ eventIndex: i });
-      return note;
+      return [note];
     }),
     voiceLimit,
   );
@@ -595,71 +637,87 @@ export async function renderSequencer(
     const P = (index: number) => evaluateParam(p[index], mod);
 
     /**
-     * The modulation ramp, when this note has one.
+     * The note's control points as the mixer's three ramps -- pitch, volume,
+     * modulation -- in frames of the note's own sounding time, and first
+     * **cut at every step boundary they cross**.
      *
-     * ⚠️ **`event.modulation` is the opening value and the engine does not
-     * hold it.** `fmodextinput.prx` ramps the modulation between a note's
-     * control points exactly as it ramps volume and pitch -- `sub_0x3930`
-     * writes its slide rate at `0x3e8a`, `sub_0x1c60` advances it at `0x1f4a`
-     * and re-derives the parameters from it. Holding it flat was wrong on
-     * 34,449 corpus notes (3.6%), and on 30,170 of those it moved some
-     * parameter by 0.35 or more. See `steering/answered-questions.md` 6d.
+     * ❗ **The engine's slides are linear in STEPS, not in frames.** `0x3930`
+     * sets each as `(next − current) / span` with the span in thirds of a
+     * step (`v0x45ac`), and the renderer adds `t × slide` with `t` the chunk's
+     * advance in steps (`N / L`, `0x0c28`). Under swing the frames per step
+     * alternate, so a glide that crosses a step boundary bends there in frame
+     * time, and one frame-linear ramp between two points would not.
+     * `swungFrame` is linear inside a step, so a point at every integer step
+     * crossed makes the frame-linear ramps exactly the step-linear ones. It is
+     * done whatever the swing, so that a live change of swing (`onClock` in the
+     * player) re-maps the same points onto the same curve; 13 of the 338 corpus
+     * sequencers swing, 2.3% of records, which is where it shows.
      *
-     * Built only when the note actually moves it: 96.4% of notes get
-     * `undefined` and take the path they took before this existed, which is
-     * what keeps the corpus render bit-identical.
+     * The pitch ramps as the **quantised** semitone (`voice+0x08`, set per
+     * point at `0x3c63`), so the interpolation runs on `notePitch`'s result
+     * and never on the raw note. The gain is absolute per point: a note may
+     * open at 0 and rise -- all 96 of `Northern Lights`'s harpsichord notes
+     * do -- and a ratio to the first point once divided by zero and rendered
+     * the part as silence. The modulation is the third ramp, `voice+0x28`
+     * (*6d* in steering/answered-questions.md); holding it flat was wrong on
+     * 34,449 corpus notes.
      */
+    const ramp = (() => {
+      const raw = event.points.map((point) => ({
+        step: point.step,
+        semis: notePitch(point.pitch, track.scale, blockRoot(track.key)) - note,
+        gain: velocityGain(point.volume),
+        mod: point.modulation,
+      }));
+      const out: typeof raw = [];
+      for (let i = 0; i < raw.length; i += 1) {
+        const a = raw[i];
+        out.push(a);
+        const b = raw[i + 1];
+        if (b === undefined) break;
+        const span = b.step - a.step;
+        if (span <= 0) continue;
+        for (let s = Math.floor(a.step) + 1; s < b.step; s += 1) {
+          if (s <= a.step) continue;
+          const t = (s - a.step) / span;
+          out.push({
+            step: s,
+            semis: a.semis + (b.semis - a.semis) * t,
+            gain: a.gain + (b.gain - a.gain) * t,
+            mod: a.mod + (b.mod - a.mod) * t,
+          });
+        }
+      }
+      return out;
+    })();
+    // One clock for the three ramps: frames of the note's own sounding time,
+    // swung, measured from its start.
+    const frameOf = (offset: number): number =>
+      Math.round(
+        swungFrame(event.step + offset, framesPerStep, seq.swing) -
+          swungFrame(event.step, framesPerStep, seq.swing),
+      );
+    // The modulation ramp, only when the note moves it: 96.4% of notes get
+    // `undefined` and take the plain path.
     const morph = (() => {
-      const values = event.points.map((point) => point.modulation);
-      if (values.every((value) => value === values[0])) return undefined;
+      if (ramp.every((point) => point.mod === ramp[0].mod)) return undefined;
       return {
         params: p,
         opening: P(OUTPUT_PARAMS.level),
         echoOffset: 2 * track.echoSend - 1,
-        points: event.points.map((point, index) => ({
-          // The same clock `automation` uses: frames of the note's own sounding
-          // time, swung, measured from its start.
-          frame: Math.round(
-            swungFrame(event.step + point.step, framesPerStep, seq.swing) -
-              swungFrame(event.step, framesPerStep, seq.swing),
-          ),
-          value: values[index],
-        })),
+        points: ramp.map((point) => ({ frame: frameOf(point.step), value: point.mod })),
       };
     })();
+    const automation = ramp.map((point) => ({
+      frame: frameOf(point.step),
+      pitch: point.semis,
+      gain: point.gain,
+    }));
     const lfo = (n: 0 | 1 | 2) => ({
       rate: P(LFO_PARAMS[n].rate),
       depth: P(LFO_PARAMS[n].depth),
       spread: P(LFO_PARAMS[n].spread),
     });
-
-    // The note's control points as mixer automation, at frame offsets: pitch in
-    // semitones relative to the first point, and gain **absolute**. A one-point
-    // note gives one entry and the voice stays flat at that gain.
-    //
-    // ⚠️ **The gain used to be relative to the first point, and a note that
-    // opens at volume 0 has no first point to be relative to.** `p.volume /
-    // base.volume` divides by zero, so the old code forced the whole envelope
-    // flat to 1 -- and, worse, `velocityGain(event.volume)` was baked into the
-    // static voice gain from that same opening volume, making it exactly 0. A
-    // note written as a fade-in from silence therefore rendered as **silence**,
-    // not as a wrong shape.
-    //
-    // That is not an edge case. In `Northern Lights` (`2bc7d95a`, uid 16629) all
-    // 96 notes of the electric harpsichord open at 0 and all 96 carry volume
-    // automation, so the part was simply missing; `pulse_wave` loses 932 of its
-    // 3,869 notes and `square_wave` 800 of 3,151. The engine has no such
-    // problem: volume is one of its three linear ramps, stored as a
-    // (value, rate) pair at `voice+0x2c`, so each control point sets an absolute
-    // level and the ramp runs between them. Opening at zero is just a fade-in.
-    const automation = event.points.map((p) => ({
-      frame: Math.round(
-        swungFrame(event.step + p.step, framesPerStep, seq.swing) -
-          swungFrame(event.step, framesPerStep, seq.swing),
-      ),
-      pitch: notePitch(p.pitch, track.scale, blockRoot(track.key)) - note,
-      gain: velocityGain(p.volume),
-    }));
 
     // The unison stack. `Numstack` layers of the same sample, each with its own
     // random detune, pan offset and start point, at `sqrt(1 / Numstack)` gain --
@@ -734,12 +792,9 @@ export async function renderSequencer(
       // ⚠️ The reverb send is `reverbSend` **alone**. The instrument's own
       // `Params` do not contribute one.
       //
-      // ⚠️ This comment used to add that `Params[26]` at `+0x5b8` reaches
-      // `voice+0x20` and that nothing reads it. Both halves were wrong:
-      // `Params[26]` is the **drive**, not a reverb send, and `0x1ee0` reads it
-      // with a `vbroadcastss` -- which is how a grep for `vmovss` missed it --
-      // into a soft-clip waveshaper this project does not implement. Nine of the
-      // game's instruments set it. See open question 21.
+      // ⚠️ `voice+0x20` is `Params[26]`, the **drive** -- `0x1ee0` reads it with
+      // a `vbroadcastss`, which is how a grep for `vmovss` once missed it and
+      // called it an unread send. It is `drive` above.
       echoSend: (() => {
         const base = P(OUTPUT_PARAMS.send);
         const offset = 2 * track.echoSend - 1;
@@ -750,77 +805,83 @@ export async function renderSequencer(
       // Seeded, so the LFO phases are reproducible along with everything else.
       random: rand,
     };
-    const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+    const stack: LayerSpec[] = [];
     for (let layer = 0; layer < layers; layer += 1) {
-      // Every layer of the note goes when the note's own record is taken.
-      const cut = cutAt.get(eventIndex);
-      const voice: VoiceSpec = {
-        ...spec,
-        // The allocator handing this record to a later note. Undefined when the
-        // pool never came for it, which is the usual case.
-        cutFrame:
-          cut === undefined
-            ? undefined
-            : Math.round(swungFrame(cut, framesPerStep, seq.swing)),
-        // ❗ **All three of Params[0..2] run from layer 0, and the engine then
-        // throws exactly one of them away.** `sub_0x1a70` enters its stack loop
-        // at `xor ebx, ebx` with no guard on `Numstack`, writes a random start,
-        // detune and pan for every layer -- and the instruction after the loop
-        // is `mov qword ptr [r14 + 0x40], 0`, which is layer 0's start position
-        // and nothing else. So the detune and the pan apply to a single-layer
-        // voice and the start offset does not. Measured 2026-09-05; the loop and
-        // its tail are `0x1a70`-`0x1c51`.
-        playbackRate: spec.playbackRate * (1 + 0.05 * P(STACK_PARAMS.detune) * bipolar()),
-        // ⚠️ **The offset is narrowed with the pan, not added after it.** The
-        // engine sums them inside the DSP -- `0x25ab` loads `voice+0x18` and
-        // `0x25b2` adds `voice + layer*4 + 0x7c` -- and the pan law at
-        // `0x2d21`/`0x2d40` runs on the sum, so everything FMOD's output stage
-        // does to the base pan it does to this too.
-        pan: clamp01(spec.pan + 0.5 * P(STACK_PARAMS.spread) * bipolar()),
-        // ⚠️ The draw happens for layer 0 too -- the engine calls `rand()` and
-        // then overwrites the result -- so it stays here rather than behind the
-        // branch. Moving it would change every later value in the stream.
-        //
-        // This is what makes `Params[2] = 1.000` harmless on the six kits that
-        // set it (`8bit_kit_1`, `a_kit_1`, `bb_kit_1`, `bb_kit_2`, `e_kit_1`,
-        // `e_perc_1`, all `Numstack` 1): the field is inert on every unstacked
-        // instrument, which is 18 of the 27 that set it. Applied to layer 0 it
-        // starts every drum hit at a uniformly random point inside its own
-        // sample -- half a kick, no transient, a click at the discontinuity --
-        // which is what a listener reported and what cost 11.6 dB of drum kit.
-        startPosition: ((offset) => (layer === 0 ? 0 : offset))(
-          P(STACK_PARAMS.startOffset) * sampleFrames * rand(),
-        ),
+      // ❗ **All three of Params[0..2] run from layer 0, and the engine then
+      // throws exactly one of them away.** `0x1a70` enters its stack loop at
+      // `xor ebx, ebx` with no guard on `Numstack`, writes a random start,
+      // detune and pan for every layer -- and the instruction after the loop
+      // is `mov qword ptr [r14 + 0x40], 0`, which is layer 0's start position
+      // and nothing else. So the detune and the pan apply to a single-layer
+      // voice and the start offset does not. Measured 2026-09-05; the loop and
+      // its tail are `0x1a70`-`0x1c51`.
+      //
+      // ⚠️ The three draws stay in this order: moving one changes every later
+      // value in the seeded stream.
+      const detune = 1 + 0.05 * P(STACK_PARAMS.detune) * bipolar();
+      // ⚠️ **The offset is summed with the pan and folded, not clamped.** The
+      // engine adds them inside the DSP -- `0x25ab` loads `voice+0x18` and
+      // `0x25b2` adds `voice + layer*4 + 0x7c` -- and the sum goes through
+      // LFO 3's triangle fold (`0x25fe`-`0x2657`) whatever that LFO's depth,
+      // so a layer pushed past 1 turns back rather than sticking to the wall.
+      // `Voice` does the fold; clamping here put `baiyon_city_guildford`'s
+      // widest layers on the wall where the game turns them around.
+      const pan = spec.pan + 0.5 * P(STACK_PARAMS.spread) * bipolar();
+      // ⚠️ The draw happens for layer 0 too -- the engine calls `rand()` and
+      // then overwrites the result -- so it stays here rather than behind the
+      // branch. This is what makes `Params[2] = 1.000` harmless on the six kits
+      // that set it (`8bit_kit_1`, `a_kit_1`, `bb_kit_1`, `bb_kit_2`, `e_kit_1`,
+      // `e_perc_1`, all `Numstack` 1): the field is inert on every unstacked
+      // instrument, which is 18 of the 27 that set it. Applied to layer 0 it
+      // starts every drum hit at a uniformly random point inside its own
+      // sample -- half a kick, no transient, a click at the discontinuity --
+      // which is what a listener reported and what cost 11.6 dB of drum kit.
+      const offset = P(STACK_PARAMS.startOffset) * sampleFrames * rand();
+      stack.push({
+        detune,
+        pan,
+        startPosition: layer === 0 ? 0 : offset,
         lfoPhase: [0, 1, 2].map(
           (n) => basePhase[n] + P(LFO_PARAMS[n].spread) * ((2 * Math.PI) / layers) * layer,
         ) as unknown as readonly [number, number, number],
-      };
-      // One voice, offered to whoever asked and then mixed. A realtime player
-      // schedules from here rather than rebuilding any of it.
-      onVoice?.(voice, {
-        guid: event.guid,
-        zone,
-        track: event.track,
-        startFrame: voice.startFrame ?? 0,
-        poolStart: event.step,
-        poolEnd: event.step + (prep.occupancySteps ?? event.durationSteps),
-        // The same two factors as the pool above, and for the same reason.
-        score: channelVolume(seq, track) * track.level * velocityGain(event.volume),
-        note: eventIndex,
-        layer,
-        startStep: event.step,
-        // ❗ The note's own end, not the pool's occupancy: a voice may hold a
-        // channel longer than it sounds, and it is the sounding that decides
-        // where the frames end.
-        endStep: voice.endFrame === undefined
-          ? undefined
-          : event.step + event.durationSteps,
-        row: track.gridY,
-        channelGain: channelVolume(seq, track),
-        pointSteps: event.points.map((point) => point.step),
       });
-      if (!planOnly) mixer.play(voice);
     }
+    const cut = cutAt.get(eventIndex);
+    // ❗ **One voice per note, its layers inside it.** A `VoiceSpec` is one of
+    // the engine's 32 records, and the record plays every layer of its note
+    // through one accumulator, one clip and one pair of ladders (`Voice`).
+    const voice: VoiceSpec = {
+      ...spec,
+      // The allocator handing this record to a later note. Undefined when the
+      // pool never came for it, which is the usual case.
+      cutFrame:
+        cut === undefined ? undefined : Math.round(swungFrame(cut, framesPerStep, seq.swing)),
+      layers: stack,
+    };
+    // Offered to whoever asked and then mixed. A realtime player schedules
+    // from here rather than rebuilding any of it.
+    onVoice?.(voice, {
+      guid: event.guid,
+      zone,
+      track: event.track,
+      startFrame: voice.startFrame ?? 0,
+      poolStart: event.step,
+      poolEnd: event.step + (prep.occupancySteps ?? event.durationSteps),
+      // The same two factors as the pool above, and for the same reason.
+      score: channelVolume(seq, track) * track.level * velocityGain(event.volume),
+      note: eventIndex,
+      startStep: event.step,
+      // ❗ The note's own end, not the pool's occupancy: a voice may hold a
+      // channel longer than it sounds, and it is the sounding that decides
+      // where the frames end.
+      endStep: voice.endFrame === undefined ? undefined : event.step + event.durationSteps,
+      row: track.gridY,
+      channelGain: channelVolume(seq, track),
+      level: track.level,
+      pointSteps: ramp.map((point) => point.step),
+    });
+    // See `audible`: a note the engine would not allocate is not mixed.
+    if (!planOnly && audible(event)) mixer.play(voice);
     played += 1;
   }
 

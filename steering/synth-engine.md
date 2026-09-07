@@ -152,7 +152,7 @@ other direction ([game-assets.md](game-assets.md)).
 
 | offset | type | what |
 |---|---|---|
-| `+0x00` | u8 | the slot (zone) index; **`0xff` means the voice is free** |
+| `+0x00` | u8 | the **instrument** index (`0x3b1e`, from `[clip+0x430]`; the zone is at `+0xcc`); **`0xff` means the voice is free** |
 | `+0x04` | f32 | `channelVolume × clip Level` — one factor of the pool score, rewritten per block |
 | `+0x08` | f32 | pitch in **semitones** |
 | `+0x0c` | f32 | volume at the start of the block, from the current control point's velocity |
@@ -307,7 +307,11 @@ records it catches all three up by `rate × elapsed` (`0x3edd`–`0x3eff`). So a
 **linearly in semitones** between its control points — the engine ramps `voice.pitch` and only
 afterwards feeds it to `exp2f`, so interpolating the playback rate instead sags in the middle of
 every bend — holds flat otherwise, and **ramps the modulation exactly as it ramps volume and
-pitch**. ⚠️ `+0x28` was read as a pan for a day and its third ramp as a `panSlide`; it is the
+pitch**. The slides are per unit of **steps**: the span is in thirds (`v0x45ac`) and the renderer's
+`t` is the chunk's advance in steps (`N / L`, `0x0c28`), so under swing a glide bends at every step
+boundary in frame time. `render.ts` cuts every ramp at the integer steps it crosses, which makes
+its frame-linear segments the engine's step-linear ones (2026-09-08; 13 of 338 corpus sequencers
+swing). ⚠️ `+0x28` was read as a pan for a day and its third ramp as a `panSlide`; it is the
 modulation, and a renderer that holds it at the note's opening value is wrong on the 3.45% of
 notes that move it — 30,170 of the 34,449 that do move some parameter by 0.35 or more, and 26 of
 the 27 parameters move on some note.
@@ -320,13 +324,36 @@ score it had.
 ## The per-voice renderer — `0x1c60`, once per record per block
 
 Called from `0xa90`'s loop over the 32 records (`0x0c51`–`0x0c97`: `ebx = 0x28; … add rbx, 0xd0;
-cmp rbx, 0x1a28`). Everything modulation-driven is evaluated **twice per block, at its start and
-its end**, and ramped across — the volume, the pitch, the pan, the filter coefficients, the LFOs,
-the drive and the sends — so the modulation the game applies is a **staircase held for a 256-frame
-block**, not a smooth per-sample curve. `Voice.render` in `packages/lbp-tracker-lib/src/audio/mixer.ts`
-re-derives per 256-frame chunk on the mixer's own frame clock, from the *interpolated modulation*:
-`evaluateParam` is affine in it, but the ADSR squares its times and the ladder squares its cutoff,
-so interpolating *those* would not be the same arithmetic.
+cmp rbx, 0x1a28`). Everything modulation-driven is evaluated **twice per chunk, at its start and
+its end** — the two envelopes (`0x203f`/`0x2089`), the pitch ratio (`0x1dc2`/`0x1e63`, the second
+with the slide added), the three LFOs (two `call 0x130` each), the filter's cutoff and resonance
+(`0x2a02`, then `0x2a54` onward with `xmm15`, the end modulation) — and each layer's rate, gain
+and pan become a `{value, step}` pair (`0x2876`, `0x25a5`, `0x274f`) that the per-sample loop
+steps every frame (`0x2d5d`, `0x2d78`, `0x2d8f`). ❗ **Inside a chunk the game applies a linear
+ramp between the two evaluations, not a value held flat.** Only the drive and the two sends are
+chunk constants (`0x1ee0`; `0x2f3f`–`0x2f89`). ❌ This paragraph said "a staircase held for a
+256-frame block" until 2026-09-08 — *44* in [answered-questions.md](answered-questions.md). `Voice`
+in `packages/lbp-tracker-lib/src/audio/mixer.ts` does the same per *segment* — a block of the
+mixer's own frame clock, cut short at the voice's own events — and re-derives at both ends from
+the *interpolated modulation*: `evaluateParam` is affine in it, but the ADSR squares its times and
+the ladder squares its cutoff, so interpolating *those* would not be the same arithmetic.
+
+### The record's accumulator, its clip, and where the ladder sits
+
+The per-sample loop (`0x2b70`–`0x2df9`) is a loop over the layers with the loop over the frames
+inside it, and every layer accumulates into **one interleaved L/R buffer on the stack**
+(`[rbp-0x9c0]`, 512 floats): `L[i] += (1 − pan)·gain·x` at `0x2d2e`, `R[i] += pan·gain·x` at
+`0x2d47`, after the drive (`0x2cab`). After the last layer, `0x2e00`–`0x2e2d` **clamps that buffer
+to ±1** (`vmaxps −1`, `vminps +1`, all 512 floats); then the ten ladder states are loaded from the
+record (`0x2e2f`–`0x2e90`, `+0xa4`..`+0xc8`), the bypass is decided on the block-start cutoff
+(`0x2e99`, `0.99 < freq`), and the two ladders run on that buffer's L and R (`0x31c6`/`0x31d3`) —
+**one pair per record, after the gain, the pan and the sum of the layers, and after a hard clip
+nothing outside the plugin sees**. The clip is also why the ladder never leaves its `[−1, 1]`
+domain. The filtered or bypassed buffer then goes to the output lanes and the sends (`0x2f00`,
+`0x32fc`). So the order is: sample → drive → gain → pan → sum of layers → clip → ladder → out.
+`Voice.renderSegment` keeps it. ❌ Until 2026-09-08 the tracker filtered each layer on its own,
+before the gain and the pan, with a ladder pair per layer — the same thing for a linear filter and
+not for this one, on the 13 shipped instruments that are both stacked and filtered (*45*).
 
 ### The note word, decoded with `bextr`
 
@@ -389,7 +416,8 @@ if (slot.tempoSynced)  ratio *= Tempo / slot.nativeTempo
 
 `0x3780` is the sample read (`mov ecx, [rdi + 0x78]` is its second instruction; ⚠️ `0x3740`, an
 older label, is mid-function). It wraps the position through the loop (`0x379d`–`0x37b9`), then
-selects the mip on the pitch ratio:
+selects the mip on the rate it was handed — the ramped, per-sample rate, so a glide across an
+octave changes copy mid-note:
 
 | ratio | compared at | mip | position scale |
 |---|---|---|---|
@@ -401,9 +429,23 @@ The fraction is carried into the mip (`(frac + (pos mod 4)) / 4` for the ÷4 lev
 octaves above its slot's root reads a pre-decimated copy rather than skipping frames. The
 interpolation (`0x389b`–`0x38ef`, the `1/32768` at `v0x4594`) is **two taps, plain linear**:
 `a = d[i]/32768, b = d[i+1]/32768, out = a + (b − a)·frac`; the stereo path is bilinear — it lerps
-L and R by a blend the caller passes, and the two frames by `frac`. When a slot has no data
-(`length <= 0`) the reader synthesises `frac(pos × 0.01) × 2 − 1`, a **saw oscillator** fallback
-(`0x37fb`–`0x380b`, the `−1` at `v0x459c`).
+L and R by a blend the caller passes, and the two frames by `frac`. **That blend is the note's
+modulation**, ramped per sample (`[rbp-0xaa4]` → `[rbp-0x9d0]` at `0x2c48`, stepped at `0x2da6`):
+a stereo `.smp` plays as **one** channel morphing from L to R with the modulation, and is then
+panned like any mono sample. None of the 216 shipped samples is stereo; the tracker's stereo path
+reads and pans each channel on its own, a convenience for its own buffers and not the engine's
+behaviour. When a slot has no data (`length <= 0`) the reader synthesises `frac(pos × 0.01) × 2 −
+1`, a **saw oscillator** fallback (`0x37fb`–`0x380b`, the `−1` at `v0x459c`); no shipped slot is
+empty and the tracker skips an instrument whose sample is missing instead.
+
+⚠️ **The position reaches the sampler as a float32.** The record keeps it as a double (`+0x40 +
+8i`, stepped by `vaddsd` at `0x2d59`), but the call at `0x2c72` converts it with `vcvtsd2ss` and
+`0x3780` truncates, floors and subtracts in single precision, so the interpolation fraction has a
+float's precision at that position — a 256th of a frame between 32,768 and 65,535, a 32nd past
+131,072 — a small, real roughness on long samples. `readMipped` passes the position through
+`Math.fround` for the same one (2026-09-08). The velocity is read as eight bits × `1/127`
+(`0x3c29`), so a record could ask for 2.0; none of 3,199,788 corpus records is above 127 and the
+editor writes seven bits.
 
 How much of the keyboard the mips cover, from every instrument's own splits and pitch formula:
 55 of 68 instruments ever land on a mip over notes 0..87 (17.3% of note-slots), 68 of 68 over
@@ -439,7 +481,9 @@ Named in `packages/lbp-tracker-lib/src/params.ts`.
 
 **The two ADSRs** — `0x16b0`, `(bool gate, float *level, float dt, a, d, s, r)`, called
 twice per envelope per block (once with a near-zero `dt` and once with the block's, for a start and
-an end value to ramp between):
+an end value to ramp between — ⚠️ and the first call **advances the state too**, by
+`frames / 48,000,000` units against the second's `frames / 192,000`, so the engine's envelopes run
+a 250th faster than its clock and an attack of zero stands at full level from the first frame):
 
 | envelope | level | A | D | S | R | passed at |
 |---|---|---|---|---|---|---|
@@ -463,8 +507,9 @@ instruments with Cohen's *d* = −3.54 — exactly `1.000` on `strings_ensemble`
 
 **The filter** — a 4-pole Moog ladder, the Stilson/Smith "Moog VCF, variation 1" from musicdsp.org
 reproduced constant for constant (`0x3070`–`0x30d0` the coefficients with `1.0`, `0.8`, `0.5`,
-`5.6`, `−1.0`; `0x3181`–`0x3259` the ladder), **two of them interleaved** — the ten floats at voice
-`+0xa4`…`+0xc8`:
+`5.6`, `−1.0`; `0x3181`–`0x3259` the ladder), **two of them interleaved, one per output channel,
+on the record's summed and clipped L/R** (*The record's accumulator*, above) — the ten floats at
+voice `+0xa4`…`+0xc8`:
 
 ```
 q = 1 - freq ;  p = freq + 0.8·freq·q ;  f = 2p - 1 ;  q = res·(1 + 0.5·q·(1 - q + 5.6·q²))
@@ -491,7 +536,9 @@ the clamped cutoff against **0.99** and the fall-through is a loop touching none
 constants, so a cutoff above the threshold is unfiltered. It is audible, because the ladder is not
 transparent at `freq = 1` (a unit impulse comes out at 0.833 and rings for half a second):
 `piano.rinst` sits on the bypass side at and above its base note. `FILTER_BYPASS_CUTOFF` in
-`moog.ts`. Corpus: cutoff wide open in 38/68; resonance zero in 60/68 (`ghost` 0.90, `saw_wave`
+`moog.ts`. Past the bypass, `0x30d8` compares the block's two ends: equal, and `0x310b` runs the
+ladder with one set of coefficients; different, and `0x33d6` onward re-derives them **per sample**
+from a linear ramp of `freq` and `res` (`(end − start) / N` at `0x33f3`). Corpus: cutoff wide open in 38/68; resonance zero in 60/68 (`ghost` 0.90, `saw_wave`
 0.76, `space_piano` 0.65, `noise` 0.58); key tracking near-binary (1.0 in 41, 0.0 in 17); envelope
 amount ≈0.98 on `square_wave`, `pulse_wave`, `e_guitar_distorted`, `robot`, `electric_piano`,
 `noise`; the filter ADSR inert in 33/68 — and 27 of the 28 with amount 0 also have an inert
@@ -510,14 +557,23 @@ The layer spread is `Params[17|20|23] · 2π/Numstack` (`0x2306`–`0x2346`), fa
 layers around the cycle. The corpus confirms which member is which: depths are zero in 62, 65 and
 62 of 68, rates in 1, 0 and 0. The oscillator at stub `0x130` is libc's `_FSin` (NID `ZtjspkJQ+vw`,
 sine/cosine with an integer selector in `edi`, zero for sine — 368 call sites in the eboot use the
-same idiom), pinned by parsing the PRX's import table rather than inferred. ⚠️ **The oscillator runs
-once per layer per block, not per sample**: the six `call 0x130` sit in the per-layer loop
-(`0x24a0`–`0x28e3`) *before* the per-sample loop (`0x2b70`–`0x2df9`), the layer's rate is written
-as a double the sample loop reads as a constant, and the three phases advance **once**, after the
-loop (`0x28f1`, `0x2915`, `0x293b`). `stepLfos` in `mixer.ts` does the same; doing it per sample
-cost 1.19 `Math.sin` calls per voice-frame and was 10% of a render. Three layers of pan compose —
-the clip's own (`voice+0x18`), the unison spread, and LFO 3 — and `lfo.ts` + `mixer.ts` do exactly
-that.
+same idiom), pinned by parsing the PRX's import table rather than inferred. ⚠️ **The oscillator runs twice per
+layer per chunk, not per sample**: the six `call 0x130` in the per-layer loop (`0x24a0`–`0x28e3`,
+*before* the per-sample loop at `0x2b70`–`0x2df9`) are **two per LFO** — at the phase (`0x24df`,
+`0x25f9`, `0x27a0`) and at the phase plus the chunk's increment (`0x2557`, `0x26c6`, `0x282e`) —
+and each pair becomes a `{value, step}` the sample loop ramps (`0x25a5`/`0x274f`/`0x2876` write
+them; `0x2d78`, `0x2d8f`, `0x2d5d` step them). The three stored phases advance **once**, after the
+loop (`0x28f1`, `0x2915`, `0x293b`), by `rate × scale × frames / 48000` (`0x2263`–`0x22cf`, the
+`1/48000` at `0x20ce`) — a velocity in radians per second, not an increment per block. ❌ This file
+read "the layer's rate is written as a double the sample loop reads as a constant" until
+2026-09-08; the double at `[r14-8]` is the start value and the one at `[r14]` is the step (*44* in
+[answered-questions.md](answered-questions.md)). `Voice.startSegment` in `mixer.ts` does the same;
+evaluating the sine per sample cost 1.19 `Math.sin` calls per voice-frame and was 10% of a render.
+Three layers of pan compose — the clip's own (`voice+0x18`), the unison spread, and LFO 3 — and
+`lfo.ts` + `mixer.ts` do exactly that. **There is no branch on the depth**: every record's pan goes
+through the fold, so a layer spread past 1 turns back rather than clamping, and the fold's input is
+the pan as written — feeding it `2 × pan` put every centred voice on the right wall for a week
+(*8*).
 
 **The output stage**:
 
@@ -594,7 +650,12 @@ record whose `+0x14 > 0` before asking whether it is free) is **dead**: both cal
 **A record is freed when the sound ends, not when the note does** (measured six ways, *29* in
 [answered-questions.md](answered-questions.md)): when the envelope's level reaches zero at both
 ends of the block (`0x20de`–`0x20f1` → `0x3093`, `[rec] = 0xff`), or when an **unlooped** sample's
-position passes its frame count (`0x3035`–`0x3069`), or when a score factor is zero. A one-shot
+position passes its frame count (`0x3035`–`0x3069`), or when the chunk-end **volume ramp** is not
+positive (`0x209a`/`0x20de`: the velocity ramp at `t_end`, not the envelope — so a note that opens
+at 0 and *holds* it is freed after one block and never sounds, 3,132 corpus notes, while a fade-in
+from 0 lives because its chunk-end ramp is positive; and a note that fades to 0 before its end is
+freed there), or when `channelVolume × Level` is not positive (`0x20ea`). `Voice.silentAfter` and
+`silentAt` in `render.ts` are the last two (2026-09-08). A one-shot
 therefore plays to the end of its sample whatever its note says; a gated note rings through its
 release still holding its record. **One record plays every layer of its note** — the per-layer loop
 is inside `0x1c60`, once per record — so a stacked note is one record, not `Numstack`

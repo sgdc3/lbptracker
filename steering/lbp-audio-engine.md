@@ -210,8 +210,10 @@ is the whole mapping into the plugin's parameter block:
   lines have identical lengths, offsets and gains, so one line fed `L + R` is exactly equivalent.
 
 Every comb gain is `powf(10, −0.003 · ms / rt60)` (`0x0d30`, `0x0d90`, `0x0fba`, `0x10e9`) with
-`ms` the stage's own length and `rt60 = slot5 × 0.1` s; every delay length is
-`round(rate · ms / 1000)` (`0x0ec9`: multiply, add 0.5, `vcvttss2si`).
+`ms` the stage's own length and `rt60 = slot5 × 0.1` s; every tap length is
+`round(rate · ms / 1000)` (`0x0ec9`: multiply, add 0.5, `vcvttss2si`) — ⚠️ except the output
+delay, which `0x11a9`–`0x11bd` **truncates** (`ms · 0.001 · rate`, `vcvttss2si`, no 0.5);
+`effects.ts` does both, and this sentence generalised the taps to it until 2026-09-08.
 
 **The early-reflection rows** are nine floats `[d0, d1, d2, g0, g1, g2, p0, p1, p2]` — three delays
 in milliseconds, three gains, three pan positions in 0..1 (`0x1254`–`0x136b`). Fixed offsets

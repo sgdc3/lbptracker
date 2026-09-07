@@ -80,6 +80,12 @@ export interface Planned {
   readonly endStep?: number;
   /** The board row, which picks the mixer channel through `NumChannels`. */
   readonly row: number;
+  /**
+   * The placement's `Level`. `0x04d4`: the engine allocates no record when
+   * `channelVolume × Level` is not positive, and the channel volume is the
+   * fader as it stands when the note is posted.
+   */
+  readonly level: number;
   /** `voice.gain` with the channel's factor divided out, so it can be redone. */
   readonly baseGain: number;
   /**
@@ -92,15 +98,15 @@ export interface Planned {
    */
   readonly baseScore: number;
   /**
-   * The note this voice belongs to, and which stack layer of it.
+   * The note this voice is.
    *
-   * ❗ **The pool counts notes, not layers.** A stacked instrument plays all
-   * its layers out of ONE of the engine's 32 records, so the allocator is asked
-   * once per note and every other layer takes the same answer. Asking per layer
-   * made `C4K3 S0NG` steal 3,634 notes of 13,091 where the truth is 1,526.
+   * ❗ **One entry per note, and the pool counts notes.** A stacked instrument
+   * plays all its layers out of ONE of the engine's 32 records, and one
+   * `VoiceSpec` carries them all (`voice.layers`), so the allocator is asked
+   * once per entry. Asking per layer made `C4K3 S0NG` steal 3,634 notes of
+   * 13,091 where the truth is 1,526.
    */
   readonly note: number;
-  readonly layer: number;
   /**
    * Each control point's offset from the note's start, in steps.
    *
@@ -143,9 +149,10 @@ export interface Planned {
  * while plenty is still ringing. A voice can also outlive its gate by its
  * release, which no amount of counting on this side would know about.
  *
- * ❗ `notes` is the number the 32-voice cap applies to, and `sounding` is not.
- * The worklet counts distinct `VoiceSpec.tag`s, and `pump` tags by note, so a
- * stacked instrument's five layers are one note here and five voices there.
+ * ❗ `notes` is the number the 32-voice cap applies to. The worklet counts
+ * distinct `VoiceSpec.tag`s, and `pump` tags by note; a voice is one record
+ * with its layers inside, so the two differ only by voices ringing past their
+ * gate under a tag the pool has already given back.
  */
 export interface Health {
   readonly sounding: number;
@@ -533,6 +540,7 @@ export class Player {
           startStep: where.startStep,
           endStep: where.endStep,
           row: where.row,
+          level: where.level,
           // ❗ Divided out so the faders can put a different one back. It is
           // never zero: `CHANNEL_HEADROOM` is 0.75 and a volume of 0 would have
           // made the voice silent in the render too.
@@ -543,7 +551,6 @@ export class Player {
           voice: rest,
           poolStart: where.poolStart,
           note: where.note + noteBase,
-          layer: where.layer,
           poolEnd: where.poolEnd,
           score: where.score,
           index: built.length,
@@ -689,6 +696,18 @@ export class Player {
     return p.baseScore * channelVolume(this.mixerNow(), { gridY: p.row });
   }
 
+  /**
+   * Whether the engine would give this note a record at all.
+   *
+   * `0x04d4` in `fmodextinput.prx`: no record when `channelVolume × Level` is
+   * not positive -- the fader at zero, not the note's velocity, which may open
+   * at 0 and rise. A note that fails this is consumed silently: not pooled,
+   * not posted, and not stealing anything.
+   */
+  private audible(p: Planned): boolean {
+    return channelVolume(this.mixerNow(), { gridY: p.row }) * p.level > 0;
+  }
+
   /** The voice with its in-note automation put back on the current clock. */
   private onClock(p: Planned): Planned['voice'] {
     const base = swungFrame(p.startStep, this.stepFrames, this.swing);
@@ -809,8 +828,7 @@ export class Player {
     const upTo = limit < 0 ? this.plan.length : limit;
     for (let i = 0; i < upTo; i += 1) {
       const p = this.plan[i];
-      // Only the note's first layer takes a record, exactly as in `pump`.
-      if (p.layer !== 0) continue;
+      if (!this.audible(p)) continue;
       const { end } = this.pool.add(p.note, {
         start: p.poolStart, end: p.poolEnd, score: this.scoreOf(p),
       });
@@ -1036,6 +1054,13 @@ export class Player {
       // once.
       const at = this.passFrame(p);
       if (at >= until) break;
+      if (!this.audible(p)) {
+        // Consumed without a record, as the engine consumes it.
+        this.handed.set(p.index, p.startStep);
+        this.handedUntilStep = Math.max(this.handedUntilStep, this.passStep(p));
+        this.nextIndex += 1;
+        continue;
+      }
       const life = this.lifeOf(p);
       // The delay this voice waits before it starts, and its own end rebased
       // onto that delay so the mixer's `endFrame - startFrame` is still its
@@ -1044,20 +1069,14 @@ export class Player {
       const tag = this.tagOf(p);
       const passSteps = this.passStep(p) - p.startStep;
       const poolEnd = p.poolEnd + passSteps;
-      // ❗ One call per NOTE. The other layers of a stacked note share its
-      // record and therefore its answer; see `Planned.note`.
-      let end: number;
-      let stole: { index: number; at: number } | undefined;
-      if (p.layer === 0) {
-        ({ end, stole } = this.pool.add(tag, {
-          start: p.poolStart + passSteps,
-          end: poolEnd,
-          score: this.scoreOf(p),
-        }));
-        this.noteEnd.set(tag, end);
-      } else {
-        end = this.noteEnd.get(tag) ?? poolEnd;
-      }
+      // ❗ One call per NOTE, and an entry is a note with its layers inside;
+      // see `Planned.note`.
+      const { end, stole } = this.pool.add(tag, {
+        start: p.poolStart + passSteps,
+        end: poolEnd,
+        score: this.scoreOf(p),
+      });
+      this.noteEnd.set(tag, end);
       if (!this.noteStart.has(tag)) this.noteStart.set(tag, this.passStep(p));
       const cut = end < poolEnd ? this.cutFrameAt(end) - at : undefined;
       node.port.postMessage({

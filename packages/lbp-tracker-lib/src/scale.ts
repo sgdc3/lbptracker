@@ -1,5 +1,6 @@
 /**
- * The sequencer's scale quantiser -- `sub_0x250` in `fmodextinput.prx`.
+ * The sequencer's scale quantiser -- `0x240` in `fmodextinput.prx` (⚠️ not
+ * `0x250`, an older label that is mid-function).
  *
  * A note in the sequencer is **not** played at the semitone it names. The
  * engine snaps it to the sequencer's scale first, so a note the editor shows on
