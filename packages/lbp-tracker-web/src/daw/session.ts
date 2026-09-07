@@ -188,7 +188,7 @@ async function replan(): Promise<void> {
     pushEffects();
     player.setPool(poolSize());
     // The transport stops at the end of the last chip, muted or not.
-    const loaded = await player.load(seq, load, restart, songEndSteps(state.song));
+    const loaded = await player.load(seq, load, restart, songEndSteps(state.song), audibleClips().map((c) => c.id));
     rememberPlanned();
     const clips = state.song.clips.length;
     setStatus(
@@ -211,8 +211,7 @@ async function replan(): Promise<void> {
 }
 
 state.onChange((kind) => {
-  if (kind === 'mix') replanSoon();
-  else if (kind === 'notes') notesChanged();
+  if (kind === 'notes' || kind === 'mix') syncPlan();
   else if (kind === 'settings') pushSettings();
   else if (kind === 'effects') pushEffects();
 });
@@ -220,10 +219,10 @@ state.onChange((kind) => {
 // ------------------------------------------------------ edits while playing
 
 /**
- * The audible chips as the plan last saw them: their order, and a print of
- * each, so an edit can be told apart from a change of the list itself.
+ * The audible chips as the plan last saw them, and a print of each, so a
+ * change can be sorted into chips added, chips gone, and chips changed inside.
  */
-let plannedIds: number[] = [];
+let plannedIds = new Set<number>();
 const prints = new Map<number, string>();
 
 const audibleClips = (): Clip[] => state.song.clips.filter((c) => state.rowAudible(c.row));
@@ -240,54 +239,65 @@ function printOf(clip: Clip): string {
 
 function rememberPlanned(): void {
   const clips = audibleClips();
-  plannedIds = clips.map((c) => c.id);
+  plannedIds = new Set(clips.map((c) => c.id));
   prints.clear();
   for (const c of clips) prints.set(c.id, printOf(c));
 }
 
 /**
- * A 'notes' change: the chips are the same and one or a few of them changed
- * inside -- a note moved, a fader turned, a chip dragged -- so only those
- * tracks are re-planned, in place, without stopping. Anything else (a chip
- * added or removed, an undo that touches many) is the whole plan again.
+ * A change to what is heard, while the plan stands: chips added, drawn,
+ * duplicated or unmuted are planned alone and put in; chips removed or muted
+ * are taken out in one pass; chips changed inside are swapped. The plan's
+ * voices carry the chip's id, so where a chip sits in the list never matters.
+ * Only a change too big to do piecemeal -- many chips at once, an undo across
+ * the board, a row of a hundred unmuted -- is the whole plan again.
  */
-const retrackPending = new Set<number>();
-let retrackTimer = 0;
-function notesChanged(): void {
+const pending = { put: new Set<number>(), drop: new Set<number>() };
+let syncTimer = 0;
+function syncPlan(): void {
+  if (!player.hasPlan || replanning) {
+    replanSoon();
+    return;
+  }
   const clips = audibleClips();
-  const sameList = player.hasPlan && !replanning
-    && clips.length === plannedIds.length && clips.every((c, i) => c.id === plannedIds[i]);
-  if (!sameList) {
+  const now = new Set(clips.map((c) => c.id));
+  for (const id of plannedIds) if (!now.has(id)) pending.drop.add(id);
+  for (const c of clips) {
+    if (!plannedIds.has(c.id) || prints.get(c.id) !== printOf(c)) pending.put.add(c.id);
+  }
+  if (pending.put.size > 8) {
+    pending.put.clear();
+    pending.drop.clear();
     replanSoon();
     return;
   }
-  const changed = clips.filter((c) => prints.get(c.id) !== printOf(c));
-  if (changed.length === 0) return;
-  if (changed.length > 6) {
-    replanSoon();
-    return;
-  }
-  for (const c of changed) retrackPending.add(c.id);
-  window.clearTimeout(retrackTimer);
-  retrackTimer = window.setTimeout(() => void retrackNow(), 60);
+  if (pending.put.size === 0 && pending.drop.size === 0) return;
+  window.clearTimeout(syncTimer);
+  syncTimer = window.setTimeout(() => void syncNow(), 60);
 }
 
-async function retrackNow(): Promise<void> {
-  const ids = [...retrackPending];
-  retrackPending.clear();
+async function syncNow(): Promise<void> {
+  const put = [...pending.put];
+  const drop = new Set(pending.drop);
+  pending.put.clear();
+  pending.drop.clear();
   try {
     const load = await ensureAssets();
-    const clips = audibleClips();
     const seq = sequencerFromSong({ ...state.song, clips: [] });
-    for (const id of ids) {
-      const index = clips.findIndex((c) => c.id === id);
-      const clip = clips[index];
-      if (!clip || index !== plannedIds.indexOf(id)) {
-        // The list moved under the timer: the whole plan, then.
-        replanSoon();
-        return;
+    const end = songEndSteps(state.song);
+    if (drop.size > 0) {
+      player.dropTracks(drop, seq, end);
+      for (const id of drop) {
+        plannedIds.delete(id);
+        prints.delete(id);
       }
-      await player.retrack(index, trackFromClip(clip), seq, load, songEndSteps(state.song));
+    }
+    const byId = new Map(audibleClips().map((c) => [c.id, c]));
+    for (const id of put) {
+      const clip = byId.get(id);
+      if (!clip) continue; // gone again under the timer: the next sync drops it
+      await player.retrack(id, trackFromClip(clip), seq, load, end);
+      plannedIds.add(id);
       prints.set(id, printOf(clip));
     }
     for (const l of planListeners) l();

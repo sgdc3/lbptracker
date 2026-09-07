@@ -36,8 +36,9 @@ not before, never how it was done. No `--` or em dash in here; the site's text d
   ending at its last point. Triplet grid at three cells to the beat, with the other grid's notes
   drawn faded. Undo and redo, copy and paste, a selection box, the arrow keys to nudge, and a
   keyboard on the left to try the instrument.
-- Editing inside a chip while the song plays is heard at once, without a stutter: only that chip
-  is re-planned, and nothing already on its way to the speakers is played twice.
+- Editing inside a chip, drawing one, removing one or muting a row while the song plays is heard at
+  once, without a stutter: only that chip is re-planned, and nothing already on its way to the
+  speakers is played twice.
 - "Loop this chip" in the note panel cuts the song off and goes round the chip's bars with every
   other row at a fifth of its volume, to work on one part in place; pressing it again leaves the
   song at the chip's start, playing on from there if it was playing before.

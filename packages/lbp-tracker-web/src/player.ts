@@ -125,7 +125,11 @@ export interface Planned {
   readonly poolEnd: number;
   readonly score: number;
   readonly index: number;
-  /** The track (the chip) the voice belongs to, so one track's voices can be swapped out. */
+  /**
+   * The chip the voice belongs to, by the key the page gave `load` -- the
+   * chip's id -- so one chip's voices can be swapped out, dropped or added
+   * without the rest of the plan noticing where it sits in the list.
+   */
   readonly track: number;
 }
 
@@ -422,6 +426,8 @@ export class Player {
      * chip into silence.
      */
     endStep = original.lengthSteps,
+    /** A key per track of `original`, in order; the track's index otherwise. */
+    keys?: readonly number[],
   ): Promise<Loaded> {
     const seq: Sequencer = restart
       ? original
@@ -444,7 +450,7 @@ export class Player {
     const sent = this.sent;
     let samples = 0;
 
-    const result = await this.collect(seq, loader, node, built, 0);
+    const result = await this.collect(seq, loader, node, built, 0, (i) => keys?.[i] ?? i);
     this.noteBase = built.reduce((m, v) => Math.max(m, v.note + 1), 0);
 
     // Sorted by musical position, which is the order they will be posted in at
@@ -482,9 +488,8 @@ export class Player {
 
   /**
    * Plan a sequencer's voices into `built`, loading any sample the worklet
-   * does not hold yet. `trackAs` names the track the entries belong to when
-   * `seq` is a one-track copy; `noteBase` keeps their note ids clear of
-   * the plan's.
+   * does not hold yet. `keyOf` turns a track's index in `seq` into the key
+   * the entries carry; `noteBase` keeps their note ids clear of the plan's.
    */
   private async collect(
     seq: Sequencer,
@@ -492,7 +497,7 @@ export class Player {
     node: AudioWorkletNode,
     built: Planned[],
     noteBase: number,
-    trackAs?: number,
+    keyOf: (index: number) => number,
   ): Promise<{ played: number; skipped: number; framesPerStep: number }> {
     const sent = this.sent;
     const result = await renderSequencer(seq, loader, {
@@ -537,7 +542,7 @@ export class Player {
           poolEnd: where.poolEnd,
           score: where.score,
           index: built.length,
-          track: trackAs ?? where.track,
+          track: keyOf(where.track),
         });
       },
       onProgress: (phase, done, total) => {
@@ -557,7 +562,7 @@ export class Player {
    * old notes and all, and the new plan of it takes over past the frontier.
    */
   async retrack(
-    index: number,
+    key: number,
     track: Track,
     seq: Sequencer,
     loader: InstrumentLoader,
@@ -569,12 +574,28 @@ export class Player {
     // an empty sequencer has none: give it the song's end, which is never
     // before this track's.
     const one: Sequencer = { ...seq, tracks: [track], lengthSteps: Math.max(seq.lengthSteps, endStep) };
-    await this.collect(one, loader, node, fresh, this.noteBase, index);
+    await this.collect(one, loader, node, fresh, this.noteBase, () => key);
     this.noteBase = fresh.reduce((m, v) => Math.max(m, v.note + 1), this.noteBase);
+    // ⚠️ By the pass's step, not the plan's: inside a looped section the
+    // frontier carries the pass, and comparing the bare step would keep every
+    // old voice and drop every new one from the second time round.
     const frontier = this.handedUntilStep;
-    const kept = this.plan.filter((p) => p.track !== index || p.startStep <= frontier);
-    const added = fresh.filter((p) => p.startStep > frontier);
-    const merged = kept.concat(added);
+    const kept = this.plan.filter((p) => p.track !== key || this.passStep(p) <= frontier);
+    const added = fresh.filter((p) => this.passStep(p) > frontier);
+    this.splice(kept.concat(added), seq, endStep);
+  }
+
+  /**
+   * Take chips out of the plan -- removed, or muted -- keeping only what was
+   * already handed over. Nothing is planned, so it costs one pass over the plan.
+   */
+  dropTracks(keys: ReadonlySet<number>, seq: Sequencer, endStep = seq.lengthSteps): void {
+    const frontier = this.handedUntilStep;
+    this.splice(this.plan.filter((p) => !keys.has(p.track) || this.passStep(p) <= frontier), seq, endStep);
+  }
+
+  /** A changed plan under the running clock: sorted, re-indexed, the end refreshed, the scheduler re-pointed. */
+  private splice(merged: Planned[], seq: Sequencer, endStep: number): void {
     merged.sort((a, b) => a.startStep - b.startStep);
     this.plan = merged.map((p, i) => ({ ...p, index: i }));
     this.songSteps = Math.max(endStep, seq.lengthSteps);
