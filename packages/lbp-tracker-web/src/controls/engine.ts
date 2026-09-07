@@ -13,12 +13,17 @@ const GROUP_SPECS = [
   // What each does is in the help (src/help.ts, 'engine'), not beside the faders.
   { key: 'pool', title: 'voice pool' },
   { key: 'stage', title: 'output stage' },
+  // ❗ Not the game's. The one group here that is this tracker's own.
+  { key: 'master', title: 'master bus (ours)' },
 ] as const satisfies readonly Group[];
 
 const FADER_SPECS = [
   { id: 'voices', group: 'pool', label: 'size', min: 1, max: 128, step: 1, start: 32,
     per: 1, disabledBy: 'optNoCap',
     format: (v, on) => (on('optNoCap') ? 'off' : String(v)) },
+  { id: 'masterAmount', group: 'master', label: 'glue', min: 0, max: 10, step: 1, start: 4,
+    per: 1, effects: true,
+    format: (v, on) => (on('optMaster') ? String(v) : 'off') },
 ] as const satisfies readonly Fader[];
 
 const CHECK_SPECS = [
@@ -26,6 +31,9 @@ const CHECK_SPECS = [
   { id: 'optEcho', group: 'stage', label: 'echo', start: true, effects: true },
   { id: 'optReverb', group: 'stage', label: 'reverb', start: true, effects: true },
   { id: 'optClip', group: 'stage', label: 'output clip', start: true, effects: true },
+  // ⚠️ Off by default and it stays that way: the game has no such thing, and a
+  // render with it on is not the game's mix. See steering/open-questions.md.
+  { id: 'optMaster', group: 'master', label: 'limiter', start: false, effects: true },
 ] as const satisfies readonly Check[];
 
 export type EngineFader = (typeof FADER_SPECS)[number]['id'];

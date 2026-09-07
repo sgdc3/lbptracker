@@ -16,6 +16,7 @@
  * The views mount into their own sections and reach all of it through here.
  */
 
+import { MASTER_DEFAULTS } from '@lbptracker/lib/audio/master.ts';
 import { shallowRef, watch } from 'vue';
 import { loaderFor, manifest, type Manifest } from '../assets.ts';
 import type { Sequencer } from '@lbptracker/cwlib/project.ts';
@@ -139,6 +140,10 @@ export function pushEffects(): void {
     echoOn: engine.on('optEcho'),
     reverbOn: engine.on('optReverb'),
     clip: engine.on('optClip'),
+    // Ours, past the fold, and only when it is switched on.
+    master: engine.on('optMaster')
+      ? { amount: engine.raw('masterAmount'), ceilingDb: MASTER_DEFAULTS.ceilingDb }
+      : null,
   });
 }
 

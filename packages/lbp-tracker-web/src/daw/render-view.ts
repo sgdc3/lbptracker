@@ -368,6 +368,7 @@ export function mountRender(opts: { isActive: () => boolean }): void {
       reverb: render.on('optReverb'),
       echo: render.on('optEcho'),
       clip: render.on('optClip'),
+      master: render.on('optMaster'),
     });
   });
 

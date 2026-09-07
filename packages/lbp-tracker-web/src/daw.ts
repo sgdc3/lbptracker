@@ -12,7 +12,7 @@ import '../ui.css';
 import '../daw.css';
 import { sequencersOf, type BackupResult } from '@lbptracker/cwlib/backup.ts';
 import type { Sequencer } from '@lbptracker/cwlib/project.ts';
-import { songFromJson, songFromSequencer, newSong } from '@lbptracker/lib/song.ts';
+import { songEndSteps, songFromJson, songFromSequencer, newSong } from '@lbptracker/lib/song.ts';
 import { mountFooter } from './footer.ts';
 import { mountHelp } from './help.ts';
 import { confirmDialog } from './confirm.ts';
@@ -30,6 +30,7 @@ import { mountMixer } from './daw/mixer.ts';
 import { mountRender } from './daw/render-view.ts';
 import { mountConvert } from './daw/convert-view.ts';
 import { mountKeyboard } from './daw/keyboard-view.ts';
+import { mountMediaKeys } from './daw/media-keys.ts';
 import type { Health } from './player.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -321,15 +322,51 @@ mountMixer();
 mountRender({ isActive: isActive('render') });
 mountConvert({ isActive: isActive('convert'), onShow: (l) => viewListeners.add((v) => v === 'convert' && l()) });
 mountKeyboard({ isActive: isActive('keyboard'), onShow: (l) => viewListeners.add((v) => v === 'keyboard' && l()) });
+// The keyboard's media keys and the system's own transport, if the browser has them.
+mountMediaKeys();
 
-// Space plays and pauses from anywhere but a field.
+/**
+ * The transport's keys, from any view but a text field.
+ *
+ * The set a DAW's hands already know: space plays and pauses **where it is**
+ * (`player.stop` keeps the position; only the stop button rewinds), Home and
+ * Enter go back to the start, End goes to the song's end, and Ctrl+S saves.
+ *
+ * ⚠️ **Letters stay out of here.** The Keyboard view plays notes on
+ * `Z S X D C V G B H N J M , L .`, so a global `L` for loop or `M` for mute
+ * would sound a note there instead. Those live in the arrange view's own
+ * handler, which only answers while that view is shown.
+ */
 window.addEventListener('keydown', (event) => {
   const target = event.target as HTMLElement | null;
   if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
-  if (event.code !== 'Space' || !player.hasPlan) return;
-  event.preventDefault();
-  if (player.playing) player.stop();
-  else player.play();
+  if (event.ctrlKey || event.metaKey) {
+    if (event.code !== 'KeyS' || event.shiftKey) return;
+    event.preventDefault();          // the browser would offer to save the page
+    saveSong();
+    return;
+  }
+  if (!player.hasPlan) return;
+  switch (event.code) {
+    case 'Space':
+      event.preventDefault();
+      if (player.playing) player.stop();
+      else player.play();
+      return;
+    case 'Home':
+    case 'Enter':
+    case 'NumpadEnter':
+      // Back to the top, and still playing if it was: a DAW does not stop
+      // because you asked it where the start is.
+      event.preventDefault();
+      player.seek(0);
+      return;
+    case 'End':
+      event.preventDefault();
+      player.seek(player.frameAt(songEndSteps(state.song)));
+      return;
+    default:
+  }
 });
 
 // The arrange view is fixed between the bar and the footer, whose heights

@@ -31,6 +31,9 @@ const CHECK_SPECS = [
   { id: 'optReverb', group: 'stage', label: 'reverb', start: true },
   { id: 'optEcho', group: 'stage', label: 'echo', start: true },
   { id: 'optClip', group: 'clip', label: 'output clip', start: true },
+  // ❗ Ours, not the game's, and off by default: a render with it on is not
+  // the game's mix. See steering/open-questions.md.
+  { id: 'optMaster', group: 'clip', label: 'master bus (ours)', start: false },
 ] as const satisfies readonly Check[];
 
 export type RenderCheck = (typeof CHECK_SPECS)[number]['id'];

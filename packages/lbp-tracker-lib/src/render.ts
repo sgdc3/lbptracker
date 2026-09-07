@@ -33,6 +33,7 @@ import {
   clipToUnit,
   reverbPreset,
 } from './audio/effects.ts';
+import { MasterBus, type MasterSettings } from './audio/master.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from './audio/mixer.ts';
 import { FILTER_PARAMS } from './audio/moog.ts';
 import {
@@ -159,6 +160,14 @@ export interface RenderOptions {
   readonly reverb?: boolean;
   /** Run the echo. Default true. Same reasoning as `reverb`. */
   readonly echo?: boolean;
+  /**
+   * **Our own master bus**, after the fold: a glue compressor and a limiter.
+   *
+   * ❗ Nothing in the game does this, so it is off unless asked for. Passing
+   * settings turns it on; see `audio/master.ts` and the deliberate deviation
+   * in steering/open-questions.md.
+   */
+  readonly master?: MasterSettings | null;
   /**
    * Called with every voice as it is handed to the mixer, and with the identity
    * of the sample it plays.
@@ -298,6 +307,7 @@ export async function renderSequencer(
     releaseTail: withReleaseTail = false,
     reverb: withReverb = true,
     echo: withEcho = true,
+    master: masterSettings = null,
     onVoice,
     planOnly = false,
     onProgress,
@@ -872,6 +882,8 @@ export async function renderSequencer(
   let reverbEnergy = 0;
   let clipped = 0;
   const hammer = new WaveHammer();
+  // Ours, off unless the caller asked: see `RenderOptions.master`.
+  const master = masterSettings ? new MasterBus(RATE, masterSettings) : null;
   let compressorGain = 1;
   const effectsStarted = now();
   for (let i = 0; i < frames; i += 1) {
@@ -926,6 +938,13 @@ export async function renderSequencer(
     // signal the game's clip never sees at that level. See {@link FOLD_GAIN}.
     left[i] *= FOLD_GAIN;
     right[i] *= FOLD_GAIN;
+    // Ours, and last: past the fold there is nothing of the game's left to be
+    // faithful to. Off unless the caller asked for it.
+    if (master) {
+      const out = master.process(left[i], right[i]);
+      left[i] = out.left;
+      right[i] = out.right;
+    }
   }
 
   let peak = 0;

@@ -25,6 +25,7 @@
  * cheaper than that was.
  */
 
+import { MASTER_DEFAULTS } from '@lbptracker/lib/audio/master.ts';
 import { loaderFor, manifest, type Manifest } from './assets.ts';
 import {
   RATE,
@@ -64,6 +65,8 @@ self.onmessage = async (event: MessageEvent) => {
     reverb?: boolean;
     echo?: boolean;
     clip?: boolean;
+  /** Our own master bus, off unless the page asks. */
+  master?: boolean;
     noKeyTrack?: boolean;
     unpitchedPercussion?: boolean;
     file?: File;
@@ -89,6 +92,7 @@ self.onmessage = async (event: MessageEvent) => {
         ...(message.reverb === undefined ? {} : { reverb: message.reverb }),
         ...(message.echo === undefined ? {} : { echo: message.echo }),
         ...(message.clip === undefined ? {} : { clip: message.clip }),
+        ...(message.master ? { master: MASTER_DEFAULTS } : {}),
         ...(message.noKeyTrack === undefined ? {} : { noKeyTrack: message.noKeyTrack }),
         ...(message.unpitchedPercussion === undefined
           ? {}

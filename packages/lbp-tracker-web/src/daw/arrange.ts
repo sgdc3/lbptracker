@@ -418,6 +418,21 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
         tripletsBox.checked = !tripletsBox.checked;
         tripletsBox.dispatchEvent(new Event('change'));
         return;
+      // ⚠️ The letters live here rather than in the shell: the Keyboard view
+      // plays notes on `Z S X D C V G B H N J M , L .`, and a global binding
+      // would sound one instead. This handler answers only while Arrange is up.
+      case 'KeyL':
+        if (ctrl) return;
+        state.edit('selection', (s) => { s.loop = !s.loop; });
+        return;
+      case 'KeyM':
+        if (ctrl) return;
+        state.toggleMute(state.selection.row);
+        return;
+      case 'KeyS':
+        if (ctrl) return;      // ctrl+S saves, and the shell has it
+        state.toggleSolo(state.selection.row);
+        return;
       default:
         break;
     }

@@ -33,7 +33,7 @@ The views are:
 |---|---|---|
 | Home | `index.html` only | a presentation of the app, reached by the brand in the top bar; a view like the others, so the song and the transport stay as they are |
 | Arrange | `daw/arrange.ts` | the board filling the page (its scroller ending at the panel's top edge when the panel is open, so the horizontal scrollbar stays reachable) (a chip shows its sound's own line icon from `editor/icons.ts`, one per `.rinst` file, ours and not the game's art; the family glyph is the fallback), with a "+" strip under its last row for another and the selected row's number turning into an "×" under the pointer to remove it (no wider gutter for it), chips and row numbers lit for 260 ms as their notes start (found by scanning the song between two playhead positions, drawn every frame while playing), between the bar and the footer; the roll and the chip and point inspector in a panel that rises over the board's lower part when a chip is clicked or drawn (not when the playhead merely moves the selection), resizable by its top edge, closed by its button or Esc |
-| Song/Mixer | `daw/mixer.ts`, `daw/MixerPanel.vue` | the song's name, tempo, swing, channels and faders, board rows, echo, reverb, loop — the song's own fields — in one card, and an "Engine" card with the switches that are not in the file (`controls/engine.ts`) and the meters; the name in the top bar is read-only |
+| Song/Mixer | `daw/mixer.ts`, `daw/MixerPanel.vue` | the song's name, tempo, swing, channels and faders, board rows, echo, reverb, loop — the song's own fields — in one card, and an "Engine" card with the switches that are not in the file (`controls/engine.ts`) and the meters, including the **master bus**, which is the one piece of DSP here that is not the game's at all (off by default, question 42 in [open-questions.md](open-questions.md)); the name in the top bar is read-only |
 | Render | `daw/render-view.ts` | hands `sequencerFromSong(song)` to the render worker and plays the WAV back |
 | Import/Export | `daw/convert-view.ts` | exports it as MIDI, re-run while the view is shown; a MIDI file in *replaces* it, through `openSong` |
 | Keyboard | `daw/keyboard-view.ts` | the instrument bench, following the chip selected on the board |
@@ -44,7 +44,27 @@ running transport), the status line and the audition path; the shell in `daw.ts`
 the transport and the files. ⚠️ **The Keyboard view keeps its own `AudioContext` and worklet**:
 it A/Bs the engine against the browser's resampler and loads samples under its own ids, which
 the song's player must not see. Each view's keys answer only while it is the one shown (Space
-plays from anywhere but a field). The render worker no longer reads files or keeps a pile: the
+plays from anywhere but a field). The transport's keys are in the shell (`daw.ts`): Space plays and **pauses where it is**
+(`player.stop` keeps the position; only the stop button rewinds), Home and Enter seek to the start
+without stopping, End to `songEndSteps`, Ctrl+S saves. ⚠️ **No letters there**: the Keyboard view
+plays notes on `Z S X D C V G B H N J M , L .`, so L for loop and M and S for the selected row's
+mute and solo live in the arrange view's own handler, which answers only while it is shown.
+
+❗ **The media keys go through `daw/media-keys.ts`, and they need a media element to arrive.** The
+Media Session API hands the session to whatever the page is *playing*, and this tracker's sound
+comes out of an `AudioWorklet`, which is not one: with Web Audio alone the browser gives the page
+no session and a keyboard's play key goes somewhere else entirely. So a silent WAV -- written by
+our own `writeWav`, no base64 in the source -- loops in an `<audio>` element for exactly as long
+as the transport runs. ⚠️ It must not be muted and its volume must stay at 1: a browser gives the
+session to *audible* media, and silence at volume 0 is not that. ⚠️ And `el.play()` needs a real
+gesture, so it is only ever called from the transport starting; a synthetic click does not count,
+which is why checking this in a driven browser needs a real pointer click rather than
+`element.click()`.
+
+The actions map to this transport: play, pause where it is, stop and rewind, and the two track
+keys to the start and the end -- one song is open, so that is what a track is. `setPositionState`
+gives the system's scrubber the song's real length; ⚠️ it throws on a duration of zero, which is
+every song before its plan exists, so it is guarded and wrapped. The render worker no longer reads files or keeps a pile: the
 song travels with the render request.
 
 ## What it shows, and what the game shows

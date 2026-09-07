@@ -4,9 +4,24 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.15 (2026-09-07)
+
+- A master bus under the engine switches: a compressor and a limiter of this tracker's own,
+  after everything the game does, for a mix that holds together. The glue knob says how much of
+  it. On a busy song at the default it comes out about 4 dB louder with the peaks still under the
+  ceiling, and it is off to begin with, because with it on what you hear is no longer what the
+  game would play. The Render view has the same switch, so an exported WAV can carry it.
+- Keyboard shortcuts of the kind a DAW has: Space plays and pauses where it is rather than going
+  back to the start, Home or Enter return to the start without stopping, End jumps to the end of
+  the song, and Ctrl+S saves. On the Arrange view, L turns the loop on and off, and M and S mute
+  and solo the selected row.
+- The media keys on a keyboard work as well, and so does whatever transport your computer shows
+  on screen or on a headset: play, pause, stop, and the skip keys for the start and the end of the
+  song. The song's name appears there while it plays.
+
 ## 0.2.14 (2026-09-07)
 
-- The rectangle you drag in the note grid now selects **points**, not whole notes. You can take
+- The rectangle you drag in the note grid now selects points, not whole notes. You can take
   the tail of a glide and leave its head where it is, then move, nudge, delete or change the
   volume of just those points; half a glide copies as half a glide. Clicking a note's line still
   takes the whole note, and dragging any selected point moves everything selected with it.

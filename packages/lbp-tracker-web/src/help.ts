@@ -86,6 +86,14 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
         'long the song is, the BPM box changes the tempo as it plays, the fader sets the volume, and the two bars ' +
         'above it are the left and right output levels. The status bar at the bottom says how many notes are ' +
         'sounding, how busy the audio is, and whether it has dropped out.') +
+      p('The keys a transport usually answers to, from any view: <kbd>Space</kbd> plays and pauses where it is, ' +
+        '<kbd>Home</kbd> or <kbd>Enter</kbd> go back to the start without stopping, <kbd>End</kbd> jumps to the ' +
+        'end of the song, and <kbd>Ctrl+S</kbd> saves it. On the Arrange view, <kbd>L</kbd> turns the loop on ' +
+        'and off and <kbd>M</kbd> and <kbd>S</kbd> mute and solo the row you have selected. Those three are ' +
+        'letters, so they wait for that view: on the Keyboard view the same letters play notes.') +
+      p('The keyboard’s <strong>media keys</strong> work too, and so does whatever transport your computer puts ' +
+        'on screen or on a headset: play, pause, stop, and the skip keys, which go to the start and the end of the ' +
+        'song. The song’s name shows there while it plays.') +
       h('Files') +
       p('<strong>new</strong> starts an empty song, <strong>open</strong> takes a level, a backup, a zip or a song file, ' +
         'and <strong>save</strong> writes the song as a file this site can open again. A dot before the name means ' +
@@ -185,7 +193,12 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
         'longer sounds like the game. Changing it while the song plays takes effect at once.') +
       p('<strong>echo</strong>, <strong>reverb</strong> and <strong>output clip</strong> switch those parts of the sound ' +
         'off to hear the song without them. Below them: how many notes are sounding, how many times the audio could ' +
-        'not keep up, and how many notes the pool has cut so far.'),
+        'not keep up, and how many notes the pool has cut so far.') +
+      p('The <strong>master bus</strong> is the one thing here that is not the game. It is a compressor and a limiter ' +
+        'of this tracker’s own, after everything else: it evens the loud parts out against the quiet ones and stops ' +
+        'anything going over the top, the way a mix is usually finished. <strong>glue</strong> is how much of it, and ' +
+        'it is off to begin with, because with it on what you hear is no longer what the game would play. Measured on ' +
+        'a busy song at the default setting: about 4 dB louder, with the peaks still under the ceiling.'),
   },
   render: {
     title: 'Rendering',

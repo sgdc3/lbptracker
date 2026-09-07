@@ -80,6 +80,33 @@ and, cheaper and needing no console, our own render at −0, −6 and −12 dB f
 with `tools/runhammer.py`, to see how much gain reduction each trim provokes. `LBP_COMPRESSOR=1`, or
 `compressor: true`.
 
+## 42. The master bus — `optMaster` / `RenderOptions.master`, default **off**
+
+❗ **The only DSP in this project that is not the game's.** `audio/master.ts` is a glue compressor
+(2.5:1, soft knee, threshold moved by one knob from -6 to -22 dBFS) followed by a lookahead peak
+limiter with a -0.3 dBFS ceiling, and it runs **after the stereo fold**, where the game's chain has
+ended: past the plugin's clip, past `SMS Reverb`, past `SMS WaveHammer`. Nothing in LBP does this.
+It exists because the project's owner asked for a mix that holds together, and it is off in the
+live engine and in the render alike, so nothing measured against a capture of the game is affected
+unless somebody switches it on.
+
+Measured live on `Ascetic` at the default setting (glue 4): peaks 0.35/0.52 without, 0.56/0.85
+with, a lift of about 4.2 dB, and the limiter holding everything under the ceiling.
+
+⚠️ **Two traps, both of them cost a test.** The limiter's gain has to be the *smallest the
+lookahead window asks for*, not the newest: taking the newest and releasing upwards lets the peak
+out of the delay line at +0.19 dB over the ceiling. And the window must include the frame leaving
+the delay this very sample, or the one peak it never sees is its own. Both are pinned in
+`test/master.test.ts`.
+
+⚠️ **The makeup is referenced to -6 dBFS, not to 0.** Taking back what the ratio removes at full
+scale assumes the mix already peaks there; ours does not, and the makeup then adds more than the
+compressor took -- +7.4 dB at the default, against +4.2 dB now.
+
+**What would settle whether it should ever be on by default**: nothing measurable. It is a taste
+question, and the answer this project gives is that the faithful path is the default and this is a
+switch beside it.
+
 ## 39. The stereo narrowing — not applied
 
 The 7.1 centre feed folds every pan to `2 − √2` of its width for a stereo listener, derived from

@@ -12,6 +12,7 @@
  */
 
 import { WaveHammer } from './compressor.ts';
+import { MasterBus, type MasterSettings } from './master.ts';
 import { Echo, FOLD_GAIN, Reverb, clipToUnit, reverbPreset } from './effects.ts';
 import { INTERPOLATORS, type InterpolatorName } from './interpolate.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from './mixer.ts';
@@ -59,6 +60,8 @@ export type MixerMessage =
       reverbOn: boolean;
       clip: boolean;
       compressor?: boolean;
+      /** Our own master bus, or null for off. See `audio/master.ts`. */
+      master?: MasterSettings | null;
     }
   /** Close the gate on the voices carrying `tag`; see `Mixer.release`. */
   | { type: 'release'; tag: number }
@@ -139,6 +142,12 @@ export class MixerProcessor extends AudioWorkletProcessor {
    */
   private readonly hammer = new WaveHammer();
   private compressor = false;
+  /**
+   * **Ours, past the fold**: a glue compressor and a limiter, off unless the
+   * page switches them on. Nothing in the game does this, which is why it is
+   * built only when it is asked for. See `master.ts`.
+   */
+  private master: MasterBus | null = null;
   /**
    * Frames since the last voice-count report.
    *
@@ -267,6 +276,12 @@ export class MixerProcessor extends AudioWorkletProcessor {
         this.reverbOn = message.reverbOn;
         this.clip = message.clip;
         this.compressor = message.compressor ?? false;
+        if (message.master) {
+          if (this.master) this.master.set(message.master);
+          else this.master = new MasterBus(sampleRate, message.master);
+        } else {
+          this.master = null;
+        }
         this.echo = message.echoOn
           ? new Echo(
               sampleRate,
@@ -309,7 +324,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
     const left = output[0];
     const right = output.length > 1 ? output[1] : output[0];
 
-    if (!this.echo && !this.reverb && !this.clip && !this.compressor) {
+    if (!this.echo && !this.reverb && !this.clip && !this.compressor && !this.master) {
       this.mixer.render(left, right);
       if (output.length > 1 && right === left) right.set(left);
       this.report(left.length, began);
@@ -355,6 +370,12 @@ export class MixerProcessor extends AudioWorkletProcessor {
       // The stereo fold's gain, last, where FMOD's speaker matrix applies it.
       left[i] *= FOLD_GAIN;
       right[i] *= FOLD_GAIN;
+      // And ours after it, where the game's chain has ended.
+      if (this.master) {
+        const out = this.master.process(left[i], right[i]);
+        left[i] = out.left;
+        right[i] = out.right;
+      }
     }
     if (output.length > 1 && right === left) right.set(left);
     this.report(left.length, began);

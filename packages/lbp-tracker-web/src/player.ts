@@ -45,6 +45,7 @@ import { channelVolume, type Sequencer, type Track } from '@lbptracker/cwlib/pro
 import { LiveVoicePool, VOICES_UNLIMITED, VOICE_POOL_SIZE } from '@lbptracker/lib/polyphony.ts';
 import { stepLength, swungFrame } from '@lbptracker/lib/swing.ts';
 import { samplesPerStep } from '@lbptracker/lib/voice.ts';
+import type { MasterSettings } from '@lbptracker/lib/audio/master.ts';
 import { RATE, renderSequencer, type InstrumentLoader } from '@lbptracker/lib/render.ts';
 
 /**
@@ -171,6 +172,10 @@ export interface EffectSettings {
   readonly echoOn: boolean;
   readonly reverbOn: boolean;
   readonly clip: boolean;
+  /** The game's own compressor, `SMS WaveHammer`. Off by default; see `RenderOptions`. */
+  readonly compressor?: boolean;
+  /** **Ours, past the fold**: a glue compressor and a limiter, or null for off. */
+  readonly master?: MasterSettings | null;
 }
 
 export interface PlayerEvents {
