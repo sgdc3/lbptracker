@@ -12,12 +12,16 @@
  * step keeps; a manifest without paths falls back to the file name.
  */
 
+import { ICONS, iconKeyOf } from './icons.ts';
+
 export interface InstrumentInfo {
   readonly guid: number;
   /** `piano`, `e_guitar_power` -> "piano", "e guitar power". */
   readonly name: string;
   readonly family: string;
   readonly colour: string;
+  /** The key into `ICONS`: the file's own name. */
+  readonly icon: string;
 }
 
 const FAMILY_COLOURS: Record<string, string> = {
@@ -56,6 +60,7 @@ export function instrumentsFrom(
       name: row.file.replace(/\.rinst$/, '').replace(/_/g, ' '),
       family,
       colour: FAMILY_COLOURS[family] ?? UNKNOWN_COLOUR,
+      icon: iconKeyOf(row.file),
     });
   }
   // Families in the order the palette lists them, names alphabetical within.
@@ -70,8 +75,36 @@ export function instrumentsFrom(
 
 /** What to show for a placement with no instrument, or one not in the assets. */
 export const MISSING_INSTRUMENT: InstrumentInfo = {
-  guid: 0, name: '(no instrument)', family: '', colour: UNKNOWN_COLOUR,
+  guid: 0, name: '(no instrument)', family: '', colour: UNKNOWN_COLOUR, icon: '',
 };
+
+/**
+ * The sound's own icon (`icons.ts`) in the box, or the family's glyph for a
+ * file that has none. The icons are 24 units square, stroked at 2, and the
+ * canvas is expected to hold the colour in `strokeStyle` and `fillStyle`.
+ */
+export function drawIcon(
+  ctx: CanvasRenderingContext2D,
+  info: Pick<InstrumentInfo, 'family' | 'icon'>,
+  x: number,
+  y: number,
+  size: number,
+): void {
+  const icon = ICONS[info.icon];
+  if (!icon) {
+    drawGlyph(ctx, info.family, x, y, size);
+    return;
+  }
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(size / 24, size / 24);
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.stroke(new Path2D(icon.d));
+  if (icon.f) ctx.fill(new Path2D(icon.f));
+  ctx.restore();
+}
 
 /**
  * A glyph per family, drawn on a canvas inside a box: a wave for a synth, a

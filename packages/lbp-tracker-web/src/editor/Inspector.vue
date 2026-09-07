@@ -107,7 +107,7 @@ const fmt = (v: number, dp = 2) => v.toFixed(dp);
         <div class="knob">
           <label for="clipGuid">sound</label>
           <button id="clipGuid" type="button" class="sound-field wide" @click="chooseSound">
-            <Glyph v-if="sound" :family="sound.family" :colour="sound.colour" />
+            <Glyph v-if="sound" :family="sound.family" :colour="sound.colour" :icon="sound.icon" />
             <span class="sound-name">{{ sound ? sound.name : clip.guid ? `unknown (${clip.guid})` : '(none)' }}</span>
           </button>
         </div>

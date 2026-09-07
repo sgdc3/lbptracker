@@ -11,6 +11,7 @@
 import { createApp, h } from 'vue';
 import InstrumentPicker from './InstrumentPicker.vue';
 import type { InstrumentInfo } from './instruments.ts';
+import { confineWheel } from '../help.ts';
 
 export function pickInstrument(
   instruments: readonly InstrumentInfo[],
@@ -19,6 +20,7 @@ export function pickInstrument(
   return new Promise((resolve) => {
     const dialog = document.createElement('dialog');
     dialog.className = 'picker-dialog';
+    confineWheel(dialog);
     const host = document.createElement('div');
     dialog.append(host);
     document.body.append(dialog);

@@ -34,7 +34,7 @@ import {
   barOfCell,
   type BoardLayout,
 } from './geometry.ts';
-import { MISSING_INSTRUMENT, drawGlyph, type InstrumentInfo } from './instruments.ts';
+import { MISSING_INSTRUMENT, drawIcon, type InstrumentInfo } from './instruments.ts';
 import { capture, release } from './pointer.ts';
 import type { EditorState } from './state.ts';
 
@@ -543,7 +543,7 @@ export class BoardView {
     ctx.fillStyle = info.colour;
     ctx.strokeStyle = info.colour;
     const size = r.h * 0.6;
-    drawGlyph(ctx, info.family, r.x + pad + 5, r.y + (r.h - size) / 2, size);
+    drawIcon(ctx, info, r.x + pad + 5, r.y + (r.h - size) / 2, size);
     // The name after it, clipped to the chip.
     ctx.save();
     ctx.beginPath();

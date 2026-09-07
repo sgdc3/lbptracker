@@ -229,6 +229,19 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
 };
 
 /**
+ * The wheel over an open dialog scrolls its own list or text, never the page
+ * behind it. Done this way rather than by hiding the page's overflow, which
+ * would drop the scrollbar, shift the page by its width and unstick the top
+ * bar. For every dialog on the page, and for the ones made on demand.
+ */
+export function confineWheel(dialog: HTMLDialogElement): void {
+  dialog.addEventListener('wheel', (event) => {
+    const scroller = (event.target as Element).closest?.('.help-body, .picker-list, .picker-scroll');
+    if (!(scroller instanceof HTMLElement) || scroller.scrollHeight <= scroller.clientHeight) event.preventDefault();
+  }, { passive: false });
+}
+
+/**
  * Wire the dialog and every `[data-help]` button on the page, present or
  * future. Call once.
  */
@@ -259,13 +272,5 @@ export function mountHelp(): void {
     const el = event.target;
     if (el instanceof HTMLElement && !(el instanceof HTMLButtonElement) && el.dataset.help) open(el.dataset.help);
   });
-  // The wheel over an open dialog scrolls its text, never the page behind it.
-  // Done here rather than by hiding the page's overflow, which would drop the
-  // scrollbar, shift the page by its width and unstick the top bar.
-  for (const d of document.querySelectorAll<HTMLDialogElement>('dialog')) {
-    d.addEventListener('wheel', (event) => {
-      const scroller = (event.target as Element).closest?.('.help-body, .picker-list, .picker-scroll');
-      if (!(scroller instanceof HTMLElement) || scroller.scrollHeight <= scroller.clientHeight) event.preventDefault();
-    }, { passive: false });
-  }
+  for (const d of document.querySelectorAll<HTMLDialogElement>('dialog')) confineWheel(d);
 }

@@ -19,6 +19,7 @@ not before, never how it was done. No `--` or em dash in here; the site's text d
   public archive, dropped or picked, with the list of songs when a level holds several.
 - A song file (.json) saves the song as it is here and opens again anywhere a level would.
 - A "?" beside every card opens the help for it; the views themselves carry little prose.
+- An icon of its own for each of the 68 sounds, on the chips, in the picker and in the sound fields.
 - A favicon: the note from the logo, in its square.
 
 ### Arrange, new

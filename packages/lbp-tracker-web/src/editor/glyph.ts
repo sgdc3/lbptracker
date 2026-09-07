@@ -5,9 +5,9 @@
  * in the family's colour, on a small canvas sized for the device.
  */
 
-import { drawGlyph, type InstrumentInfo } from './instruments.ts';
+import { drawIcon, type InstrumentInfo } from './instruments.ts';
 
-export function glyphCanvas(info: Pick<InstrumentInfo, 'family' | 'colour'>, size = 18): HTMLCanvasElement {
+export function glyphCanvas(info: Pick<InstrumentInfo, 'family' | 'colour' | 'icon'>, size = 18): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(size * dpr);
@@ -20,7 +20,7 @@ export function glyphCanvas(info: Pick<InstrumentInfo, 'family' | 'colour'>, siz
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = info.colour;
     ctx.strokeStyle = info.colour;
-    drawGlyph(ctx, info.family, 0, 0, size);
+    drawIcon(ctx, info, 0, 0, size);
   }
   return canvas;
 }

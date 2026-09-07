@@ -104,7 +104,7 @@ onMounted(() => search.value?.focus());
           @mouseenter="at = row.index"
           @click="emit('pick', row.item.guid)"
         >
-          <Glyph :family="row.item.family" :colour="row.item.colour" />
+          <Glyph :family="row.item.family" :colour="row.item.colour" :icon="row.item.icon" />
           <span>{{ row.item.name }}</span>
         </button>
       </template>
