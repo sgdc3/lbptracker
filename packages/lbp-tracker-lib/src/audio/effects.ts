@@ -764,29 +764,48 @@ export function reverbPreset(setting: number): readonly number[] {
 }
 
 /**
- * The settings a composer actually picks from: **1 to 5**, measured over the
- * corpus (338 sequencers, `fixtures/levels/sequencers.jsonl`, 2026-09-07):
- * 5 on 59.2%, 3 on 35.5%, then 4, 2 and 1, and **0, 6 and 7 never once**.
- * The remap has eight entries and its last two both point at preset 0, so the
- * three unused settings are the padding, not choices.
+ * **The sequencer's reverb list, in the game's own order and its own words.**
  *
- * ❗ **The game names its reverbs and this project cannot yet say which name
- * belongs to which setting.** Its own English table (`gamedata/languages/
- * english.trans`) holds twelve, under keys `REVERB_SETTING_<NAME>`: Bathroom,
- * Cathedral, Cave, Concert Hall, Forest, Hall, Hallway, Hangar, Padded Cell,
- * Room, Small Room, Underwater -- exactly as many as the preset table has
- * rows. The list is built by `AddReverbs__` in `gamedata/scripts/
- * tweaksequencer.ff` into a field called `TranslatedReverbNames`, and the
- * order that method uses is in script bytecode nothing here can read yet: the
- * keys are neither strings nor LAMS ids in the eboot or the script.
- * See steering/open-questions.md. Until it is read, a setting is described by
- * what it measurably does, never by a guessed name.
+ * Read out of `AddReverbs__` in `gamedata/scripts/tweaksequencer.ff`, which
+ * builds the field `TranslatedReverbNames` with exactly six `ARRAY_APPEND`s,
+ * each on a `Translate` of one LAMS id; the ids resolve through
+ * `gamedata/languages/english.trans`. `tools/ReverbOrder.java` does the walk
+ * and steering/lbp-audio-engine.md has the method. So the list is settings
+ * 0..5, and the remap's last two entries -- both preset 0 -- are padding that
+ * no menu offers.
+ *
+ * ✔ **Two things confirm the join from the other side.** `Bright Plate` is the
+ * one preset whose damping filter is switched off, which is what makes a plate
+ * bright; and `Small Room` is the shortest at 0.6 s. Neither came from the
+ * names.
+ *
+ * ⚠️ **The names are not in decay order, and a guess would have got them
+ * wrong.** Preset 11 rings for 5.0 s, longer than any other, and it is not the
+ * Cathedral -- it is the Big Hall; the Cathedral is preset 2, shorter but with
+ * a 70 ms pre-delay, the largest space in the set. This was open question 41,
+ * and that is exactly the guess it warned against.
+ *
+ * ⚠️ Over the corpus's 338 sequencers the setting is 5 on 59.2%, 3 on 35.5%,
+ * then 4, 2 and 1, and **0 never once** -- a composer can choose Small Room
+ * and none of them did.
  */
-export const REVERB_SETTINGS: readonly number[] = [1, 2, 3, 4, 5];
+export const REVERB_NAMES: readonly string[] = [
+  'Small Room',    // 0 -> preset 3
+  'Room',          // 1 -> preset 6
+  'Bright Plate',  // 2 -> preset 8
+  'Hall',          // 3 -> preset 5
+  'Big Hall',      // 4 -> preset 11
+  'Cathedral',     // 5 -> preset 2
+];
 
-/** What a setting measurably does, for a menu that has to say something true. */
+/** The settings the game's own menu offers: 0 to 5. */
+export const REVERB_SETTINGS: readonly number[] = [0, 1, 2, 3, 4, 5];
+
+/** What a setting is: its name, and what the preset behind it measurably does. */
 export interface ReverbSummary {
   readonly setting: number;
+  /** What the game calls it, or '' for a setting outside its list. */
+  readonly name: string;
   /** The row of `REVERB_PRESETS` the remap sends it to. */
   readonly preset: number;
   /** RT60, in seconds: `decay * 0.1`. */
@@ -801,11 +820,13 @@ export interface ReverbSummary {
   readonly earlyDb: number;
 }
 
+
 export function reverbSummary(setting: number): ReverbSummary {
   const preset = REVERB_REMAP[setting] ?? REVERB_REMAP[0];
   const p = REVERB_PRESETS[preset] ?? REVERB_PRESETS[0];
   return {
     setting,
+    name: REVERB_NAMES[setting] ?? '',
     preset,
     decaySeconds: p[PRESET_SLOT.decay] * 0.1,
     preDelayMs: p[PRESET_SLOT.outputDelayMs],

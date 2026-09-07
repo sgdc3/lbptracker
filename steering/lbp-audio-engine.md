@@ -110,45 +110,42 @@ argument, which is how the synthesiser receives the game's state block.
 | 10 | −240 | −200 | 2 | 1 | 10 | 10 | 1 | 20 | 1 | 8000 |
 | 11 | −280 | −60 | 4 | 5 | 50 | 45 | 1 | 100 | 1 | 10000 |
 
-### The twelve names, and the five settings a sequencer uses
+### The six the sequencer offers, in the game's own words
 
-**The game names its reverbs, in its own translation table.** `gamedata/languages/english.trans`
-(GUID 31131, out of `intro_001.farc`) is a 42,508-entry LAMS table: `u32 count`, then
-`count x (u32 key, u32 byte-offset)`, then one UTF-16BE blob whose entries are separated by
-**U+FEFF**, not NUL. Probing candidate key names through cwlib's `makeLamsKeyID` finds exactly
-twelve under `REVERB_SETTING_<NAME>` and nothing else of that family:
+**Read out of the game's own script.** `AddReverbs__` in `gamedata/scripts/tweaksequencer.ff`
+builds the field `TranslatedReverbNames` with exactly six `ARRAY_APPEND`s, each over a `Translate`
+of one LAMS key id; the ids resolve through `gamedata/languages/english.trans`. So the list is
+settings **0 to 5**, in this order, and the remap's last two entries — both preset 0 — are padding
+no menu offers:
 
-| | | | |
-|---|---|---|---|
-| Bathroom | Cathedral | Cave | Concert Hall |
-| Forest | Hall | Hallway | Hangar |
-| Padded Cell | Room | Small Room | Underwater |
+| setting | name | preset | RT60 | before the late field | damping | late | early |
+|---|---|---|---|---|---|---|---|
+| 0 | **Small Room** | 3 | 0.6 s | 1 ms | 5 kHz | -20 dB | -50 dB |
+| 1 | **Room** | 6 | 1.2 s | 5 ms | 5 kHz | -10 dB | -110 dB (none to speak of) |
+| 2 | **Bright Plate** | 8 | 2.0 s | 15 ms | **off** | -25 dB | -50 dB |
+| 3 | **Hall** | 5 | 1.2 s | 5 ms | 5 kHz | -15 dB | -55 dB |
+| 4 | **Big Hall** | 11 | 5.0 s | 45 ms | 10 kHz | -28 dB | -46 dB |
+| 5 | **Cathedral** | 2 | 3.0 s | 70 ms | 7 kHz | -16 dB | -52 dB |
 
-Twelve names, and the preset table above has twelve rows. ⚠️ **Which name is which row is not
-known.** The list is built by `AddReverbs__` in `gamedata/scripts/tweaksequencer.ff` into a field
-`TranslatedReverbNames` (the level-wide one is `GetReverbStrings__` in
-`trigger_global_settings.ff`), and the keys reach it as `LAMS.E_KEY` enum members: the strings are
-in neither eboot nor script, and the ids are not in either as u32 (LE or BE) or as LEB128, so
-reading the order needs a disassembler for the script bytecode, which this project does not have.
-Until then a setting is described by what it measurably does. The question is in
-[open-questions.md](open-questions.md).
+✔ **Two checks from the other side.** `Bright Plate` is the one preset with the damping filter
+switched off, which is what makes a plate bright, and `Small Room` is the shortest. Neither is a
+name-shaped argument. ⚠️ **The names are not in decay order**: preset 11 rings longest at 5.0 s
+and is the *Big Hall*, not the Cathedral — the trap question 41 existed to stop, see
+[answered-questions.md](answered-questions.md).
 
-**A sequencer only ever writes 1 to 5.** Over the 338 sequencers of the corpus
-(`fixtures/levels/sequencers.jsonl`, 2026-09-07): 5 on 59.2%, 3 on 35.5%, 4 on 2.4%, 2 on 1.8%,
-1 on 1.2%, and **0, 6 and 7 never**. The remap's last two entries both point at preset 0, so those
-three are its padding rather than choices, and 5 is the mode a new song starts at
-(`NEW_SONG_DEFAULTS`). What each of the five is, through the remap:
+⚠️ **A composer can choose 0 and none of the 338 corpus sequencers did**: the histogram is 5 on
+59.2%, 3 on 35.5%, 4 on 2.4%, 2 on 1.8%, 1 on 1.2%, 0 never. 5 is the mode and what a new song in
+this tracker starts at (`NEW_SONG_DEFAULTS`).
 
-| setting | preset | RT60 | delay before the late field | damping | late | early |
-|---|---|---|---|---|---|---|
-| 1 | 6 | 1.2 s | 5 ms | 5 kHz | -10 dB | -110 dB (none to speak of) |
-| 2 | 8 | 2.0 s | 15 ms | **off** | -25 dB | -50 dB |
-| 3 | 5 | 1.2 s | 5 ms | 5 kHz | -15 dB | -55 dB |
-| 4 | 11 | 5.0 s | 45 ms | 10 kHz | -28 dB | -46 dB |
-| 5 | 2 | 3.0 s | 70 ms | 7 kHz | -16 dB | -52 dB |
+The game names more rooms than the sequencer offers — the level-wide reverb is a longer list, and
+`REVERB_SETTING_<NAME>` in `english.trans` also answers to Bathroom, Cave, Concert Hall, Forest,
+Hallway, Hangar, Padded Cell and Underwater. Which of those the *level's* list holds, and in what
+order, has not been read: `GetReverbStrings__` is not defined in
+`trigger_global_settings.ff` itself.
 
-`REVERB_SETTINGS` and `reverbSummary` in `packages/lbp-tracker-lib/src/audio/effects.ts` are this
-table, and the editor's reverb menu is drawn from them.
+`REVERB_NAMES`, `REVERB_SETTINGS` and `reverbSummary` in
+`packages/lbp-tracker-lib/src/audio/effects.ts` are this table, and the editor's reverb menu is
+drawn from them; `tools/ReverbOrder.java` re-reads it from the game.
 
 Slots 7 and 9 are set from bytes tested against zero — booleans — which is what ruled FMOD's
 `SFXREVERB` out (its indices 7 and 9 are `REVERBLEVEL` and `DIFFUSION`, both floats). `v0x3fcd50`

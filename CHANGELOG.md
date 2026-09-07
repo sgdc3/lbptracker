@@ -4,6 +4,13 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.11 (2026-09-07)
+
+- The reverbs have their real names, in the game's own order: Small Room, Room, Bright Plate,
+  Hall, Big Hall and Cathedral. They came out of the game itself, not out of a guess, and the
+  list is six rather than five: Small Room is a setting the game offers and no song in the
+  corpus of 338 ever picked.
+
 ## 0.2.10 (2026-09-07)
 
 - Every sound is called what the game calls it: "Saw Wave", "Beatbox Kit 2", "Electric Guitar

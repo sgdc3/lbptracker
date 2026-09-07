@@ -47,6 +47,7 @@ every access uses the same base.** The harness is reusable on `fmodsmsreverb.prx
 |---|---|
 | `GuidLookup.java` | resolve a GUID (or a path substring) against the game's FileDB, `output/orbisguids.map` — GUID → path + SHA-1. This is how you find where any resource actually lives |
 | `ExtractGuid.java` | GUID → FileDB → SHA-1 → FARC → bytes, plus a `manifest.json` the browser uses to resolve GUIDs without the 11 MB FileDB |
+| `ReverbOrder.java` | a compiled `.ff` script through the LAMS table: every `LoadConstInstructionInt` operand in a function, translated. ⚠️ **The int is inline in the instruction word**, which is why searching a script's bytes for a LAMS id finds nothing. This is how the reverb list's order was read |
 | `InstrumentNames.java` | every `*instrument_*.plan` → its inventory `titleKey` → the LAMS table → **the name the game shows for each sound**, joined to the `.rinst` GUID through the plan's dependencies. Feeds `src/editor/instrument-labels.ts` |
 
 The sequencer's real samples and its `.rinst` instrument definitions come out of the game with:

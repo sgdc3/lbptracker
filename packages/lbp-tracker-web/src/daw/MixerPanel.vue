@@ -51,11 +51,11 @@ const fmt = (v: number) => v.toFixed(2);
 /**
  * The reverb is a **choice, not a dial**: `ReverbSetting` picks one of the
  * game's presets, and a slider through it crossed values the game never uses
- * and suggested a range where there is a list. The options carry what each
- * setting measurably does (`reverbSummary`), because the game's own twelve
- * names cannot yet be matched to its presets -- the note is in `effects.ts`.
- * A song that arrives with a setting outside the list keeps it, rather than
- * being quietly moved to one we know.
+ * and suggested a range where there is a list of six. Each option carries the
+ * game's own name for that setting and how long it rings, with the rest of the
+ * measured record in its tooltip (`REVERB_NAMES`, `reverbSummary`). A song
+ * that arrives with a setting outside the list keeps it, rather than being
+ * quietly moved to one we know.
  */
 const reverbOptions = computed(() => {
   const settings = [...REVERB_SETTINGS];
@@ -65,8 +65,8 @@ const reverbOptions = computed(() => {
     const damping = r.dampingHz === null ? 'no damping' : `damping ${(r.dampingHz / 1000).toFixed(0)} kHz`;
     return {
       setting,
-      label: `${setting} · ${r.decaySeconds.toFixed(1)} s`,
-      title: `preset ${r.preset}: ${r.decaySeconds.toFixed(1)} s decay, `
+      label: r.name ? `${r.name} · ${r.decaySeconds.toFixed(1)} s` : `setting ${setting} · ${r.decaySeconds.toFixed(1)} s`,
+      title: `setting ${setting}, preset ${r.preset}: ${r.decaySeconds.toFixed(1)} s decay, `
         + `${r.preDelayMs} ms before the late field, ${damping}, `
         + `late ${r.lateDb} dB, early ${r.earlyDb} dB`,
     };

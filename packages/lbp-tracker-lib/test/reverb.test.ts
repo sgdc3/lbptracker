@@ -6,11 +6,14 @@ import {
   REVERB_EARLY_SETS,
   REVERB_PAIR_RATIOS,
   REVERB_PRESETS,
+  REVERB_NAMES,
   REVERB_REMAP,
+  REVERB_SETTINGS,
   REVERB_TAP_SETS,
   Reverb,
   millibelToLinear,
   reverbPreset,
+  reverbSummary,
 } from '../src/audio/effects.ts';
 
 const RATE = 48000;
@@ -249,4 +252,22 @@ test('the echo delay is EchoTime in beats, because the ring counts floats', asyn
   assert.equal(clipToUnit(2), 1);
   assert.equal(clipToUnit(-2), -1);
   assert.equal(clipToUnit(0.5), 0.5);
+});
+
+test('the six the sequencer offers: the names, the order and the presets', () => {
+  assert.deepEqual([...REVERB_NAMES], 
+    ['Small Room', 'Room', 'Bright Plate', 'Hall', 'Big Hall', 'Cathedral'],
+    'the order AddReverbs__ appends them in');
+  assert.deepEqual(REVERB_SETTINGS.map((s) => reverbSummary(s).preset), [3, 6, 8, 5, 11, 2],
+    'through the remap, which is where the names attach');
+  // The two checks that do not come from the names.
+  const byName = (n: string) => reverbSummary(REVERB_NAMES.indexOf(n));
+  assert.equal(byName('Bright Plate').dampingHz, null,
+    'the plate is the one preset with damping off, which is what makes it bright');
+  const decays = REVERB_SETTINGS.map((s) => reverbSummary(s).decaySeconds);
+  assert.equal(Math.min(...decays), byName('Small Room').decaySeconds, 'the small room is the shortest');
+  assert.equal(Math.max(...decays), byName('Big Hall').decaySeconds,
+    'and the longest is the big hall, NOT the cathedral -- see answered question 41');
+  assert.ok(byName('Cathedral').preDelayMs > byName('Big Hall').preDelayMs,
+    'the cathedral is the largest space by pre-delay, which is why it is not the longest tail');
 });

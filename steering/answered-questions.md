@@ -56,6 +56,31 @@ scans walked past it.
 length". Both halves were wrong (*12b*), and the wrong reading corrected question 12 *away* from "a
 per-slot length", which is what it is.
 
+## 41. Which reverb name goes with which preset — read out of the script's bytecode
+
+**Answer**: the Music Sequencer's list is six, in this order, and `ReverbSetting` indexes it:
+**Small Room, Room, Bright Plate, Hall, Big Hall, Cathedral**. The measurement lives in
+[lbp-audio-engine.md](lbp-audio-engine.md), *The six the sequencer offers*, and the table is
+`REVERB_NAMES` in `packages/lbp-tracker-lib/src/audio/effects.ts`.
+
+**How**: the toolkit parses a `.ff` into an `RScript`, and `AddReverbs__` in
+`gamedata/scripts/tweaksequencer.ff` is six `ARRAY_APPEND`s over six `Translate` calls.
+❗ **The operand of a `LoadConstInstructionInt` is inline in the instruction word**, not an
+index into `constantTableS64` — which is empty in these scripts. That is the whole reason a
+session spent an hour searching the script's bytes for those ids as u32 (both endiannesses)
+and as LEB128 varints and concluded they were not there. They were, packed.
+`tools/ReverbOrder.java` is the walk, reusable on any tweak script.
+
+⚠️ **The wrong turn this question exists to have prevented**: naming preset 11 the Cathedral.
+It rings for 5.0 s, longer than every other preset, and the guess is irresistible. It is the
+**Big Hall**; the Cathedral is preset 2, which rings 3.0 s and has the longest pre-delay at
+70 ms. Two independent checks say the join is right — `Bright Plate` is the one preset whose
+damping filter is off, and `Small Room` is the shortest — and neither of them is a name.
+
+⚠️ A second thing the corpus got wrong on its own: settings 1..5 are the only ones any of the
+338 sequencers hold, which read as "the list is five". The list is six. **0 is Small Room, and
+nobody picked it.** An unused option is not an absent one.
+
 ## 12b. `[slot + 0x78]` — the playable length, with the loop beside it
 
 **Answer**: `+0x78` the playable length in frames, `+0x7c` the loop start, `+0x80` the loop length;

@@ -169,12 +169,10 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
       p('The echo\'s <strong>time</strong> is in beats, so it follows the tempo; <strong>feedback</strong> is how long it ' +
         'repeats and <strong>mix</strong> how loud. Each instrument sends its own amount to both, in its note ' +
         'panel.') +
-      p('<strong>Reverb</strong> is a list of five, which is what the game writes: across 338 sequencers from real ' +
-        'levels the setting is only ever 1 to 5. Each one picks a whole preset inside the reverb itself, so the ' +
-        'option says how long that preset rings and hovering it gives the rest of what it does. The game has its ' +
-        'own names for its rooms, twelve of them, and which name belongs to which preset is not something this ' +
-        'project has been able to read out of the game yet, so the list says what each setting measurably is ' +
-        'instead of guessing.'),
+      p('<strong>Reverb</strong> is the list of six the game itself offers, in its own order: Small Room, Room, ' +
+        'Bright Plate, Hall, Big Hall and Cathedral. Each picks a whole preset, so the option also says how long ' +
+        'that one rings, and hovering it gives the delay before the tail, the damping and the levels. Big Hall ' +
+        'rings longest; Cathedral is the largest space, with the longest delay before its tail arrives.'),
   },
   engine: {
     title: 'The engine',
