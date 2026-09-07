@@ -10,6 +10,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { ICONS, iconKeyOf } from '../src/editor/icons.ts';
+import { INSTRUMENT_LABELS } from '../src/editor/instrument-labels.ts';
+import { instrumentsFrom } from '../src/editor/instruments.ts';
 
 const MANIFEST = path.resolve(import.meta.dirname, '../../../fixtures/rinst/manifest.json');
 
@@ -29,4 +31,28 @@ test('the manifest and the icon table name the same sounds', { skip: !existsSync
   const missing = [...files].filter((f) => !(f in ICONS));
   const extra = Object.keys(ICONS).filter((k) => !files.has(k));
   assert.deepEqual({ missing, extra }, { missing: [], extra: [] });
+});
+
+test('every sound carries the name the game gives it, and every name a sound', { skip: !existsSync(MANIFEST) }, () => {
+  const manifest = JSON.parse(readFileSync(MANIFEST, 'utf8')) as { guid: number; file: string }[];
+  const guids = new Set(manifest.map((r) => r.guid));
+  const labelled = Object.keys(INSTRUMENT_LABELS).map(Number);
+  assert.deepEqual(
+    {
+      unnamed: manifest.filter((r) => !(r.guid in INSTRUMENT_LABELS)).map((r) => r.file),
+      strays: labelled.filter((g) => !guids.has(g)),
+    },
+    { unnamed: [], strays: [] },
+  );
+  // Every label is "Category: Name", and both halves survive the split.
+  for (const [guid, label] of Object.entries(INSTRUMENT_LABELS)) {
+    assert.match(label, /^[A-Z][^:]*: \S/, `${guid}: ${label}`);
+  }
+  const info = instrumentsFrom(manifest);
+  const harp = info.find((i) => i.guid === 129021);
+  assert.deepEqual(
+    harp && { name: harp.name, category: harp.category },
+    { name: 'Harp', category: 'Plucked' },
+    'the split keeps the two halves apart',
+  );
 });

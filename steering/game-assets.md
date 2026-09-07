@@ -58,6 +58,23 @@ instrument definitions under `gamedata/audio/music/instruments/`, one per stock 
 Three of the 216 sample paths carry a `#` and 48 a space, which is why `asset()` in the web package
 percent-encodes every segment.
 
+### The instruments' names live in the palette plans, not in the `.rinst`
+
+An `.rinst` carries no name; the name a player sees belongs to the **palette item** that places it.
+Every `gamedata/.../instr_instrument_*.plan` (and, for the three plain waveforms, a
+`gad_instrument_*.plan`) is an `RPlan` whose `InventoryItemDetails.titleKey` is a LAMS id, and
+`gamedata/languages/english.trans` turns that into the words: "Synth: Saw Wave", "Plucked: Harp",
+"Percussion: Beatbox Kit 2". The plan's dependency list holds the `.rinst` GUID, which is what
+joins the two ends.
+
+Measured 2026-09-07 with `tools/InstrumentNames.java`: **68 plans name all 68 `.rinst` files, each
+by exactly one plan, and no two plans disagree.** The table is
+`packages/lbp-tracker-web/src/editor/instrument-labels.ts` and a test holds it against the
+manifest. The label's own prefix is the game's category -- Keys, Plucked, Wind, Voice, Percussion,
+Tuned Percussion, Synth, SFX -- and ⚠️ that is **not** the family the tracker colours a chip by,
+which comes from the asset's path and is release-shaped (`move_pack`, `lbp3`, `baiyon`). The game
+files `space_piano` under Synth and the path files it under `keys`; both are kept.
+
 ### The samples carry their own loop points — and you must honour them
 
 Every `.smp` is a RIFF with the sound designer's DAW metadata still attached. Most of it is debris

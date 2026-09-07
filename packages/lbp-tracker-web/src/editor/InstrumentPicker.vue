@@ -20,7 +20,13 @@ const list = useTemplateRef<HTMLDivElement>('list');
 
 const shown = computed(() => {
   const q = query.value.trim().toLowerCase();
-  return props.instruments.filter((i) => !q || i.name.includes(q) || i.family.replace(/_/g, ' ').includes(q));
+  // ⚠️ Lower-cased on both sides: the names are the game's own and carry its
+  // capitals ("Saw Wave"), so matching the raw name against a lower-cased
+  // query finds nothing.
+  return props.instruments.filter((i) => !q
+    || i.name.toLowerCase().includes(q)
+    || i.category.toLowerCase().includes(q)
+    || i.family.replace(/_/g, ' ').includes(q));
 });
 
 /** The rows with a family heading wherever the family changes. */
@@ -106,6 +112,7 @@ onMounted(() => search.value?.focus());
         >
           <Glyph :family="row.item.family" :colour="row.item.colour" :icon="row.item.icon" />
           <span>{{ row.item.name }}</span>
+          <span v-if="row.item.category" class="picker-category">{{ row.item.category }}</span>
         </button>
       </template>
       <div v-if="!shown.length" class="picker-none">nothing matches</div>

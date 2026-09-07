@@ -4,6 +4,16 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.10 (2026-09-07)
+
+- Every sound is called what the game calls it: "Saw Wave", "Beatbox Kit 2", "Electric Guitar
+  Power Chords", instead of the file name it used to show ("saw wave", "bb kit 2",
+  "e guitar power"). The names come from the game's own palette items and its own translations, so
+  all 68 are named and none is invented.
+- The sound picker shows the game's category beside each name, Keys or Plucked or Percussion, and
+  searching now matches the category as well. Typing in lower case finds them again: with the
+  names capitalised it would have stopped matching.
+
 ## 0.2.9 (2026-09-07)
 
 - Reverb is a menu now, not a slider, and it lists the five settings the game actually writes: over

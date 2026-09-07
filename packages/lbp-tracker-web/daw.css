@@ -197,6 +197,8 @@ main { flex: 1 0 auto; width: 100%; box-sizing: border-box; margin: 0; max-width
 .sound-field::after { content: "\25be"; margin-left: auto; color: var(--dimmer); }
 .glyph, .glyph-host { display: inline-block; flex: 0 0 auto; vertical-align: middle; line-height: 0; }
 .picker-row .glyph-host { margin-right: .1rem; }
+/* The game's own category for a sound, quiet at the end of its row. */
+.picker-row .picker-category { margin-left: auto; color: var(--dimmer); font-size: .8rem; white-space: nowrap; }
 .knob input[type="text"] { text-align: left; font-family: inherit; }
 .song-group { margin-bottom: 1rem; }
 #mixer .live { grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); }

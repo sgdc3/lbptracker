@@ -13,11 +13,22 @@
  */
 
 import { ICONS, iconKeyOf } from './icons.ts';
+import { INSTRUMENT_LABELS } from './instrument-labels.ts';
 
 export interface InstrumentInfo {
   readonly guid: number;
-  /** `piano`, `e_guitar_power` -> "piano", "e guitar power". */
+  /**
+   * What the game calls it, without its category: "Saw Wave", "Harp".
+   *
+   * From `INSTRUMENT_LABELS`; a GUID the table does not know falls back to its
+   * file name -- `e_guitar_power` -> "e guitar power" -- which is what every
+   * instrument was called before the game's own names were read.
+   */
   readonly name: string;
+  /** The game's own category for it: "Synth", "Plucked", "Tuned Percussion". */
+  readonly category: string;
+  /** The whole of the game's label, category and all, for a tooltip. */
+  readonly label: string;
   readonly family: string;
   readonly colour: string;
   /** The key into `ICONS`: the file's own name. */
@@ -55,9 +66,13 @@ export function instrumentsFrom(
   const out: InstrumentInfo[] = [];
   for (const row of rows) {
     const family = familyOf(row.file, row.path);
+    const label = INSTRUMENT_LABELS[row.guid] ?? '';
+    const colon = label.indexOf(': ');
     out.push({
       guid: row.guid,
-      name: row.file.replace(/\.rinst$/, '').replace(/_/g, ' '),
+      name: colon > 0 ? label.slice(colon + 2) : label || row.file.replace(/\.rinst$/, '').replace(/_/g, ' '),
+      category: colon > 0 ? label.slice(0, colon) : '',
+      label,
       family,
       colour: FAMILY_COLOURS[family] ?? UNKNOWN_COLOUR,
       icon: iconKeyOf(row.file),
@@ -75,7 +90,8 @@ export function instrumentsFrom(
 
 /** What to show for a placement with no instrument, or one not in the assets. */
 export const MISSING_INSTRUMENT: InstrumentInfo = {
-  guid: 0, name: '(no instrument)', family: '', colour: UNKNOWN_COLOUR, icon: '',
+  guid: 0, name: '(no instrument)', category: '', label: '', family: '',
+  colour: UNKNOWN_COLOUR, icon: '',
 };
 
 /**
