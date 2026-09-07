@@ -221,5 +221,6 @@ bar 175 that nothing on screen showed as selected.
   the top to the end plus the tail, as the live page does.
 - Marquee selection is by points inside the box; there is no lasso across clips, no copy between
   clips through the system clipboard, and no MIDI input.
-- The board is scrolled by hand while it plays only when the playhead leaves the view; there is no
-  zoom on either grid.
+- The board zooms in time only (`ZOOM_LEVELS` in `editor/board.ts`, the corner cell's "-", glass and
+  "+", the step at the view's left edge kept where it is, the level in localStorage); the roll has no
+  zoom, and neither grid zooms vertically.

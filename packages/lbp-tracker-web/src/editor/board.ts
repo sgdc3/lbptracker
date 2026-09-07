@@ -62,6 +62,14 @@ export interface BoardCallbacks {
 }
 
 const CELL_W = 44;
+/**
+ * The horizontal zoom: how wide a cell is drawn, as a factor on `CELL_W`.
+ * Rows keep their height; only time stretches. Chosen with the "- / +" in the
+ * corner cell between the row numbers and the bar numbers, kept in
+ * localStorage so the board opens the way it was left.
+ */
+const ZOOM_LEVELS = [0.4, 0.6, 0.8, 1, 1.35, 1.8, 2.5] as const;
+const ZOOM_KEY = 'lbp.board-zoom';
 const CELL_H = 34;
 /** The gutter: the row number, then the mute and solo buttons. */
 const GUTTER = 66;
@@ -82,6 +90,9 @@ export class BoardView {
   private readonly state: EditorState;
   private readonly cb: BoardCallbacks;
   private layout: BoardLayout = { cellW: CELL_W, cellH: CELL_H, gutter: GUTTER, ruler: RULER, cols: 24, rows: 8 };
+  private zoomIndex = ZOOM_LEVELS.indexOf(1);
+  /** Which part of the corner cell the pointer is over: 0 out, 1 the glass, 2 in; null elsewhere. */
+  private cornerHover: 0 | 1 | 2 | null = null;
   /** The playhead, in timeline steps, or null when there is nothing to show. */
   private playStep: number | null = null;
   /** Following the playhead, unless the person scrolled away from it. */
@@ -136,10 +147,18 @@ export class BoardView {
     canvas.addEventListener('pointerleave', () => {
       this.hover = null;
       this.gutterHover = null;
+      this.cornerHover = null;
       this.schedule();
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     scroller.addEventListener('scroll', () => this.schedule());
+    try {
+      const stored = Number(localStorage.getItem(ZOOM_KEY));
+      const at = ZOOM_LEVELS.indexOf(stored as (typeof ZOOM_LEVELS)[number]);
+      if (at >= 0) this.zoomIndex = at;
+    } catch {
+      // no storage: the default zoom
+    }
     this.follow = new Follow(scroller, () => {
       if (this.playStep === null) return true;
       const x = this.xOfStep(this.playStep) - scroller.scrollLeft;
@@ -242,7 +261,7 @@ export class BoardView {
     if (this.drag?.kind === 'create') lastCell = Math.max(lastCell, this.drag.endCell + 2);
     lastCell = Math.max(lastCell, Math.ceil((this.drag?.kind === 'end' ? this.drag.step : songEndSteps(song)) / STEPS_PER_CELL));
     this.layout = {
-      cellW: CELL_W, cellH: CELL_H, gutter: GUTTER, ruler: RULER,
+      cellW: Math.round(CELL_W * ZOOM_LEVELS[this.zoomIndex]), cellH: CELL_H, gutter: GUTTER, ruler: RULER,
       cols: Math.max(24, lastCell + 8),
       rows: Math.max(1, song.boardRows),
     };
@@ -518,8 +537,82 @@ export class BoardView {
     }
     ctx.fillStyle = '#171b21';
     ctx.fillRect(0, 0, layout.gutter, layout.ruler);
+    this.drawCorner();
     ctx.fillStyle = 'rgba(255,255,255,0.12)';
     ctx.fillRect(0, layout.ruler - 1, viewW, 1);
+  }
+
+  /** The corner cell: zoom out, the glass (back to 1:1), zoom in. */
+  private drawCorner(): void {
+    const { ctx, layout } = this;
+    const third = layout.gutter / 3;
+    const cy = layout.ruler / 2;
+    const paint = (part: 0 | 1 | 2, enabled: boolean) => {
+      if (this.cornerHover === part && enabled) {
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        ctx.fillRect(part * third, 0, third, layout.ruler - 1);
+      }
+      ctx.fillStyle = enabled ? '#aab2bd' : 'rgba(170,178,189,0.3)';
+      ctx.strokeStyle = ctx.fillStyle;
+    };
+    ctx.save();
+    ctx.lineWidth = 1.4;
+    ctx.lineCap = 'round';
+    // "-"
+    paint(0, this.zoomIndex > 0);
+    ctx.beginPath();
+    ctx.moveTo(third * 0.5 - 3.5, cy);
+    ctx.lineTo(third * 0.5 + 3.5, cy);
+    ctx.stroke();
+    // The glass
+    paint(1, this.zoomIndex !== ZOOM_LEVELS.indexOf(1));
+    const gx = third * 1.5 - 1;
+    ctx.beginPath();
+    ctx.arc(gx, cy - 1, 3.6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(gx + 2.6, cy + 1.6);
+    ctx.lineTo(gx + 5.5, cy + 4.5);
+    ctx.stroke();
+    // "+"
+    paint(2, this.zoomIndex < ZOOM_LEVELS.length - 1);
+    const px = third * 2.5;
+    ctx.beginPath();
+    ctx.moveTo(px - 3.5, cy);
+    ctx.lineTo(px + 3.5, cy);
+    ctx.moveTo(px, cy - 3.5);
+    ctx.lineTo(px, cy + 3.5);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** Which third of the corner cell a canvas point is in, or null outside it. */
+  private cornerPart(cx: number, cy: number): 0 | 1 | 2 | null {
+    if (cx < 0 || cx >= this.layout.gutter || cy < 0 || cy >= this.layout.ruler) return null;
+    return Math.min(2, Math.floor((cx / this.layout.gutter) * 3)) as 0 | 1 | 2;
+  }
+
+  /**
+   * Change the zoom, keeping the step at the left edge of the view where it
+   * is, so the bars in sight stay the bars in sight.
+   */
+  setZoom(index: number): void {
+    const next = Math.max(0, Math.min(ZOOM_LEVELS.length - 1, index));
+    if (next === this.zoomIndex) return;
+    const leftStep = ((this.scroller.scrollLeft) / this.layout.cellW) * STEPS_PER_CELL;
+    this.zoomIndex = next;
+    try {
+      localStorage.setItem(ZOOM_KEY, String(ZOOM_LEVELS[next]));
+    } catch {
+      // no storage: this session only
+    }
+    this.measure();
+    this.follow.scrollTo(Math.max(0, (leftStep / STEPS_PER_CELL) * this.layout.cellW));
+    this.schedule();
+  }
+
+  get zoom(): number {
+    return ZOOM_LEVELS[this.zoomIndex];
   }
 
   /**
@@ -623,7 +716,11 @@ export class BoardView {
   private onDown = (event: PointerEvent): void => {
     const { x, y, cx, cy } = this.at(event);
     if (cy < this.layout.ruler) {
-      if (cx >= this.layout.gutter) this.cb.onSeek(((x - this.layout.gutter) / this.layout.cellW) * STEPS_PER_CELL);
+      const part = this.cornerPart(cx, cy);
+      if (part === 0) this.setZoom(this.zoomIndex - 1);
+      else if (part === 1) this.setZoom(ZOOM_LEVELS.indexOf(1));
+      else if (part === 2) this.setZoom(this.zoomIndex + 1);
+      else if (cx >= this.layout.gutter) this.cb.onSeek(((x - this.layout.gutter) / this.layout.cellW) * STEPS_PER_CELL);
       return;
     }
     if (cx < this.layout.gutter) {
@@ -710,13 +807,15 @@ export class BoardView {
       if (row === this.layout.rows) gutterHover = row;
       else if (row >= 0 && row < this.layout.rows && cx < MUTE_X) gutterHover = row;
     }
+    const corner = this.cornerPart(cx, cy);
     const changed = (at?.cell !== this.hover?.cell) || (at?.row !== this.hover?.row)
-      || overEnd !== this.overEnd || gutterHover !== this.gutterHover;
+      || overEnd !== this.overEnd || gutterHover !== this.gutterHover || corner !== this.cornerHover;
     this.hover = at;
     this.overEnd = overEnd;
     this.gutterHover = gutterHover;
+    this.cornerHover = corner;
     const removable = gutterHover !== null && gutterHover === this.state.selection.row && this.layout.rows > 1;
-    this.canvas.style.cursor = overEnd ? 'ew-resize' : (gutterHover !== null && (removable || gutterHover === this.layout.rows)) ? 'pointer' : '';
+    this.canvas.style.cursor = overEnd ? 'ew-resize' : (corner !== null || (gutterHover !== null && (removable || gutterHover === this.layout.rows))) ? 'pointer' : '';
     if (changed) this.schedule();
   };
 

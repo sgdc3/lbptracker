@@ -4,6 +4,12 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.3 (2026-09-07)
+
+- The board zooms in time: "-" and "+" in the corner cell between the row numbers and the bar
+  numbers make the bars narrower or wider, the glass between them puts them back, and the rows
+  keep their height. The choice is remembered.
+
 ## 0.2.2 (2026-09-07)
 
 - On the published site the top bar sat 20 px down over the bar numbers, the status bar was

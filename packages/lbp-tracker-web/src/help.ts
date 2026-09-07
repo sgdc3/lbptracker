@@ -112,6 +112,9 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
         '<kbd>Ctrl+D</kbd> duplicates it into the cursor cell. Instruments may overlap in time, though the game\'s ' +
         'composers rarely let them.') +
       h('Rows, channels and the end') +
+      p('The corner cell between the row numbers and the bar numbers zooms the board in time: ' +
+        '<strong>-</strong> and <strong>+</strong> make the bars narrower or wider, the glass puts them back; the rows keep ' +
+        'their height.') +
       p('The <strong>+</strong> under the last row adds one. To remove a row, select it and click its number, which ' +
         'turns into an <strong>&times;</strong> under the pointer; a row that holds instruments asks first. ' +
         'The <strong>M</strong> and <strong>S</strong> boxes beside a row mute it or solo it. When the song has more ' +
