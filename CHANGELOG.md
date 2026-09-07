@@ -4,20 +4,20 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
-## 0.2.16 (2026-09-07)
-
-- The playhead in the note grid glides instead of stepping. It moved ten times a second, which at
-  240 BPM is a lurch of a step and a half; it now moves with every frame the screen draws, the way
-  the one on the board already did.
-- A G beside the volume turns the master bus on and off from the top bar. It is the same switch as
-  the one under Song/Mixer, and it lights up while it is on.
-
-## 0.2.15 (2026-09-07)
-
-- A master bus under the engine switches: a compressor and a limiter of this tracker's own,
-  after everything the game does, for a mix that holds together. The glue knob says how much of
-  it. On a busy song at the default it comes out about 4 dB louder with the peaks still under the
-  ceiling, and it is off to begin with, because with it on what you hear is no longer what the
+## 0.2.16 (2026-09-07)
+
+- The playhead in the note grid glides instead of stepping. It moved ten times a second, which at
+  240 BPM is a lurch of a step and a half; it now moves with every frame the screen draws, the way
+  the one on the board already did.
+- A G beside the volume turns the master bus on and off from the top bar. It is the same switch as
+  the one under Song/Mixer, and it lights up while it is on.
+
+## 0.2.15 (2026-09-07)
+
+- A master bus under the engine switches: a compressor and a limiter of this tracker's own,
+  after everything the game does, for a mix that holds together. The glue knob says how much of
+  it. On a busy song at the default it comes out about 4 dB louder with the peaks still under the
+  ceiling, and it is off to begin with, because with it on what you hear is no longer what the
   game would play. The Render view has the same switch, so an exported WAV can carry it.
 - Keyboard shortcuts of the kind a DAW has: Space plays and pauses where it is rather than going
   back to the start, Home or Enter return to the start without stopping, End jumps to the end of
@@ -25,24 +25,24 @@ not before, never how it was done. No `--` or em dash in here; the site's text d
   and solo the selected row.
 - The media keys on a keyboard work as well, and so does whatever transport your computer shows
   on screen or on a headset: play, pause, stop, and the skip keys for the start and the end of the
-  song. The song's name appears there while it plays.
-
-## 0.2.14 (2026-09-07)
-
-- The rectangle you drag in the note grid now selects points, not whole notes. You can take
-  the tail of a glide and leave its head where it is, then move, nudge, delete or change the
-  volume of just those points; half a glide copies as half a glide. Clicking a note's line still
-  takes the whole note, and dragging any selected point moves everything selected with it.
-
-## 0.2.13 (2026-09-07)
-
+  song. The song's name appears there while it plays.
+
+## 0.2.14 (2026-09-07)
+
+- The rectangle you drag in the note grid now selects points, not whole notes. You can take
+  the tail of a glide and leave its head where it is, then move, nudge, delete or change the
+  volume of just those points; half a glide copies as half a glide. Clicking a note's line still
+  takes the whole note, and dragging any selected point moves everything selected with it.
+
+## 0.2.13 (2026-09-07)
+
 - Every sound now shows the icon the game gives it. The 68 pictures come from the game itself, so
-  a chip on the board looks like the one you would have placed in the Music Sequencer.
-
-## 0.2.12 (2026-09-07)
-
-- Notes picked with a rectangle now move together when you drag any one of them by its dot, not
-  just by the line between its points. Dragging a single selected note still moves the one point
+  a chip on the board looks like the one you would have placed in the Music Sequencer.
+
+## 0.2.12 (2026-09-07)
+
+- Notes picked with a rectangle now move together when you drag any one of them by its dot, not
+  just by the line between its points. Dragging a single selected note still moves the one point
   you grabbed, so a glide is still shaped the same way: press Esc to drop the selection first.
 - The line under the note grid keeps its height when it has nothing to say, so the grid no longer
   jumps by six pixels every time the pointer leaves a note.
@@ -51,15 +51,15 @@ not before, never how it was done. No `--` or em dash in here; the site's text d
   note count follows the edit.
 - "Find the notes" now goes to the view that actually holds the most notes, sideways as well as
   up and down. On a part with a bass line and one high note it used to land halfway between them,
-  which is to say on nothing at all.
-
-## 0.2.11 (2026-09-07)
-
-- The reverbs have their real names, in the game's own order: Small Room, Room, Bright Plate,
-  Hall, Big Hall and Cathedral. They came out of the game itself, not out of a guess, and the
-  list is six rather than five: Small Room is a setting the game offers and no song in the
-  corpus of 338 ever picked.
-
+  which is to say on nothing at all.
+
+## 0.2.11 (2026-09-07)
+
+- The reverbs have their real names, in the game's own order: Small Room, Room, Bright Plate,
+  Hall, Big Hall and Cathedral. They came out of the game itself, not out of a guess, and the
+  list is six rather than five: Small Room is a setting the game offers and no song in the
+  corpus of 338 ever picked.
+
 ## 0.2.10 (2026-09-07)
 
 - Every sound is called what the game calls it: "Saw Wave", "Beatbox Kit 2", "Electric Guitar
