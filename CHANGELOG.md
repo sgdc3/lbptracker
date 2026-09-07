@@ -4,6 +4,12 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.2 (2026-09-07)
+
+- On the published site the top bar sat 20 px down over the bar numbers, the status bar was
+  taller than meant and the views were capped in width: the page's own styles were losing to
+  the shared ones there, and only there. Fixed.
+
 ## 0.2.1 (2026-09-07)
 
 - The board and the note grid follow the playhead only until you scroll away from it, ahead or

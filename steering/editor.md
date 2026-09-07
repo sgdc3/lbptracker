@@ -12,7 +12,10 @@ the end.
 ❗ **There is one song open and every view works on it.** Until 2026-09-06 the tracker was five
 pages — a bench, a live player, a renderer, a MIDI bridge and the editor — each opening its own
 level and handing a song to another through `sessionStorage`, and the owner asked for a DAW
-instead of disjoint menus. `index.html` is now the one page: a sticky top bar with the views'
+instead of disjoint menus. `index.html` is now the one page (its own styles in `daw.css`, imported by
+`src/daw.ts` after `ui.css`; ⚠️ never a `<style>` block under the `<link>`, which the build left inline
+while bundling the link after it, so the shared sheet won on the deployed site and not on the dev
+server -- measured 2026-09-07, 0.2.1): a sticky top bar with the views'
 tabs, the song's name, the transport (play, stop, loop, clock, tempo, volume and a VU meter)
 and the file actions (new, open, save); "open" is a modal dialog holding the shared drop zone
 and the picker for a level holding several sequencers; a fixed footer carries the status line,

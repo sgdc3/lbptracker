@@ -1,0 +1,324 @@
+/*
+ * The one page: a DAW shell around one song. Page-level rules are in ui.css;
+ * these are the shell's own, and they override some of ui.css's.
+ *
+ * ❗ **Loaded from `src/daw.ts`, after `ui.css`, and not from the HTML.** This
+ * used to be a `<style>` block under a `<link>` to ui.css, which is the right
+ * order in the page -- and the build kept the block inline while bundling the
+ * linked sheet into a file loaded after it, so on the deployed site ui.css won
+ * every contest: the body got its 20 px padding back under the top bar, the
+ * main its 60 rem cap, the status bar its extra height (measured 2026-09-07 on
+ * 0.2.1, invisible on the dev server). Two imports in one module have one
+ * order everywhere.
+ */
+
+/* The one page: a DAW shell around one song. Page-level rules are in ui.css. */
+/* A column at least a viewport tall, so the text footer sits at the end of the
+   scroll -- just above the fixed status bar -- however short the content is. */
+body {
+  padding: 0 0 var(--foot-h, 2.2rem); box-sizing: border-box; min-height: 100vh;
+  display: flex; flex-direction: column;
+}
+/* `margin: 0`, not the shared `0 auto`: an auto cross-axis margin in this
+   flex column shrink-wraps the main to its content. */
+main { flex: 1 0 auto; width: 100%; box-sizing: border-box; margin: 0; max-width: none; padding: 0 1rem; }
+
+/* ------------------------------------------------------------- the top bar */
+.daw-top {
+  position: sticky; top: 0; z-index: 30; background: var(--bg);
+  border-bottom: 1px solid var(--line); padding: .5rem 1rem;
+  display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+}
+.daw-top .brand {
+  display: inline-flex; align-items: center; gap: .5rem;
+  font-size: .78rem; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--dimmer); margin-right: .4rem; text-decoration: none; cursor: pointer;
+}
+.daw-top .brand:hover { color: var(--ink); }
+
+/* ------------------------------------------------------------------- home */
+.home { max-width: 56rem; margin: 1.5rem auto 0; padding: 0 1rem; }
+.home h1 { font-size: 1.7rem; line-height: 1.25; margin: 0 0 .6rem; letter-spacing: -.01em; }
+.home .sub { color: var(--dim); margin: 0 0 1.2rem; }
+.home .sub strong { color: var(--ink); font-weight: 600; }
+.home-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: .8rem; margin: 1rem 0; }
+.home-grid .card { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: .8rem .9rem; }
+.home-grid .card h3 { margin: 0 0 .35rem; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase; color: var(--dimmer); }
+.home-grid .card p { margin: 0; color: var(--dim); font-size: .9rem; }
+.home .actions { display: flex; gap: .6rem; flex-wrap: wrap; margin: 1.2rem 0; }
+.tabs { display: flex; gap: .2rem; }
+.tabs button {
+  background: none; border: 1px solid transparent; color: var(--dim);
+  padding: .35rem .75rem; border-radius: 7px; font-size: .92rem;
+}
+.tabs button:hover { color: var(--ink); background: var(--panel); border-color: transparent; }
+.tabs button[aria-selected="true"] { color: var(--ink); background: var(--panel); border-color: var(--line); }
+.daw-top .spacer { flex: 1 1 0; min-width: 0; }
+#songName {
+  color: var(--ink); font-weight: 600; max-width: 18rem; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+#dirty { color: var(--warn); font-size: 1.1rem; width: .8rem; text-align: center; }
+.transport { display: flex; align-items: center; gap: .5rem; }
+.transport button { padding: .3rem .7rem; line-height: 1.2; min-width: 2.4rem; }
+.transport button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+#clock { color: var(--dim); font: .9rem/1 ui-monospace, Consolas, monospace; min-width: 6.5rem; }
+#tempoBox { width: 4.2rem; padding: .3rem .4rem; }
+.vol { display: flex; flex-direction: column; gap: 3px; width: 7rem; }
+#vu { display: block; width: 100%; height: 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 3px; }
+#vol { width: 100%; margin: 0; }
+
+/* The fixed footer: what the app last did, and what the audio thread is holding. */
+.daw-foot {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: var(--bg);
+  border-top: 1px solid var(--line); padding: .4rem 1rem;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 1rem; font-size: .85rem;
+}
+/* The status on the left, the credit in the middle, the load on the right. */
+.daw-foot .credit { text-align: center; color: var(--dimmer); font-size: .82rem; white-space: nowrap; }
+.daw-foot .credit b { color: var(--dim); font-weight: 600; }
+.daw-foot .credit .v { font-family: ui-monospace, Consolas, monospace; cursor: pointer; border-bottom: 1px dotted var(--dimmer); }
+.daw-foot .credit .v:hover { color: var(--ink); border-bottom-color: currentColor; }
+#load { justify-self: end; }
+#status { margin: 0; min-height: 1.4em; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#status.bad { color: var(--bad); }
+#load { color: var(--dimmer); font: .82rem/1.4 ui-monospace, Consolas, monospace; white-space: nowrap; }
+#load .bad { color: var(--bad); font-weight: 600; }
+
+/* ------------------------------------------------------------- the views */
+.view { margin-top: .8rem; }
+.view[hidden] { display: none; }
+.view > section { margin-bottom: .8rem; }
+
+/* The "?" beside a title: one dialog, one topic (src/help.ts). */
+.help-btn {
+  flex: 0 0 auto; width: 1.3rem; height: 1.3rem; padding: 0; border-radius: 50%;
+  font-size: .74rem; line-height: 1; letter-spacing: 0; text-transform: none;
+  display: inline-grid; place-items: center;
+}
+.step .help-btn { margin-left: auto; }
+.board-help { position: absolute; right: 1.2rem; top: .55rem; z-index: 5; }
+.help-dialog .picker-title { font-size: 1.05rem; color: var(--ink); font-weight: 600; }
+.help-body { max-height: min(70vh, 40rem); overflow: auto; overscroll-behavior: contain; color: var(--dim); font-size: .9rem; }
+.help-body p { margin: 0 0 .7rem; }
+.help-body h4 {
+  margin: 1rem 0 .4rem; font-size: .74rem; letter-spacing: .07em; text-transform: uppercase; color: var(--dimmer);
+}
+.help-body strong { color: var(--ink); font-weight: 600; }
+/* The "are you sure?" dialog: a question and two buttons. */
+.picker-dialog.confirm-dialog { width: min(30rem, 92vw); }
+.confirm-question { margin: 0 0 .4rem; font-size: 1rem; line-height: 1.5; }
+
+/* The file dialog: the drop zone and the song picker, opened on demand. */
+.picker-dialog.file-dialog { width: min(44rem, 94vw); }
+.file-dialog .drop { padding: 1.2rem 1rem; }
+
+/* ---------------------------------------------------------------- arrange */
+/* The board takes the whole page between the bar and the footer; the chip
+   panel rises over its lower part. `--top-h` and `--foot-h` are measured. */
+.view.arrange {
+  position: fixed; left: 0; right: 0; top: var(--top-h, 3.2rem); bottom: var(--foot-h, 2.2rem);
+  margin: 0; overflow: hidden;
+}
+.view.arrange[hidden] { display: none; }
+.board-scroller {
+  position: absolute; inset: 0; overflow: auto; background: var(--panel-2);
+}
+.board-scroller canvas { position: sticky; top: 0; left: 0; display: block; z-index: 1; }
+.board-scroller:focus-visible, .roll-scroller:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.chip-panel {
+  position: absolute; left: 0; right: 0; bottom: 0; height: var(--panel-h, 46%);
+  min-height: 10rem; max-height: 92%; display: flex; flex-direction: column;
+  background: var(--panel); border-top: 1px solid var(--line);
+  box-shadow: 0 -12px 34px rgb(0 0 0 / .45); z-index: 5;
+}
+.chip-panel[hidden] { display: none; }
+.panel-grip { height: 7px; cursor: ns-resize; background: linear-gradient(var(--line), transparent); flex: 0 0 auto; }
+.panel-grip:hover { background: var(--accent); }
+.panel-head {
+  display: flex; align-items: center; gap: .6rem; padding: .25rem .8rem .35rem; flex: 0 0 auto;
+  border-bottom: 1px solid var(--line-soft);
+}
+.panel-head .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-head .title small { color: var(--dimmer); font-weight: 400; margin-left: .4rem; }
+.panel-head button { padding: .25rem .6rem; }
+.panel-head button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+/* The "?" keeps its round shape here: `.panel-head button` above would pad it off-centre. */
+.panel-head .help-btn { padding: 0; }
+.panel-body { flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr) 21rem; min-height: 0; }
+@media (max-width: 52rem) { .panel-body { grid-template-columns: minmax(0, 1fr); } .panel-side { display: none; } }
+.panel-roll { display: flex; flex-direction: column; min-height: 0; }
+.roll-scroller { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--panel-2); }
+.roll-scroller canvas { position: sticky; top: 0; left: 0; display: block; z-index: 1; }
+#hover { color: var(--dim); font: .78rem/1.4 ui-monospace, Consolas, monospace; min-height: 1.3em; padding: .15rem .8rem; flex: 0 0 auto; }
+.panel-side { overflow: auto; border-left: 1px solid var(--line); padding: .6rem .7rem; }
+.panel-side .group { border: 0; padding: 0; }
+.panel-side .group + .group { margin-top: .9rem; }
+.picker-dialog.help-dialog { width: min(58rem, 94vw); }
+
+/* The "which instrument?" dialog. */
+.picker-dialog {
+  background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 0; width: min(26rem, 92vw);
+  box-shadow: 0 18px 50px rgb(0 0 0 / .55);
+  /* Not the element's own `auto`: the song picker's list floats below its field,
+     and a dialog that scrolls instead would clip it and scroll its own title away. */
+  overflow: visible;
+}
+.picker-dialog::backdrop { background: rgb(0 0 0 / .55); }
+.picker-box { padding: 1rem 1.1rem 1rem; }
+.picker-title { margin: 0 0 .6rem; font-size: .95rem; color: var(--dim); }
+.picker-list.picker-tall { max-height: 20rem; }
+.file-dialog .picker-list { max-height: min(40vh, 18rem); }
+.file-dialog .picker-search { flex: 1 1 12rem; width: auto; }
+.picker-family {
+  font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--dimmer);
+  padding: .45rem .5rem .2rem;
+}
+.picker-foot { margin-top: .6rem; }
+
+/* Knobs, shared by the inspector, the mixer and the keyboard's panel. */
+.group > h3 {
+  margin: 0 0 .55rem; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--dimmer); display: flex; align-items: center; gap: .5rem;
+}
+.group > h3 .check { font-size: .72rem; margin-left: auto; letter-spacing: 0; text-transform: none; }
+.knob { display: grid; grid-template-columns: 5.6rem 1fr 5.2rem; gap: .5rem; align-items: center; }
+.knob + .knob { margin-top: .3rem; }
+.knob label { font-size: .84rem; }
+.knob input[type="range"], .knob select, .knob input[type="text"] { width: 100%; min-width: 0; }
+.knob input[type="text"].wide, .knob select.wide, .knob .sound-field.wide { grid-column: 2 / 4; }
+/* A sound field: the instrument's glyph and name, opening the picker. */
+.sound-field {
+  display: flex; align-items: center; gap: .5rem; width: 100%; min-width: 0;
+  text-align: left; padding: .3rem .6rem; font: inherit;
+}
+.sound-field .sound-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sound-field::after { content: "\25be"; margin-left: auto; color: var(--dimmer); }
+.glyph, .glyph-host { display: inline-block; flex: 0 0 auto; vertical-align: middle; line-height: 0; }
+.picker-row .glyph-host { margin-right: .1rem; }
+.knob input[type="text"] { text-align: left; font-family: inherit; }
+.song-group { margin-bottom: 1rem; }
+#mixer .live { grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); }
+.knob output { font: .78rem/1 ui-monospace, Consolas, monospace; color: var(--dim); text-align: right; }
+.group.off { opacity: .55; }
+.group.off .knob { opacity: .6; }
+.inspector { display: grid; grid-template-columns: 1fr; gap: .8rem; }
+
+kbd {
+  font: .78rem ui-monospace, Consolas, monospace; background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 4px; padding: 0 .3rem;
+}
+
+/* ----------------------------------------------------------------- render */
+#rd-rangeFields { display: inline-flex; gap: .5rem; align-items: center; }
+#rd-rangeFields.off label { opacity: .4; }
+.rd-switches { margin-top: .7rem; gap: .5rem 1.2rem; }
+.rd-switches .sep { color: var(--line); }
+#rd-bar {
+  height: 5px; background: var(--panel-2); border-radius: 3px; overflow: hidden;
+  border: 1px solid var(--line); margin-top: .45rem;
+}
+#rd-bar div { height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
+#rd-playerUi { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+#rd-wave { width: 100%; height: 128px; display: block; background: var(--panel-2); cursor: pointer; }
+#rd-wave.empty { cursor: default; }
+#rd-wave:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#rd-transport {
+  display: flex; align-items: center; gap: .6rem; padding: .5rem .65rem;
+  background: var(--panel-2); border-top: 1px solid var(--line);
+}
+#rd-transport button { padding: .3rem .7rem; line-height: 1.2; min-width: 2.4rem; }
+#rd-times { color: var(--dim); font-size: .9rem; }
+#rd-vol { width: 7rem; }
+#rd-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: .8rem; }
+#rd-stats:empty { display: none; }
+.note-empty { display: none; color: var(--dimmer); font-size: .9rem; margin: 0; }
+#rd-stats:empty + .note-empty { display: block; }
+.stat-card {
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  padding: .7rem .9rem; min-width: 0;
+}
+.stat-card h3 {
+  margin: 0 0 .35rem; font-size: .72rem; font-weight: 600; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--dimmer);
+}
+.stat-card .big { font-family: ui-monospace, Consolas, monospace; font-size: 1.35rem; line-height: 1.2; overflow-wrap: anywhere; }
+.stat-card .big small { font-size: .8rem; color: var(--dim); font-family: inherit; margin-left: .3rem; }
+.stat-card dl { margin: .5rem 0 0; display: grid; grid-template-columns: auto 1fr; gap: .2rem .8rem; }
+.stat-card dt { color: var(--dim); font-size: .82rem; white-space: nowrap; }
+.stat-card dd { margin: 0; font-family: ui-monospace, Consolas, monospace; font-size: .82rem; text-align: right; overflow-wrap: anywhere; }
+.stat-card.span { grid-column: 1 / -1; }
+#rd-status, #cv-status, #cv-midiStatus, #kb-status { color: var(--accent); min-height: 1.4em; font-size: .92rem; margin-top: .6rem; }
+#kb-status { font-size: .85rem; }
+#rd-status.bad, #cv-status.bad, #cv-midiStatus.bad { color: var(--bad); }
+
+/* ---------------------------------------------------------------- convert */
+#cv-report, #cv-inReport { margin-top: .8rem; display: none; }
+#cv-report.on, #cv-inReport.on { display: block; }
+.tally { display: flex; flex-wrap: wrap; gap: .4rem .9rem; align-items: baseline; }
+.tally b { font: 600 1.02rem/1.2 ui-monospace, Consolas, monospace; color: var(--ink); }
+.tally .item { display: flex; gap: .35rem; align-items: baseline; }
+.tally .item span { color: var(--dimmer); font-size: .82rem; }
+.tally .item.warn b { color: var(--warn, #e0a44a); }
+.lost { margin-top: .55rem; }
+.lost li { color: var(--dim); font-size: .85rem; margin: .15rem 0; }
+.logbox {
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  padding: .75rem; max-height: 14rem; overflow: auto;
+  font-family: ui-monospace, Consolas, monospace; font-size: .8rem; color: var(--dim);
+}
+.logbox .bad { color: var(--bad); }
+#cv-midiFile { display: none; }
+
+/* --------------------------------------------------------------- keyboard */
+#kb-piano {
+  position: relative; height: 148px; margin: 0; user-select: none;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  overflow: hidden; touch-action: none; display: flex;
+}
+#kb-piano:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.wkey {
+  position: relative; flex: 1 1 0; min-width: 0; height: 100%;
+  background: linear-gradient(#eef1f4, #cdd3da);
+  border-right: 1px solid #9aa3ad; cursor: pointer;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  align-items: center; padding-bottom: .3rem; gap: .15rem;
+}
+.wkey:last-child { border-right: 0; }
+.wkey.down { background: linear-gradient(#9fe3c1, #6fd3a0); }
+.bkey {
+  position: absolute; top: 0; height: 62%; width: 1.9%; z-index: 2;
+  background: linear-gradient(#2a3138, #12161b);
+  border: 1px solid #05070a; border-top: 0; border-radius: 0 0 3px 3px;
+  cursor: pointer; display: flex; flex-direction: column; justify-content: flex-end;
+  align-items: center; padding-bottom: .25rem; gap: .15rem;
+}
+.bkey.down { background: linear-gradient(#4e9c78, #2f7d59); }
+.zone { width: 62%; height: 4px; border-radius: 2px; }
+.caps { max-width: 100%; overflow: hidden; white-space: nowrap; }
+.wkey .caps { font: 600 .62rem/1 ui-monospace, Consolas, monospace; color: #4a525c; }
+.bkey .caps { font: 600 .58rem/1 ui-monospace, Consolas, monospace; color: #93a0ad; }
+.wkey .lbl { font: .58rem/1 ui-monospace, Consolas, monospace; color: #78828e; }
+#kb-octave, #kb-meter, #kb-detail {
+  font-family: ui-monospace, Consolas, monospace; font-size: .85rem; min-height: 1.4em;
+}
+#kb-meter { color: var(--dim); }
+.kb-setup { grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); }
+.kb-setup .knob { grid-template-columns: 5.6rem 1fr auto; }
+.kb-setup .knob output { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#kb-meter.bad { color: var(--bad); font-weight: 600; }
+#kb-octave { color: var(--ink); }
+#kb-detail { color: var(--accent); }
+#kb-midiState.on { color: var(--accent); }
+#kb-mpeLive { font: .78rem/1.5 ui-monospace, Consolas, monospace; color: var(--accent); min-height: 1.2em; white-space: nowrap; }
+.view .params .knob { grid-template-columns: 5.4rem 1fr 3.4rem; }
+
+#errorCard { display: none; margin: .8rem 1rem; }
+#errorCard.show { display: block; }
+/* The text footer belongs to the home view only, centred under the presentation;
+   the working views end at the status bar. */
+.site-foot {
+  display: none; margin: 2rem 0 0; padding: 1.1rem 1rem .9rem; max-width: none; text-align: center;
+}
+body[data-view="home"] .site-foot { display: block; }

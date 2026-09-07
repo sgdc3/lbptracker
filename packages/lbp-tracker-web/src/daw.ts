@@ -7,6 +7,9 @@
  * keys. Everything a view does is in `daw/*`.
  */
 
+// ❗ Both sheets from here, in this order: see the note at the top of daw.css.
+import '../ui.css';
+import '../daw.css';
 import { sequencersOf, type BackupResult } from '@lbptracker/cwlib/backup.ts';
 import type { Sequencer } from '@lbptracker/cwlib/project.ts';
 import { songFromJson, songFromSequencer, newSong } from '@lbptracker/lib/song.ts';
