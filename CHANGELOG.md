@@ -4,6 +4,11 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.13 (2026-09-07)
+
+- Every sound now shows the icon the game gives it. The 68 pictures come from the game itself, so
+  a chip on the board looks like the one you would have placed in the Music Sequencer.
+
 ## 0.2.12 (2026-09-07)
 
 - Notes picked with a rectangle now move together when you drag any one of them by its dot, not

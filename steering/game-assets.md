@@ -279,6 +279,22 @@ must not redistribute them"; the sentence is gone rather than quietly contradict
 steering file that forbids what the project does is a trap for the next session. The copyright
 fact is unchanged and is why it was worth weighing.
 
+❗ **The instrument icons are traced from the game's own textures, and they are in this
+repository.** Until 2026-09-07 the icons were marks of this project's own and this section could
+say the repository held nothing of the game's; that sentence would now be false, so it is gone
+rather than left standing. `src/editor/icons.ts` holds 68 silhouettes traced from the textures the
+palette plans carry, and they are a derivative of Sony / Media Molecule's art.
+
+⚠️ **The alternative was tried, and the owner rejected it.** On the same day a full set was drawn
+from scratch -- our own geometry, showing what the game's icons show without touching their pixels
+-- specifically to avoid this. The owner judged the result worse to use and asked for the traced
+set back, knowing what it is. Recording that here is the point: the next session should not
+re-run the experiment thinking nobody considered it.
+
+`tools/IconDump.java` and `tools/trace-icons.py` regenerate the file from a copy of the game, so
+what is committed is a drawing rather than a texture. The samples and the levels are unchanged and
+still arrive at runtime.
+
 ❗ **Nothing in the app claims either way.** The footer used to say "no game data is included
 here", which was true of a tracker that only read the user's own copy and would not be true of that
 deployment, so it was removed; `LICENSE` says only that this repository contains no game data,

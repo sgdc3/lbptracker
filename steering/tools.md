@@ -47,6 +47,8 @@ every access uses the same base.** The harness is reusable on `fmodsmsreverb.prx
 |---|---|
 | `GuidLookup.java` | resolve a GUID (or a path substring) against the game's FileDB, `output/orbisguids.map` — GUID → path + SHA-1. This is how you find where any resource actually lives |
 | `ExtractGuid.java` | GUID → FileDB → SHA-1 → FARC → bytes, plus a `manifest.json` the browser uses to resolve GUIDs without the 11 MB FileDB |
+| `IconDump.java` | every `*instrument_*.plan`'s `InventoryItemDetails.icon`, decoded through `RTexture` into a 128 px PNG named after the `.rinst` it places |
+| `trace-icons.py` | those PNGs into the SVG paths of `src/editor/icons.ts`: drop the frame, close the stripes down the y axis, marching squares, Douglas-Peucker. ⚠️ Both traps are in its header, and the second one bites anyone simplifying a closed loop. `EPS` is the one knob |
 | `ReverbOrder.java` | a compiled `.ff` script through the LAMS table: every `LoadConstInstructionInt` operand in a function, translated. ⚠️ **The int is inline in the instruction word**, which is why searching a script's bytes for a LAMS id finds nothing. This is how the reverb list's order was read |
 | `InstrumentNames.java` | every `*instrument_*.plan` → its inventory `titleKey` → the LAMS table → **the name the game shows for each sound**, joined to the `.rinst` GUID through the plan's dependencies. Feeds `src/editor/instrument-labels.ts` |
 

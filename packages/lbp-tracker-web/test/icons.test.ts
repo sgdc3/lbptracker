@@ -17,9 +17,15 @@ const MANIFEST = path.resolve(import.meta.dirname, '../../../fixtures/rinst/mani
 
 test('every icon is a path, and the table names the 68 sounds', () => {
   for (const [key, icon] of Object.entries(ICONS)) {
-    assert.match(icon.d, /^M/, `${key}: the stroke path starts with a move`);
-    if (icon.f) assert.match(icon.f, /^M/, `${key}: the fill path starts with a move`);
-    assert.doesNotMatch(icon.d, /NaN|undefined/, key);
+    // Traced silhouettes come as `f` and are filled; `d` is stroked. One or
+    // the other has to be there, or the sound falls back to a family glyph.
+    assert.ok(icon.d || icon.f, `${key}: no path at all`);
+    for (const path of [icon.d, icon.f]) {
+      if (path === undefined) continue;
+      assert.match(path, /^M/, `${key}: a path starts with a move`);
+      assert.doesNotMatch(path, /NaN|undefined/, key);
+      assert.ok(path.endsWith('Z') || icon.d === path, `${key}: a filled path closes`);
+    }
   }
   assert.equal(Object.keys(ICONS).length, 68);
 });

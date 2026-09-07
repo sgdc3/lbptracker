@@ -2,10 +2,11 @@
  * The instrument palette: what the game's 68 `.rinst` files are called, which
  * family each belongs to, and the colour the board paints that family.
  *
- * ⚠️ **None of this is the game's art.** The game shows each instrument as a
- * texture (`PInstrument.Icon`) that this project cannot ship; the chip on the
- * board is a colour and a glyph of our own, chosen so that a kit, a synth and a
- * guitar are told apart at a glance the way they are in the game's grid.
+ * ❗ **The icons are the game's own, traced** (`icons.ts`, and the licensing
+ * note in steering/game-assets.md): each is the silhouette of the texture the
+ * instrument's palette item carries, so a chip says which sound it is the way
+ * the game's grid does. The colour behind it is ours, by family, and a sound
+ * with no icon falls back to a glyph of ours.
  *
  * The family comes from the asset's path in the manifest
  * (`gamedata/audio/music/instruments/<family>/x.rinst`), which the staging
@@ -107,7 +108,7 @@ export function drawIcon(
   size: number,
 ): void {
   const icon = ICONS[info.icon];
-  if (!icon) {
+  if (!icon || (!icon.d && !icon.f)) {
     drawGlyph(ctx, info.family, x, y, size);
     return;
   }
@@ -117,7 +118,9 @@ export function drawIcon(
   ctx.lineWidth = 2;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.stroke(new Path2D(icon.d));
+  // The traced icons are silhouettes and come as `f`; `d` is stroked, which is
+  // what the line drawings this file used to hold were made of.
+  if (icon.d) ctx.stroke(new Path2D(icon.d));
   if (icon.f) ctx.fill(new Path2D(icon.f));
   ctx.restore();
 }
