@@ -4,6 +4,12 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.18 (2026-09-07)
+
+- The Keyboard view plays an instrument's full stack of layers, so sounds that share their samples
+  and differ only in how many layers they stack and how far apart those are tuned no longer sound
+  the same. Piano and Honkytonk Piano were the pair that gave it away.
+
 ## 0.2.17 (2026-09-07)
 
 - The footer on the front page links to the source on GitHub, and to the issue tracker,
