@@ -4,6 +4,12 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.7 (2026-09-07)
+
+- The song's end marker can be dragged on a new song again. Since 0.2.6 it was drawn there but did
+  not answer the pointer. Dragging it right up to the start now leaves it one tile in, instead of
+  taking it away with no way to take hold of it again.
+
 ## 0.2.6 (2026-09-07)
 
 - In the note grid the line between a note's points now shows what it does between them: it

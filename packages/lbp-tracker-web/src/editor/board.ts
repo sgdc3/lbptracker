@@ -784,7 +784,10 @@ export class BoardView {
       return;
     }
     if (this.drag?.kind === 'end') {
-      const step = Math.max(0, Math.round((x - this.layout.gutter) / this.layout.cellW)) * STEPS_PER_CELL;
+      // Never onto the very start: on a song with chips `setSongEnd` reads a
+      // cell as "back to the last chip" anyway, and on an empty one an end at
+      // step 0 would take the marker away with no way to take hold of it again.
+      const step = Math.max(1, Math.round((x - this.layout.gutter) / this.layout.cellW)) * STEPS_PER_CELL;
       if (step !== this.drag.step) {
         this.drag.step = step;
         this.drag.moved = true;
@@ -822,10 +825,18 @@ export class BoardView {
     if (changed) this.schedule();
   };
 
-  /** Within a few pixels of the song's end marker. */
+  /**
+   * Within a few pixels of the song's end marker.
+   *
+   * ⚠️ The condition has to be the one `draw` marks the end under, or the
+   * marker is there and cannot be grabbed. It was `clips.length > 0` in both
+   * places; when an empty song was given an end of its own only the drawing
+   * was changed, and the marker a new song shows went dead (0.2.6).
+   */
   private nearEnd(x: number): boolean {
-    if (this.state.song.clips.length === 0) return false;
-    return Math.abs(x - boardX(this.layout, songEndSteps(this.state.song))) <= 6;
+    const end = songEndSteps(this.state.song);
+    if (end <= 0) return false;
+    return Math.abs(x - boardX(this.layout, end)) <= 6;
   }
 
   private onUp = (event: PointerEvent): void => {
