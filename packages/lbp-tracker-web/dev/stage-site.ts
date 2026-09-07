@@ -54,6 +54,10 @@ const HEADERS = `# Written by packages/lbp-tracker-web/dev/stage-site.ts on ever
   Cache-Control: public, max-age=31536000, immutable
 /fixtures/*
   Cache-Control: public, max-age=86400
+/sw.js
+  Cache-Control: no-cache
+/manifest.webmanifest
+  Cache-Control: no-cache
 /*
   X-Content-Type-Options: nosniff
 `;

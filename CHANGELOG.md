@@ -4,6 +4,13 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.5 (2026-09-07)
+
+- The site installs as an app: on a phone or a desktop the browser offers to add it, and it then
+  opens in its own window, with its own icon, and starts without a network.
+- A link to the site now unfurls with a title, a description and the icon, and search engines are
+  told what the site is.
+
 ## 0.2.4 (2026-09-07)
 
 - With the note panel open, the board's horizontal scrollbar sits just above it instead of under it.

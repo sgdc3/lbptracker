@@ -187,6 +187,16 @@ applied, the worklet started. ⚠️ npm 11's install-script gate holds `workerd
 postinstall; `wrangler dev` and `wrangler deploy --dry-run` both ran regardless, because the
 platform binaries arrive as optional dependencies.
 
+**The site is a PWA, and its parts live in `packages/lbp-tracker-web/public/`** (Vite copies that
+directory to `dist/` verbatim, which is why they are there and not in `src/`):
+`manifest.webmanifest`, `icon-192.png`, `icon-maskable.svg`, `robots.txt`, `sitemap.xml` and
+`sw.js`. ⚠️ **The service worker is plain JavaScript at the site's root on purpose**: a worker's
+scope is the path it is served from, and the bundler would give it a hashed name under
+`/assets/`, whose scope is `/assets/`. ❗ It is **network-first** — every request goes to the
+network and the copy it keeps is used only when that fails — because a cache-first worker would
+serve the previous deployment to everyone who already visited. `dev/stage-site.ts` writes
+`Cache-Control: no-cache` for `sw.js` and the manifest for the same reason.
+
 ## Vue, and where it is not allowed
 
 The pages are Vue 3, and the first thing to know is the line it does not cross:

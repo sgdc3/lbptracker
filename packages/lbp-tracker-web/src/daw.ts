@@ -345,6 +345,17 @@ void ensureAssets().catch((error: unknown) => {
 });
 mountFooter();
 mountHelp();
+
+// The service worker: the site installs as an app, and opens without a
+// network. Not on the dev server, where it would sit between Vite and the
+// page for no gain. See `public/sw.js` for why it is network-first.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    void navigator.serviceWorker.register('./sw.js').catch(() => {
+      // No worker: the app runs as it always did, online only.
+    });
+  });
+}
 $('version').textContent = `v${APP_VERSION}`;
 
 // Everything a console session needs to poke the app, as the bench does.

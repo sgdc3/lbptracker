@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- The maskable icon: the brand's dark purple to the edges, the note inside
+       the safe zone, so a launcher may crop it to a circle or a squircle
+       without cutting the mark. The note's path is the logo's, in ui.css. -->
+  <rect width="32" height="32" fill="#2a1150"/>
+  <g transform="translate(16 16.6) scale(0.95) translate(-31.3 -15.997)">
+    <path fill="#ffd63d" d="M30.29 20.60A3.5 2.45 -20 1 1 23.71 23.00A3.5 2.45 -20 1 1 30.29 20.60ZM38.89 19.20A3.5 2.45 -20 1 1 32.31 21.60A3.5 2.45 -20 1 1 38.89 19.20ZM28.594 21.208V9.0h1.8V21.208ZM37.194 19.808V7.842L38.994 7.6V19.808ZM28.594 9.0 38.994 7.6v3.9L28.594 12.9Z"/>
+  </g>
+</svg>
