@@ -4,6 +4,13 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.1 (2026-09-07)
+
+- The board and the note grid follow the playhead only until you scroll away from it, ahead or
+  behind; scrolling back to it, seeking, or pressing play makes them follow again.
+- Removing a row with instruments on it, and throwing away unsaved changes, ask through the
+  app's own dialog rather than the browser's.
+
 ## 0.2.0 (2026-09-07)
 
 ### One page, one song
