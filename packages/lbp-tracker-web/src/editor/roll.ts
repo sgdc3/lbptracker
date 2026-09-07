@@ -22,10 +22,18 @@
  *
  * | on              | plain             | shift            | alt              | right click |
  * |-----------------|-------------------|------------------|------------------|-------------|
- * | empty           | draw a note; drag for its end | marquee | —         | —           |
+ * | empty           | draw a note; drag for its end | rectangle (ctrl too: add to the selection) | — | — |
  * | a point         | move it           | volume (up/down) | timbre (up/down) | delete it   |
  * | a line          | move the note     | —                | —                | delete note |
  * | double-click    | line: add a point; point: delete it                    |             |
+ *
+ * Ctrl on a point or a line adds that note to the selection, or takes it out.
+ * The rectangle catches a note by a point inside it **or by a line crossing
+ * it**, so a held note is caught by a rectangle drawn across its middle.
+ *
+ * The commands the page's keys reach are at the end of the class:
+ * `deleteSelection`, `nudge`, `adjust`, `selectAll`, `copy`, `cut`, `paste`,
+ * `duplicateSelection`.
  */
 
 import {
@@ -59,6 +67,7 @@ import {
   rollX,
   rollY,
   segmentDistance,
+  segmentMeetsRect,
   snapThirds,
   timbreColour,
   type RollLayout,
@@ -89,7 +98,7 @@ type Drag =
   | { mode: 'point'; note: SongNote; point: SongPoint; moved: boolean; lastThirds: number; lastPitch: number }
   | { mode: 'volume' | 'timbre'; note: SongNote; point: SongPoint; startY: number; startValue: number; moved: boolean }
   | { mode: 'note'; notes: SongNote[]; startThirds: number; startPitch: number; lastThirds: number; lastPitch: number; moved: boolean }
-  | { mode: 'marquee'; x0: number; y0: number; x1: number; y1: number };
+  | { mode: 'marquee'; x0: number; y0: number; x1: number; y1: number; add: boolean };
 
 export class RollView {
   private readonly canvas: HTMLCanvasElement;
@@ -109,6 +118,8 @@ export class RollView {
   private lastClipId: number | null = null;
   /** Notes copied with Ctrl+C, relative to their first position. */
   private clipboard: SongNote[] = [];
+  /** Where they were lifted from, so a cut and a paste put them back. */
+  private clipboardAt = 0;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -498,6 +509,41 @@ export class RollView {
     return null;
   }
 
+  /**
+   * The notes a rectangle catches: one with a point inside it, **or with a
+   * line crossing it**. A held note's two points can both sit outside a
+   * rectangle drawn straight across the middle of it, and leaving that note
+   * out is not what the drag meant.
+   */
+  private notesInRect(
+    clip: Clip,
+    r: { x0: number; y0: number; x1: number; y1: number },
+  ): number[] {
+    const x0 = Math.min(r.x0, r.x1);
+    const x1 = Math.max(r.x0, r.x1);
+    const y0 = Math.min(r.y0, r.y1);
+    const y1 = Math.max(r.y0, r.y1);
+    const ids: number[] = [];
+    for (const note of clip.notes) {
+      const pts = note.points;
+      let caught = false;
+      for (const p of pts) {
+        const px = rollX(this.layout, p.thirds);
+        const py = rollY(this.layout, p.pitch);
+        if (px >= x0 && px <= x1 && py >= y0 && py <= y1) { caught = true; break; }
+      }
+      for (let i = 0; !caught && i < pts.length - 1; i += 1) {
+        caught = segmentMeetsRect(
+          rollX(this.layout, pts[i].thirds), rollY(this.layout, pts[i].pitch),
+          rollX(this.layout, pts[i + 1].thirds), rollY(this.layout, pts[i + 1].pitch),
+          x0, y0, x1, y1,
+        );
+      }
+      if (caught) ids.push(note.id);
+    }
+    return ids;
+  }
+
   private snapped(x: number, steps: number): number {
     return snapThirds(rollThirdsAt(this.layout, x), this.state.triplets, steps);
   }
@@ -579,7 +625,7 @@ export class RollView {
       return;
     }
     if (event.shiftKey) {
-      this.drag = { mode: 'marquee', x0: x, y0: y, x1: x, y1: y };
+      this.drag = { mode: 'marquee', x0: x, y0: y, x1: x, y1: y, add: event.ctrlKey || event.metaKey };
       this.schedule();
       return;
     }
@@ -623,7 +669,13 @@ export class RollView {
         );
       } else {
         const t = this.snapped(x, clip.steps);
-        this.cb.onHover(`${noteName(pitch ?? 0)} at ${positionLabel(t)}`);
+        const n = this.state.selection.noteIds.size;
+        // With something selected the line says what the keys will do to it:
+        // the commands are otherwise only in the help.
+        this.cb.onHover(n === 0
+          ? `${noteName(pitch ?? 0)} at ${positionLabel(t)}  ·  shift+drag selects`
+          : `${noteName(pitch ?? 0)} at ${positionLabel(t)}  ·  ${n} note${n === 1 ? '' : 's'} selected`
+            + '  ·  ctrl+D duplicate, ctrl+X cut, ctrl+C copy, ctrl+V paste, Delete removes');
       }
       return;
     }
@@ -685,6 +737,10 @@ export class RollView {
       case 'marquee': {
         drag.x1 = x;
         drag.y1 = y;
+        // The count comes from the same test the drop will use, so the hint
+        // cannot say one thing and the selection do another.
+        const n = this.notesInRect(clip, drag).length;
+        this.cb.onHover(`${n} note${n === 1 ? '' : 's'}${drag.add ? ' to add' : ''}`);
         this.schedule();
         break;
       }
@@ -718,18 +774,9 @@ export class RollView {
         break;
       case 'marquee': {
         if (!clip) break;
-        const x0 = Math.min(drag.x0, drag.x1);
-        const x1 = Math.max(drag.x0, drag.x1);
-        const y0 = Math.min(drag.y0, drag.y1);
-        const y1 = Math.max(drag.y0, drag.y1);
-        const ids = clip.notes
-          .filter((n) => n.points.some((p) => {
-            const px = rollX(this.layout, p.thirds);
-            const py = rollY(this.layout, p.pitch);
-            return px >= x0 && px <= x1 && py >= y0 && py <= y1;
-          }))
-          .map((n) => n.id);
-        state.selectNotes(ids);
+        const ids = this.notesInRect(clip, drag);
+        // Ctrl held: the rectangle adds to what is already selected.
+        state.selectNotes(drag.add ? new Set([...state.selection.noteIds, ...ids]) : ids);
         break;
       }
     }
@@ -815,42 +862,94 @@ export class RollView {
     if (clip) this.state.selectNotes(clip.notes.map((n) => n.id));
   }
 
-  copy(): void {
+  /** The selected notes, each point's position relative to the earliest of them. */
+  private lift(): SongNote[] {
     const clip = this.state.clip();
-    if (!clip) return;
+    if (!clip) return [];
     const notes = clip.notes.filter((n) => this.state.selection.noteIds.has(n.id));
-    if (!notes.length) return;
+    if (!notes.length) return [];
     const first = Math.min(...notes.map((n) => n.points[0].thirds));
-    this.clipboard = notes.map((n) => ({
+    return notes.map((n) => ({
       id: 0,
       points: n.points.map((p) => ({ ...p, thirds: p.thirds - first })),
     }));
   }
 
-  /** Paste at the playhead if it is in the clip, else at the first free bar after the selection. */
-  paste(atThirds?: number): void {
+  copy(): void {
+    const lifted = this.lift();
+    if (!lifted.length) return;
+    this.clipboard = lifted;
+    this.clipboardAt = this.selectionStart();
+  }
+
+  /** Copy the selection and take it away, as one entry in the undo stack. */
+  cut(): void {
+    const lifted = this.lift();
+    if (!lifted.length) return;
+    this.clipboard = lifted;
+    this.clipboardAt = this.selectionStart();
+    this.deleteSelection();
+  }
+
+  /**
+   * A copy of the selection, one step past its own end, selected in its place
+   * so a second Ctrl+D goes on down the grid. It leaves the clipboard alone:
+   * duplicating is not a reason to lose what was copied.
+   */
+  duplicateSelection(): void {
+    const lifted = this.lift();
+    if (!lifted.length) return;
+    this.insert(lifted, this.afterSelection());
+  }
+
+  /** The earliest point of the selection, or 0 when nothing is selected. */
+  private selectionStart(): number {
+    const clip = this.state.clip();
+    if (!clip) return 0;
+    const selected = clip.notes.filter((n) => this.state.selection.noteIds.has(n.id));
+    return selected.length ? Math.min(...selected.map((n) => n.points[0].thirds)) : 0;
+  }
+
+  /** One step past the last point of the selection, on a whole step. */
+  private afterSelection(): number {
+    const clip = this.state.clip();
+    if (!clip) return 0;
+    const selected = clip.notes.filter((n) => this.state.selection.noteIds.has(n.id));
+    const end = selected.length
+      ? Math.max(...selected.map((n) => n.points[n.points.length - 1].thirds))
+      : -3;
+    return Math.ceil((end + 3) / 3) * 3;
+  }
+
+  /** Put a lifted set of notes into the clip at a position, and select it. */
+  private insert(notes: readonly SongNote[], atThirds: number): void {
     const state = this.state;
     const clip = state.clip();
-    if (!clip || !this.clipboard.length) return;
-    let at = atThirds;
-    if (at === undefined) {
-      const selected = clip.notes.filter((n) => state.selection.noteIds.has(n.id));
-      const end = selected.length
-        ? Math.max(...selected.map((n) => n.points[n.points.length - 1].thirds))
-        : -3;
-      at = Math.ceil((end + 3) / 3) * 3;
-    }
+    if (!clip) return;
     const ids: number[] = [];
     state.edit('notes', (song) => {
-      for (const n of this.clipboard) {
+      for (const n of notes) {
         const note = addNote(song, clip, { thirds: 0, pitch: 0 });
         note.points = n.points.map((p) => ({
-          ...p, thirds: Math.min(lastThirds(clip), p.thirds + at!),
+          ...p, thirds: Math.min(lastThirds(clip), p.thirds + atThirds),
         }));
         ids.push(note.id);
       }
     });
     state.selectNotes(ids);
+  }
+
+  /**
+   * Paste at the playhead when it is in the clip, else one step past the
+   * selection -- and with nothing selected, back where the clipboard was
+   * lifted from, so a cut followed by a paste puts the notes back rather than
+   * dropping them at the start of the grid.
+   */
+  paste(atThirds?: number): void {
+    if (!this.state.clip() || !this.clipboard.length) return;
+    const at = atThirds
+      ?? (this.state.selection.noteIds.size ? this.afterSelection() : this.clipboardAt);
+    this.insert(this.clipboard, at);
   }
 
   get hasClipboard(): boolean {

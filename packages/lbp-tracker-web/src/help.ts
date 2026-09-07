@@ -133,10 +133,17 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
         'add a point, double-click a point to remove it; right-click removes a point or, on the line, the whole note. ' +
         'The point card on the right edits the selected point with sliders.') +
       h('Selection and keys') +
-      p('<kbd>Shift</kbd>+drag on empty space selects, <kbd>Ctrl</kbd>+click adds to the selection. Arrow keys nudge ' +
-        'the selection, <kbd>+</kbd>/<kbd>-</kbd> change its volume, <kbd>[</kbd>/<kbd>]</kbd> its timbre, ' +
-        '<kbd>Delete</kbd> removes it, <kbd>Ctrl+C</kbd>/<kbd>V</kbd> copy and paste, <kbd>Ctrl+Z</kbd>/<kbd>Y</kbd> ' +
-        'undo and redo. <kbd>T</kbd> switches to the triplet grid, three cells to the beat instead of four; notes on ' +
+      p('<kbd>Shift</kbd>+drag on empty space draws a rectangle round notes, and it catches a note whose line ' +
+        'crosses it, not only one with a point inside; the line under the grid counts them as you drag. Hold ' +
+        '<kbd>Ctrl</kbd> as well and the rectangle adds to what is already selected, and <kbd>Ctrl</kbd>+click puts ' +
+        'one note in or takes it out. Drag any line to move the whole selection.') +
+      p('Arrow keys nudge the selection a cell sideways or a semitone up and down, with <kbd>Shift</kbd> a whole ' +
+        'octave; <kbd>+</kbd>/<kbd>-</kbd> change its volume and <kbd>[</kbd>/<kbd>]</kbd> its timbre. ' +
+        '<kbd>Delete</kbd> removes it, <kbd>Ctrl+D</kbd> duplicates it one step further on, ' +
+        '<kbd>Ctrl+X</kbd>/<kbd>C</kbd>/<kbd>V</kbd> cut, copy and paste, <kbd>Ctrl+A</kbd> takes every note in the ' +
+        'chip and <kbd>Ctrl+Z</kbd>/<kbd>Y</kbd> undo and redo. A paste lands at the playhead when it is inside the ' +
+        'chip, otherwise a step after the selection, or back where it was cut from when nothing is selected.') +
+      p('<kbd>T</kbd> switches to the triplet grid, three cells to the beat instead of four; notes on ' +
         'the other grid are drawn faded. The keyboard on the left plays the instrument.') +
       h('The instrument') +
       p('<strong>grid</strong> is how long the instrument is, in bars. <strong>key</strong> and <strong>scale</strong> ' +

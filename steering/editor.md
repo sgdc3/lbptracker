@@ -87,6 +87,19 @@ The editor draws both, as faithfully as the data allows and no further:
   (the slide rates at `+0x2c` in [synth-engine.md](synth-engine.md)), so the ribbon's thickness and
   hue at any x are the volume and modulation that will sound there. A segment whose ends share a
   timbre — 96.1% of notes automate nothing — skips the gradient and fills flat.
+- **Selecting and editing a set of notes.** Shift+drag on empty space draws a rectangle;
+  it catches a note by a point inside it **or by a line crossing it** (`segmentMeetsRect` in
+  `geometry.ts`, `notesInRect` in `roll.ts`), because a held note's two points can both sit
+  outside a rectangle drawn across its middle and leaving it out is not what the drag meant. Ctrl
+  with it adds to the selection; Ctrl on a point or a line puts one note in or takes it out. The
+  commands at the end of `RollView` are what the page's keys reach: `deleteSelection`, `nudge`,
+  `adjust`, `selectAll`, `copy`, `cut`, `paste`, `duplicateSelection`, all of them one entry in
+  the undo stack. `lift` and `insert` are the single copy path underneath, so a duplicate and a
+  paste cannot drift apart; a duplicate lands one step past the selection and *selects the copy*,
+  so pressing it again walks on down the grid, and it leaves the clipboard alone. A paste with
+  nothing selected goes back where the clipboard was lifted from, which makes cut then paste a
+  round trip. ⚠️ Ctrl+D is shared with the board, which duplicates the chip: the roll takes it
+  only when the pointer is not over the board and notes are selected, the same rule Delete uses.
 - A note's end is its last point and nothing more: a one-record note is one point, a held note
   two joined by a line, as the game draws them. ⚠️ A faint one-step tail past the last point --
   where the gate does close (`duration = lastStep − firstStep + 1`) -- was drawn for a day and

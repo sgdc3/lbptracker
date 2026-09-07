@@ -4,6 +4,17 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.8 (2026-09-07)
+
+- The rectangle you drag round notes now catches a held note whose line crosses it, not only notes
+  with a point inside it, and the line under the grid counts what it has caught as you drag. Hold
+  Ctrl while dragging it to add to the selection instead of replacing it.
+- New keys for a selection of notes: Ctrl+X cuts, Ctrl+D duplicates it one step further on and
+  selects the copy, so pressing it again walks on down the grid. Pasting with nothing selected
+  puts the notes back where they were cut from.
+- The line under the grid says how many notes are selected and which keys act on them, so the
+  commands are not only in the help.
+
 ## 0.2.7 (2026-09-07)
 
 - The song's end marker can be dragged on a new song again. Since 0.2.6 it was drawn there but did

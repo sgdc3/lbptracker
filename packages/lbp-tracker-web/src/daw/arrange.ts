@@ -440,6 +440,10 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
         event.preventDefault();
         roll.copy();
         break;
+      case 'KeyX':
+        event.preventDefault();
+        roll.cut();
+        break;
       case 'KeyV': {
         event.preventDefault();
         const clip = state.clip();
@@ -453,7 +457,10 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
       }
       case 'KeyD':
         event.preventDefault();
-        duplicateSelected();
+        // The board's key duplicates the chip; with notes selected in the roll
+        // it duplicates those, the way Delete already tells the two apart.
+        if (!onBoard && state.selection.noteIds.size > 0) roll.duplicateSelection();
+        else duplicateSelected();
         break;
       default:
         break;
