@@ -243,6 +243,8 @@ input.archive-q { flex: 1 1 24rem; min-width: 0; text-align: left; }
 .site-foot b { color: var(--dim); font-weight: 600; }
 .site-foot a { color: var(--dim); text-decoration: none; border-bottom: 1px solid var(--line); }
 .site-foot a:hover { color: var(--accent); border-bottom-color: currentColor; }
+.site-foot-links { margin-bottom: .7rem; }
+.site-foot-links a { color: var(--ink); }
 .site-foot-small { margin-top: .7rem; font-size: .78rem; }
 
 /* ------------------------------------------------------------- the drop zone */

@@ -18,7 +18,21 @@
  * `steering/game-assets.md` now says where a deployment gets the assets is the
  * deployment's decision, and the Cloudflare deployment ships them
  * (`dev/stage-site.ts`), so the two agree.
+ *
+ * The first line is the project's own: the source, and where to say what broke.
+ * It goes first because it is the only part of this footer a reader has any
+ * reason to click; the credit and the disclaimer under it are there to be true,
+ * not to be followed.
+ *
+ * ⚠️ **One constant for both links.** The issues page is the repository's URL
+ * plus a path, so writing it out twice is a rename waiting to leave half the
+ * footer pointing at nothing. The manifests are `private` and carry no
+ * `repository` field to read it from, and adding one only for this would put
+ * the same string in a second place.
  */
+
+/** Where this thing lives. The issues page is this plus a path, below. */
+const REPO = 'https://github.com/sgdc3/lbptracker';
 
 /** A link that never leaks the referrer and never gets window access. */
 const link = (href: string, text: string): string =>
@@ -38,6 +52,11 @@ export function mountFooter(): void {
   // it, and the same claim twice on one screen reads as a slogan rather than
   // as the fact it is.
   foot.innerHTML =
+    '<p class="site-foot-line site-foot-links">' +
+    link(REPO, 'Source on GitHub') +
+    ' · ' +
+    link(`${REPO}/issues`, 'Report an issue') +
+    '</p>' +
     '<p class="site-foot-line">Standing on ' +
     link('https://github.com/ennuo/toolkit', 'ennuo’s craftworld toolkit') +
     ', which is the reference this project checks its resource reading against; ' +

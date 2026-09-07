@@ -4,6 +4,11 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.17 (2026-09-07)
+
+- The footer on the front page links to the source on GitHub, and to the issue tracker,
+  so there is somewhere to say what broke.
+
 ## 0.2.16 (2026-09-07)
 
 - The playhead in the note grid glides instead of stepping. It moved ten times a second, which at
