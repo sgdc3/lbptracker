@@ -16,6 +16,7 @@ import {
   rollX,
   rollY,
   segmentDistance,
+  bestNoteWindow,
   segmentMeetsRect,
   snapThirds,
   timbreColour,
@@ -129,3 +130,31 @@ test('the marquee catches a line that crosses it, not only the points inside it'
   assert.equal(meets(10, 10, 10, 10), true, 'a point on the edge');
   assert.equal(meets(0, 0, 0, 0), false, 'a point outside');
 });
+
+test('find the notes: the window that shows the most of them, not the middle of the range', () => {
+  const view = { rows: 10, cols: 8, rowCount: 128, stepCount: 32 };
+  // A bass cluster low down and one lonely note six octaves above it: the
+  // midpoint of the range holds nothing at all.
+  const bass = [0, 1, 2, 3].map((i) => ({ rowMin: 100 + i, rowMax: 100 + i, stepMin: i, stepMax: i }));
+  const stray = { rowMin: 20, rowMax: 20, stepMin: 0, stepMax: 0 };
+  const best = bestNoteWindow([...bass, stray], view, { row: 60, step: 0 });
+  assert.equal(best.visible, 4, 'the four that can share a screen');
+  assert.ok(best.row >= 94 && best.row <= 100, `the window holds the cluster, got ${best.row}`);
+
+  // A tie leaves the view where the caller already was.
+  const spread = [{ rowMin: 10, rowMax: 10, stepMin: 0, stepMax: 0 },
+                  { rowMin: 90, rowMax: 90, stepMin: 0, stepMax: 0 }];
+  assert.equal(bestNoteWindow(spread, view, { row: 85, step: 0 }).row, 85,
+    'one note either way, so it stays put');
+
+  // Everything visible at once when it fits.
+  const tight = [{ rowMin: 40, rowMax: 42, stepMin: 1, stepMax: 3 },
+                 { rowMin: 44, rowMax: 46, stepMin: 4, stepMax: 6 }];
+  const all = bestNoteWindow(tight, view, { row: 0, step: 0 });
+  assert.equal(all.visible, 2);
+
+  // A note wider than the window is still counted from the origins that see part of it.
+  const wide = [{ rowMin: 0, rowMax: 127, stepMin: 0, stepMax: 31 }];
+  assert.equal(bestNoteWindow(wide, view, { row: 0, step: 0 }).visible, 1);
+  assert.equal(bestNoteWindow([], view, { row: 7, step: 2 }).row, 7, 'no notes, no movement');
+});

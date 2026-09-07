@@ -4,6 +4,20 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.12 (2026-09-07)
+
+- Notes picked with a rectangle now move together when you drag any one of them by its dot, not
+  just by the line between its points. Dragging a single selected note still moves the one point
+  you grabbed, so a glide is still shaped the same way: press Esc to drop the selection first.
+- The line under the note grid keeps its height when it has nothing to say, so the grid no longer
+  jumps by six pixels every time the pointer leaves a note.
+- The status line stopped getting stuck on "preparing: voices 0%". Editing one note took a short
+  path that never wrote the line back afterwards; it now ends where the full rebuild does, and the
+  note count follows the edit.
+- "Find the notes" now goes to the view that actually holds the most notes, sideways as well as
+  up and down. On a part with a bass line and one high note it used to land halfway between them,
+  which is to say on nothing at all.
+
 ## 0.2.11 (2026-09-07)
 
 - The reverbs have their real names, in the game's own order: Small Room, Room, Bright Plate,

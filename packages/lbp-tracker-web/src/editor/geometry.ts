@@ -232,6 +232,73 @@ export function barOfCell(cell: number): number {
   return cell * BARS_PER_CELL + 1;
 }
 
+/** A note's extent on the grid, in whole rows and whole steps. */
+export interface NoteBox {
+  readonly rowMin: number;
+  readonly rowMax: number;
+  readonly stepMin: number;
+  readonly stepMax: number;
+}
+
+/**
+ * Where to scroll a grid so that **the most notes are on screen at once**.
+ *
+ * The window's origin is what is being chosen, so turn the question inside
+ * out: a note is visible from a *rectangle* of origins -- rows
+ * `[rowMax - rows + 1, rowMin]` by steps `[stepMax - cols + 1, stepMin]`,
+ * clamped -- and the best origin is the one the most of those rectangles
+ * cover. Adding 1 over each rectangle in a difference array and taking the 2D
+ * prefix sum gives the count for **every** origin at once, so this is exact
+ * rather than a search, and it costs `rows x steps + notes` rather than
+ * `origins x notes`.
+ *
+ * Ties go to the origin nearest `prefer`, which the caller sets to whatever it
+ * would have done anyway: the view then only moves when moving buys something.
+ */
+export function bestNoteWindow(
+  boxes: readonly NoteBox[],
+  view: { rows: number; cols: number; rowCount: number; stepCount: number },
+  prefer: { row: number; step: number },
+): { row: number; step: number; visible: number } {
+  const maxRow = Math.max(0, view.rowCount - view.rows);
+  const maxStep = Math.max(0, view.stepCount - view.cols);
+  const w = maxStep + 2;
+  const diff = new Int32Array((maxRow + 2) * w);
+  for (const b of boxes) {
+    // ⚠️ **Overlap, not containment.** The origins a note is *visible* from
+    // are `[rowMin - rows + 1, rowMax]`; the other way round is the rectangle
+    // of origins that hold the note *whole*, and it is empty for anything
+    // taller or wider than the window, which quietly dropped exactly the
+    // notes a composer most wants to find.
+    const r0 = Math.max(0, Math.min(maxRow, b.rowMin - view.rows + 1));
+    const r1 = Math.max(0, Math.min(maxRow, b.rowMax));
+    const s0 = Math.max(0, Math.min(maxStep, b.stepMin - view.cols + 1));
+    const s1 = Math.max(0, Math.min(maxStep, b.stepMax));
+    if (r0 > r1 || s0 > s1) continue;
+    diff[r0 * w + s0] += 1;
+    diff[r0 * w + s1 + 1] -= 1;
+    diff[(r1 + 1) * w + s0] -= 1;
+    diff[(r1 + 1) * w + s1 + 1] += 1;
+  }
+  let best = { row: prefer.row, step: prefer.step, visible: -1 };
+  let bestDistance = Infinity;
+  for (let r = 0; r <= maxRow; r += 1) {
+    for (let s = 0; s <= maxStep; s += 1) {
+      const above = r > 0 ? diff[(r - 1) * w + s] : 0;
+      const left = s > 0 ? diff[r * w + s - 1] : 0;
+      const corner = r > 0 && s > 0 ? diff[(r - 1) * w + s - 1] : 0;
+      const count = diff[r * w + s] + above + left - corner;
+      diff[r * w + s] = count;
+      const distance = Math.abs(r - prefer.row) + Math.abs(s - prefer.step);
+      if (count > best.visible || (count === best.visible && distance < bestDistance)) {
+        best = { row: r, step: s, visible: count };
+        bestDistance = distance;
+      }
+    }
+  }
+  return best;
+}
+
 /**
  * Whether a segment meets an axis-aligned rectangle, for the marquee.
  *

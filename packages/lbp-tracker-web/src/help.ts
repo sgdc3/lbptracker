@@ -136,7 +136,8 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
       p('<kbd>Shift</kbd>+drag on empty space draws a rectangle round notes, and it catches a note whose line ' +
         'crosses it, not only one with a point inside; the line under the grid counts them as you drag. Hold ' +
         '<kbd>Ctrl</kbd> as well and the rectangle adds to what is already selected, and <kbd>Ctrl</kbd>+click puts ' +
-        'one note in or takes it out. Drag any line to move the whole selection.') +
+        'one note in or takes it out. With several selected, dragging any of them, by a point or by a line, ' +
+        'moves them all together; to shape a single point again, drop the selection with <kbd>Esc</kbd> first.') +
       p('Arrow keys nudge the selection a cell sideways or a semitone up and down, with <kbd>Shift</kbd> a whole ' +
         'octave; <kbd>+</kbd>/<kbd>-</kbd> change its volume and <kbd>[</kbd>/<kbd>]</kbd> its timbre. ' +
         '<kbd>Delete</kbd> removes it, <kbd>Ctrl+D</kbd> duplicates it one step further on, ' +

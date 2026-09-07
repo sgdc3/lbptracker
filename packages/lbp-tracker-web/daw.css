@@ -150,7 +150,21 @@ main { flex: 1 0 auto; width: 100%; box-sizing: border-box; margin: 0; max-width
 .panel-roll { display: flex; flex-direction: column; min-height: 0; }
 .roll-scroller { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--panel-2); }
 .roll-scroller canvas { position: sticky; top: 0; left: 0; display: block; z-index: 1; }
-#hover { color: var(--dim); font: .78rem/1.4 ui-monospace, Consolas, monospace; min-height: 1.3em; padding: .15rem .8rem; flex: 0 0 auto; }
+/*
+ * The line under the grid keeps its height whether or not it has anything to
+ * say. ⚠️ `min-height: 1.3em` did not: the line box is 1.4em and the padding
+ * is outside it, so the row was 16.2 px empty against 22.25 px full and the
+ * grid above jumped 6 px every time the pointer left a note. `1lh` is exactly
+ * one line box, so the two cannot drift apart again; the em is for anything
+ * that does not know the unit. ⚠️ The box is `border-box`, so the padding has
+ * to be added to the line: `1lh` on its own still left 4.8 px of jump.
+ */
+#hover {
+  color: var(--dim); font: .78rem/1.4 ui-monospace, Consolas, monospace;
+  padding: .15rem .8rem; flex: 0 0 auto;
+  min-height: calc(1.4em + .3rem);
+  min-height: calc(1lh + .3rem);
+}
 .panel-side { overflow: auto; border-left: 1px solid var(--line); padding: .6rem .7rem; }
 .panel-side .group { border: 0; padding: 0; }
 .panel-side .group + .group { margin-top: .9rem; }

@@ -166,6 +166,32 @@ export function onPlan(listener: () => void): void {
 }
 
 /**
+ * What the status line says when the plan is up to date, from the song and
+ * the last full build.
+ *
+ * ⚠️ **Both paths have to end here.** The one-track sync (`syncNow`) posts the
+ * same progress events as a full rebuild, and a single track never reaches the
+ * second report, so it printed `preparing: voices 0%` and left it there: every
+ * note edit stuck the status until something else happened to set it. The
+ * numbers a sync cannot know -- the notes the plan dropped for want of an
+ * instrument, and the song's length in seconds -- are kept from the last full
+ * build, which is the last time either could have changed.
+ */
+let lastPlan = { skipped: 0, seconds: 0 };
+
+function showPlanSummary(): void {
+  const song = state.song;
+  const clips = song.clips.length;
+  const notes = song.clips.reduce((n, c) => n + c.notes.length, 0);
+  setStatus(
+    `${clips} instrument${clips === 1 ? '' : 's'}, ` +
+    `${notes.toLocaleString()} note${notes === 1 ? '' : 's'}` +
+    (lastPlan.skipped ? `, ${lastPlan.skipped} with no instrument` : '') +
+    `; ${clock(lastPlan.seconds)} at ${song.tempo} BPM`,
+  );
+}
+
+/**
  * Rebuild the plan from the song as it stands, debounced: a drag produces a
  * change per pixel, and the voice pass over a big song takes a second.
  */
@@ -190,13 +216,8 @@ async function replan(): Promise<void> {
     // The transport stops at the end of the last chip, muted or not.
     const loaded = await player.load(seq, load, restart, songEndSteps(state.song), audibleClips().map((c) => c.id));
     rememberPlanned();
-    const clips = state.song.clips.length;
-    setStatus(
-      `${clips} instrument${clips === 1 ? '' : 's'}, ` +
-      `${loaded.played.toLocaleString()} note${loaded.played === 1 ? '' : 's'}` +
-      (loaded.skipped ? `, ${loaded.skipped} with no instrument` : '') +
-      `; ${clock(loaded.seconds)} at ${state.song.tempo} BPM`,
-    );
+    lastPlan = { skipped: loaded.skipped, seconds: loaded.seconds };
+    showPlanSummary();
     for (const l of planListeners) l();
   } catch (error) {
     setStatus('failed', true);
@@ -301,6 +322,7 @@ async function syncNow(): Promise<void> {
       prints.set(id, printOf(clip));
     }
     for (const l of planListeners) l();
+    showPlanSummary();
   } catch (error) {
     setStatus('failed', true);
     setError(String((error as Error).stack ?? error));

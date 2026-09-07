@@ -99,7 +99,20 @@ The editor draws both, as faithfully as the data allows and no further:
   so pressing it again walks on down the grid, and it leaves the clipboard alone. A paste with
   nothing selected goes back where the clipboard was lifted from, which makes cut then paste a
   round trip. ⚠️ Ctrl+D is shared with the board, which duplicates the chip: the roll takes it
-  only when the pointer is not over the board and notes are selected, the same rule Delete uses.
+  only when the pointer is not over the board and notes are selected, the same rule Delete uses.
+  ⚠️ **A point of a note inside a selection drags the whole selection**, not that point alone: the
+  dots are what a pointer lands on, and a selection movable only by the thin line between them is
+  one a composer cannot move. Shaping a single point again means dropping the selection first
+  (Esc); a selection of one behaves as it always did.
+- **"Find the notes" looks for the window that shows the most of them** (`bestNoteWindow` in
+  `geometry.ts`, exact rather than a search: a note is visible from a rectangle of scroll origins,
+  so a 2D difference array and a prefix sum give the count for every origin at once). ⚠️ It used
+  to centre the pitch *range*, and a chip with a bass line and one high note has a midpoint no
+  note is near: measured on such a chip, the old rule showed **0 of 9** notes and this one shows
+  8. A tie leaves the view where it was, and the horizontal axis is chosen the same way instead of
+  being reset to step 0. ⚠️ The origins a note is visible from are the *overlap* rectangle,
+  `[rowMin - rows + 1, rowMax]`; the containment rectangle is empty for a note taller than the
+  window, which drops exactly the notes worth finding.
 - A note's end is its last point and nothing more: a one-record note is one point, a held note
   two joined by a line, as the game draws them. ⚠️ A faint one-step tail past the last point --
   where the gate does close (`duration = lastStep − firstStep + 1`) -- was drawn for a day and
@@ -202,6 +215,14 @@ glide and the plan rebuilds to 14,500 notes; play advances 32 steps in two secon
 Ctrl+Z restores the count; "add an instrument" places a chip at the cursor, the inspector's key select
 writes `Key`, Ctrl+D duplicates into the next free cell, Delete on the board removes the chip.
 
+❗ **Every path that touches the plan ends on `showPlanSummary`** (`daw/session.ts`). The
+one-track sync posts the same progress events as a full rebuild, and one track never reaches the
+second report, so the status line was left reading `preparing: voices 0%` after every note edit
+until something else wrote to it. The summary is rebuilt from the song rather than restored, so
+the note count follows an edit; the two numbers a sync cannot know -- notes dropped for want of
+an instrument, and the song's length -- are kept from the last full build, which is the last time
+either could have changed.
+
 **The song ends where its last chip's grid ends, or where the end was dragged to**
 (`songEndSteps`; `Song.endSteps` holds a dragged end, in whole cells, 0 meaning "the last
 chip"), marked on the board with a grip and the area beyond shaded; the marker drags to make room

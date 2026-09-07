@@ -23,8 +23,8 @@
  * | on              | plain             | shift            | alt              | right click |
  * |-----------------|-------------------|------------------|------------------|-------------|
  * | empty           | draw a note; drag for its end | rectangle (ctrl too: add to the selection) | — | — |
- * | a point         | move it           | volume (up/down) | timbre (up/down) | delete it   |
- * | a line          | move the note     | —                | —                | delete note |
+ * | a point         | move it, or the whole selection when there is one | volume (up/down) | timbre (up/down) | delete it |
+ * | a line          | move the note, or the whole selection | —          | —                | delete note |
  * | double-click    | line: add a point; point: delete it                    |             |
  *
  * Ctrl on a point or a line adds that note to the selection, or takes it out.
@@ -56,6 +56,7 @@ import {
   gridUnit,
   isBlackKey,
   noteName,
+  bestNoteWindow,
   onGrid,
   pointLineHalf,
   pointRadius,
@@ -178,23 +179,63 @@ export class RollView {
     });
   }
 
-  /** Scroll so the clip's notes -- or middle C -- are in the middle of the view. */
+  /**
+   * Put the notes in view: **the window that holds the most of them**.
+   *
+   * ⚠️ Centring the pitch range is not the same thing and was what this did.
+   * A clip whose bass sits at C1 and whose hats sit at C7 has a midpoint no
+   * note is anywhere near, so "find the notes" landed on an empty band with
+   * the music off both edges. `bestNoteWindow` counts what each scroll
+   * position would actually show and takes the best, and it moves nothing when
+   * a tie means the old centring was as good.
+   */
   scrollToNotes(): void {
     const clip = this.state.clip();
-    let centre = 60;
-    if (clip && clip.notes.length) {
+    this.measure();
+    const layout = this.layout;
+    const viewH = this.scroller.clientHeight - layout.ruler;
+    const viewW = this.scroller.clientWidth - layout.keys;
+    if (!clip || !clip.notes.length) {
+      // Nothing to find: middle C in the middle, as an empty grid always did.
+      this.scroller.scrollTop = Math.max(0, rollY(layout, 60) - this.scroller.clientHeight / 2);
+      this.scroller.scrollLeft = 0;
+      return;
+    }
+    const boxes = clip.notes.map((n) => {
       let lo = 127;
       let hi = 0;
-      for (const n of clip.notes) for (const p of n.points) {
+      let first = Infinity;
+      let last = 0;
+      for (const p of n.points) {
         lo = Math.min(lo, p.pitch);
         hi = Math.max(hi, p.pitch);
+        first = Math.min(first, p.thirds);
+        last = Math.max(last, p.thirds);
       }
-      centre = (lo + hi) / 2;
-    }
-    this.measure();
-    const y = rollY(this.layout, centre);
-    this.scroller.scrollTop = Math.max(0, y - this.scroller.clientHeight / 2);
-    this.scroller.scrollLeft = 0;
+      return {
+        rowMin: PITCHES - 1 - hi,
+        rowMax: PITCHES - 1 - lo,
+        stepMin: Math.floor(first / 3),
+        stepMax: Math.floor(last / 3),
+      };
+    });
+    // Where the old rule would have gone, which is where a tie stays.
+    const midPitch = boxes.reduce((m, b) => m + (b.rowMin + b.rowMax) / 2, 0) / boxes.length;
+    const best = bestNoteWindow(
+      boxes,
+      {
+        rows: Math.max(1, Math.floor(viewH / layout.rowH)),
+        cols: Math.max(1, Math.floor(viewW / layout.stepW)),
+        rowCount: PITCHES,
+        stepCount: layout.steps,
+      },
+      {
+        row: Math.max(0, Math.round(midPitch - viewH / layout.rowH / 2)),
+        step: 0,
+      },
+    );
+    this.scroller.scrollTop = Math.max(0, best.row * layout.rowH);
+    this.scroller.scrollLeft = Math.max(0, best.step * layout.stepW);
   }
 
   /** Keep a step in view while the song plays. */
@@ -599,6 +640,18 @@ export class RollView {
         this.drag = { mode: 'volume', note, point, startY: y, startValue: point.volume, moved: false };
       } else if (event.altKey) {
         this.drag = { mode: 'timbre', note, point, startY: y, startValue: point.timbre, moved: false };
+      } else if (state.selection.noteIds.size > 1) {
+        /**
+         * **A point of a note inside a set drags the whole set.** The dots are
+         * what the pointer lands on, so a selection that can only be moved by
+         * grabbing the thin line between them is a selection that cannot be
+         * moved. To shape one point again, drop the selection first (Esc, or
+         * a click on empty grid) and grab it on its own.
+         */
+        const notes = clip.notes.filter((n) => state.selection.noteIds.has(n.id));
+        const t = this.snapped(x, clip.steps);
+        const p = rollPitchAt(this.layout, y);
+        this.drag = { mode: 'note', notes, startThirds: t, startPitch: p, lastThirds: t, lastPitch: p, moved: false };
       } else {
         this.drag = { mode: 'point', note, point, moved: false, lastThirds: point.thirds, lastPitch: point.pitch };
       }
@@ -665,7 +718,9 @@ export class RollView {
         const p = hitP.point;
         this.cb.onHover(
           `${noteName(p.pitch)} (${p.pitch}) at ${positionLabel(p.thirds)} · volume ${p.volume} · timbre ${p.timbre}` +
-          ` · point ${hitP.index + 1} of ${hitP.note.points.length}`,
+          ` · point ${hitP.index + 1} of ${hitP.note.points.length}`
+          + (this.state.selection.noteIds.size > 1 && this.state.selection.noteIds.has(hitP.note.id)
+            ? `  ·  drag moves all ${this.state.selection.noteIds.size}` : ''),
         );
       } else {
         const t = this.snapped(x, clip.steps);
