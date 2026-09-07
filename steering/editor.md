@@ -79,6 +79,14 @@ The editor draws both, as faithfully as the data allows and no further:
   grid, "all shifted left" — and then, briefly, on the grid lines; the owner settled it here.
 - The volume is the dot's radius (`pointRadius`, 0..127 → 0.18..0.5 of a row) and the timbre
   nibble its colour (`timbreColour`, a straight RGB blend from blue at 0 to orange at 15).
+- **The line between two points carries both, so the eye reads the glide and not just its ends.**
+  It is filled as a quadrilateral rather than stroked: its half-width at each end is that point's
+  volume (`pointLineHalf`, 0.42 of the dot's radius, so the dots stay what a volume is read off and
+  they cover the joints), and its fill is a gradient between the two points' timbre colours.
+  That is not decoration: the engine ramps the modulation exactly as it ramps volume and pitch
+  (the slide rates at `+0x2c` in [synth-engine.md](synth-engine.md)), so the ribbon's thickness and
+  hue at any x are the volume and modulation that will sound there. A segment whose ends share a
+  timbre — 96.1% of notes automate nothing — skips the gradient and fills flat.
 - A note's end is its last point and nothing more: a one-record note is one point, a held note
   two joined by a line, as the game draws them. ⚠️ A faint one-step tail past the last point --
   where the gate does close (`duration = lastStep − firstStep + 1`) -- was drawn for a day and
@@ -184,7 +192,10 @@ writes `Key`, Ctrl+D duplicates into the next free cell, Delete on the board rem
 **The song ends where its last chip's grid ends, or where the end was dragged to**
 (`songEndSteps`; `Song.endSteps` holds a dragged end, in whole cells, 0 meaning "the last
 chip"), marked on the board with a grip and the area beyond shaded; the marker drags to make room
-past the last chip and snaps back to "the last chip" when dragged onto it. The transport stops
+past the last chip and snaps back to "the last chip" when dragged onto it. **A new song starts
+with an end of its own**, two tiles out (`NEW_SONG_END_STEPS`): with no chip to take an end from
+it had none, and a board with no marker on it gave the composer nothing to lay a song out against
+and nothing to drag. The transport stops
 there — without the render's six-second effects tail,
 which the transport does not need: it stops the clock and not the audio, so the echo and the
 reverb ring on. The notes' own end, `songLengthSteps`, is what the sequencer's `lengthSteps`

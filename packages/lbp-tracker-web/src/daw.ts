@@ -298,8 +298,19 @@ function saveSong(): void {
 }
 $('save').addEventListener('click', saveSong);
 
+/**
+ * Unsaved work stands in the way of closing the tab: the browser asks first.
+ *
+ * ⚠️ **Both signals, or it is silent somewhere.** `preventDefault()` is what
+ * the standard asks for and what Chrome takes; Safari and older browsers only
+ * look at the legacy `returnValue`, and setting it costs nothing. The browser
+ * writes its own wording either way, and it only asks at all once the page has
+ * been interacted with, which editing a song is.
+ */
 window.addEventListener('beforeunload', (event) => {
-  if (state.dirty) event.preventDefault();
+  if (!state.dirty) return;
+  event.preventDefault();
+  event.returnValue = '';
 });
 
 // --------------------------------------------------------------- the views

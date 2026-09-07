@@ -179,6 +179,19 @@ export function pointRadius(volume: number, rowH: number): number {
 }
 
 /**
+ * The half-width of the line at a point: the same volume the dot shows, so a
+ * segment tapers from one point's volume to the next's and the ribbon's
+ * thickness is the volume the engine glides through.
+ *
+ * A fraction of `pointRadius`, so it stays well inside the dot: the dots
+ * remain what you read a volume off, and they cover the joints where two
+ * segments of different slopes meet.
+ */
+export function pointLineHalf(volume: number, rowH: number): number {
+  return Math.max(0.75, pointRadius(volume, rowH) * 0.42);
+}
+
+/**
  * The note's timbre as a colour: blue at 0, orange at 15, as the game paints it.
  *
  * A straight blend in RGB between the two, which passes through a grey in the

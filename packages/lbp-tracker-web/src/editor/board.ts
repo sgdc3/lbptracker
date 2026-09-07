@@ -418,7 +418,10 @@ export class BoardView {
     // beyond it shaded -- there is nothing there to play.
     const endStep = this.drag?.kind === 'end' ? this.drag.step : songEndSteps(song);
     const endX = boardX(layout, endStep);
-    if (song.clips.length > 0 || this.drag?.kind === 'end') {
+    // An empty song has an end of its own (`NEW_SONG_END_STEPS`), so the
+    // marker is there to drag before the first chip is placed; only an end
+    // dragged back to the very start leaves nothing to mark.
+    if (endStep > 0 || this.drag?.kind === 'end') {
       ctx.fillStyle = 'rgba(0,0,0,0.3)';
       ctx.fillRect(endX, layout.ruler, width - endX, height - layout.ruler);
       ctx.strokeStyle = this.drag?.kind === 'end' || this.overEnd ? accent : 'rgba(232,234,238,0.45)';

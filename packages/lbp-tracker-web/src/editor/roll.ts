@@ -6,7 +6,9 @@
  * colour its timbre -- blue at 0, orange at 15 -- with a keyboard down the
  * left and a step grid that can be switched between whole steps and thirds.
  * The engine glides linearly between consecutive points, so the straight
- * line is not a drawing convention: it is what will sound.
+ * line is not a drawing convention: it is what will sound -- and the line
+ * carries the glide, swelling with the volume and shifting hue with the
+ * timbre from one point to the next.
  *
  * ❗ **A canvas the size of the viewport, not of the grid.** 128 pitch rows by
  * 128 steps is a 3,000 by 1,700 pixel surface, twice that on a high-density
@@ -47,6 +49,7 @@ import {
   isBlackKey,
   noteName,
   onGrid,
+  pointLineHalf,
   pointRadius,
   positionLabel,
   rollPitchAt,
@@ -313,16 +316,48 @@ export class RollView {
       const on = selected.has(note.id);
       const pts = note.points;
       const fade = dimmed(note) ? 0.3 : 1;
+      /**
+       * A segment is drawn as a ribbon, not a stroke: its half-width at each
+       * end is that point's volume (`pointLineHalf`) and its colour at each
+       * end that point's timbre, so it swells and shifts hue exactly as the
+       * engine's gliding volume and modulation do between the two -- the
+       * engine ramps the modulation as it ramps the volume
+       * (steering/synth-engine.md, the slide rates at `+0x2c`).
+       */
+      const weight = on ? 1.35 : 1;
+      const alpha = (on ? 1 : 0.8) * fade;
       for (let i = 0; i < pts.length - 1; i += 1) {
         const a = pts[i];
         const b = pts[i + 1];
-        ctx.strokeStyle = timbreColour(a.timbre, (on ? 1 : 0.8) * fade);
-        ctx.lineWidth = on ? 3.5 : 2.5;
-        ctx.lineCap = 'round';
+        const ax = px(a.thirds);
+        const ay = py(a.pitch);
+        const bx = px(b.thirds);
+        const by = py(b.pitch);
+        const dx = bx - ax;
+        const dy = by - ay;
+        const len = Math.hypot(dx, dy);
+        if (len === 0) continue;
+        // The normal, to offset each end by its own half-width.
+        const nx = (-dy / len) * weight;
+        const ny = (dx / len) * weight;
+        const ha = pointLineHalf(a.volume, layout.rowH);
+        const hb = pointLineHalf(b.volume, layout.rowH);
+        if (a.timbre === b.timbre) {
+          ctx.fillStyle = timbreColour(a.timbre, alpha);
+        } else {
+          // Only the 3.9% of notes that automate the timbre pay for a gradient.
+          const grad = ctx.createLinearGradient(ax, ay, bx, by);
+          grad.addColorStop(0, timbreColour(a.timbre, alpha));
+          grad.addColorStop(1, timbreColour(b.timbre, alpha));
+          ctx.fillStyle = grad;
+        }
         ctx.beginPath();
-        ctx.moveTo(px(a.thirds), py(a.pitch));
-        ctx.lineTo(px(b.thirds), py(b.pitch));
-        ctx.stroke();
+        ctx.moveTo(ax + nx * ha, ay + ny * ha);
+        ctx.lineTo(bx + nx * hb, by + ny * hb);
+        ctx.lineTo(bx - nx * hb, by - ny * hb);
+        ctx.lineTo(ax - nx * ha, ay - ny * ha);
+        ctx.closePath();
+        ctx.fill();
       }
       // ⚠️ Nothing past the last point. The gate closes a step after it, but
       // the game draws no tail: a note's end IS its last point, and a note of

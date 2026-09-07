@@ -4,6 +4,18 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.6 (2026-09-07)
+
+- In the note grid the line between a note's points now shows what it does between them: it
+  swells where the volume rises and thins where it falls, and its colour runs from one point's
+  timbre to the next. The dots still say what each point is; the line now says what happens on
+  the way.
+- A new song starts with an end marker two tiles along the board, so there is a length to lay a
+  song out against, and something to drag, before the first instrument is placed. It used to
+  appear only once a chip was there.
+- Closing the tab or the window with unsaved changes asks first on every browser; Safari and the
+  older ones were closing without a word.
+
 ## 0.2.5 (2026-09-07)
 
 - The site installs as an app: on a phone or a desktop the browser offers to add it, and it then

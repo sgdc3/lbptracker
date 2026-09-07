@@ -170,6 +170,14 @@ export const NEW_CLIP_DEFAULTS = {
   reverbSend: 0,
 } as const;
 
+/**
+ * The end a song starts with, in steps: two tiles, eight bars. A new song has
+ * no chip to take an end from, and an end at 0 is a board with no marker on
+ * it and nothing to drag; this gives the composer a length to lay out against
+ * from the first frame, and the first chip past it pushes it along.
+ */
+export const NEW_SONG_END_STEPS = 2 * DEFAULT_CLIP_STEPS;
+
 export function newSong(name = 'untitled'): Song {
   return {
     name,
@@ -177,7 +185,7 @@ export function newSong(name = 'untitled'): Song {
     loop: false,
     startPoint: 0,
     volumes: new Array<number>(MIXER_CHANNELS).fill(1),
-    endSteps: 0,
+    endSteps: NEW_SONG_END_STEPS,
     clips: [],
     nextId: 1,
   };
