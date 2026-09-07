@@ -267,15 +267,29 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     } else roll.setPlayhead(null);
     if (player.playing && opts.isActive()) board.followStep(step);
   }
-  // The player ticks ten times a second; the playhead and the flashes want
-  // every frame while it plays, and the board's own scan is cheap.
+  /**
+   * The player ticks ten times a second, which is fine for the numbers and
+   * far too slow for a line: at 240 BPM a step is 62 ms, so a playhead moved
+   * on the tick lurches a step and a half at a time.
+   *
+   * `player.stepAt` is continuous -- it divides the frames inside a step by
+   * that step's own swung length -- so both playheads are moved every frame
+   * from it, and the rest of `paint` (which chip is under it, what to select,
+   * where to scroll) stays on the tick, where it costs nothing.
+   *
+   * ⚠️ The roll used to be left out of this loop and only the board was
+   * smoothed, which is why its line stepped while the board's glided.
+   */
   let smoothing = false;
   const smooth = () => {
     if (!player.playing || !opts.isActive()) {
       smoothing = false;
       return;
     }
-    board.setPlayhead(player.stepAt(player.position()));
+    const step = player.stepAt(player.position());
+    board.setPlayhead(step);
+    const clip = state.clip();
+    roll.setPlayhead(clip ? step - clip.cell * STEPS_PER_CELL : null);
     window.requestAnimationFrame(smooth);
   };
   const startSmoothing = () => {

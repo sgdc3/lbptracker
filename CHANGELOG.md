@@ -4,6 +4,14 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.16 (2026-09-07)
+
+- The playhead in the note grid glides instead of stepping. It moved ten times a second, which at
+  240 BPM is a lurch of a step and a half; it now moves with every frame the screen draws, the way
+  the one on the board already did.
+- A G beside the volume turns the master bus on and off from the top bar. It is the same switch as
+  the one under Song/Mixer, and it lights up while it is on.
+
 ## 0.2.15 (2026-09-07)
 
 - A master bus under the engine switches: a compressor and a limiter of this tracker's own,

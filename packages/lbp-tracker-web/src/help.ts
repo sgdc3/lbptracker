@@ -86,6 +86,9 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
         'long the song is, the BPM box changes the tempo as it plays, the fader sets the volume, and the two bars ' +
         'above it are the left and right output levels. The status bar at the bottom says how many notes are ' +
         'sounding, how busy the audio is, and whether it has dropped out.') +
+      p('The <strong>G</strong> beside the volume is the master bus, on and off from the bar: the same switch as ' +
+        'under Song/Mixer, so the two always agree. It lights up when it is on, and on is not what the game would ' +
+        'play.') +
       p('The keys a transport usually answers to, from any view: <kbd>Space</kbd> plays and pauses where it is, ' +
         '<kbd>Home</kbd> or <kbd>Enter</kbd> go back to the start without stopping, <kbd>End</kbd> jumps to the ' +
         'end of the song, and <kbd>Ctrl+S</kbd> saves it. On the Arrange view, <kbd>L</kbd> turns the loop on ' +

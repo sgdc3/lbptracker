@@ -31,6 +31,8 @@ import { mountRender } from './daw/render-view.ts';
 import { mountConvert } from './daw/convert-view.ts';
 import { mountKeyboard } from './daw/keyboard-view.ts';
 import { mountMediaKeys } from './daw/media-keys.ts';
+import { engine } from './controls/engine.ts';
+import { watch } from 'vue';
 import type { Health } from './player.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -140,6 +142,26 @@ loopButton.addEventListener('click', () => {
   state.edit('selection', (s) => { s.loop = !s.loop; });
 });
 volSlider.addEventListener('input', () => player.setVolume(Number(volSlider.value)));
+
+/**
+ * The G in the bar is the master bus's own switch, not a second setting: it
+ * reads and writes `optMaster`, so the Song/Mixer card and this button can
+ * never disagree. What it turns on is ours and not the game's, which is what
+ * the title says and why it is off to begin with.
+ */
+const glueButton = $<HTMLButtonElement>('glue');
+const paintGlue = () => {
+  const on = engine.on('optMaster');
+  glueButton.setAttribute('aria-pressed', String(on));
+  glueButton.classList.toggle('on', on);
+};
+glueButton.addEventListener('click', () => {
+  engine.set('optMaster', !engine.on('optMaster'));
+  paintGlue();
+});
+// The card under Song/Mixer moves the same switch; follow it.
+watch(engine.effectsSignature, paintGlue);
+paintGlue();
 player.setVolume(Number(volSlider.value));
 
 /**

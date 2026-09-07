@@ -65,6 +65,20 @@ The actions map to this transport: play, pause where it is, stop and rewind, and
 keys to the start and the end -- one song is open, so that is what a track is. `setPositionState`
 gives the system's scrubber the song's real length; ⚠️ it throws on a duration of zero, which is
 every song before its plan exists, so it is guarded and wrapped. The render worker no longer reads files or keeps a pile: the
+
+❗ **Both playheads move every frame, from one continuous number.** The player ticks ten times a
+second, which is fine for the clock and far too slow for a line: at 240 BPM a step is 62 ms, so a
+playhead moved on the tick lurches a step and a half at a time. `player.stepAt` is continuous (it
+divides the frames inside a step by that step's own swung length), and `arrange.ts`'s `smooth`
+loop feeds it to the board and the roll on every `requestAnimationFrame`; the rest of `paint` --
+which chip is under it, what to select, where to scroll -- stays on the tick. ⚠️ For a day the
+roll was left out of that loop and only the board was smoothed. Measured on `Ascetic`: 211
+updates each over 183 frames in three seconds, against the tick's ~30.
+
+The **G** beside the volume is `optMaster` from the bar, reading and writing the same switch as
+the Song/Mixer card, so the two cannot disagree; ⚠️ it is deliberately **not** given the accent
+colour the loop button takes, because the accent in that bar means the song's own state and this
+is the tracker's own doing (question 42).
 song travels with the render request.
 
 ## What it shows, and what the game shows
