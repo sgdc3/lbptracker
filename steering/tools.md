@@ -57,6 +57,25 @@ java -cp "$JAR;out" ExtractGuid <orbisguids.map> <gamedir> fixtures/smp  audio/m
 
 then `npm run serve` and open http://127.0.0.1:8173/ to play them.
 
+⚠️ **Run these on JDK 21 or 25, not the `java` on PATH.** `javac` here is 25 and the JRE on PATH is
+1.8, so `ExtractGuid` compiles and then dies with `UnsupportedClassVersionError: class file version
+69.0`. Use `"C:/Program Files/Eclipse Adoptium/jdk-25.0.3.9-hotspot/bin/java.exe"`.
+
+**The game's own words come out the same way.** `ExtractGuid ... "languages/english.trans"` pulls
+the LAMS table (GUID 31131, 3.5 MB, out of `intro_001.farc`); its layout is `u32 count`, then
+`count x (u32 key, u32 offset)`, then one UTF-16BE blob. ⚠️ **The offset is in BYTES and points at
+the entry's own U+FEFF**, which is also the separator -- there are no NULs, and reading it as
+characters or splitting on NUL gives strings that start mid-word and look almost right. The keys
+are hashes: `cwlib.resources.RTranslationTable.makeLamsKeyID(String)` computes them, so the way to
+read a name is to *propose* the key and look it up (`translate("REVERB_SETTING_CAVE")` → `Cave`).
+That is how the reverb names were found ([lbp-audio-engine.md](lbp-audio-engine.md)). The eboot
+holds none of these keys, as strings or as ids; the UI builds them in script.
+
+**A `.ff` script decompresses with `lbpres.py --raw`**, and its string table then shows the class's
+fields and method names -- `gamedata/scripts/tweaksequencer.ff` is the Music Sequencer's tweak
+menu, `AddReverbs__` and `TranslatedReverbNames` and all. The bytecode's operands need a
+disassembler nobody has written; the strings alone still say which script owns a piece of UI.
+
 - ⚠️ `<gamedir>` is the folder holding `base_001.farc` — `D:\PS4Games\CUSA00063`, **not** the
   `-patch` folder, which holds only `patch_001.farc` and makes every row come back `MISSING`.
 - ⚠️ **Two GUIDs can share a basename**, and the extractor once let the second overwrite the first

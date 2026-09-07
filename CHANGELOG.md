@@ -4,6 +4,15 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.9 (2026-09-07)
+
+- Reverb is a menu now, not a slider, and it lists the five settings the game actually writes: over
+  338 sequencers from real levels the value is only ever 1 to 5, while the slider went to 15. Each
+  option says how long that reverb rings, and hovering it gives the delay before the tail, the
+  damping and the levels.
+- A new song starts on reverb 5, the setting three out of five real sequencers use. It used to
+  start on 0, which no sequencer in the corpus holds and which is not "no reverb" either.
+
 ## 0.2.8 (2026-09-07)
 
 - The rectangle you drag round notes now catches a held note whose line crosses it, not only notes

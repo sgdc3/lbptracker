@@ -167,8 +167,14 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
         'rows the board has.') +
       h('Echo and reverb') +
       p('The echo\'s <strong>time</strong> is in beats, so it follows the tempo; <strong>feedback</strong> is how long it ' +
-        'repeats and <strong>mix</strong> how loud. <strong>Reverb</strong> picks one of the game\'s sixteen rooms. ' +
-        'Each instrument sends its own amount to both, in its note panel.'),
+        'repeats and <strong>mix</strong> how loud. Each instrument sends its own amount to both, in its note ' +
+        'panel.') +
+      p('<strong>Reverb</strong> is a list of five, which is what the game writes: across 338 sequencers from real ' +
+        'levels the setting is only ever 1 to 5. Each one picks a whole preset inside the reverb itself, so the ' +
+        'option says how long that preset rings and hovering it gives the rest of what it does. The game has its ' +
+        'own names for its rooms, twelve of them, and which name belongs to which preset is not something this ' +
+        'project has been able to read out of the game yet, so the list says what each setting measurably is ' +
+        'instead of guessing.'),
   },
   engine: {
     title: 'The engine',

@@ -148,6 +148,12 @@ export const MIXER_CHANNELS = 6;
  * likely the value the editor starts a new sequencer at -- but nobody has read
  * that out of the game. The echo values are the corpus's medians for the same
  * reason. See steering/open-questions.md.
+ *
+ * The **reverb** is the same argument and it used to break it: it was 0, and 0
+ * is a setting the corpus never once holds. Over those 338 sequencers the
+ * setting is 5 on 59.2% and 3 on 35.5%, so 5 is the mode and the likeliest
+ * default (`REVERB_SETTINGS` in `audio/effects.ts` has the histogram).
+ * ⚠️ 0 is not "no reverb": the remap sends it to preset 3, a 0.6 s room.
  */
 export const NEW_SONG_DEFAULTS = {
   tempo: 240,
@@ -155,7 +161,7 @@ export const NEW_SONG_DEFAULTS = {
   echoFeedback: 0.45,
   echoTime: 2,
   echoMix: 0.5,
-  reverb: 0,
+  reverb: 5,
   numChannels: 1,
   boardRows: 8,
 } as const;

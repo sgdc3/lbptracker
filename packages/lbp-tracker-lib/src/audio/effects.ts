@@ -764,6 +764,58 @@ export function reverbPreset(setting: number): readonly number[] {
 }
 
 /**
+ * The settings a composer actually picks from: **1 to 5**, measured over the
+ * corpus (338 sequencers, `fixtures/levels/sequencers.jsonl`, 2026-09-07):
+ * 5 on 59.2%, 3 on 35.5%, then 4, 2 and 1, and **0, 6 and 7 never once**.
+ * The remap has eight entries and its last two both point at preset 0, so the
+ * three unused settings are the padding, not choices.
+ *
+ * ❗ **The game names its reverbs and this project cannot yet say which name
+ * belongs to which setting.** Its own English table (`gamedata/languages/
+ * english.trans`) holds twelve, under keys `REVERB_SETTING_<NAME>`: Bathroom,
+ * Cathedral, Cave, Concert Hall, Forest, Hall, Hallway, Hangar, Padded Cell,
+ * Room, Small Room, Underwater -- exactly as many as the preset table has
+ * rows. The list is built by `AddReverbs__` in `gamedata/scripts/
+ * tweaksequencer.ff` into a field called `TranslatedReverbNames`, and the
+ * order that method uses is in script bytecode nothing here can read yet: the
+ * keys are neither strings nor LAMS ids in the eboot or the script.
+ * See steering/open-questions.md. Until it is read, a setting is described by
+ * what it measurably does, never by a guessed name.
+ */
+export const REVERB_SETTINGS: readonly number[] = [1, 2, 3, 4, 5];
+
+/** What a setting measurably does, for a menu that has to say something true. */
+export interface ReverbSummary {
+  readonly setting: number;
+  /** The row of `REVERB_PRESETS` the remap sends it to. */
+  readonly preset: number;
+  /** RT60, in seconds: `decay * 0.1`. */
+  readonly decaySeconds: number;
+  /** The delay before the late field, in milliseconds. */
+  readonly preDelayMs: number;
+  /** The damping filter's corner, or null when the preset switches it off. */
+  readonly dampingHz: number | null;
+  /** The late field's level in dB: the slots are tenths of a dB. */
+  readonly lateDb: number;
+  /** The early reflections' level in dB, including the preset's own /100. */
+  readonly earlyDb: number;
+}
+
+export function reverbSummary(setting: number): ReverbSummary {
+  const preset = REVERB_REMAP[setting] ?? REVERB_REMAP[0];
+  const p = REVERB_PRESETS[preset] ?? REVERB_PRESETS[0];
+  return {
+    setting,
+    preset,
+    decaySeconds: p[PRESET_SLOT.decay] * 0.1,
+    preDelayMs: p[PRESET_SLOT.outputDelayMs],
+    dampingHz: p[PRESET_SLOT.dampEnable] ? p[PRESET_SLOT.dampHz] : null,
+    lateDb: p[PRESET_SLOT.lateLevel] / 10,
+    earlyDb: p[PRESET_SLOT.earlyLevel] / 10 - 40,
+  };
+}
+
+/**
  * The four block kernels of `fmodsmsreverb.prx`, transcribed.
  *
  * They exist out of line at `0x08f0`-`0x0a30` and again inlined in the block

@@ -12,6 +12,7 @@
  */
 import { computed } from 'vue';
 import { MIXER_CHANNELS, type Song } from '@lbptracker/lib/song.ts';
+import { REVERB_SETTINGS, reverbSummary } from '@lbptracker/lib/audio/effects.ts';
 import { bandOf } from '../editor/geometry.ts';
 import type { EditorState } from '../editor/state.ts';
 import type { ChangeKind } from '../editor/state.ts';
@@ -46,6 +47,31 @@ const set = (kind: ChangeKind, key: string, fn: (value: number, s: Song) => void
   props.state.edit(kind, (s) => fn(value, s), key);
 };
 const fmt = (v: number) => v.toFixed(2);
+
+/**
+ * The reverb is a **choice, not a dial**: `ReverbSetting` picks one of the
+ * game's presets, and a slider through it crossed values the game never uses
+ * and suggested a range where there is a list. The options carry what each
+ * setting measurably does (`reverbSummary`), because the game's own twelve
+ * names cannot yet be matched to its presets -- the note is in `effects.ts`.
+ * A song that arrives with a setting outside the list keeps it, rather than
+ * being quietly moved to one we know.
+ */
+const reverbOptions = computed(() => {
+  const settings = [...REVERB_SETTINGS];
+  if (!settings.includes(song.value.reverb)) settings.push(song.value.reverb);
+  return settings.sort((a, b) => a - b).map((setting) => {
+    const r = reverbSummary(setting);
+    const damping = r.dampingHz === null ? 'no damping' : `damping ${(r.dampingHz / 1000).toFixed(0)} kHz`;
+    return {
+      setting,
+      label: `${setting} · ${r.decaySeconds.toFixed(1)} s`,
+      title: `preset ${r.preset}: ${r.decaySeconds.toFixed(1)} s decay, `
+        + `${r.preDelayMs} ms before the late field, ${damping}, `
+        + `late ${r.lateDb} dB, early ${r.earlyDb} dB`,
+    };
+  });
+});
 </script>
 
 <template>
@@ -130,9 +156,10 @@ const fmt = (v: number) => v.toFixed(2);
       </div>
       <div class="knob">
         <label for="mx-reverb">reverb</label>
-        <input id="mx-reverb" type="range" min="0" max="15" step="1" :value="song.reverb" autocomplete="off"
-               @input="set('effects', 'reverb', (v, s) => { s.reverb = v; })($event)">
-        <output>{{ song.reverb }}</output>
+        <select id="mx-reverb" class="wide" :value="song.reverb" autocomplete="off"
+                @change="set('effects', 'reverb', (v, s) => { s.reverb = v; })($event)">
+          <option v-for="o in reverbOptions" :key="o.setting" :value="o.setting" :title="o.title">{{ o.label }}</option>
+        </select>
       </div>
     </div>
   </div>

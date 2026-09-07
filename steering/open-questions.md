@@ -149,6 +149,30 @@ value the editor starts at. A decision, not a measurement. **What would settle i
 sequencer in the game, save, and read its `PSequencer`; the toolkit's field initialisers are the
 other source, and they are a reading of the same kind as this one.
 
+## 41. Which of the game's twelve reverb names goes with which preset
+
+The game names its reverb settings and this project can read the names but not the order.
+`gamedata/languages/english.trans` holds exactly twelve under `REVERB_SETTING_<NAME>` -- Bathroom,
+Cathedral, Cave, Concert Hall, Forest, Hall, Hallway, Hangar, Padded Cell, Room, Small Room,
+Underwater -- and the eboot's preset table has exactly twelve rows
+([lbp-audio-engine.md](lbp-audio-engine.md), *The twelve names*). Nothing joins the two lists.
+
+The list is assembled in script: `AddReverbs__` in `gamedata/scripts/tweaksequencer.ff` fills a
+field `TranslatedReverbNames`, and `GetReverbStrings__` in `trigger_global_settings.ff` does the
+level-wide one. Both reach their keys as `LAMS.E_KEY` enum members, and the enum resolves at
+compile time: the key strings appear in neither the eboot nor the decompressed scripts, and the
+LAMS ids appear in neither as u32 (either endianness) nor as LEB128 varints. So the order lives in
+the script bytecode as operands, and reading it needs a disassembler for LBP's script VM, which
+this project has not written.
+
+⚠️ **Do not guess it from the decay times.** Preset 11 rings for 5 s and *is* the longest, and
+calling it Cathedral is exactly the kind of plausible label that would be repeated afterwards as
+if it had been measured. The editor's reverb menu says what each setting measurably does
+(`reverbSummary`) for this reason.
+
+**What would settle it**: a disassembler for the `.ff` bytecode far enough to read the operands of
+`AddReverbs__`; or a capture of the game's own tweak menu, which shows the names in order.
+
 ## 24. The last 54 clips that need a verbatim record patch
 
 ⚠️ **Nothing here is audible and nothing here is broken.** The MIDI round trip is exact — 0 records
