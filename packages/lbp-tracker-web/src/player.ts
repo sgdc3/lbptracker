@@ -893,6 +893,38 @@ export class Player {
     this.pass = 0;
   }
 
+  /**
+   * Bring a clock that has gone round a section back into it, in place.
+   *
+   * ❗ **The pass is a property of the section being gone round, and the
+   * section can change or go away under a running clock**: the song's loop
+   * switched off, a chip's region cleared or moved, or the transport stopped
+   * (which stores the *folded* position). `passFrame` then loses its
+   * `pass * len` offset while `rawPosition` keeps it -- or the other way
+   * round -- and every voice left in the plan lands at delay 0 in one burst
+   * (switching the loop off during the second pass played the whole rest of
+   * the song at once, 2026-09-09), or nothing posts until the clock has run
+   * the offset out (a pause in a second pass resumed into silence).
+   *
+   * So, before `activeRegion()` can answer differently: the position is
+   * folded into the section it was gone round, the pass comes back to zero
+   * with the frontier of handed-over steps (`rebasePass`), the clock restarts
+   * from the folded position, and the pool is replayed to the scheduler's
+   * index so its steps are in the same space as the notes still to come. The
+   * same rebase a live tempo change does; `nextIndex` and `handed` are kept,
+   * because they are per plan entry and the pass never touched them.
+   */
+  private foldPass(): void {
+    if (this.pass === 0) return;
+    const folded = this.position();
+    this.rebasePass();
+    this.cursorFrames = Math.min(this.songFrames, folded);
+    if (this.playing && this.context) this.startedAt = this.context.currentTime;
+    const want = this.plan.findIndex((p) => this.frameOf(p) >= folded);
+    this.nextIndex = Math.max(this.nextIndex, want < 0 ? this.plan.length : want);
+    this.rebuildPoolTo(this.nextIndex);
+  }
+
   /** The playhead in steps, undoing the swing: the inverse of `swungFrame`. */
   stepAt(frames: number): number {
     if (this.stepFrames <= 0) return 0;
@@ -915,7 +947,19 @@ export class Player {
   }
 
   /** Start over at the end instead of stopping: the song's own loop flag, mirrored here. */
-  loop = false;
+  get loop(): boolean {
+    return this.songLoop;
+  }
+
+  set loop(on: boolean) {
+    if (on === this.songLoop) return;
+    // Switching the song's loop off while it is the section being gone round
+    // takes that section away: fold the clock first. See `foldPass`.
+    if (!on && this.region === null) this.foldPass();
+    this.songLoop = on;
+  }
+
+  private songLoop = false;
 
   /**
    * A section to go round instead of the song, in steps; and a row to hear
@@ -946,10 +990,20 @@ export class Player {
   private static readonly PASS_SPAN = 1 << 24;
 
   setRegion(start: number, end: number): void {
-    this.region = end > start ? { start, end } : null;
+    const next = end > start ? { start, end } : null;
+    const same =
+      (next === null && this.region === null) ||
+      (next !== null && this.region !== null && next.start === this.region.start && next.end === this.region.end);
+    if (same) return;
+    // A different section, or none: the passes counted on the old one are
+    // meaningless against the new one. Fold before `activeRegion` changes.
+    this.foldPass();
+    this.region = next;
   }
 
   clearRegion(): void {
+    if (this.region === null) return;
+    this.foldPass();
     this.region = null;
   }
 
@@ -998,6 +1052,9 @@ export class Player {
 
   stop(clear = true): void {
     if (!this.playing) return;
+    // The stored cursor is the folded position, so the pass has to come down
+    // with it or `play` resumes against a clock the passes no longer match.
+    this.foldPass();
     this.cursorFrames = this.position();
     this.playing = false;
     window.clearTimeout(this.timer);

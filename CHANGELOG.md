@@ -4,6 +4,12 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.20 (2026-09-09)
+
+- Switching the song's loop off while it plays no longer fires every remaining note at once. The
+  same slip made a pause inside a looped section resume into silence, and moving or clearing a
+  chip's loop region while it went round could do either; all three are fixed together.
+
 ## 0.2.19 (2026-09-08)
 
 - Sounds with a pan wobble (Ghost, Noise, Synth Strings, Power Guitar, Mosquito, Synth Bell,

@@ -322,6 +322,15 @@ ones applied the way the page does, against a render of a sequencer that had the
 - The pool is live for the same reason: the plan carries no cuts and `LiveVoicePool` applies the
   size per note. Its score is not immune — `channelVolume * velocityGain` means a fader changes
   which voice is stolen — so the plan carries `baseScore` as it carries `baseGain`.
+- ❗ **The pass belongs to the section being gone round, and the section can change under the
+  clock.** A loop is not a seek: the clock runs on unwrapped and voices are posted with `pass ×
+  length` added. Switch the song's loop off during the second pass, clear or move a chip's region,
+  or stop the transport (which stores the *folded* position), and `passFrame` and `rawPosition`
+  disagree by that offset — every voice left in the plan lands at delay 0 in one burst, or nothing
+  posts until the clock has run the offset out. `Player.foldPass` folds the position, brings the
+  pass and the frontier to zero and replays the pool, and every path that can change
+  `activeRegion()` calls it first (the `loop` setter, `setRegion`, `clearRegion`, `stop`).
+  Shipped as "switching loop off explodes every sound at once", 2026-09-09.
 - ❗ **`nextIndex` must never move backwards — a bug that shipped.** Re-pointing the playhead let it
   land before the end of the look-ahead window `pump` had already handed to the worklet, and every
   voice in it was posted again, thirty times a second while a slider was held ("the notes are
