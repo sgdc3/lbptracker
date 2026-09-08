@@ -305,6 +305,7 @@ async function openLevel(opened: Opened): Promise<void> {
       key: r.key,
       name: r.name,
       tracks: r.tracks,
+      uid: r.uid,
       file: result.projects.length > 1 ? r.file : undefined,
     }));
     const first = picker.setRows(rows);
@@ -325,10 +326,13 @@ async function openLevel(opened: Opened): Promise<void> {
       openSong(songFromSequencer(seq), `opened "${seq.name}"`);
       chose(start);
       leaveHome();
-      // One song: nothing to choose, so the dialog can go. Several: leave the
-      // picker in view, the choice is the point. A link that named one has
-      // chosen already.
+      // One song: nothing to choose, so the dialog can go. Several: the picker
+      // is the point, and it is *put up* rather than merely left up, because
+      // the route that most needs it never opened it -- a `?level=` link goes
+      // straight from an empty page to a song, and the other fifteen in the
+      // level would be invisible. A link that named one has chosen already.
       if (rows.length === 1 || wanted) fileDialog.close();
+      else if (!fileDialog.open) fileDialog.showModal();
     } else if (note) setStatus(note, true);
     else if (result.failed.length) setStatus(`nothing to open: ${result.failed[0].why}`, true);
     else setStatus('no sequencers in there', true);

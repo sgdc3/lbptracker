@@ -326,6 +326,12 @@ can never reach the song it names; and `seq` is written only when `level` is in 
 level opened off this machine has no shareable name. Both values are validated before use — the
 hash reaches a fetch URL, the uid a map key.
 
+A `?level=` link with no `seq` puts the picker up when the level holds more than one song
+(`openLevel` in `daw.ts`), rather than opening the biggest and hiding the rest behind a button the
+reader has no reason to press; the rows carry the uid beside the name and the search box matches it
+from the start of the number (`matches` in `widgets/picker-state.ts`), so the number in a link
+leads back to its row.
+
 A level takes seconds to arrive and none of it used to be visible: the archive panel and the drop
 zone both say what they are doing *inside* `#fileDialog`, which a `?level=` link never opens. Every
 route now runs a job on the one loader (`src/widgets/loading.ts`), and it is a modal `<dialog>`

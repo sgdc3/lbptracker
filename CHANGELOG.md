@@ -11,7 +11,9 @@ not before, never how it was done. No `--` or em dash in here; the site's text d
   link, the archive box, a drop or the file buttons.
 - A link can now name a song inside the level, not just the level: the address bar carries the
   song you are looking at, and opening that link again lands straight on it. It is the seq number
-  after the level hash.
+  after the level hash. Every song in the picker shows that number beside its name, and typing it
+  into the search box finds it; a link with no song in it opens the picker, so the other fifteen
+  songs in a level are not hidden behind the biggest one.
 - Opening a level from the online archive no longer fetches the pieces it depends on unless you
   ask for them. It is faster, and on most levels those pieces are copies of songs the level
   already carries. Tick whole backup, or put &deep=1 in a link, when a song lives only in a piece

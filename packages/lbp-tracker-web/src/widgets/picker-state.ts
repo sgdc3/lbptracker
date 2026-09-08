@@ -23,6 +23,12 @@ export interface SeqRow {
   readonly key: string;
   readonly name: string;
   readonly tracks: number;
+  /**
+   * The sequencer's own number in its level, shown because it is what a link
+   * names a song by (`seq=` in `src/link.ts`). Optional: a page that has no
+   * uids to give -- there is none today -- still gets rows.
+   */
+  readonly uid?: number;
   /** The level it came from, shown when a backup holds more than one. */
   readonly file?: string;
 }
@@ -55,3 +61,23 @@ export const detail = (row: SeqRow): string =>
   // in one folder are told apart by the file they came out of and nothing else.
   `${row.tracks} instrument${row.tracks === 1 ? '' : 's'}` +
   `${row.file ? ` · ${shortFile(row.file)}` : ''}`;
+
+/** The uid as it is shown and searched for: `#9819`, or nothing to show. */
+export const uidLabel = (row: SeqRow): string => (row.uid === undefined ? '' : `#${row.uid}`);
+
+/**
+ * Does this row match what was typed?
+ *
+ * ❗ **The uid is searchable because it is now an identifier a reader
+ * handles**: it is in the link to a song, so `9819` pasted back into the box
+ * has to find the row it came from, with or without the `#`. ⚠️ It matches
+ * from the *start* of the number and not anywhere inside it -- `98` finds
+ * `#9819`, `819` does not -- because a uid is a number a reader is copying,
+ * not prose to search through.
+ */
+export const matches = (row: SeqRow, needle: string): boolean => {
+  const q = needle.trim().toLowerCase();
+  if (q === '') return true;
+  if (title(row).toLowerCase().includes(q)) return true;
+  return row.uid !== undefined && `#${row.uid}`.includes(q.startsWith('#') ? q : `#${q}`);
+};

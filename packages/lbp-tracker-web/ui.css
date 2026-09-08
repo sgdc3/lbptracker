@@ -191,6 +191,11 @@ input.picker-search {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .picker-row .picker-detail { margin-left: auto; }
+/* The uid, beside the name: the number a link to this song carries. */
+.picker-uid {
+  flex: 0 0 auto; font: .78rem/1 ui-monospace, Consolas, monospace; color: var(--dimmer);
+}
+.picker-row.on .picker-uid { color: var(--accent); }
 .picker-row:hover, .picker-row.at { background: var(--panel); }
 .picker-row.on { color: var(--accent); }
 .picker-none { color: var(--dimmer); font-size: .85rem; padding: .5rem; }

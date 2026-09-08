@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { levelFromQuery, pickWanted, songFromQuery } from '../src/link.ts';
+import { matches, uidLabel } from '../src/widgets/picker-state.ts';
 
 const SHA1 = '8febe1f91343b2b97843530297d54df113043b89';
 
@@ -46,4 +47,20 @@ test('the wanted row is found by uid, by key, or not at all', () => {
   assert.equal(pickWanted(rows, { key: 'a#7' }), rows[0]);
   assert.equal(pickWanted(rows, { uid: 9 }), undefined);
   assert.equal(pickWanted(rows, undefined), undefined);
+});
+
+// The picker's rows now carry the uid, because that is what a link names a song
+// by; a reader who copies it back into the search box has to find it again.
+test('a row is found by its uid, from the start of the number', () => {
+  const row = { key: 'a#9819', name: 'Intro', tracks: 3, uid: 9819 };
+  assert.ok(matches(row, '9819'));
+  assert.ok(matches(row, '#9819'));
+  assert.ok(matches(row, '98'));
+  assert.ok(matches(row, 'intro'));
+  assert.ok(matches(row, ''));
+  assert.ok(!matches(row, '819'));
+  assert.ok(!matches(row, '1234'));
+  assert.ok(!matches({ key: 'a#1', name: 'Intro', tracks: 3 }, '1'));
+  assert.equal(uidLabel(row), '#9819');
+  assert.equal(uidLabel({ key: 'a', name: 'Intro', tracks: 3 }), '');
 });

@@ -17,7 +17,7 @@
  * here because there is nothing to escape: `{{ }}` is text.
  */
 import { computed, ref, useTemplateRef, watch } from 'vue';
-import { detail, title, type PickerState, type SeqRow } from './picker-state.ts';
+import { detail, matches, title, uidLabel, type PickerState, type SeqRow } from './picker-state.ts';
 
 const props = defineProps<{
   state: PickerState;
@@ -32,10 +32,7 @@ const cursor = ref(-1);
 
 const listEl = useTemplateRef<HTMLElement>('list');
 
-const shown = computed(() => {
-  const q = needle.value.trim().toLowerCase();
-  return props.state.rows.filter((r) => q === '' || title(r).toLowerCase().includes(q));
-});
+const shown = computed(() => props.state.rows.filter((r) => matches(r, needle.value)));
 const current = computed(() => props.state.rows.find((r) => r.key === props.state.chosen));
 
 // A new level: the search starts empty and the chosen row is in view.
@@ -105,6 +102,9 @@ const onKey = async (event: KeyboardEvent) => {
         @click="pick(row.key)"
       >
         <span>{{ title(row) }}</span>
+        <!-- The uid is what a link names this song by, so it is on the row
+             rather than only in the URL: see `seq=` in `src/link.ts`. -->
+        <span v-if="uidLabel(row)" class="picker-uid">{{ uidLabel(row) }}</span>
         <span class="picker-detail">{{ detail(row) }}</span>
       </button>
     </div>
