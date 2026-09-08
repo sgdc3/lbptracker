@@ -36,7 +36,7 @@ import { loadResource } from '@lbptracker/cwlib/resource.ts';
 import { readInstrument, usedSlots } from '../src/rinstrument.ts';
 import { swungFrame } from '../src/swing.ts';
 import { samplesPerStep } from '../src/voice.ts';
-import { loopRegion, readWav } from '../src/wav.ts';
+import { engineSample, readWav } from '../src/wav.ts';
 import { nodeInflate } from '@lbptracker/cwlib/platform/node.ts';
 
 const LEVELS =
@@ -76,13 +76,15 @@ async function loadInstrument(guid: number): Promise<LoadedInstrument | null> {
     const smp = smpIndex.get(sampleGuid);
     if (!smp) continue;
     const wav = readWav(new Uint8Array(await readFile(path.join('fixtures/smp', smp.file))));
+    // The loader's loop region and its 16-frame patch: see `engineSample`.
+    const engine = engineSample(wav);
     slots.push({
       base: slot.baseNote,
       wav: {
-        channels: wav.channels,
+        channels: engine.channels,
         sampleRate: wav.sampleRate,
-        loop: wav.loop ? loopRegion(wav.loop, wav.channels[0].length) : undefined,
-        mips: wav.channels.map((c) => buildMipChain(c)),
+        loop: engine.loop,
+        mips: engine.channels.map((c) => buildMipChain(c)),
       } satisfies SampleBuffer,
     });
   }

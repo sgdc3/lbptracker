@@ -145,8 +145,35 @@ then a signed halve that keeps the low 16 bits — so every output lands back on
 
 **Looping** is a plain modulo (`0x3769`–`0x377a`): if `pos > loopStart + loopLength` then
 `pos = (pos − loopStart) mod loopLength + loopStart`. The region is **`[loopStart, loopStart +
-loopLength)`**, half-open — the same join `loopRegion()` reached by measuring smoothness from the
-other direction ([game-assets.md](game-assets.md)).
+loopLength)`**, half-open, and the loader below fills both from `smpl` as written: `dwStart`, and
+`min(dwEnd + 1, frames) − dwStart`. ❌ `loopRegion()` returned `[dwStart − 1, dwEnd + 1)` until
+2026-09-08 on a smoothness measurement ([game-assets.md](game-assets.md)); the engine's region is
+a frame shorter and its join is the literal one (*43* in
+[answered-questions.md](answered-questions.md)).
+
+### The loader — `v0xb3e520` in the eboot, and what it does to the loop
+
+Found from the `RIFF`/`WAVE`/`smpl`/`fmt `/`data` immediates in the code (the string copies at
+`v0xefbd1e`… belong to FMOD's own codecs, which the sequencer never uses); outside FMOD's range,
+writes exactly the slot's fields, and ends by calling `v0x3fc2b0`, the eboot's copy of the mip
+builder `0x12e0`. `rbx` is the slot, `rsi` a stream:
+
+- Zeroes `+0x00`, `+0x10`, `+0x18`, `+0x78`, `+0x7c`, `+0x80`; checks `RIFF` and `WAVE`; walks
+  the chunks.
+- **`data`** (`v0xb3e697`): `+0x78 = size / 2` samples; allocates `(size/2 | 0xf) + 0x11`
+  int16s — the data rounded up to 16 plus 16 of slack — reads the PCM verbatim, and zero-fills 16
+  frames past it (`v0xb3e950`–`v0xb3e97e`); stereo halves `+0x78` into frames (`v0xb3e989`).
+- **`smpl`** (`v0xb3e700`): per loop, `+0x7c = dwStart` (clamped to `frames − 1`), `+0x80 =
+  min(dwEnd + 1, frames) − start`; then **copies frames `[start, start + 16)` over
+  `[end, end + 16)`** (`v0xb3e77c`–`v0xb3e868`, both channels when stereo). That patch is why the
+  sampler's unwrapped second tap (`0x3780` wraps only *past* `end`) lands on loop-start material:
+  the audible join is `d[dwEnd] → d[dwStart]`. `patchLoop` / `engineSample` in
+  `packages/lbp-tracker-lib/src/wav.ts`.
+- **`fmt `** (`v0xb3e880`): reads four bytes — `wFormatTag`, `nChannels` — and keeps only
+  `+0x94 = (nChannels == 2)`. ❗ **The sample rate is never read, and nothing resamples**: a
+  frame is a frame at the plugin's 48 kHz whatever the file says. 42 of the 216 shipped `.smp`
+  are 44.1 kHz — `ukulele`, `record_static` and five kits — and play 8.8% fast, +1.47 semitones,
+  in the game. The tracker does the same since 2026-09-08; it corrected them before (*43*).
 
 ## The voice record — 208 bytes
 

@@ -11,7 +11,7 @@ import { RATE, renderSequencer, toPcm16, type LoadedInstrument } from '../src/re
 import { readLevelProject, type Sequencer } from '@lbptracker/cwlib/project.ts';
 import { readInstrument, usedSlots } from '../src/rinstrument.ts';
 import { loadResourceFile, nodeInflate } from '@lbptracker/cwlib/platform/node.ts';
-import { loopRegion, readWav } from '../src/wav.ts';
+import { engineSample, readWav } from '../src/wav.ts';
 
 const LEVELS =
   process.env.LBP_LEVELS ?? 'C:/Users/sgdc3/Desktop/LBP/toolkit/tools/sequencerdump/data';
@@ -82,13 +82,15 @@ async function fixture(): Promise<{
       const s = smpIndex.get(sampleGuid);
       if (!s) continue;
       const wav = readWav(await readFile(path.join(SMP, s.file)));
+      // The loader's loop region and its 16-frame patch: see `engineSample`.
+      const engine = engineSample(wav);
       slots.push({
         base: slot.baseNote,
         wav: {
-          channels: wav.channels,
+          channels: engine.channels,
           sampleRate: wav.sampleRate,
-          loop: wav.loop ? loopRegion(wav.loop, wav.channels[0].length) : undefined,
-          mips: wav.channels.map((c) => buildMipChain(c)),
+          loop: engine.loop,
+          mips: engine.channels.map((c) => buildMipChain(c)),
         } satisfies SampleBuffer,
       });
     }

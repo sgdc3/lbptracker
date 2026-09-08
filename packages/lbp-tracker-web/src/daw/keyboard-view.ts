@@ -49,8 +49,8 @@ import { LFO_PARAMS, OUTPUT_PARAMS, STACK_PARAMS } from '@lbptracker/lib/params.
 import { resolveSlot } from '@lbptracker/lib/instrument.ts';
 import { readInstrument, usedSlots, type RInstrument } from '@lbptracker/lib/rinstrument.ts';
 import { loadResource } from '@lbptracker/cwlib/resource.ts';
-import { pitchRatio, velocityGain } from '@lbptracker/lib/voice.ts';
-import { loopRegion, readWav, type WavData } from '@lbptracker/lib/wav.ts';
+import { ENGINE_RATE, pitchRatio, velocityGain } from '@lbptracker/lib/voice.ts';
+import { engineSample, loopRegion, readWav, type WavData } from '@lbptracker/lib/wav.ts';
 import { webInflate } from '@lbptracker/cwlib/platform/web.ts';
 import { state } from './session.ts';
 import { fillSoundField } from '../editor/glyph.ts';
@@ -200,16 +200,15 @@ async function loadInstrument(row: ManifestRow): Promise<void> {
 
   const worklet = await ensureAudio();
   slots.forEach((s, i) => {
+    // The loader's loop region and its 16-frame patch: see `engineSample`.
+    const engine = engineSample(s.wav);
     worklet.port.postMessage({
       type: 'load',
       sample: {
         id: `slot${i}`,
-        channels: s.wav.channels,
+        channels: engine.channels,
         sampleRate: s.wav.sampleRate,
-        // loopRegion, not smpl's fields verbatim -- see its docstring.
-        loop: s.wav.loop
-          ? loopRegion(s.wav.loop, s.wav.channels[0].length)
-          : undefined,
+        loop: engine.loop,
       },
     });
   });
@@ -272,7 +271,10 @@ function voiceFor(note: number) {
   const s = loadedSlots[zone];
   const slot = usedSlots(instrument)[zone].slot;
   const ratio = pitchRatio(slot, note, 120);
-  return { zone, s, ratio, playbackRate: ratio * (s.wav.sampleRate / context.sampleRate) };
+  // The engine never reads a sample's own rate (the loader takes only
+  // `nChannels` out of `fmt `): a frame per output frame at ratio 1, at the
+  // engine's 48 kHz. See `ENGINE_RATE` in voice.ts.
+  return { zone, s, ratio, playbackRate: ratio * (ENGINE_RATE / context.sampleRate) };
 }
 
 /** How long a note of a bench sequence is held, in seconds, from the slider. */

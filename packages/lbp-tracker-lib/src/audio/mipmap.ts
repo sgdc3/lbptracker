@@ -118,13 +118,16 @@ export interface LoopSpan {
  *
  * 1. **Only the integer index is wrapped; the second tap is not.** At the last
  *    frame of the loop the engine interpolates towards the frame that follows
- *    it *in the file*, not towards the frame the loop jumps back to. Wrapping
- *    both taps -- which `interpolate.ts` does, for a defensible reason -- is
- *    smoother and is not what the game plays.
+ *    it *in the buffer* -- and the eboot's loader has put the loop's first
+ *    frame there (`patchLoop` in `wav.ts`: 16 frames of the loop's start
+ *    copied past its end), so on a buffer built by `engineSample` the join is
+ *    seamless by construction. On a raw buffer it reads whatever follows the
+ *    loop in the file, which is what this did for every sample until
+ *    2026-09-08.
  * 2. **The wrap triggers on `>` , not `>=`.** Index `loop.end` is read
- *    directly, and the frame after it maps to `loop.start + 1` rather than to
- *    `loop.start`. So `loop.start` is visited once, on the way in; the
- *    repeating region is effectively `[start + 1, end]`.
+ *    directly -- the patched frame, equal to `loop.start`'s -- and the frame
+ *    after it maps to `loop.start + 1`, so the two readings agree and the
+ *    period is exactly `end − start` frames.
  */
 export function readMipped(
   chain: MipChain,

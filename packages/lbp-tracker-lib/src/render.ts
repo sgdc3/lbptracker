@@ -414,7 +414,8 @@ export async function renderSequencer(
     if (sample.loop !== undefined) return 0;
     if (oneShot === 'gate') return 0;
     if (oneShot === 'full') return Infinity;
-    return (sample.channels[0].length * RATE) / sample.sampleRate;
+    // A frame per output frame: the engine never reads the file's rate.
+    return sample.channels[0].length;
   };
 
   // ## Resolving every note before the pool runs, and why
@@ -462,12 +463,18 @@ export async function renderSequencer(
     const zone = resolveSlot(loaded.inst, event.pitch, loaded.slots.length);
     const slot = loaded.slots[Math.min(zone, loaded.slots.length - 1)];
     const definition = loaded.inst.slots[Math.min(zone, loaded.inst.slots.length - 1)];
+    // ❗ **No sample-rate conversion.** The eboot's loader (`v0xb3e520`) reads
+    // `nChannels` out of `fmt ` and nothing else -- never the rate -- and the
+    // plugin advances one sample frame per output frame at ratio 1, so the 42
+    // shipped `.smp` at 44.1 kHz play 8.8% fast, +1.47 semitones, in the game
+    // (`ukulele`, `record_static` and five kits). This multiplied by
+    // `sampleRate / RATE` until 2026-09-08 and played them in tune, which the
+    // game does not; *43* in steering/answered-questions.md.
     const playbackRate =
       ((unpitchedPercussion && slot.wav.loop === undefined) ||
       unpitchedGuids.includes(event.guid)
         ? 1
         : pitchRatio(definition, note, seq.tempo)) *
-      (slot.wav.sampleRate / RATE) *
       (pitchShift.get(event.guid) ?? 1);
     const hold = holdFramesFor(slot.wav);
     const stretched =

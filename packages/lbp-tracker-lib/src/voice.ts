@@ -30,6 +30,9 @@ import { resolveSlot } from './instrument.ts';
  */
 export const FINETUNE_PER_SEMITONE = 1;
 
+/** The engine's output rate. Its plugin is written for it and nothing else. */
+export const ENGINE_RATE = 48000;
+
 /**
  * ✔ Measured: the engine's step is `720000 / tempo` frames (`0x0bf7`), and at
  * its default tempo of 125 that is `48000 * 60 / (125 * 4)` -- four steps to
@@ -60,7 +63,13 @@ export interface VoiceRequest {
   readonly level: number;
   /** `PInstrument.Pan`, 0..1 centred at 0.5. */
   readonly pan: number;
-  /** The sample's own rate, from the FSB header. */
+  /**
+   * The sample's own rate.
+   *
+   * ⚠️ **Ignored, as the engine ignores it**: the loader never reads the
+   * `fmt ` rate and the plugin plays a frame per output frame at ratio 1.
+   * Kept so a caller carrying it need not change.
+   */
   readonly sampleRate: number;
   /** The output device's rate. */
   readonly outputRate: number;
@@ -81,10 +90,13 @@ export interface VoiceRequest {
  * structure, the order of the terms and the `tempo / baseBpm` factor all match
  * `0x1d71`-`0x1e1f` in `fmodextinput.prx` exactly. See steering/synth-engine.md.
  *
- * ⚠️ **There is no sample-rate term in it.** The engine's ratio is this one
- * and nothing else; `render.ts` multiplies by `sample.sampleRate / RATE` on
- * top, and 42 of the 216 shipped `.smp` files are 44.1 kHz. Whether the game
- * resamples them on load is unread -- *43* in steering/open-questions.md.
+ * ❗ **There is no sample-rate term in it, and none anywhere else.** The
+ * eboot's loader (`v0xb3e520`) reads `nChannels` out of `fmt ` and nothing
+ * more -- never the rate -- and hands the frames to the plugin as they are, so
+ * a frame is a frame at 48 kHz whatever the file said. 42 of the 216 shipped
+ * `.smp` are 44.1 kHz (`ukulele`, `record_static`, five kits) and the game
+ * plays them 8.8% fast, +1.47 semitones. So does this, since 2026-09-08; it
+ * used to correct them (*43* in steering/answered-questions.md).
  */
 export function pitchRatio(
   slot: SampleSlot,
@@ -122,7 +134,7 @@ export function voiceFor(request: VoiceRequest): VoiceParams {
   const ratio = pitchRatio(definition, request.note, request.tempo);
   return {
     slot,
-    playbackRate: ratio * (request.sampleRate / request.outputRate),
+    playbackRate: ratio * (ENGINE_RATE / request.outputRate),
     gain: velocityGain(request.volume) * request.level,
     pan: request.pan,
   };

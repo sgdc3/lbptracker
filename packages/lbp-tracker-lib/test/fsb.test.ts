@@ -294,20 +294,58 @@ test('every pitched sequencer sample carries a sustain loop', async (t) => {
   }
 });
 
-test('loopRegion shifts both bounds down by one', async () => {
+test('loopRegion is the loader\'s: start as written, the inclusive end made exclusive', async () => {
   const { loopRegion } = await import('../src/wav.ts');
-  assert.deepEqual(loopRegion({ start: 100, end: 200, type: 0 }, 500), { start: 99, end: 201 });
+  // v0xb3e74c-v0xb3e76d: +0x7c = dwStart, +0x80 = min(dwEnd + 1, frames) - start.
+  assert.deepEqual(loopRegion({ start: 100, end: 200, type: 0 }, 500), { start: 100, end: 201 });
   // Clamped rather than out of range at either edge.
   assert.deepEqual(loopRegion({ start: 0, end: 99, type: 0 }, 100), { start: 0, end: 100 });
+  assert.deepEqual(loopRegion({ start: 120, end: 200, type: 0 }, 100), { start: 99, end: 100 });
 });
 
-test('loopRegion joins the loop more smoothly than smpl read literally', async (t) => {
+test('patchLoop puts the loop\'s first 16 frames after its end, so the wrap reads them', async () => {
+  const { patchLoop, LOOP_PATCH_FRAMES } = await import('../src/wav.ts');
+  const { buildMipChain, readMipped } = await import('../src/audio/mipmap.ts');
+  // A ramp whose loop is [10, 30): frame 30 in the file is 30, and after the
+  // patch it is frame 10's value.
+  const data = Float32Array.from({ length: 40 }, (_, i) => i / 100);
+  const loop = { start: 10, end: 30 };
+  const patched = patchLoop(data, loop);
+  // The loader's buffer always has 16 frames past the loop's end; here the
+  // file is 40 frames and the patch reaches 46, so the copy grows it.
+  assert.equal(patched.length, 46, 'grown to hold the patch');
+  for (let i = 0; i < LOOP_PATCH_FRAMES; i += 1) {
+    assert.equal(patched[30 + i], data[10 + i], `frame ${30 + i} holds frame ${10 + i}`);
+  }
+  assert.equal(patched[9], data[9], 'nothing before the end is touched');
+  // A loop ending on the file's last frame grows the buffer by the patch.
+  const tail = patchLoop(data, { start: 10, end: 40 });
+  assert.equal(tail.length, 40 + LOOP_PATCH_FRAMES);
+  assert.equal(tail[40], data[10]);
+
+  // Through the engine's sampler: position 29.5 interpolates towards frame 30,
+  // which is now the loop's first frame -- the same value position 9.5 + 20
+  // cycles would give on an endless ramp of the loop, i.e. seamless.
+  const chain = buildMipChain(patched);
+  const atWrap = readMipped(chain, 29.5, 0, loop);
+  assert.ok(Math.abs(atWrap - (data[29] + data[10]) / 2) < 1e-9, `wrap reads ${atWrap}`);
+  // And one frame on, index 31 wraps to 11: the period is exactly 20 frames.
+  assert.ok(Math.abs(readMipped(chain, 31, 0, loop) - data[11]) < 1e-9);
+});
+
+// ❌ Until 2026-09-08 this test asserted that shifting the loop down by one
+// frame joined more smoothly than the literal reading -- which it does, and
+// which is not what the game plays: the loader takes `smpl` as written and
+// patches the loop's first frames past its end, so the engine's join IS the
+// literal one. The measurement is kept for the record, and the assertion is
+// now that the patched join is exactly the literal one.
+test('the engine\'s join is the literal one, and the patch makes it so', async (t) => {
   const dir = process.env.LBP_SMP ?? 'fixtures/smp';
   if (!existsSync(dir)) {
     t.skip(`no ${dir} (extract with tools/ExtractGuid.java)`);
     return;
   }
-  const { loopRegion } = await import('../src/wav.ts');
+  const { loopRegion, patchLoop } = await import('../src/wav.ts');
   const { readdir } = await import('node:fs/promises');
   const files = (await readdir(dir)).filter((f) => f.endsWith('.smp'));
   if (files.length === 0) {
@@ -333,16 +371,17 @@ test('loopRegion joins the loop more smoothly than smpl read literally', async (
     step = step / k || 1e-9;
 
     const region = loopRegion(wav.loop, d.length);
-    fixed += Math.abs(d[region.start] - d[region.end - 1]) / step;
-    literal += Math.abs(d[start] - d[end]) / step;
+    const patched = patchLoop(d, region);
+    // The frame the sampler's unwrapped second tap reads at the loop's last
+    // frame is the loop's first, on every corpus loop.
+    assert.equal(patched[region.end], d[region.start], `${name}: the patch lands`);
+    fixed += Math.abs(d[region.start - 1] - d[region.end - 1]) / step;
+    literal += Math.abs(patched[region.end] - patched[region.end - 1]) / step;
     n += 1;
   }
   assert.ok(n > 20, `expected a corpus of loops, saw ${n}`);
   console.log(
-    `    ${n} loops — join with loopRegion ${(fixed / n).toFixed(2)}x, ` +
-      `read literally ${(literal / n).toFixed(2)}x`,
+    `    ${n} loops — the engine's join ${(literal / n).toFixed(2)}x an adjacent step; ` +
+      `the old one-frame shift would have been ${(fixed / n).toFixed(2)}x`,
   );
-  // Under 1x means the join is smoother than an average pair of adjacent frames.
-  assert.ok(fixed / n < 1, `loopRegion should join continuously, got ${(fixed / n).toFixed(2)}x`);
-  assert.ok(literal / n > fixed / n * 2, 'and clearly better than the literal reading');
 });

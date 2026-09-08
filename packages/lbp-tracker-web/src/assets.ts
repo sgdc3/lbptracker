@@ -17,7 +17,7 @@ import { type SampleBuffer } from '@lbptracker/lib/audio/mixer.ts';
 import { loadResource } from '@lbptracker/cwlib/resource.ts';
 import { type LoadedInstrument } from '@lbptracker/lib/render.ts';
 import { readInstrument, usedSlots } from '@lbptracker/lib/rinstrument.ts';
-import { readWav, loopRegion } from '@lbptracker/lib/wav.ts';
+import { engineSample, readWav } from '@lbptracker/lib/wav.ts';
 import { webInflate } from '@lbptracker/cwlib/platform/web.ts';
 
 export type Manifest = Map<number, { file: string; path?: string }>;
@@ -92,13 +92,15 @@ export async function loaderFor(
       const s = smpIndex.get(sampleGuid);
       if (!s) continue;
       const wav = readWav(await bytes(asset(`fixtures/smp/${s.file}`)));
+      // The loader's loop region and its 16-frame patch: see `engineSample`.
+      const engine = engineSample(wav);
       slots.push({
         base: slot.baseNote,
         wav: {
-          channels: wav.channels,
+          channels: engine.channels,
           sampleRate: wav.sampleRate,
-          loop: wav.loop ? loopRegion(wav.loop, wav.channels[0].length) : undefined,
-          mips: wav.channels.map((c) => buildMipChain(c)),
+          loop: engine.loop,
+          mips: engine.channels.map((c) => buildMipChain(c)),
         } satisfies SampleBuffer,
       });
     }

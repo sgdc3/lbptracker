@@ -320,6 +320,27 @@ instruments that are both stacked and filtered (`choir`, `brass`, `synth_strings
 law to where the layer loop ends. ⚠️ When a state count and an implementation's count disagree,
 the implementation is wrong, not the count — and "one per channel" means *after* the pan.
 
+## 43. The 44.1 kHz samples, and the loop the loader really plays
+
+**Answer**: the eboot's sample loader `v0xb3e520` reads `nChannels` out of `fmt ` and nothing
+else, never resamples, fills the slot's loop from `smpl` as written (`[dwStart, dwEnd + 1)`), and
+copies the loop's first 16 frames past its end — *The loader* in [synth-engine.md](synth-engine.md).
+So the 42 shipped `.smp` at 44.1 kHz play +1.47 semitones in the game, and every loop joins
+literally. `render.ts` dropped its `sampleRate / RATE`, `loopRegion()` returns the loader's
+region and `engineSample()` applies the patch (2026-09-08).
+
+❌ **A measurement of the files was taken for a measurement of the engine.** `loopRegion()`'s
+`[dwStart − 1, dwEnd + 1)` came from asking which join was smoothest across the corpus, and it
+was smoothest — 0.59× an adjacent step against 3.28× for the literal reading — and steering
+recorded "the engine agrees from the other direction" because the plugin's region is half-open
+too. Half-open said nothing about where the start is; the loader did, and it was three
+`RIFF`/`smpl` immediates away from being found (`grep` the eboot for the tag bytes; the string
+copies at `v0xefbd1e` are FMOD's codecs and lead nowhere). ⚠️ Smoothness is a property of the
+file; fidelity is a property of the loader. The two agreed only by luck, and here they did not.
+⚠️ The same loader was the answer to the sample-rate question that sat as *43* in
+open-questions for a day: "the slot has no rate field" was already the whole argument, and the
+reading only confirmed it.
+
 ## 3 / 3b. Grid resolution, swing, triplets and the block clock
 
 **Answer**: `gridX = floor(2x/105 − 0.5)`, 16 steps per cell (measured twice), `720000/tempo`

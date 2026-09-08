@@ -184,9 +184,12 @@ test('fitBpm scales the rate by tempo over the sample tempo', () => {
   assert.ok(Math.abs(pitchRatio(loop, 48, 180) - 1.5) < 1e-9);
 });
 
-test('playbackRate folds in the sample-rate conversion', () => {
-  // A 22050 Hz sample played at its base note on a 44100 Hz device advances
-  // half a frame per output frame.
+test('playbackRate ignores the file\'s own rate, as the loader does', () => {
+  // The eboot's loader (v0xb3e520) never reads the `fmt ` rate: a frame is a
+  // frame at the engine's 48 kHz. A 22050 Hz file at its base note on a
+  // 44100 Hz device therefore advances 48000/44100 frames per output frame --
+  // the device correction and nothing for the file, which plays 2.18x fast
+  // exactly as it would in the game.
   const v = voiceFor({
     note: 48,
     volume: 127,
@@ -197,7 +200,7 @@ test('playbackRate folds in the sample-rate conversion', () => {
     outputRate: 44100,
     tempo: 120,
   });
-  assert.ok(Math.abs(v.playbackRate - 0.5) < 1e-12);
+  assert.ok(Math.abs(v.playbackRate - 48000 / 44100) < 1e-12);
   assert.equal(v.slot, 0);
   assert.ok(Math.abs(v.gain - 1) < 1e-12);
 });

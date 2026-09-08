@@ -25,6 +25,12 @@ not before, never how it was done. No `--` or em dash in here; the site's text d
   game; one that opens at zero and rises still fades in.
 - With swing on, a glide bends at every step the way the game's does, instead of running straight
   in time across the stretched and squeezed steps.
+- The 42 game samples recorded at 44.1 kHz (Ukulele, Record Static and five drum kits) play as
+  the game plays them: a frame per frame at 48 kHz, so 8.8% faster and a semitone and a half
+  higher than before. The game never reads a sample's own rate; the tracker used to.
+- Loops join the way the game joins them: from the loop's last frame straight to its first, with
+  the loader's own patch behind the seam. The tracker used to start each loop a frame early,
+  which sounded smoother and ran a few cents flat.
 - Turning every output switch off no longer drops the level by 4.6 dB.
 
 ## 0.2.18 (2026-09-07)

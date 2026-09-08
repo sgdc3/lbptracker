@@ -35,7 +35,7 @@ import { VOICES_UNLIMITED, VOICE_POOL_SIZE } from '../src/polyphony.ts';
 import { readLevelProject, type LevelProject } from '@lbptracker/cwlib/project.ts';
 import { readInstrument, usedSlots } from '../src/rinstrument.ts';
 import { loadResourceFile, nodeInflate } from '@lbptracker/cwlib/platform/node.ts';
-import { readWav, writeWav, loopRegion } from '../src/wav.ts';
+import { engineSample, readWav, writeWav } from '../src/wav.ts';
 
 const seqIndex = Number(process.argv[2] ?? 0);
 // 0 (or no argument) renders the sequencer end to end.
@@ -243,13 +243,15 @@ async function loadInstrument(guid: number): Promise<LoadedInstrument | null> {
     const s = smpIndex.get(sampleGuid);
     if (!s) continue;
     const wav = readWav(await readFile(path.join('fixtures/smp', s.file)));
+    // The loader's loop region and its 16-frame patch: see `engineSample`.
+    const engine = engineSample(wav);
     slots.push({
       base: slot.baseNote,
       wav: {
-        channels: wav.channels,
+        channels: engine.channels,
         sampleRate: wav.sampleRate,
-        loop: wav.loop ? loopRegion(wav.loop, wav.channels[0].length) : undefined,
-        mips: wav.channels.map((c) => buildMipChain(c)),
+        loop: engine.loop,
+        mips: engine.channels.map((c) => buildMipChain(c)),
       } satisfies SampleBuffer,
     });
   }

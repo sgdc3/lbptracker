@@ -20,33 +20,79 @@ export interface WavLoop {
 }
 
 /**
- * The half-open region a player should actually loop, `[start, end)`.
+ * The loop the engine plays, `[start, end)`: the loader's own reading of `smpl`.
  *
- * ⚠️ **Not what `smpl`'s own fields say, and this was measured rather than
- * reasoned.** The join has to be phase-continuous, so the right question is
- * which frame follows which at the wrap. Across the game's 60 usable loops,
- * the jump at the join measured in units of the sample's own average adjacent
- * step:
+ * ✔ **Read out of the eboot's sample loader** (`v0xb3e520`, 2026-09-08, the
+ * function that fills the plugin's slot -- `+0x78`, `+0x7c`, `+0x80`, `+0x94`
+ * -- and calls its mip builder): `+0x7c` is `dwStart` as written, clamped to
+ * the last frame; `+0x80` is `min(dwEnd + 1, frames) − start`, so `smpl`'s end
+ * is inclusive and the region half-open. The loader then copies the loop's
+ * first 16 frames to just past its end ({@link patchLoop}), which is what
+ * makes the sampler's unwrapped second tap land on loop-start material: the
+ * audible join is `d[dwEnd] → d[dwStart]`, the literal one.
  *
- * | join | mean | worst |
- * |---|---|---|
- * | `d[end] → d[start-1]` | **0.59×** | 3.2× |
- * | `d[end+1] → d[start]` | 0.98× | 15.9× |
- * | `d[end] → d[start]` (the literal reading) | 3.28× | 69.5× |
- *
- * A mean below 1 means the join is smoother than an average pair of adjacent
- * frames — continuous. The literal reading is five times worse and is what
- * a listener heard as a transient on high notes, where a 45 ms loop wraps
- * twenty times a second.
+ * ❌ **Until 2026-09-08 this returned `[dwStart − 1, dwEnd + 1)`**, a region
+ * one frame longer than the engine's, chosen by measuring which join was
+ * smoothest over the corpus (`d[end] → d[start − 1]` at 0.59× the average
+ * adjacent step against 3.28× for the literal one; steering/game-assets.md
+ * keeps the table). Smoother, and not the game's: it lengthened every loop's
+ * period by a frame -- a few cents flat on a 45 ms loop -- and bought a
+ * smoothness the game does not have. If a sustained high piano note clicks
+ * here and not in a capture of the game, this is the line to revisit.
  */
 export function loopRegion(
   loop: WavLoop,
   frameCount: number,
 ): { start: number; end: number } {
-  return {
-    start: Math.max(0, loop.start - 1),
-    end: Math.min(frameCount, loop.end + 1),
-  };
+  const start = Math.max(0, Math.min(loop.start, frameCount - 1));
+  return { start, end: Math.max(start, Math.min(frameCount, loop.end + 1)) };
+}
+
+/** Frames the loader copies from the loop's start to just past its end. */
+export const LOOP_PATCH_FRAMES = 16;
+
+/**
+ * The engine's loop patch: the loop's first 16 frames written over the 16
+ * frames after its end, in a buffer with room for them.
+ *
+ * `v0xb3e77c`-`v0xb3e868` in the eboot, once the `smpl` chunk is read: for
+ * `i` in 0..15, `data[end + i] = data[start + i]`, with `end` the exclusive
+ * end. The buffer was allocated with 16 to 31 frames of slack and zero-filled
+ * past the data (`v0xb3e950`-`v0xb3e97e`), so the copy always has room. The
+ * sampler (`0x3780`) wraps only *past* `end` and leaves its second tap
+ * unwrapped, so at the last frame of the loop it interpolates towards
+ * `data[end]` -- and thanks to this patch that is the loop's first frame, not
+ * whatever the file held after the loop. The mip copies are built from the
+ * patched buffer, so their wraps see the same material.
+ *
+ * A copy, never in place: the decoded channels are shared with paths that read
+ * the file as it is.
+ */
+export function patchLoop(
+  channel: Float32Array,
+  loop: { readonly start: number; readonly end: number },
+): Float32Array {
+  const out = new Float32Array(Math.max(channel.length, loop.end + LOOP_PATCH_FRAMES));
+  out.set(channel);
+  for (let i = 0; i < LOOP_PATCH_FRAMES; i += 1) {
+    out[loop.end + i] = channel[loop.start + i] ?? 0;
+  }
+  return out;
+}
+
+/**
+ * A decoded sample as the engine holds it: the loader's loop region, and the
+ * channels with its 16-frame patch applied. What every `SampleBuffer` built
+ * from a `.smp` should start from.
+ */
+export function engineSample(wav: WavData): {
+  readonly channels: Float32Array[];
+  readonly loop: { readonly start: number; readonly end: number } | undefined;
+} {
+  const loop = wav.loop ? loopRegion(wav.loop, wav.channels[0].length) : undefined;
+  const looped = loop !== undefined && loop.end > loop.start;
+  const channels = wav.channels.map((c) => (looped ? patchLoop(c, loop) : c));
+  return { channels, loop: looped ? loop : undefined };
 }
 
 /**

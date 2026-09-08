@@ -164,20 +164,6 @@ have none.
   likeliest sources are the component's `scaleX` on the board and the highest `x` in `Notes` —
   or save a level with an empty six-bar grid and see what changes in the file.
 
-## 43. The 44.1 kHz samples — does the game resample them, or play them sharp?
-
-**42 of the 216 shipped `.smp` files are 44100 Hz** (all mono 16-bit PCM; the other 174 are
-48000), measured 2026-09-08 over `fixtures/smp`. They belong to seven instruments: `8bit_kit_1`,
-`dubstep_kit`, `electronic_kit`, `hand_percussion`, `junk_kit` — one-shots — and **`record_static`
-and `ukulele`**, which are looped and pitched. The engine's rate is `exp2f((pitch + fineTune −
-rootNote)/12)` and nothing else (`0x1d8c`–`0x1dc2`; the tempo-sync branch never runs, `fitBpm` is
-0 on all 278 slots), and the slot has no sample-rate field, so **either the eboot resamples to
-48 kHz when it decodes the `RSample`, or the game plays these 8.8% fast — +1.47 semitones and
-shorter**. `render.ts` and the player multiply by `sample.sampleRate / RATE`, i.e. they assume the
-first, on no reading. **What would settle it**: a capture of the ukulele against its own sample,
-or the `RSample` loader in the eboot (the preload worker at `v0x1c38aa` is where type 49 is
-loaded). A two-second listen; the difference is a semitone and a half on an instrument in tune.
-
 ## 40. What a new sequencer starts at — the editor's defaults are the corpus's modes
 
 Nothing has been read out of the game about the values a freshly placed Music Sequencer or

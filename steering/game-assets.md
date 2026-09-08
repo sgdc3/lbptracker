@@ -104,10 +104,16 @@ adjacent step:
 
 A mean below 1 means the join is smoother than an average pair of adjacent frames. The literal
 reading is 5× worse, and a listener heard it as a transient on high notes — `piano_c6`'s loop is
-45 ms and wraps 22 times a second, so a 2× step becomes a 22 Hz buzz. `loopRegion()` in
-`packages/lbp-tracker-lib/src/wav.ts` does the shift and `packages/lbp-tracker-lib/test/fsb.test.ts`
-guards the 0.59× figure. ✔ The engine agrees from the other direction: its loop is the half-open
-`[loopStart, loopStart + loopLength)` — [synth-engine.md](synth-engine.md). ⚠️ The metric is
+45 ms and wraps 22 times a second, so a 2× step becomes a 22 Hz buzz. ❌ **And the literal
+reading is the game's.** The eboot's loader (`v0xb3e520`, *The loader* in
+[synth-engine.md](synth-engine.md)) takes `smpl` as written — `[dwStart, dwEnd + 1)` — and copies
+the loop's first 16 frames past its end, so the engine's join is `d[dwEnd] → d[dwStart]`, the
+3.28× row. `loopRegion()` in `packages/lbp-tracker-lib/src/wav.ts` returned the 0.59× region until
+2026-09-08, a frame longer than the engine's and a few cents flat on a short loop; it returns the
+loader's now, and `engineSample()` applies the patch. The table stays as a measurement of the
+*files*: whatever the sound designers cut their loops for, the game plays them literally, and
+whether that clicks on a sustained F5 is what a capture would show (*The piano's loop contour* in
+[open-questions.md](open-questions.md)). ⚠️ The metric is
 meaningless for synthesised waveforms: `kenny_saw_a4` measures 108× because a sawtooth's vertical
 edge *is* its shape. Judge it on the acoustic multisamples.
 
