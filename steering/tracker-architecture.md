@@ -144,7 +144,8 @@ page goes silent with no error on the main thread.
 `?open=fixtures/levels/x.lvl` on any page fetches that file from the site and opens it as if
 dropped (`widgets/open-panel.ts`): a file input cannot be filled from a script, and it is how the
 pages are checked in an automated browser. The deployed site serves no levels, so there it 404s
-into the page's error line.
+into the page's error line. `?level=<sha1>` is the other query route and is the shareable one — a
+published level fetched from the archive; *Checking it* in [editor.md](editor.md) has it.
 
 What was kept: the libraries have no build (the bundler stops at the web package's edge; `node
 --test` runs 306 tests against the source); the output is relocatable (`base: './'`, every path

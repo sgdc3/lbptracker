@@ -65,3 +65,31 @@ export function readPaste(text: string): Pasted {
   if (link) return { kind: 'link', id: Number(link[1]) };
   return { kind: 'neither' };
 }
+
+/**
+ * The query parameter that names a level in the archive.
+ *
+ * ❗ **The shareable link is the hash**, because that is the only name a
+ * level has here: `?level=<40 hex digits>` opens exactly what pasting those
+ * digits into the box opens, `&deep=0` turns the dependency walk off. Nothing
+ * else is encoded -- the level's bytes are fetched from archive.org by the
+ * reader's own browser, so a link costs this site nothing and works from any
+ * copy of it, including a local dev server.
+ */
+export const LEVEL_PARAM = 'level';
+export const DEEP_PARAM = 'deep';
+
+/**
+ * The level a URL asks for, if it asks for one.
+ *
+ * ⚠️ **The hash is validated here, not trusted**: it goes into a
+ * fetch URL, and 40 hex digits is the whole of what a level's name may be.
+ * A malformed one is no level rather than a request to archive.org.
+ */
+export function levelFromQuery(search: string): { sha1: string; deep: boolean } | undefined {
+  const params = new URLSearchParams(search);
+  const wanted = params.get(LEVEL_PARAM)?.trim() ?? '';
+  if (!/^[0-9a-f]{40}$/i.test(wanted)) return undefined;
+  const deep = params.get(DEEP_PARAM);
+  return { sha1: wanted.toLowerCase(), deep: deep !== '0' && deep !== 'false' };
+}

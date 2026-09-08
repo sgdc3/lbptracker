@@ -22,7 +22,7 @@
 
 import { createApp, h, reactive } from 'vue';
 import ArchivePanel from './widgets/ArchivePanel.vue';
-import { readPaste, rootLevelUrl, SEARCH_HOST } from './lbparchive.ts';
+import { DEEP_PARAM, LEVEL_PARAM, readPaste, rootLevelUrl, SEARCH_HOST } from './lbparchive.ts';
 import { OPENABLE_DEPENDENCIES, readDependencies } from '@lbptracker/cwlib/resource.ts';
 import { looksLikeLevel } from '@lbptracker/cwlib/backup.ts';
 import type { BackupFile } from '@lbptracker/cwlib/backup.ts';
@@ -45,6 +45,12 @@ import type { Opened } from './open-level.ts';
 const RESOURCE_LIMIT = 250;
 const AT_A_TIME = 6;
 
+/** What a wired panel lets the page do without the reader touching it. */
+export interface ArchiveOpen {
+  /** Open a root level by its SHA-1, as if it had been pasted into the box. */
+  open(sha1: string, opts?: { deep?: boolean }): Promise<void>;
+}
+
 /**
  * Wire a button to a panel it builds itself.
  *
@@ -56,7 +62,7 @@ export function wireArchiveOpen(opts: {
   button: HTMLElement;
   host: HTMLElement;
   onOpen: (opened: Opened) => void | Promise<void>;
-}): void {
+}): ArchiveOpen {
   const { button, host, onOpen } = opts;
   host.classList.add('archive');
   host.hidden = true;
@@ -157,10 +163,12 @@ export function wireArchiveOpen(opts: {
    * twelve "adventure map" hashes taken off the index are `ADCb`, so this is not
    * a corner case.
    */
-  async function open_(sha1: string): Promise<void> {
+  async function open_(sha1: string, deep = ui.deep): Promise<void> {
     if (busy) return;
     busy = true;
     ui.busy = true;
+    ui.query = sha1;
+    ui.deep = deep;
     say(`fetching ${sha1.slice(0, 8)}…`);
     try {
       const root = await grab(sha1);
@@ -169,7 +177,7 @@ export function wireArchiveOpen(opts: {
       // ❗ **Read once, at the start.** Ticking the box while eighteen fetches
       // are in flight must not change what this open is doing halfway through.
       // ❗ Not optional when the root is not itself openable: see above.
-      const withParts = ui.deep || !looksLikeLevel(root);
+      const withParts = deep || !looksLikeLevel(root);
       const queue = withParts ? partsOf(root, seen) : [];
       let missing = 0;
       while (queue.length > 0 && files.length < RESOURCE_LIMIT) {
@@ -202,6 +210,13 @@ export function wireArchiveOpen(opts: {
         missing > 0,
       );
       host.hidden = missing === 0;
+      // ❗ **The address bar becomes the link to share.** A level opened
+      // from the archive is fully named by its hash, so writing it into the URL
+      // costs one `replaceState` and gives the reader something to copy; the
+      // walk goes with it because it changes what the link opens. `replaceState`
+      // and not `pushState`: opening a level is not a page the Back button
+      // should have to step through.
+      rememberInUrl(sha1, deep);
       // No name to give it: naming levels is what the index does, and not
       // needing the index is the point. The songs carry their own titles anyway.
       await onOpen({
@@ -238,4 +253,22 @@ export function wireArchiveOpen(opts: {
     host.hidden = !host.hidden;
     if (!host.hidden) focusField();
   });
+
+  return {
+    open: (sha1, o) => {
+      // Opened from a link rather than from the box: show the box anyway, or a
+      // hash that 404s reports itself into a panel nobody can see.
+      host.hidden = false;
+      return open_(sha1.toLowerCase(), o?.deep ?? ui.deep);
+    },
+  };
+}
+
+/** Put an opened level's hash in the address bar, so the URL is the link. */
+function rememberInUrl(sha1: string, deep: boolean): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set(LEVEL_PARAM, sha1);
+  if (deep) url.searchParams.delete(DEEP_PARAM);
+  else url.searchParams.set(DEEP_PARAM, '0');
+  window.history.replaceState(null, '', url);
 }

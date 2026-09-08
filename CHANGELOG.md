@@ -4,6 +4,14 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.21 (2026-09-09)
+
+- A level opened from the online archive now has a link of its own. The address bar carries the
+  level's hash once it opens, so copying the URL and sending it to somebody opens the same level
+  for them; a link like ?level= followed by the 40 hex digits works on its own too, and adding
+  &deep=0 to it skips fetching the level's extra pieces.
+- A new song starts at 120 BPM instead of 240.
+
 ## 0.2.20 (2026-09-09)
 
 - Switching the song's loop off while it plays no longer fires every remaining note at once. The

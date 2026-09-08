@@ -44,41 +44,75 @@ running transport), the status line and the audition path; the shell in `daw.ts`
 the transport and the files. ⚠️ **The Keyboard view keeps its own `AudioContext` and worklet**:
 it A/Bs the engine against the browser's resampler and loads samples under its own ids, which
 the song's player must not see. Each view's keys answer only while it is the one shown (Space
-plays from anywhere but a field). The transport's keys are in the shell (`daw.ts`): Space plays and **pauses where it is**
-(`player.stop` keeps the position; only the stop button rewinds), Home and Enter seek to the start
-without stopping, End to `songEndSteps`, Ctrl+S saves. ⚠️ **No letters there**: the Keyboard view
-plays notes on `Z S X D C V G B H N J M , L .`, so L for loop and M and S for the selected row's
-mute and solo live in the arrange view's own handler, which answers only while it is shown.
-
-❗ **The media keys go through `daw/media-keys.ts`, and they need a media element to arrive.** The
-Media Session API hands the session to whatever the page is *playing*, and this tracker's sound
-comes out of an `AudioWorklet`, which is not one: with Web Audio alone the browser gives the page
-no session and a keyboard's play key goes somewhere else entirely. So a silent WAV -- written by
-our own `writeWav`, no base64 in the source -- loops in an `<audio>` element for exactly as long
-as the transport runs. ⚠️ It must not be muted and its volume must stay at 1: a browser gives the
-session to *audible* media, and silence at volume 0 is not that. ⚠️ And `el.play()` needs a real
-gesture, so it is only ever called from the transport starting; a synthetic click does not count,
-which is why checking this in a driven browser needs a real pointer click rather than
-`element.click()`.
-
-The actions map to this transport: play, pause where it is, stop and rewind, and the two track
-keys to the start and the end -- one song is open, so that is what a track is. `setPositionState`
-gives the system's scrubber the song's real length; ⚠️ it throws on a duration of zero, which is
+plays from anywhere but a field). The transport's keys are in the shell (`daw.ts`): Space plays and **pauses where it is**
+
+(`player.stop` keeps the position; only the stop button rewinds), Home and Enter seek to the start
+
+without stopping, End to `songEndSteps`, Ctrl+S saves. ⚠️ **No letters there**: the Keyboard view
+
+plays notes on `Z S X D C V G B H N J M , L .`, so L for loop and M and S for the selected row's
+
+mute and solo live in the arrange view's own handler, which answers only while it is shown.
+
+
+
+❗ **The media keys go through `daw/media-keys.ts`, and they need a media element to arrive.** The
+
+Media Session API hands the session to whatever the page is *playing*, and this tracker's sound
+
+comes out of an `AudioWorklet`, which is not one: with Web Audio alone the browser gives the page
+
+no session and a keyboard's play key goes somewhere else entirely. So a silent WAV -- written by
+
+our own `writeWav`, no base64 in the source -- loops in an `<audio>` element for exactly as long
+
+as the transport runs. ⚠️ It must not be muted and its volume must stay at 1: a browser gives the
+
+session to *audible* media, and silence at volume 0 is not that. ⚠️ And `el.play()` needs a real
+
+gesture, so it is only ever called from the transport starting; a synthetic click does not count,
+
+which is why checking this in a driven browser needs a real pointer click rather than
+
+`element.click()`.
+
+
+
+The actions map to this transport: play, pause where it is, stop and rewind, and the two track
+
+keys to the start and the end -- one song is open, so that is what a track is. `setPositionState`
+
+gives the system's scrubber the song's real length; ⚠️ it throws on a duration of zero, which is
+
 every song before its plan exists, so it is guarded and wrapped. The render worker no longer reads files or keeps a pile: the
-
-❗ **Both playheads move every frame, from one continuous number.** The player ticks ten times a
-second, which is fine for the clock and far too slow for a line: at 240 BPM a step is 62 ms, so a
-playhead moved on the tick lurches a step and a half at a time. `player.stepAt` is continuous (it
-divides the frames inside a step by that step's own swung length), and `arrange.ts`'s `smooth`
-loop feeds it to the board and the roll on every `requestAnimationFrame`; the rest of `paint` --
-which chip is under it, what to select, where to scroll -- stays on the tick. ⚠️ For a day the
-roll was left out of that loop and only the board was smoothed. Measured on `Ascetic`: 211
-updates each over 183 frames in three seconds, against the tick's ~30.
-
-The **G** beside the volume is `optMaster` from the bar, reading and writing the same switch as
-the Song/Mixer card, so the two cannot disagree; ⚠️ it is deliberately **not** given the accent
-colour the loop button takes, because the accent in that bar means the song's own state and this
-is the tracker's own doing (question 42).
+
+
+❗ **Both playheads move every frame, from one continuous number.** The player ticks ten times a
+
+second, which is fine for the clock and far too slow for a line: at 240 BPM a step is 62 ms, so a
+
+playhead moved on the tick lurches a step and a half at a time. `player.stepAt` is continuous (it
+
+divides the frames inside a step by that step's own swung length), and `arrange.ts`'s `smooth`
+
+loop feeds it to the board and the roll on every `requestAnimationFrame`; the rest of `paint` --
+
+which chip is under it, what to select, where to scroll -- stays on the tick. ⚠️ For a day the
+
+roll was left out of that loop and only the board was smoothed. Measured on `Ascetic`: 211
+
+updates each over 183 frames in three seconds, against the tick's ~30.
+
+
+
+The **G** beside the volume is `optMaster` from the bar, reading and writing the same switch as
+
+the Song/Mixer card, so the two cannot disagree; ⚠️ it is deliberately **not** given the accent
+
+colour the loop button takes, because the accent in that bar means the song's own state and this
+
+is the tracker's own doing (question 42).
+
 song travels with the render request.
 
 ## What it shows, and what the game shows
@@ -99,13 +133,20 @@ The editor draws both, as faithfully as the data allows and no further:
   out edge to edge, which is what a composer sees in the game. A chip is grabbed by
   any cell it covers and keeps that offset while dragged; a double-click adds a chip wherever none
   is *anchored*, under another's tail included.
-- **The chip's icon is the game's own, traced** (`src/editor/icons.ts`: 68 silhouettes of the
-  textures the palette plans carry, regenerated by `tools/IconDump.java` and
-  `tools/trace-icons.py`). The colour behind it is ours, by instrument family
-  (`src/editor/instruments.ts`), and a sound with no icon falls back to a family glyph.
-  ⚠️ **A set drawn from scratch was tried on 2026-09-07 and rejected** as worse to use; what the
-  traced set costs is in the licensing note in [game-assets.md](game-assets.md), and the decision
-  is the owner's. Keep the simplification light: the measurements are in the tool's header.
+- **The chip's icon is the game's own, traced** (`src/editor/icons.ts`: 68 silhouettes of the
+
+  textures the palette plans carry, regenerated by `tools/IconDump.java` and
+
+  `tools/trace-icons.py`). The colour behind it is ours, by instrument family
+
+  (`src/editor/instruments.ts`), and a sound with no icon falls back to a family glyph.
+
+  ⚠️ **A set drawn from scratch was tried on 2026-09-07 and rejected** as worse to use; what the
+
+  traced set costs is in the licensing note in [game-assets.md](game-assets.md), and the decision
+
+  is the owner's. Keep the simplification light: the measurements are in the tool's header.
+
 - A point sits at the **centre of its cell** (`rollX`), as the game draws it. A click anywhere
   inside a cell means that cell. **The "triplet grid" switch makes the cells thirds of a beat, not
   of a step**: a beat is four steps, twelve thirds, so the triplet grid has three four-third cells
@@ -126,30 +167,54 @@ The editor draws both, as faithfully as the data allows and no further:
   (the slide rates at `+0x2c` in [synth-engine.md](synth-engine.md)), so the ribbon's thickness and
   hue at any x are the volume and modulation that will sound there. A segment whose ends share a
   timbre — 96.1% of notes automate nothing — skips the gradient and fills flat.
-- **The selection is a set of POINTS, not of notes** (`Selection.points`, a note id to the indices
-  of its chosen points). Shift+drag draws a rectangle and it catches the points inside it;
-  clicking a line takes every point of that note, which is how a whole note is still moved; Ctrl
-  puts one point in or out, and Ctrl with the rectangle adds. ⚠️ **It was a set of note ids until
-  2026-09-07**, and the rectangle took whole notes, so the tail of a glide could not be grabbed
-  without its head -- which is most of what a chain of control points is for. The old rectangle
-  also caught a note whose *line* crossed it (`segmentMeetsRect`, now gone): that rule was
-  note-shaped and a rectangle over the middle of a held note now catches nothing, which is the
-  honest answer, because there is no point there.
-- **Moving a set of points needs its own primitive.** `pointShiftLimits` and `movePoints`
-  (`song.ts`) shift chosen points together; ⚠️ clamping each against its immediate neighbour, the
-  way `movePoint` does, **pins a group**, because the neighbour has not moved yet. The bound for a
-  selected point is the nearest *unselected* point on either side, and the roll intersects the
-  limits across every note in the selection before applying, so a chord keeps its shape against
-  the clip's edge instead of sliding apart. `test/song.test.ts` holds both.
-- The commands at the end of `RollView` are what the page's keys reach: `deleteSelection`,
-  `nudge`, `adjust`, `selectAll`, `copy`, `cut`, `paste`, `duplicateSelection`, all of them one
-  entry in the undo stack, and all of them over the selected points. Delete takes the points and a
-  note whose last point goes with them goes too. `lift` and `insert` are the single copy path, so
-  a duplicate and a paste cannot drift apart, and **a note contributes only its selected points**,
-  so half a glide copies as half a glide. A duplicate lands one step past the selection and
-  selects the copy; a paste with nothing selected goes back where the clipboard was lifted from.
-  ⚠️ Ctrl+D is shared with the board, which duplicates the chip: the roll takes it only when the
-  pointer is not over the board and something is selected, the same rule Delete uses.
+- **The selection is a set of POINTS, not of notes** (`Selection.points`, a note id to the indices
+
+  of its chosen points). Shift+drag draws a rectangle and it catches the points inside it;
+
+  clicking a line takes every point of that note, which is how a whole note is still moved; Ctrl
+
+  puts one point in or out, and Ctrl with the rectangle adds. ⚠️ **It was a set of note ids until
+
+  2026-09-07**, and the rectangle took whole notes, so the tail of a glide could not be grabbed
+
+  without its head -- which is most of what a chain of control points is for. The old rectangle
+
+  also caught a note whose *line* crossed it (`segmentMeetsRect`, now gone): that rule was
+
+  note-shaped and a rectangle over the middle of a held note now catches nothing, which is the
+
+  honest answer, because there is no point there.
+
+- **Moving a set of points needs its own primitive.** `pointShiftLimits` and `movePoints`
+
+  (`song.ts`) shift chosen points together; ⚠️ clamping each against its immediate neighbour, the
+
+  way `movePoint` does, **pins a group**, because the neighbour has not moved yet. The bound for a
+
+  selected point is the nearest *unselected* point on either side, and the roll intersects the
+
+  limits across every note in the selection before applying, so a chord keeps its shape against
+
+  the clip's edge instead of sliding apart. `test/song.test.ts` holds both.
+
+- The commands at the end of `RollView` are what the page's keys reach: `deleteSelection`,
+
+  `nudge`, `adjust`, `selectAll`, `copy`, `cut`, `paste`, `duplicateSelection`, all of them one
+
+  entry in the undo stack, and all of them over the selected points. Delete takes the points and a
+
+  note whose last point goes with them goes too. `lift` and `insert` are the single copy path, so
+
+  a duplicate and a paste cannot drift apart, and **a note contributes only its selected points**,
+
+  so half a glide copies as half a glide. A duplicate lands one step past the selection and
+
+  selects the copy; a paste with nothing selected goes back where the clipboard was lifted from.
+
+  ⚠️ Ctrl+D is shared with the board, which duplicates the chip: the roll takes it only when the
+
+  pointer is not over the board and something is selected, the same rule Delete uses.
+
 - A note's end is its last point and nothing more: a one-record note is one point, a held note
   two joined by a line, as the game draws them. ⚠️ A faint one-step tail past the last point --
   where the gate does close (`duration = lastStep − firstStep + 1`) -- was drawn for a day and
@@ -246,20 +311,36 @@ browser is not tracking — a synthetic event, which is what a scripted check di
 was stuck at the drop zone until this existed. The dev server serves `fixtures/`; the deployed site
 serves only `fixtures/rinst` and `fixtures/smp`, so anything else 404s into the page's error line.
 
+`?level=<40 hex digits>` on any page opens a published level out of the Internet Archive by its
+root hash, exactly as pasting that hash into the archive box does; `&deep=0` turns the dependency
+walk off. It is the site's shareable link, and opening a level from the box writes it into the
+address bar (`replaceState`) so the URL *is* the link. The hash is validated before it reaches a
+fetch (`levelFromQuery` in `src/lbparchive.ts`); the fetch itself is the reader's browser against
+archive.org, so a link needs nothing of this site. See *The public archive* in
+[lbp-modding-toolchain.md](lbp-modding-toolchain.md) for what is behind that URL.
+
 `window.__lbpEditor` exposes `state`, `player`, `board`, `roll` and `showView`. Verified in Chrome 2026-09-06:
 Ascetic's 1,150 clips open and plan; a chip click selects; a drag on empty space draws a two-point
 glide and the plan rebuilds to 14,500 notes; play advances 32 steps in two seconds at 240 BPM;
 Ctrl+Z restores the count; "add an instrument" places a chip at the cursor, the inspector's key select
 writes `Key`, Ctrl+D duplicates into the next free cell, Delete on the board removes the chip.
 
-❗ **Every path that touches the plan ends on `showPlanSummary`** (`daw/session.ts`). The
-one-track sync posts the same progress events as a full rebuild, and one track never reaches the
-second report, so the status line was left reading `preparing: voices 0%` after every note edit
-until something else wrote to it. The summary is rebuilt from the song rather than restored, so
-the note count follows an edit; the two numbers a sync cannot know -- notes dropped for want of
-an instrument, and the song's length -- are kept from the last full build, which is the last time
-either could have changed.
-
+❗ **Every path that touches the plan ends on `showPlanSummary`** (`daw/session.ts`). The
+
+one-track sync posts the same progress events as a full rebuild, and one track never reaches the
+
+second report, so the status line was left reading `preparing: voices 0%` after every note edit
+
+until something else wrote to it. The summary is rebuilt from the song rather than restored, so
+
+the note count follows an edit; the two numbers a sync cannot know -- notes dropped for want of
+
+an instrument, and the song's length -- are kept from the last full build, which is the last time
+
+either could have changed.
+
+
+
 **The song ends where its last chip's grid ends, or where the end was dragged to**
 (`songEndSteps`; `Song.endSteps` holds a dragged end, in whole cells, 0 meaning "the last
 chip"), marked on the board with a grip and the area beyond shaded; the marker drags to make room

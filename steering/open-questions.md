@@ -168,10 +168,15 @@ have none.
 
 Nothing has been read out of the game about the values a freshly placed Music Sequencer or
 Instrument holds. `NEW_SONG_DEFAULTS` in `packages/lbp-tracker-lib/src/song.ts` uses the corpus's
-mode for the tempo (240, ahead of 125 — which is the *engine's* default in `fmodextinput.prx`, so
-the two are not the same thing) and the corpus medians for the echo (2.00 beats, feedback 0.45,
+corpus medians for the echo (2.00 beats, feedback 0.45,
 mix 0.5), on the reasoning that a mode that strong across 338 user sequencers is most likely the
-value the editor starts at. A decision, not a measurement. **What would settle it**: place a new
+value the editor starts at. A decision, not a measurement.
+
+⚠️ **The tempo is no longer one of them.** The corpus's mode is 240 (ahead of 125, the *engine's*
+default in `fmodextinput.prx` — the two are not the same thing), but since neither is a reading of
+the editor, a new song starts at **120**: a blank song's tempo is a usability choice, 240 read as a
+bug to every listener who opened one, and a loaded sequencer always carries its own tempo, so
+nothing about fidelity turns on it. **What would settle it**: place a new
 sequencer in the game, save, and read its `PSequencer`; the toolkit's field initialisers are the
 other source, and they are a reading of the same kind as this one.
 
