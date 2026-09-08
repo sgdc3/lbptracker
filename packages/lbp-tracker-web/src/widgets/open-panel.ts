@@ -9,7 +9,7 @@
 
 import { createApp, h } from 'vue';
 import { wireArchiveOpen } from '../archive-panel.ts';
-import { levelFromQuery } from '../lbparchive.ts';
+import { levelFromQuery } from '../link.ts';
 import { asset } from '../assets.ts';
 import { fromDrop, fromFiles, type Opened } from '../open-level.ts';
 import OpenLevel from './OpenLevel.vue';
@@ -101,7 +101,7 @@ export function mountOpen(
     // handled here rather than in the panel so that both query routes are in
     // one place. It is not the same thing as `?open=`: that one fetches a file
     // this site serves, this one fetches a published level from archive.org.
-    // See `LEVEL_PARAM` in `lbparchive.ts`.
+    // See `link.ts` for the whole of what a URL may say.
     const wanted = levelFromQuery(window.location.search);
     if (wanted) void archive.open(wanted.sha1, { deep: wanted.deep });
   }

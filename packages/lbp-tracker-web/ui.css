@@ -263,3 +263,36 @@ input.archive-q { flex: 1 1 24rem; min-width: 0; text-align: left; }
 .drop.loaded { padding: .95rem 1rem; border-style: solid; }
 .drop.loaded strong { display: inline; margin: 0; }
 .drop input[type="file"] { display: none; }
+
+/* ------------------------------------------------------------- the loader */
+/* Shown while a level is being opened, from any route. It is a modal dialog
+   because the file picker is one too and the top layer is the only place a
+   message can sit above it; see `src/widgets/loading.ts`. */
+.loading-dialog {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 1.1rem 1.4rem;
+  box-shadow: 0 18px 40px rgb(0 0 0 / .45);
+}
+.loading-dialog::backdrop { background: rgb(0 0 0 / .55); }
+.loading-box { display: flex; align-items: center; gap: .85rem; }
+.loading-text { min-width: min(22rem, 60vw); }
+.loading-title { display: block; font-size: 1rem; }
+.loading-note { display: block; color: var(--dim); font-size: .85rem; min-height: 1.2em; }
+.spinner {
+  flex: 0 0 auto;
+  width: 1.35rem;
+  height: 1.35rem;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+/* A reader who asked for less motion gets a pulse instead of a spin. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+}

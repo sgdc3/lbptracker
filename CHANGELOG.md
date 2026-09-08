@@ -4,12 +4,24 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.22 (2026-09-09)
+
+- Opening a level now says so while it happens, instead of leaving the page looking idle for the
+  several seconds it takes. It counts the pieces as they arrive, whether the level comes from a
+  link, the archive box, a drop or the file buttons.
+- A link can now name a song inside the level, not just the level: the address bar carries the
+  song you are looking at, and opening that link again lands straight on it. It is the seq number
+  after the level hash.
+- Opening a level from the online archive no longer fetches the pieces it depends on unless you
+  ask for them. It is faster, and on most levels those pieces are copies of songs the level
+  already carries. Tick whole backup, or put &deep=1 in a link, when a song lives only in a piece
+  of its own; an adventure still always takes the long route, since it has no world of its own.
+
 ## 0.2.21 (2026-09-09)
 
 - A level opened from the online archive now has a link of its own. The address bar carries the
   level's hash once it opens, so copying the URL and sending it to somebody opens the same level
-  for them; a link like ?level= followed by the 40 hex digits works on its own too, and adding
-  &deep=0 to it skips fetching the level's extra pieces.
+  for them; a link like ?level= followed by the 40 hex digits works on its own too.
 - A new song starts at 120 BPM instead of 240.
 
 ## 0.2.20 (2026-09-09)

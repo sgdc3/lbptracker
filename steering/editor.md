@@ -311,13 +311,27 @@ browser is not tracking — a synthetic event, which is what a scripted check di
 was stuck at the drop zone until this existed. The dev server serves `fixtures/`; the deployed site
 serves only `fixtures/rinst` and `fixtures/smp`, so anything else 404s into the page's error line.
 
-`?level=<40 hex digits>` on any page opens a published level out of the Internet Archive by its
-root hash, exactly as pasting that hash into the archive box does; `&deep=0` turns the dependency
-walk off. It is the site's shareable link, and opening a level from the box writes it into the
-address bar (`replaceState`) so the URL *is* the link. The hash is validated before it reaches a
-fetch (`levelFromQuery` in `src/lbparchive.ts`); the fetch itself is the reader's browser against
-archive.org, so a link needs nothing of this site. See *The public archive* in
-[lbp-modding-toolchain.md](lbp-modding-toolchain.md) for what is behind that URL.
+`?level=<40 hex digits>&seq=<uid>` is **the site's shareable link to a song**, and the whole of
+what a URL may say is in `src/link.ts`. `level` opens a published level out of the Internet Archive
+by its root hash, exactly as pasting that hash into the archive box does; `seq` picks one sequencer
+out of the level by its uid (`file#uid` when a backup repeats a uid across levels, which
+`sequencersOf` warns about); `deep=1` turns the dependency walk on -- off by default, box and link
+alike, since on most levels it buys duplicate rows and seconds, and the measurement is on `open_`
+in `archive-panel.ts`. The address bar is written back to as the reader opens a level and picks a
+song, so the URL is always the link to what is on screen (`replaceState`, never `pushState`).
+
+⚠️ Two traps, both paid for once: `rememberLevel` runs *before* the level is read, so it must keep
+`seq` when the hash is unchanged and drop it when it is not — wipe it unconditionally and a link
+can never reach the song it names; and `seq` is written only when `level` is in the URL, since a
+level opened off this machine has no shareable name. Both values are validated before use — the
+hash reaches a fetch URL, the uid a map key.
+
+A level takes seconds to arrive and none of it used to be visible: the archive panel and the drop
+zone both say what they are doing *inside* `#fileDialog`, which a `?level=` link never opens. Every
+route now runs a job on the one loader (`src/widgets/loading.ts`), and it is a modal `<dialog>`
+because the picker is one too: an ordinary overlay renders under the top layer whatever its
+`z-index`. Jobs nest — the archive fetch holds one while the read of what it brought back starts
+another — and the newest is the one shown.
 
 `window.__lbpEditor` exposes `state`, `player`, `board`, `roll` and `showView`. Verified in Chrome 2026-09-06:
 Ascetic's 1,150 clips open and plan; a chip click selects; a drag on empty space draws a two-point

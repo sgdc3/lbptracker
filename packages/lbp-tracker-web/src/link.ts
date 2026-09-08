@@ -1,0 +1,122 @@
+/**
+ * The page's own query string: what a link to a song says, and how it is read.
+ *
+ * ❗ **A link names a level by its hash and a song by its uid**, because that is
+ * all either of them has for a name here: `?level=<40 hex digits>` fetches a
+ * published level out of the Internet Archive (`lbparchive.ts` has where from
+ * and why it needs no server), `&seq=<uid>` picks one of the sequencers inside
+ * it, and `&deep=1` also fetches the resources the level depends on. Nothing
+ * else is encoded, so a link costs this site nothing, survives a redeploy, and
+ * works from any copy of the page including a dev server.
+ *
+ * ⚠️ **Everything read out of here is validated, not trusted.** The hash goes
+ * into a fetch URL and the uid into a map key, and both arrive from whatever
+ * somebody pasted into the address bar.
+ *
+ * The address bar is written back to as the reader opens things
+ * (`rememberLevel`, `rememberSequencer`), so the URL is always the link to what
+ * is on screen. ⚠️ **`replaceState`, never `pushState`**: opening a level is
+ * not a page the Back button should have to step through.
+ */
+
+export const LEVEL_PARAM = 'level';
+export const DEEP_PARAM = 'deep';
+export const SEQ_PARAM = 'seq';
+
+/** A sequencer inside a backup: unique on `file#uid`, and often just the uid. */
+export type WantedSong = { readonly key: string } | { readonly uid: number };
+
+/**
+ * The level a URL asks for, if it asks for one.
+ *
+ * ⚠️ **The walk is off unless the link says otherwise.** It costs seconds and
+ * duplicate rows on most levels; only a link that asks for it pays that. See
+ * `open_` in `archive-panel.ts` for the measurement.
+ */
+export function levelFromQuery(search: string): { sha1: string; deep: boolean } | undefined {
+  const params = new URLSearchParams(search);
+  const wanted = params.get(LEVEL_PARAM)?.trim() ?? '';
+  if (!/^[0-9a-f]{40}$/i.test(wanted)) return undefined;
+  const deep = params.get(DEEP_PARAM);
+  return { sha1: wanted.toLowerCase(), deep: deep === '1' || deep === 'true' };
+}
+
+/**
+ * The song a URL asks for, if it asks for one.
+ *
+ * ❗ **Two spellings, because a uid is unique inside a level and not across a
+ * backup** (`sequencersOf` in `packages/cwlib-ts/src/backup.ts`): `seq=7` means
+ * "the sequencer numbered 7", which is unambiguous for the one level a `?level=`
+ * link opens, and `seq=<file>#7` names the file too, which is what a backup of
+ * several levels needs. A link written by this page is the short form whenever
+ * the short form can only mean one thing.
+ */
+export function songFromQuery(search: string): WantedSong | undefined {
+  const raw = new URLSearchParams(search).get(SEQ_PARAM)?.trim();
+  if (!raw) return undefined;
+  const hash = raw.lastIndexOf('#');
+  if (hash > 0) return { key: raw };
+  // A uid is an unsigned 32-bit Thing number; anything else is not one.
+  const uid = Number(raw);
+  if (!Number.isInteger(uid) || uid < 0 || uid > 0xffffffff) return undefined;
+  return { uid };
+}
+
+/** The row a link asked for, out of the rows a backup actually gave. */
+export function pickWanted<T extends { key: string; uid: number }>(
+  rows: readonly T[],
+  wanted: WantedSong | undefined,
+): T | undefined {
+  if (!wanted) return undefined;
+  if ('key' in wanted) return rows.find((r) => r.key === wanted.key);
+  // Rows come sorted biggest first, so the first match is the likeliest one
+  // when two levels in a backup happen to share a uid.
+  return rows.find((r) => r.uid === wanted.uid);
+}
+
+/**
+ * Rewrite the address bar.
+ *
+ * A key given as `undefined` is removed; a key left out of `changes` is left
+ * alone, which is the difference `rememberLevel` turns on.
+ */
+function rewrite(changes: Record<string, string | undefined>): void {
+  const url = new URL(window.location.href);
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === undefined) url.searchParams.delete(key);
+    else url.searchParams.set(key, value);
+  }
+  window.history.replaceState(null, '', url);
+}
+
+/**
+ * Put an opened level's hash in the address bar, so the URL is the link.
+ *
+ * ⚠️ **`seq` survives only a re-open of the same level.** It named a
+ * song inside the level that was there before, and dropping it on a *different*
+ * hash is not tidiness: this runs before the level is read, so a stale `seq`
+ * left in the URL is one the reader never asked for and the open would then act
+ * on. Re-opening the same hash -- which is what a `?level=…&seq=…` link does --
+ * has to keep it, or the link could never reach the song it names.
+ */
+export function rememberLevel(sha1: string, deep: boolean): void {
+  const before = levelFromQuery(window.location.search);
+  const changes: Record<string, string | undefined> = {
+    [LEVEL_PARAM]: sha1,
+    [DEEP_PARAM]: deep ? '1' : undefined,
+  };
+  if (before?.sha1 !== sha1) changes[SEQ_PARAM] = undefined;
+  rewrite(changes);
+}
+
+/**
+ * Put the song being edited in the address bar, beside the level it came from.
+ *
+ * ⚠️ **Only when the level itself is in the link.** A level opened from a file
+ * on this machine has no shareable name, and a bare `?seq=` would be a link
+ * that says which song out of a backup nobody else can open.
+ */
+export function rememberSequencer(row: { key: string; uid: number } | undefined, unique: boolean): void {
+  if (!levelFromQuery(window.location.search)) return;
+  rewrite({ [SEQ_PARAM]: row ? (unique ? String(row.uid) : row.key) : undefined });
+}

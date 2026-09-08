@@ -21,7 +21,7 @@ defineProps<{ searchHost: string; busy?: boolean }>();
 const note = defineModel<string>('note', { default: '' });
 const bad = defineModel<boolean>('bad', { default: false });
 const query = defineModel<string>('query', { default: '' });
-const deep = defineModel<boolean>('deep', { default: true });
+const deep = defineModel<boolean>('deep', { default: false });
 const emit = defineEmits<{ submit: [] }>();
 
 const field = useTemplateRef<HTMLInputElement>('field');

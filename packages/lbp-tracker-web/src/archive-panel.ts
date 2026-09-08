@@ -22,7 +22,9 @@
 
 import { createApp, h, reactive } from 'vue';
 import ArchivePanel from './widgets/ArchivePanel.vue';
-import { DEEP_PARAM, LEVEL_PARAM, readPaste, rootLevelUrl, SEARCH_HOST } from './lbparchive.ts';
+import { readPaste, rootLevelUrl, SEARCH_HOST } from './lbparchive.ts';
+import { rememberLevel } from './link.ts';
+import { loading, type LoadingJob } from './widgets/loading.ts';
 import { OPENABLE_DEPENDENCIES, readDependencies } from '@lbptracker/cwlib/resource.ts';
 import { looksLikeLevel } from '@lbptracker/cwlib/backup.ts';
 import type { BackupFile } from '@lbptracker/cwlib/backup.ts';
@@ -70,7 +72,7 @@ export function wireArchiveOpen(opts: {
   // The markup is `widgets/ArchivePanel.vue`; this keeps the state it binds to
   // and the logic that reads it. ❗ The panel used to be a 20-line `innerHTML`
   // string, which is why the note's default had to be read back out of the DOM.
-  const ui = reactive({ query: '', deep: true, note: '', bad: false, busy: false });
+  const ui = reactive({ query: '', deep: false, note: '', bad: false, busy: false });
   let focusField = () => {};
   createApp({
     render: () =>
@@ -95,6 +97,18 @@ export function wireArchiveOpen(opts: {
   const say = (text: string, bad = false) => {
     ui.note = text;
     ui.bad = bad;
+  };
+
+  // ❗ **Progress goes to two places.** The panel's note is where a reader
+  // who opened the box is looking; the loader is what everyone else sees,
+  // including a `?level=` link that never opened the box at all. `job` runs for
+  // as long as one open does (`widgets/loading.ts`), and the two lines are
+  // worded for where they appear: the note sits under a field that already
+  // holds the hash, the loader has to say what is going on from nothing.
+  let job: LoadingJob | undefined;
+  const progress = (note: string, loud = note) => {
+    say(note);
+    job?.note(loud);
   };
 
   /** One resource out of the archive. Throws with something worth reading. */
@@ -148,13 +162,13 @@ export function wireArchiveOpen(opts: {
    * ⚠️ **A missing plan is not a failed open.** Only the level itself is
    * required; anything else that will not come is counted and said out loud.
    *
-   * ❗ **The walk is a checkbox, on by default.** Measured on "Music Gallery
+   * ❗ **The walk is a checkbox, off by default.** Measured on "Music Gallery
    * #3": the level plus its 17 plans took 10 s against 3 s for the level alone,
    * and gave 46 sequencer rows instead of 31 — but **16 distinct songs either
-   * way**, every plan being a copy of a song already placed in the level. It is
-   * on because the one thing it can find, a song that lives only as a plan, is
-   * music silently missing from a music tracker; it is a checkbox because on
-   * most levels it is seven seconds and fifteen duplicate rows for nothing.
+   * way**, every plan being a copy of a song already placed in the level. So on
+   * most levels it is seven seconds and fifteen duplicate rows for nothing,
+   * which is why it is off; the one thing it can find that the level cannot, a
+   * song living only as a plan, is one tick away and `?deep=1` in a link.
    *
    * ⚠️ **Except when the root cannot be opened at all**, and then the walk is
    * not optional. An adventure (`ADCb`) has no world of its own: `readBackup`
@@ -169,7 +183,8 @@ export function wireArchiveOpen(opts: {
     ui.busy = true;
     ui.query = sha1;
     ui.deep = deep;
-    say(`fetching ${sha1.slice(0, 8)}…`);
+    job = loading(`Opening ${sha1.slice(0, 8)}… from the archive`);
+    progress(`fetching ${sha1.slice(0, 8)}…`, 'asking archive.org for the level…');
     try {
       const root = await grab(sha1);
       const files: BackupFile[] = [{ name: sha1, bytes: root }];
@@ -181,7 +196,7 @@ export function wireArchiveOpen(opts: {
       const queue = withParts ? partsOf(root, seen) : [];
       let missing = 0;
       while (queue.length > 0 && files.length < RESOURCE_LIMIT) {
-        say(`${files.length} of ${files.length + queue.length} resources…`);
+        progress(`${files.length} of ${files.length + queue.length} resources…`);
         const wave = await Promise.all(
           queue.splice(0, AT_A_TIME).map(async (hash) => {
             try {
@@ -213,10 +228,9 @@ export function wireArchiveOpen(opts: {
       // ❗ **The address bar becomes the link to share.** A level opened
       // from the archive is fully named by its hash, so writing it into the URL
       // costs one `replaceState` and gives the reader something to copy; the
-      // walk goes with it because it changes what the link opens. `replaceState`
-      // and not `pushState`: opening a level is not a page the Back button
-      // should have to step through.
-      rememberInUrl(sha1, deep);
+      // walk goes with it because it changes what the link opens. See
+      // `link.ts`.
+      rememberLevel(sha1, deep);
       // No name to give it: naming levels is what the index does, and not
       // needing the index is the point. The songs carry their own titles anyway.
       await onOpen({
@@ -230,6 +244,8 @@ export function wireArchiveOpen(opts: {
     } finally {
       busy = false;
       ui.busy = false;
+      job?.done();
+      job = undefined;
     }
   }
 
@@ -262,13 +278,4 @@ export function wireArchiveOpen(opts: {
       return open_(sha1.toLowerCase(), o?.deep ?? ui.deep);
     },
   };
-}
-
-/** Put an opened level's hash in the address bar, so the URL is the link. */
-function rememberInUrl(sha1: string, deep: boolean): void {
-  const url = new URL(window.location.href);
-  url.searchParams.set(LEVEL_PARAM, sha1);
-  if (deep) url.searchParams.delete(DEEP_PARAM);
-  else url.searchParams.set(DEEP_PARAM, '0');
-  window.history.replaceState(null, '', url);
 }

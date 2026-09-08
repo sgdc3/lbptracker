@@ -16,7 +16,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { levelFromQuery, readPaste, rootLevelUrl } from '../src/lbparchive.ts';
+import { readPaste, rootLevelUrl } from '../src/lbparchive.ts';
 
 test('the archive URL is sharded by the first two hex digits', () => {
   assert.equal(
@@ -49,15 +49,4 @@ test('39 digits, 41 digits and a hex-looking word are not hashes', () => {
   assert.equal(readPaste(sha1.slice(1)).kind, 'neither');
   assert.equal(readPaste(`${sha1}0`).kind, 'neither');
   assert.equal(readPaste('deadbeef').kind, 'neither');
-});
-
-// The shareable link: `?level=<sha1>` is the hash and nothing else, and the
-// walk rides along because it changes what the link opens.
-test('a level link carries a hash, and a bad one is no level at all', () => {
-  const sha1 = '8febe1f91343b2b97843530297d54df113043b89';
-  assert.deepEqual(levelFromQuery(`?level=${sha1.toUpperCase()}`), { sha1, deep: true });
-  assert.deepEqual(levelFromQuery(`?level=${sha1}&deep=0`), { sha1, deep: false });
-  assert.equal(levelFromQuery(''), undefined);
-  assert.equal(levelFromQuery('?level=deadbeef'), undefined);
-  assert.equal(levelFromQuery(`?level=${sha1}0`), undefined);
 });

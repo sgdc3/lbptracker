@@ -21,6 +21,8 @@ import { isSongFile, openedTitle, readOpened, saveNote, type Opened } from './op
 import { seqPicker } from './seq-picker.ts';
 import { saveSongFile } from './song-file.ts';
 import { mountOpen } from './widgets/open-panel.ts';
+import { loading } from './widgets/loading.ts';
+import { pickWanted, rememberSequencer, songFromQuery } from './link.ts';
 import {
   RATE, clock, ensureAssets, onPlan, onPlayer, onStatus, openSong, player, setError,
   setErrorSink, setStatus, state,
@@ -236,11 +238,26 @@ fileDialog.addEventListener('click', (event) => {
   if (event.target === fileDialog) fileDialog.close();
 });
 
+/**
+ * The rows behind the picker, kept so a link can name one of them.
+ *
+ * ❗ **A song's name in a link is its uid**, and `link.ts` says why the file
+ * sometimes has to go with it. `unique` is read once per open rather than per
+ * pick: it is a property of the pile that was opened.
+ */
+let pickerRows: { key: string; uid: number }[] = [];
+let uidIsUnique = true;
+
+const chose = (key: string): void => {
+  rememberSequencer(pickerRows.find((r) => r.key === key), uidIsUnique);
+};
+
 const picker = seqPicker($<HTMLDivElement>('seq'), async (key) => {
   const seq = songs.get(key);
   if (!seq) return;
   if (state.dirty && !(await confirmDialog('Throw away the unsaved changes?', 'throw them away'))) return;
   openSong(songFromSequencer(seq), `opened "${seq.name}"`);
+  chose(key);
   fileDialog.close();
 });
 
@@ -250,8 +267,18 @@ async function openLevel(opened: Opened): Promise<void> {
   setError('');
   drop.busy(true);
   setStatus(`reading ${opened.label}…`);
+  // ❗ **The loader is the only thing a reader sees on some routes.** The drop
+  // zone's own title lives inside `#fileDialog`, and a `?level=` link or a drop
+  // on the home screen never opens that dialog; reading a big backup is
+  // seconds. See `widgets/loading.ts`.
+  const job = loading(`Reading ${opened.label}`, 'loading the game’s instruments…');
   try {
     await ensureAssets();
+    job.note(
+      opened.files.length > 1
+        ? `unpacking ${opened.files.length} resources…`
+        : 'unpacking the level…',
+    );
     const only = opened.files.length === 1 ? opened.files[0] : undefined;
     // One of our own song files opens as the song it holds -- ids, names and
     // grid lengths intact -- rather than through the sequencer it also is.
@@ -261,6 +288,7 @@ async function openLevel(opened: Opened): Promise<void> {
       drop.loaded(true);
       drop.say(only.name);
       songs = new Map();
+      pickerRows = [];
       picker.setRows([]);
       fileDialog.close();
       return;
@@ -270,23 +298,37 @@ async function openLevel(opened: Opened): Promise<void> {
     for (const p of result.projects) {
       for (const sequencer of p.sequencers) songs.set(`${p.file}#${sequencer.uid}`, sequencer);
     }
-    const rows = sequencersOf(result).map((r) => ({
+    // `found` keeps the uid the picker's rows do not carry: it is what a link
+    // names a song by (`link.ts`).
+    const found = sequencersOf(result);
+    const rows = found.map((r) => ({
       key: r.key,
       name: r.name,
       tracks: r.tracks,
       file: result.projects.length > 1 ? r.file : undefined,
     }));
     const first = picker.setRows(rows);
+    pickerRows = found.map((r) => ({ key: r.key, uid: r.uid }));
+    uidIsUnique = new Set(pickerRows.map((r) => r.uid)).size === pickerRows.length;
     drop.loaded(true);
     drop.say(openedTitle(result, rows.length, opened.label));
     const note = saveNote(result);
-    if (first) {
-      const seq = songs.get(first)!;
+    // ❗ **`?seq=<uid>` opens straight into one song of the level**, which is
+    // what a link to a song has to do: a level holds sixteen of them and the
+    // biggest one is rarely the one being shared. A uid that is not in this
+    // level falls back to the first row rather than to nothing.
+    const wanted = pickWanted(found, songFromQuery(window.location.search));
+    const start = wanted?.key ?? first;
+    if (start) {
+      const seq = songs.get(start)!;
+      if (wanted) picker.select(start);
       openSong(songFromSequencer(seq), `opened "${seq.name}"`);
+      chose(start);
       leaveHome();
       // One song: nothing to choose, so the dialog can go. Several: leave the
-      // picker in view, the choice is the point.
-      if (rows.length === 1) fileDialog.close();
+      // picker in view, the choice is the point. A link that named one has
+      // chosen already.
+      if (rows.length === 1 || wanted) fileDialog.close();
     } else if (note) setStatus(note, true);
     else if (result.failed.length) setStatus(`nothing to open: ${result.failed[0].why}`, true);
     else setStatus('no sequencers in there', true);
@@ -298,12 +340,14 @@ async function openLevel(opened: Opened): Promise<void> {
     setError(String((error as Error).stack ?? error));
   } finally {
     drop.busy(false);
+    job.done();
   }
 }
 
 const startNew = async () => {
   if (state.dirty && !(await confirmDialog('Throw away the unsaved changes?', 'throw them away'))) return;
   songs = new Map();
+  pickerRows = [];
   picker.setRows([]);
   openSong(newSong(), 'a new song');
   state.selection.cursor = { cell: 0, row: 0 };
