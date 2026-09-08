@@ -201,6 +201,18 @@ input.picker-search {
 .picker-none { color: var(--dimmer); font-size: .85rem; padding: .5rem; }
 /* The save button beside the field: the chosen song as this tracker's own file. */
 .picker-save { flex: 0 0 auto; white-space: nowrap; }
+/* Beside it: the link to the chosen song, for a level that came from the
+   archive. It says what happened in its own label, so it needs the two colours
+   the status bar would have used. */
+.picker-link { flex: 0 0 auto; white-space: nowrap; }
+.picker-link.ok { color: var(--accent); border-color: var(--accent); }
+.picker-link.bad { color: var(--warn); border-color: var(--warn); }
+/* The link itself, when the clipboard refused it: there to be selected. */
+input.picker-linkfield {
+  width: 100%; margin-top: .5rem; font: .82rem/1.4 ui-monospace, Consolas, monospace;
+  color: var(--dim); background: var(--panel); border: 1px solid var(--warn);
+  border-radius: 6px; padding: .35rem .5rem; text-align: left;
+}
 
 /* ---------------------------------------------------- panel grid and cards */
 /* Four pages had grown their own copy of these three rules -- two of them

@@ -36,9 +36,16 @@ export interface SeqRow {
 export interface PickerState {
   rows: readonly SeqRow[];
   chosen: string;
+  /**
+   * Whether these songs can be linked to, which decides if the copy button is
+   * there at all. ❗ **Only a level fetched from the online archive can**: a
+   * level opened off this machine has no name anybody else could open it by.
+   */
+  linkable: boolean;
 }
 
-export const pickerState = (): PickerState => reactive<PickerState>({ rows: [], chosen: '' });
+export const pickerState = (): PickerState =>
+  reactive<PickerState>({ rows: [], chosen: '', linkable: false });
 
 export const title = (row: SeqRow): string => row.name || '(untitled)';
 

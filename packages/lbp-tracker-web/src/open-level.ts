@@ -47,6 +47,14 @@ export interface Opened {
   readonly files: readonly BackupFile[];
   /** True when the source was a folder or an archive rather than one file. */
   readonly many: boolean;
+  /**
+   * Set when this came out of the Internet Archive, which is the only source
+   * whose songs can be linked to: `archive-panel.ts` puts the hash it fetched
+   * here, and the page turns it into the URL (`link.ts`). A level off this
+   * machine has no name anybody else could open, and says so by leaving this
+   * out.
+   */
+  readonly archive?: { readonly sha1: string; readonly deep: boolean };
 }
 
 const read = async (file: File, name = file.name): Promise<BackupFile | undefined> =>

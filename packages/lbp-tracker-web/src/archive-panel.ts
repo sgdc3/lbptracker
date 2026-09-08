@@ -238,6 +238,7 @@ export function wireArchiveOpen(opts: {
         label: `root level ${sha1.slice(0, 8)}`,
         files,
         many: files.length > 1,
+        archive: { sha1, deep },
       });
     } catch (error) {
       say(error instanceof Error ? error.message : String(error), true);

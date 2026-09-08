@@ -24,6 +24,13 @@ const props = defineProps<{
   onPick: (key: string) => void;
   /** Save the chosen song as a file; the button appears only when this is given. */
   onSave?: (key: string) => void;
+  /**
+   * Copy a link to the chosen song. The page does the copying -- it is the one
+   * that knows what the link is -- and answers with the link and whether it
+   * reached the clipboard. ⚠️ **A refused copy is not an error**: the
+   * clipboard can be denied outright, and then the URL is shown instead.
+   */
+  onLink?: (key: string) => Promise<{ url: string; copied: boolean }>;
 }>();
 
 const needle = ref('');
@@ -39,6 +46,7 @@ const current = computed(() => props.state.rows.find((r) => r.key === props.stat
 watch(() => props.state.rows, async () => {
   needle.value = '';
   cursor.value = -1;
+  shownLink.value = '';
   await Promise.resolve();
   listEl.value?.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
 });
@@ -50,6 +58,47 @@ const pick = (key: string, quiet = false) => {
   if (!quiet) props.onPick(key);
 };
 defineExpose({ pick });
+
+/**
+ * The copy button's own state: '' before, 'yes' or 'no' for a moment after.
+ *
+ * ❗ **The button is the receipt.** A copy that leaves nothing on screen is
+ * indistinguishable from a click that missed, and the picker is a modal dialog
+ * over the status bar the rest of the app reports through.
+ */
+const copied = ref<'' | 'yes' | 'no'>('');
+let clearCopied = 0;
+const copyLabel = computed(() =>
+  copied.value === 'yes' ? 'link copied' : copied.value === 'no' ? 'here it is' : 'copy the link');
+
+/**
+ * The link itself, shown only when the clipboard refused it.
+ *
+ * ⚠️ **A denied copy must still leave the reader with the link.** The
+ * clipboard is a permission the embedder can withhold and there is nothing the
+ * page can do about it; a field holding the URL, selected, is what is left.
+ */
+const shownLink = ref('');
+const linkField = useTemplateRef<HTMLInputElement>('linkField');
+
+const copyLink = async () => {
+  const row = current.value;
+  if (!props.onLink || !row) return;
+  try {
+    const done = await props.onLink(row.key);
+    copied.value = done.copied ? 'yes' : 'no';
+    shownLink.value = done.copied ? '' : done.url;
+  } catch {
+    copied.value = 'no';
+    shownLink.value = '';
+  }
+  if (shownLink.value) {
+    await Promise.resolve();
+    linkField.value?.select();
+  }
+  window.clearTimeout(clearCopied);
+  clearCopied = window.setTimeout(() => { copied.value = ''; }, 1800);
+};
 
 const onKey = async (event: KeyboardEvent) => {
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -81,6 +130,18 @@ const onKey = async (event: KeyboardEvent) => {
         @input="cursor = shown.length ? 0 : -1"
         @keydown="onKey"
       >
+      <!-- ❗ Beside the search box rather than on each row: it copies the
+           link to the song that is CHOSEN, which is also the one playing, and a
+           button on sixteen rows would be sixteen ways to ask the same thing. -->
+      <button
+        v-if="onLink && state.linkable"
+        type="button"
+        class="picker-link"
+        :class="{ ok: copied === 'yes', bad: copied === 'no' }"
+        title="Copy a link that opens this song, in this level, for anybody"
+        :disabled="!current"
+        @click="copyLink()"
+      >{{ copyLabel }}</button>
       <button
         v-if="onSave"
         type="button"
@@ -90,6 +151,17 @@ const onKey = async (event: KeyboardEvent) => {
         @click="current && onSave(current.key)"
       >save as a song file</button>
     </div>
+    <!-- Only after a copy the browser would not do: the link, to take by hand. -->
+    <input
+      v-if="shownLink"
+      ref="linkField"
+      class="picker-linkfield"
+      type="text"
+      readonly
+      :value="shownLink"
+      aria-label="The link to this song"
+      @focus="($event.target as HTMLInputElement).select()"
+    >
     <div ref="list" class="picker-list picker-tall" role="listbox">
       <button
         v-for="(row, i) in shown"

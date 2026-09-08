@@ -326,6 +326,16 @@ can never reach the song it names; and `seq` is written only when `level` is in 
 level opened off this machine has no shareable name. Both values are validated before use — the
 hash reaches a fetch URL, the uid a map key.
 
+The picker carries **copy the link**, beside the search box and only for songs that have one:
+`state.linkable` follows each open, and only a level fetched from the archive can be linked to, so
+a level off this machine shows no button rather than a dead one. ⚠️ Two traps: the copy goes
+through `navigator.clipboard` and falls back to `execCommand('copy')` — the first is denied
+outright in some embedders (measured in the in-app browser, where the second one works) — and a
+refused copy is not an error but a URL shown in a field for the reader to take by hand. The URL
+also stops claiming a level as soon as one is opened from anywhere else: `Opened.archive` says
+where a pile came from and `forgetLevel` clears the three parameters otherwise, or the button
+would offer a link to a song nobody is looking at.
+
 A `?level=` link with no `seq` puts the picker up when the level holds more than one song
 (`openLevel` in `daw.ts`), rather than opening the biggest and hiding the rest behind a button the
 reader has no reason to press; the rows carry the uid beside the name and the search box matches it

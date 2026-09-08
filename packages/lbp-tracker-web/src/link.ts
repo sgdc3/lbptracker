@@ -120,3 +120,37 @@ export function rememberSequencer(row: { key: string; uid: number } | undefined,
   if (!levelFromQuery(window.location.search)) return;
   rewrite({ [SEQ_PARAM]: row ? (unique ? String(row.uid) : row.key) : undefined });
 }
+
+/** Is there a link to make? Only a level fetched from the archive has one. */
+export const linkable = (): boolean => levelFromQuery(window.location.search) !== undefined;
+
+/**
+ * The link to one song of the level that is open, ready to be handed to
+ * somebody.
+ *
+ * ❗ **Built from the row, not from the address bar.** The reader may be
+ * copying the link to a song they have not opened -- the picker copies whatever
+ * row is chosen -- so only the level and the walk come out of the URL.
+ */
+export function songLink(row: { key: string; uid: number } | undefined, unique: boolean): string | undefined {
+  const level = levelFromQuery(window.location.search);
+  if (!level || !row) return undefined;
+  const url = new URL(window.location.href);
+  url.searchParams.set(LEVEL_PARAM, level.sha1);
+  if (level.deep) url.searchParams.set(DEEP_PARAM, '1');
+  else url.searchParams.delete(DEEP_PARAM);
+  url.searchParams.set(SEQ_PARAM, unique ? String(row.uid) : row.key);
+  return url.toString();
+}
+
+/**
+ * Stop the URL claiming a level.
+ *
+ * ❗ **What is open now did not come from the archive**, so the link that is
+ * in the address bar is to something else entirely -- a level from this machine
+ * or a new song. Left there, the picker would offer to copy a link to a song
+ * nobody is looking at.
+ */
+export function forgetLevel(): void {
+  rewrite({ [LEVEL_PARAM]: undefined, [DEEP_PARAM]: undefined, [SEQ_PARAM]: undefined });
+}

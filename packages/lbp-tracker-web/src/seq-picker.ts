@@ -25,6 +25,8 @@ export interface SeqPickerHandle {
   value(): string;
   /** Select a row without telling the caller's `onPick`. */
   select(key: string): void;
+  /** Whether these songs have a link, which is what shows the copy button. */
+  setLinkable(on: boolean): void;
 }
 
 /**
@@ -37,11 +39,20 @@ export interface SeqPickerHandle {
  * `onSave`, when given, puts a "save" button beside the field: the
  * chosen sequencer leaves as one of this tracker's song files, from whichever
  * page it was found on. The page resolves the key and calls `saveSongFile`.
+ *
+ * `onLink` puts a "copy the link" button there, and it appears only while
+ * `setLinkable(true)` -- a level from the online archive is the only one whose
+ * songs have a link (`link.ts`). It answers with the link and whether it
+ * reached the clipboard; ⚠️ a refused copy is **not** an error, and the
+ * picker shows the URL for the reader to take by hand.
  */
 export function seqPicker(
   host: HTMLElement,
   onPick: (key: string) => void | Promise<void>,
-  onSave?: (key: string) => void,
+  handlers: {
+    onSave?: (key: string) => void;
+    onLink?: (key: string) => Promise<{ url: string; copied: boolean }>;
+  } = {},
 ): SeqPickerHandle {
   const state = pickerState();
   // ⚠️ A **function** ref, not a string one: a string ref resolves against the
@@ -54,7 +65,8 @@ export function seqPicker(
       h(SeqPicker, {
         state,
         onPick,
-        onSave,
+        onSave: handlers.onSave,
+        onLink: handlers.onLink,
         ref: (el: unknown) => {
           inner = el as { pick(key: string, quiet?: boolean): void } | null;
         },
@@ -70,6 +82,9 @@ export function seqPicker(
     value: () => state.chosen,
     select(key) {
       inner?.pick(key, true);
+    },
+    setLinkable(on) {
+      state.linkable = on;
     },
   };
 }

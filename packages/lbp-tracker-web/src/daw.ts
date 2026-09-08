@@ -22,7 +22,7 @@ import { seqPicker } from './seq-picker.ts';
 import { saveSongFile } from './song-file.ts';
 import { mountOpen } from './widgets/open-panel.ts';
 import { loading } from './widgets/loading.ts';
-import { pickWanted, rememberSequencer, songFromQuery } from './link.ts';
+import { forgetLevel, linkable, pickWanted, rememberSequencer, songFromQuery, songLink } from './link.ts';
 import {
   RATE, clock, ensureAssets, onPlan, onPlayer, onStatus, openSong, player, setError,
   setErrorSink, setStatus, state,
@@ -259,9 +259,57 @@ const picker = seqPicker($<HTMLDivElement>('seq'), async (key) => {
   openSong(songFromSequencer(seq), `opened "${seq.name}"`);
   chose(key);
   fileDialog.close();
+}, {
+  // ❗ **Only a level from the online archive has a link**, which is why this
+  // lives in the picker and not in the top bar beside the song's name: the
+  // button is there when the songs on screen came from a hash anybody can
+  // fetch, and gone otherwise. `setLinkable` below follows each open.
+  // ⚠️ **A copy can be refused and the reader must still get the link.**
+  // `navigator.clipboard.writeText` is denied outright in some contexts -- an
+  // embedded browser with no clipboard permission is one, measured -- so this
+  // reports what happened instead of throwing, and the picker shows the URL to
+  // copy by hand when it could not do it.
+  onLink: async (key) => {
+    const url = songLink(pickerRows.find((r) => r.key === key), uidIsUnique);
+    if (!url) throw new Error('this song has no link');
+    const copied = await copyText(url);
+    if (copied) setStatus('link copied');
+    return { url, copied };
+  },
 });
 
 const drop = mountOpen('#open', { onOpen: (opened) => openLevel(opened) });
+
+/**
+ * Put text on the clipboard, saying whether it went.
+ *
+ * ❗ **Two routes, because the first one is not always allowed.**
+ * `navigator.clipboard` needs a secure context, a user gesture and a permission
+ * the embedder can withhold; `execCommand('copy')` is deprecated and works in
+ * places the other does not. Neither is guaranteed, so this reports rather than
+ * throwing and the caller has a way to show the text.
+ */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // Fall through to the old route.
+  }
+  const field = document.createElement('textarea');
+  field.value = text;
+  field.setAttribute('readonly', '');
+  field.style.cssText = 'position:fixed;top:-1000px;opacity:0';
+  document.body.append(field);
+  field.select();
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    field.remove();
+  }
+}
 
 async function openLevel(opened: Opened): Promise<void> {
   setError('');
@@ -272,6 +320,11 @@ async function openLevel(opened: Opened): Promise<void> {
   // on the home screen never opens that dialog; reading a big backup is
   // seconds. See `widgets/loading.ts`.
   const job = loading(`Reading ${opened.label}`, 'loading the game’s instruments…');
+  // ❗ **The URL stops claiming a level that is not this one.** The archive
+  // route has already written its hash there (`rememberLevel`); every other
+  // route is opening something nobody else can fetch, and a link left over from
+  // a previous open would be a link to the wrong song.
+  if (!opened.archive) forgetLevel();
   try {
     await ensureAssets();
     job.note(
@@ -290,6 +343,7 @@ async function openLevel(opened: Opened): Promise<void> {
       songs = new Map();
       pickerRows = [];
       picker.setRows([]);
+      picker.setLinkable(false);
       fileDialog.close();
       return;
     }
@@ -309,6 +363,7 @@ async function openLevel(opened: Opened): Promise<void> {
       file: result.projects.length > 1 ? r.file : undefined,
     }));
     const first = picker.setRows(rows);
+    picker.setLinkable(linkable());
     pickerRows = found.map((r) => ({ key: r.key, uid: r.uid }));
     uidIsUnique = new Set(pickerRows.map((r) => r.uid)).size === pickerRows.length;
     drop.loaded(true);
@@ -353,6 +408,10 @@ const startNew = async () => {
   songs = new Map();
   pickerRows = [];
   picker.setRows([]);
+  picker.setLinkable(false);
+  // A new song is not the level in the address bar, and reloading the page must
+  // not bring that level back over it.
+  forgetLevel();
   openSong(newSong(), 'a new song');
   state.selection.cursor = { cell: 0, row: 0 };
   state.touch('selection');
