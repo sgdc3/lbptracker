@@ -253,6 +253,7 @@ export class EditorState {
     this.selection.points = new Map();
     this.selection.point = null;
     this.selection.cursor = null;
+    this.followPlayhead = true;
     this.notify('notes');
   }
 
@@ -304,8 +305,28 @@ export class EditorState {
       .sort((a, b) => a.cell - b.cell)[0];
   }
 
+  /**
+   * Whether the roll moves to the chip the playhead is inside.
+   *
+   * ❗ **A state, not a rule** -- the same decision `editor/follow.ts` records
+   * for the scroll, and for the same reason: it used to win over the person.
+   * Clicking a chip means "show me this one", so it switches the follow off;
+   * choosing a row means "watch this row", so it switches it back on, as does
+   * opening a song, the button in the panel head, and landing back on the chip
+   * the playhead is in.
+   *
+   * ⚠️ Before this it was neither on nor off. A chip clicked on the playhead's
+   * own row was shown until the playhead crossed into the next chip, which
+   * yanked the view away mid-edit; a chip clicked on another row was overridden
+   * on the very next frame if the playhead happened to be inside a chip there,
+   * and held forever if it was not.
+   */
+  followPlayhead = true;
+
   /** Select a clip alone, and with it the row it sits on. Any block selected before goes. */
   selectClip(id: number | null): void {
+    // The person is pointing at a chip: stop following until asked again.
+    this.followPlayhead = false;
     const clip = this.clip(id);
     if (clip) this.selection.row = clip.row;
     this.selection.clips = new Set(clip ? [clip.id] : []);
@@ -327,10 +348,16 @@ export class EditorState {
     const current = this.clip();
     this.selection.row = row;
     if (current && current.row === row) {
+      this.followPlayhead = true;
       this.notify('selection');
       return;
     }
     this.selectClip(this.firstClipOnRow(row)?.id ?? null);
+    // ❗ **Choosing a row is "watch this row", so it follows** -- `selectClip`
+    // has just switched that off for the chip it picked, and this is the one
+    // caller that means the opposite.
+    this.followPlayhead = true;
+    this.notify('selection');
   }
 
   /**
@@ -361,6 +388,7 @@ export class EditorState {
    * where it is.
    */
   selectClips(ids: Iterable<number>, lead?: number): void {
+    this.followPlayhead = false;
     const next = new Set<number>();
     for (const id of ids) if (this.clip(id)) next.add(id);
     this.selection.clips = next;

@@ -4,6 +4,18 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.25 (2026-09-10)
+
+- The note grid stays where you put it. While the song plays, the grid follows the playhead into
+  whichever instrument it reaches on the row you are on; clicking an instrument used to hold it
+  only until the playhead crossed into the next one, which pulled the grid away from you
+  mid-edit, and on another row it could be overridden at once. Now clicking an instrument means
+  you want that one, and it stays.
+- A "follow" button in the note panel says which of the two is happening and puts it back. Press
+  it and the grid jumps to whatever is sounding now and goes back to following; press it again to
+  hold where you are without having to click anything. Choosing a row turns following on again as
+  well, and so does opening a song.
+
 ## 0.2.24 (2026-09-09)
 
 - Instruments keep their colour. Every instrument on the board is drawn in the colour the game

@@ -289,17 +289,6 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
 
   // --------------------------------------------------------- the playhead
 
-  /**
-   * The chip the playhead was last inside on the selected row.
-   *
-   * ❗ **The roll follows the playhead by transitions, not by position.** When
-   * the playhead enters a chip on the selected row the roll moves to it; while
-   * it stays inside that chip a click on another chip holds, instead of being
-   * snapped back on the next tick. Reset when the row changes.
-   */
-  let followed: number | null = null;
-  let followedRow = -1;
-
   function chipUnder(step: number): Clip | undefined {
     let found: Clip | undefined;
     for (const c of state.song.clips) {
@@ -310,6 +299,39 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     return found;
   }
 
+  /**
+   * The follow switch in the panel head: whether the roll moves to the chip
+   * the playhead is inside.
+   *
+   * ❗ **It shows a state the person already owns** (`state.followPlayhead`) --
+   * clicking a chip switches the follow off, choosing a row switches it on --
+   * so the button is both the way back and the only place the current answer
+   * is visible. Pressing it on jumps to the playhead's chip at once rather
+   * than waiting for it to cross into the next one.
+   */
+  const followButton = $<HTMLButtonElement>('followPlayhead');
+  const showFollow = () => followButton.setAttribute('aria-pressed', String(state.followPlayhead));
+  /**
+   * The selection as the last frame left it.
+   *
+   * ⚠️ **The rule below is a transition, and it has to be.** "Selected the
+   * chip the playhead is in, so follow again" read as a position first, and
+   * the button could then not be switched off at all while the roll sat on
+   * that chip: the click cleared the flag and the next frame put it back.
+   */
+  let seenSelection: number | null = null;
+  /** The chip the playhead is inside on the selected row, or none. */
+  const liveChip = (): Clip | undefined =>
+    (player.hasPlan ? chipUnder(player.stepAt(player.position())) : undefined);
+  followButton.addEventListener('click', () => {
+    state.followPlayhead = !state.followPlayhead;
+    const under = state.followPlayhead ? liveChip() : undefined;
+    if (under) state.followClip(under.id);
+    showFollow();
+  });
+  state.onChange(showFollow);
+  showFollow();
+
   function paint(): void {
     if (!player.hasPlan) {
       board.setPlayhead(null);
@@ -318,15 +340,20 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     }
     const step = player.stepAt(player.position());
     board.setPlayhead(step);
-    if (followedRow !== state.selection.row) {
-      followedRow = state.selection.row;
-      followed = null;
+    const live = chipUnder(step)?.id ?? null;
+    // ❗ **Moving the roll ONTO the playhead's chip is following again**,
+    // however it got there -- the click that selects it, the button, or the
+    // follow itself. The same self-healing rule `follow.ts` uses for the
+    // scroll, where a scroll that brings the playhead back into view switches
+    // that one on too.
+    const moved = state.selection.clipId !== seenSelection;
+    seenSelection = state.selection.clipId;
+    if (moved && live !== null && state.selection.clipId === live) state.followPlayhead = true;
+    else if (state.followPlayhead && live !== null && live !== state.selection.clipId) {
+      state.followClip(live);
+      seenSelection = live;
     }
-    const under = chipUnder(step);
-    if ((under?.id ?? null) !== followed) {
-      followed = under?.id ?? null;
-      if (under) state.followClip(under.id);
-    }
+    showFollow();
     const clip = state.clip();
     if (clip) {
       const inClip = step - clip.cell * STEPS_PER_CELL;
