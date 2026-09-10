@@ -54,9 +54,8 @@ import {
 import {
   PITCHES,
   STEPS_PER_BAR,
-  TAIL_STEPS,
   TRIPLET_THIRDS,
-  ghostNotes,
+  ghostWindow,
   gridUnit,
   isBlackKey,
   noteName,
@@ -121,9 +120,22 @@ export class RollView {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly state: EditorState;
   private readonly cb: RollCallbacks;
-  private layout: RollLayout = { keys: KEYS, ruler: RULER, stepW: STEP_W, rowH: ROW_H, steps: 32, tail: 0, triplets: false };
-  /** What the row's other chips hold in the bar after this clip; see `ghostNotes`. */
+  private layout: RollLayout = {
+    keys: KEYS, ruler: RULER, stepW: STEP_W, rowH: ROW_H, steps: 32, head: 0, tail: 0, triplets: false,
+  };
+  /**
+   * What the row's other chips hold before and after this clip; see
+   * `ghostWindow`.
+   *
+   * ⚠️ **Kept between frames rather than recomputed in `draw`.** A busy row of
+   * `Ascetic` holds thousands of notes and the roll paints thirty times a
+   * second while the song plays; this changes only when the song or the chip
+   * does, which `state.version` counts.
+   */
   private ghosts: { note: SongNote; shift: number }[] = [];
+  private ghostKey = '';
+  private ghostHead = 0;
+  private ghostTail = 0;
   private playStep: number | null = null;
   /** Following the playhead, unless the person scrolled away from it. */
   private readonly follow: Follow;
@@ -250,6 +262,15 @@ export class RollView {
       },
     );
     this.scroller.scrollTop = Math.max(0, best.row * layout.rowH);
+    // ❗ **`best.step` is in the clip's own steps**, and `stepCount` above was
+    // its own `steps`: `find the notes` looks at this chip's notes and at
+    // nothing in the lead-in or the tail.
+    //
+    // ⚠️ **The head is deliberately NOT added back here.** In content pixels
+    // the clip's step 0 sits a bar in, so adding it would park that bar off
+    // the left edge and the lead-in would have to be scrolled to -- which is
+    // the whole thing it exists to save. Leaving it off frames the window a
+    // bar early, which is the run-up an author wants to see anyway.
     this.scroller.scrollLeft = Math.max(0, best.step * layout.stepW);
   }
 
@@ -273,17 +294,24 @@ export class RollView {
 
   private measure(): void {
     const clip = this.state.clip();
-    // ❗ **The tail exists only when there is something in it.** An empty bar
-    // of grid nobody can write in is scroll for nothing, and the common case
-    // -- a row whose chips do not reach past this one -- keeps the roll it
-    // always had.
-    this.ghosts = clip
-      ? ghostNotes(clip, this.state.song.clips.filter((c) => c.row === clip.row && c.id !== clip.id))
-      : [];
+    // ❗ **Neither side exists unless something is in it.** An empty bar of
+    // grid nobody can write in is scroll for nothing, and a row whose chips do
+    // not reach past this one keeps the roll it always had.
+    const key = `${clip?.id ?? 0}:${this.state.version.value}`;
+    if (key !== this.ghostKey) {
+      this.ghostKey = key;
+      const window_ = clip
+        ? ghostWindow(clip, this.state.song.clips.filter((c) => c.row === clip.row && c.id !== clip.id))
+        : { ghosts: [], head: 0, tail: 0 };
+      this.ghosts = window_.ghosts;
+      this.ghostHead = window_.head;
+      this.ghostTail = window_.tail;
+    }
     this.layout = {
       ...this.layout,
       steps: clip?.steps ?? 32,
-      tail: this.ghosts.length > 0 ? TAIL_STEPS : 0,
+      head: this.ghostHead,
+      tail: this.ghostTail,
       triplets: this.state.triplets,
     };
     const full = rollSize(this.layout);
@@ -383,8 +411,12 @@ export class RollView {
     // The visible pitch rows and step columns.
     const rowTop = Math.max(0, Math.floor((sy) / layout.rowH));
     const rowBottom = Math.min(PITCHES - 1, Math.ceil((sy + viewH) / layout.rowH));
-    const stepLeft = Math.max(0, Math.floor((sx) / layout.stepW));
-    const stepRight = Math.min(layout.steps + layout.tail, Math.ceil((sx + viewW) / layout.stepW));
+    // ⚠️ In the CLIP's own steps, which are negative across the lead-in bar.
+    const stepLeft = Math.max(-layout.head, Math.floor(sx / layout.stepW) - layout.head);
+    const stepRight = Math.min(
+      layout.steps + layout.tail,
+      Math.ceil((sx + viewW) / layout.stepW) - layout.head,
+    );
 
     // Row shading: black-key rows darker, as the game's grid does.
     for (let row = rowTop; row <= rowBottom; row += 1) {
@@ -424,11 +456,15 @@ export class RollView {
         }
       }
     }
-    // Past the clip's end there is nothing to place a note on, and the dark
-    // over it is what says so -- the ghosts below are drawn on top of it.
+    // Outside the clip's own grid there is nothing to place a note on, and the
+    // dark over it is what says so -- the ghosts below are drawn on top of it.
+    const startX = rollStepX(layout, 0) - sx;
     const endX = rollStepX(layout, layout.steps) - sx;
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    if (startX > layout.keys) {
+      ctx.fillRect(layout.keys, layout.ruler, startX - layout.keys, viewH - layout.ruler);
+    }
     if (endX < viewW) {
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.fillRect(endX, layout.ruler, viewW - endX, viewH - layout.ruler);
     }
 
@@ -504,14 +540,25 @@ export class RollView {
     // invisible while it is the thing an author is listening for.
     if (this.ghosts.length > 0) {
       ctx.save();
-      const from = Math.max(layout.keys, endX);
+      // ❗ Two regions, and the clip's own grid is the hole between them: a
+      // ghost whose chain crosses a boundary is cut at it, so nothing the
+      // author cannot touch is ever drawn over the notes they are editing.
       ctx.beginPath();
-      ctx.rect(from, layout.ruler, Math.max(0, viewW - from), viewH - layout.ruler);
+      if (startX > layout.keys) {
+        ctx.rect(layout.keys, layout.ruler, startX - layout.keys, viewH - layout.ruler);
+      }
+      if (endX < viewW) ctx.rect(endX, layout.ruler, viewW - endX, viewH - layout.ruler);
       ctx.clip();
+      // The thirds on screen, so a row of thousands of notes costs a compare.
+      const fromThirds = (stepLeft - 1) * 3;
+      const toThirds = (stepRight + 1) * 3;
       for (const { note, shift } of this.ghosts) {
+        const pts = note.points;
+        if (pts[0].thirds + shift > toThirds) continue;
+        if (pts[pts.length - 1].thirds + shift < fromThirds) continue;
         const gx = (t: number) => rollX(layout, t + shift) - sx;
-        this.drawChain(note.points, GHOST_ALPHA, 1, gx, py);
-        for (const p of note.points) {
+        this.drawChain(pts, GHOST_ALPHA, 1, gx, py);
+        for (const p of pts) {
           ctx.fillStyle = timbreColour(p.timbre, GHOST_ALPHA);
           ctx.beginPath();
           ctx.arc(gx(p.thirds), py(p.pitch), pointRadius(p.volume, layout.rowH), 0, Math.PI * 2);
@@ -761,7 +808,8 @@ export class RollView {
     // step, so a click in the tail -- or in the empty canvas right of a short
     // grid, which was already possible -- used to draw a note at the end of
     // the clip, several bars from where the pointer was.
-    if (rollThirdsAt(this.layout, x) >= clip.steps * 3) return;
+    const at = rollThirdsAt(this.layout, x);
+    if (at < 0 || at >= clip.steps * 3) return;
     // Empty: a new note, one point, at the snapped position.
     const thirds = this.snapped(x, clip.steps);
     const pitch = rollPitchAt(this.layout, y);

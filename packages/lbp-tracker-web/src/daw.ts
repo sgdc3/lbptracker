@@ -249,13 +249,25 @@ fileDialog.addEventListener('click', (event) => {
 let pickerRows: { key: string; uid: number }[] = [];
 let uidIsUnique = true;
 
+/** The song on screen, so picking it again is a dismissal rather than a reload. */
+let openKey = '';
+
 const chose = (key: string): void => {
+  openKey = key;
   rememberSequencer(pickerRows.find((r) => r.key === key), uidIsUnique);
 };
 
 const picker = seqPicker($<HTMLDivElement>('seq'), async (key) => {
   const seq = songs.get(key);
   if (!seq) return;
+  // ❗ **Picking the song already open just closes the picker.** It is a
+  // dismissal, not a choice: opening it again would ask about unsaved changes
+  // and then throw away the edit the person is in the middle of, for a click
+  // that asked for nothing.
+  if (key === openKey) {
+    fileDialog.close();
+    return;
+  }
   if (state.dirty && !(await confirmDialog('Throw away the unsaved changes?', 'throw them away'))) return;
   openSong(songFromSequencer(seq), `opened "${seq.name}"`);
   chose(key);

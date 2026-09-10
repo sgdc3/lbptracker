@@ -187,9 +187,10 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
         '<strong>colour</strong> is the chip\'s own on the board, the way the game keeps it: a new chip takes the ' +
         'colour its instrument comes with in the popit, <em>reset</em> puts it back, and it travels in a MIDI ' +
         'file and in an exported plan. Nothing plays it. ' +
-        'Past the end of the instrument the grid shows one more bar, faded: what the other instruments on ' +
-        'that row play there, so you can see how your notes join what comes next. Nothing in it can be ' +
-        'clicked or moved, and <em>find the notes</em> ignores it. ' +
+        'Around the instrument the grid shows what the rest of the row plays, faded: one bar before it, and ' +
+        'everything after it. That is how you see the join with what came before and what comes next, since ' +
+        'instruments on a row overlap. Nothing in the faded parts can be clicked or moved, and ' +
+        '<em>find the notes</em> ignores them. ' +
         '<strong>Follow</strong> is whether the grid moves to whichever instrument the playhead is inside on ' +
         'this row. Clicking an instrument turns it off, so what you are looking at stays put while the song ' +
         'plays; the button puts it back and jumps to the one sounding now, and choosing a row turns it on too. ' +

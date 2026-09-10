@@ -51,10 +51,19 @@ watch(() => props.state.rows, async () => {
   listEl.value?.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
 });
 
-/** Choose a row. `quiet` selects without telling the page. */
+/**
+ * Choose a row. `quiet` selects without telling the page.
+ *
+ * ⚠️ **A click on the row that is already chosen is still a choice.** This
+ * used to return early on it, and since the page closes the dialog from
+ * `onPick`, clicking the song you were already on left the picker sitting
+ * there with nothing happening -- the one row in the list where a click did
+ * nothing at all. Only the state write is skipped now; the page hears it
+ * either way and decides what a repeat means (`daw.ts`: close, and do not
+ * open the song again).
+ */
 const pick = (key: string, quiet = false) => {
-  if (key === props.state.chosen) return;
-  props.state.chosen = key;
+  if (key !== props.state.chosen) props.state.chosen = key;
   if (!quiet) props.onPick(key);
 };
 defineExpose({ pick });

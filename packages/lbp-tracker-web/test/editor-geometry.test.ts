@@ -19,50 +19,60 @@ import {
   rollY,
   segmentDistance,
   bestNoteWindow,
-  ghostNotes,
+  ghostWindow,
   rollSize,
   snapThirds,
   timbreColour,
-  TAIL_STEPS,
+  HEAD_STEPS,
   type BoardLayout,
   type RollLayout,
 } from '../src/editor/geometry.ts';
 
 const board: BoardLayout = { cellW: 40, cellH: 30, gutter: 24, ruler: 18, cols: 10, rows: 4 };
-const roll: RollLayout = { keys: 50, ruler: 20, stepW: 24, rowH: 12, steps: 32, tail: 0, triplets: false };
+const roll: RollLayout = { keys: 50, ruler: 20, stepW: 24, rowH: 12, steps: 32, head: 0, tail: 0, triplets: false };
 const tripletRoll: RollLayout = { ...roll, triplets: true };
 
-test('the roll draws a tail only for what the row holds in it, and shifts it into place', () => {
+test('the roll shows a bar before the clip and everything after it, shifted into place', () => {
   // A cell is 16 steps -- 48 thirds -- and this clip is 32 steps long, so its
-  // own grid ends at third 96 and the bar after it runs to third 120.
+  // own grid runs from third 0 to 96 and the bar before it is thirds -24..0.
   const clip = { cell: 4, steps: 32 };
   const note = (from: number, to = from) => ({ points: [{ thirds: from }, { thirds: to }] });
   const others = [
-    // Anchored two cells later: its third 0 lands on this grid's third 96, so
-    // its opening bar is exactly the tail.
-    // ⚠️ 72 thirds is 24 steps in, three bars past this clip's end: a chip's
-    // own notes reach far further than the bar being shown, and only the ones
-    // inside the window belong in it.
-    { cell: 6, notes: [note(0), note(12), note(72)] },
-    // Anchored before this one and still sounding: a long note of its own that
-    // reaches into the window, and one that stops before it.
-    { cell: 2, notes: [note(0, 200), note(0, 60)] },
-    // Far enough on that nothing of it is in the bar.
-    { cell: 10, notes: [note(0)] },
+    // Two cells later: its third 0 lands on this grid's 96, where this clip
+    // ends, so its opening is the first thing after.
+    { cell: 6, notes: [note(0), note(12)] },
+    // Two cells earlier: its third 96 lands on this grid's 0, so a note at 72
+    // sits in the bar before, and one at 0 is a whole clip earlier and out.
+    { cell: 2, notes: [note(72), note(0)] },
+    // Far on, and still shown: after the clip is everything, not one bar.
+    { cell: 40, notes: [note(0)] },
   ];
-  const ghosts = ghostNotes(clip, others);
+  const { ghosts, head, tail } = ghostWindow(clip, others);
   assert.deepEqual(
-    ghosts.map((g) => [g.note.points[0].thirds, g.shift]),
-    [[0, 96], [12, 96], [0, -96]],
-    'the note at 72 of the next chip is past the bar, and the far chip has nothing in it',
+    ghosts.map((g) => g.note.points[0].thirds + g.shift),
+    [96, 108, -24, 1728],
+    'the note a whole clip before is out; everything after is in',
   );
-  // The shift is what puts a ghost on this grid: the next chip's third 0 is
-  // this grid's 96, which is where this clip's own notes stop.
-  assert.equal(ghosts[0].note.points[0].thirds + ghosts[0].shift, clip.steps * 3);
-  // ⚠️ And the tail is drawn width, never grid length: `steps` stays the
-  // clip's own, which is what a click and `find the notes` are held to.
-  assert.equal(rollSize({ ...roll, tail: TAIL_STEPS }).width, roll.keys + (32 + 8) * roll.stepW);
-  assert.equal(rollSize(roll).width, roll.keys + 32 * roll.stepW, 'no tail, no extra width');
+  assert.equal(head, HEAD_STEPS, 'one bar of lead-in, because something is in it');
+  // 1728 thirds is step 576, which is 544 past this clip's end: rounded up to
+  // the game's 8-step bar, and it is already a multiple of one.
+  assert.equal(tail, 544);
+  assert.equal(ghostWindow({ cell: 0, steps: 32 }, others).head, 0, 'no bar before the song');
+  assert.deepEqual(
+    ghostWindow(clip, [{ cell: 4, notes: [note(3, 9)] }]),
+    { ghosts: [], head: 0, tail: 0 },
+    'a chip sounding UNDER this one is not before it or after it',
+  );
+
+  // ⚠️ The head and the tail are drawn width, never grid length: `steps` stays
+  // the clip's own, which is what a click and `find the notes` are held to.
+  const wide = { ...roll, head: 8, tail: 16 };
+  assert.equal(rollSize(wide).width, roll.keys + (8 + 32 + 16) * roll.stepW);
+  assert.equal(rollSize(roll).width, roll.keys + 32 * roll.stepW, 'no window, no extra width');
+  // And a position is where the head puts it: step 0 is a bar in.
+  assert.equal(rollStepX(wide, 0), roll.keys + 8 * roll.stepW);
+  assert.equal(rollThirdsAt(wide, rollStepX(wide, 4)), 12, 'and back again');
+  assert.equal(rollThirdsAt(wide, roll.keys), -24, 'the far left is the bar before');
 });
 
 test('board: a cell and its rectangle agree, and the gutter is not a cell', () => {

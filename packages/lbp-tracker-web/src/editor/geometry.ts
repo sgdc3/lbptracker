@@ -108,15 +108,16 @@ export interface RollLayout {
   /** The clip's grid length. */
   readonly steps: number;
   /**
-   * Steps drawn past that grid: the bar after the clip, where what the row's
-   * other chips hold there is shown through and cannot be touched. 0 when
-   * there is nothing to show.
+   * Steps drawn BEFORE the clip's own grid -- one bar of lead-in -- and after
+   * it, where what the row's other chips hold is shown through and cannot be
+   * touched. Both are 0 when there is nothing to show there.
    *
    * ❗ **Kept apart from `steps` on purpose.** Everything that asks "how long
    * is this clip" -- where a click may land, what `find the notes` may scroll
-   * to -- reads `steps`, and reads it unchanged; only the drawn width knows
-   * about the tail.
+   * to -- reads `steps`, and reads it unchanged; only the drawn width, and the
+   * x a position lands on, know about these.
    */
+  readonly head: number;
   readonly tail: number;
   /** Whether the grid's cells are thirds of a step rather than steps. */
   readonly triplets: boolean;
@@ -142,39 +143,54 @@ export const gridUnit = (triplets: boolean): number => (triplets ? TRIPLET_THIRD
 
 export function rollSize(layout: RollLayout): { width: number; height: number } {
   return {
-    width: layout.keys + (layout.steps + layout.tail) * layout.stepW,
+    width: layout.keys + (layout.head + layout.steps + layout.tail) * layout.stepW,
     height: layout.ruler + PITCHES * layout.rowH,
   };
 }
 
-/** One bar of it: the game's bar is 8 steps, and a chip's grid is four of them. */
-export const TAIL_STEPS = STEPS_PER_BAR;
+/** The lead-in: one bar, the game's own 8 steps. */
+export const HEAD_STEPS = STEPS_PER_BAR;
+
+/** A note of another chip on the row, and what to add to its positions here. */
+export interface Ghost<N> {
+  readonly note: N;
+  /** Thirds to add to each of its positions to bring it onto this clip's grid. */
+  readonly shift: number;
+}
 
 /**
- * What the row's other chips hold in the bar after this clip.
+ * What the row's other chips hold around this clip: **a bar before it, and
+ * everything after it**.
  *
  * ❗ **A chip's clip is not the whole of its row's music.** Chips of one row
  * overlap heavily -- a cell is 16 steps and a clip may hold 128, and `Ascetic`
- * places one every two cells -- so the notes that sound right after the one
- * being edited belong to chips this grid does not show, and the join between
- * them was invisible. This is the rule for what to draw through in that bar:
- * a note of another chip on the row whose own span reaches into the window.
+ * places one every two cells -- so the notes on either side of the one being
+ * edited belong to chips this grid does not show, and both joins were
+ * invisible. This is the rule for what to draw through: a note of another chip
+ * on the row whose own span reaches into the window.
  *
- * The shift is what to add to each of that note's positions to bring it onto
- * this clip's grid: chips sit on 16-step cells, so it is always whole steps,
- * and it is negative for a chip anchored earlier that is still sounding.
+ * The two sides are deliberately not symmetric. **Before** is one bar: enough
+ * to see what you are answering, and no more, because the grid would otherwise
+ * open somewhere in the middle of the row's history. **After** is everything,
+ * to the last note any of the row's other chips holds, rounded up to a bar --
+ * what comes next is what an author is writing towards.
+ *
+ * ⚠️ The head is clamped at the song's start: a chip on cell 0 has no bar
+ * before it, and there is no negative time to draw.
  *
  * Generic over the note so this stays pure geometry: it needs a position and
  * nothing else about a note.
  */
-export function ghostNotes<N extends { points: readonly { thirds: number }[] }>(
+export function ghostWindow<N extends { points: readonly { thirds: number }[] }>(
   clip: { cell: number; steps: number },
   others: readonly { cell: number; notes: readonly N[] }[],
-  tailSteps: number = TAIL_STEPS,
-): { note: N; shift: number }[] {
-  const from = clip.steps * 3;
-  const to = (clip.steps + tailSteps) * 3;
-  const out: { note: N; shift: number }[] = [];
+  headSteps: number = HEAD_STEPS,
+): { ghosts: Ghost<N>[]; head: number; tail: number } {
+  const head = Math.min(headSteps, clip.cell * STEPS_PER_CELL);
+  const from = -head * 3;
+  const end = clip.steps * 3;
+  const spans: { note: N; shift: number; first: number; last: number }[] = [];
+  let furthest = end;
   for (const other of others) {
     const shift = (other.cell - clip.cell) * STEPS_PER_CELL * 3;
     for (const note of other.notes) {
@@ -185,15 +201,41 @@ export function ghostNotes<N extends { points: readonly { thirds: number }[] }>(
         if (p.thirds < first) first = p.thirds;
         if (p.thirds > last) last = p.thirds;
       }
-      if (last + shift >= from && first + shift < to) out.push({ note, shift });
+      first += shift;
+      last += shift;
+      if (last < from) continue;
+      spans.push({ note, shift, first, last });
+      if (last > furthest) furthest = last;
     }
   }
-  return out;
+  const tail = Math.ceil((furthest / 3 - clip.steps) / STEPS_PER_BAR) * STEPS_PER_BAR;
+  // ⚠️ A note whose whole span sits inside the clip's own window is another
+  // chip sounding UNDER this one, not before or after it, and drawing it would
+  // put a ghost the author cannot touch on top of the notes they are editing.
+  //
+  // ❗ There is no upper bound to test against: the tail was measured from
+  // these same notes, so anything reaching past the clip is inside it. An
+  // upper bound of `(steps + tail) * 3` looks right and drops the furthest
+  // note of the row, which is the one that set the tail in the first place.
+  const ghosts = spans
+    .filter((s) => s.first < 0 || s.last >= end)
+    .map(({ note, shift }) => ({ note, shift }));
+  return {
+    ghosts,
+    head: ghosts.some((g) => g.note.points.some((p) => p.thirds + g.shift < 0)) ? head : 0,
+    tail,
+  };
 }
 
 /**
  * A position in thirds of a step to its canvas x: the CENTRE of its cell, the
- * way the game's grid draws a note. On the triplet grid a point on a triplet
+ * way the game's grid draws a note.
+ *
+ * ❗ **Positions stay the clip's own, and the head is an offset applied on the
+ * way to the canvas.** A position before the clip's first step is negative,
+ * which is exactly what the lead-in bar holds; every clamp, snap and hit test
+ * goes on working in the clip's own thirds, and only this, `rollStepX` and
+ * `rollThirdsAt` know that the grid no longer starts at x = `keys`. On the triplet grid a point on a triplet
  * cell sits in the centre of that four-third cell; otherwise a point on a
  * whole step sits in the centre of the step, and a point on a third in the
  * centre of the third -- the finest cell it is on.
@@ -205,17 +247,17 @@ export function rollX(layout: RollLayout, thirds: number): number {
   const unit = layout.triplets && thirds % TRIPLET_THIRDS === 0
     ? TRIPLET_THIRDS
     : thirds % 3 === 0 ? 3 : 1;
-  return layout.keys + ((thirds + unit / 2) / 3) * layout.stepW;
+  return layout.keys + (layout.head + (thirds + unit / 2) / 3) * layout.stepW;
 }
 
 /** A step boundary to its canvas x: the grid lines, the ruler, the playhead. */
 export function rollStepX(layout: RollLayout, step: number): number {
-  return layout.keys + step * layout.stepW;
+  return layout.keys + (layout.head + step) * layout.stepW;
 }
 
 /** A canvas x to a continuous position in thirds; `snapThirds` picks the cell. */
 export function rollThirdsAt(layout: RollLayout, x: number): number {
-  return ((x - layout.keys) / layout.stepW) * 3;
+  return ((x - layout.keys) / layout.stepW - layout.head) * 3;
 }
 
 /** The centre of a pitch's row. Pitch 127 is the top row. */

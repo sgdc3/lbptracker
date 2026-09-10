@@ -206,23 +206,35 @@ The editor draws both, as faithfully as the data allows and no further:
   (the slide rates at `+0x2c` in [synth-engine.md](synth-engine.md)), so the ribbon's thickness and
   hue at any x are the volume and modulation that will sound there. A segment whose ends share a
   timbre — 96.1% of notes automate nothing — skips the gradient and fills flat.
-- **The bar after the clip is drawn, through and untouchable** (`ghostNotes` in `geometry.ts`,
-  held by `test/editor-geometry.test.ts`). A chip's grid is not the whole of its row's music:
-  chips of one row overlap heavily — a cell is 16 steps and a clip may hold 128, and `Ascetic`
-  places one every two cells — so what sounds immediately after the clip being edited belongs to
-  chips this grid does not show, and the join between them was invisible. The roll therefore draws
-  one extra bar (`TAIL_STEPS`) holding every note of the row's other chips that reaches into it,
-  shifted onto this grid, at `GHOST_ALPHA`. ⚠️ **Measured rather than eyeballed**: at 0.45 a
-  ghost's bluest pixel came back (54,116,210) against a real note's (66,140,255), which reads as a
-  note; 0.28 gives (42,91,166), which reads as not yours.
-  - ❗ **`RollLayout.tail` is drawn width and never grid length.** Everything that asks how long
-    the clip is — where a click may land, what `find the notes` may scroll to (`stepCount`) —
-    reads `steps`, unchanged. The ghosts are not in `clip.notes`, so no selection, drag or key can
-    reach them; and the tail is only there when something is in it, so a row whose chips do not
-    reach past this one keeps the roll it always had.
-  - ⚠️ A click past the clip's end now does nothing. `snapped` clamps to the last step, so it used
-    to draw a note at the end of the clip several bars from the pointer — already possible in the
-    empty canvas right of a short grid, and the tail would have made it easy.
+- **What the row plays around the clip is drawn, through and untouchable** (`ghostWindow` in
+  `geometry.ts`, held by `test/editor-geometry.test.ts`). A chip's grid is not the whole of its
+  row's music: chips of one row overlap heavily — a cell is 16 steps and a clip may hold 128, and
+  `Ascetic` places one every two cells — so the notes on either side of the one being edited
+  belong to chips this grid does not show, and both joins were invisible. The roll draws every
+  note of the row's other chips that reaches the window, shifted onto this grid, at `GHOST_ALPHA`.
+  - **The two sides are deliberately not symmetric.** Before is one bar (`HEAD_STEPS`): enough to
+    see what you are answering, and no more, or the grid would open somewhere in the middle of the
+    row's history. After is *everything*, to the last note the row holds, rounded up to a bar —
+    what comes next is what an author is writing towards. On `Ascetic`'s busiest row that is a
+    4,992-step tail and 1,459 ghosts, drawn in 0.26–0.58 ms a frame because the list is computed
+    once per song version and each note is culled against the visible thirds.
+  - ⚠️ **The head is scrolled to, not scrolled past.** `scrollToNotes` deliberately does not add
+    the head back to the scroll it computes: the clip's step 0 sits a bar into the content, so
+    adding it would park the lead-in off the left edge, which is the whole thing it exists to
+    save. The owner asked for it visible on open, and this is where that is decided.
+  - ⚠️ **Measured rather than eyeballed**: at 0.45 a ghost's bluest pixel came back (54,116,210)
+    against a real note's (66,140,255), which reads as a note; 0.28 gives (42,91,166), which reads
+    as not yours.
+  - ❗ **`RollLayout.head` and `tail` are drawn width and never grid length.** Positions stay the
+    clip's own — negative across the lead-in — and only `rollX`, `rollStepX` and `rollThirdsAt`
+    know the grid no longer starts at x = `keys`. Everything that asks how long the clip is (where
+    a click may land, what `find the notes` may scroll to through `stepCount`) reads `steps`,
+    unchanged. The ghosts are not in `clip.notes`, so no selection, drag or key can reach them,
+    and the drawing is clipped to the two regions outside the clip so nothing untouchable is ever
+    drawn over the notes being edited.
+  - ⚠️ A click outside the clip's own grid now does nothing. `snapped` clamps, so it used to draw
+    a note at the end (or the start) of the clip several bars from the pointer — already possible
+    in the empty canvas right of a short grid, and the window would have made it easy.
 - **The selection is a set of POINTS, not of notes** (`Selection.points`, a note id to the indices
 
   of its chosen points). Shift+drag draws a rectangle and it catches the points inside it;

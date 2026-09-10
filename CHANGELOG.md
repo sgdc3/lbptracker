@@ -6,15 +6,19 @@ not before, never how it was done. No `--` or em dash in here; the site's text d
 
 ## 0.2.26 (2026-09-10)
 
-- The note grid now shows one bar past the end of the instrument you are editing, and what the
-  other instruments on that row play there. It is drawn faded, and you cannot touch it: it is
-  there so you can see how what you are writing joins what comes next. Instruments on a row
-  overlap in this game, so the notes that follow yours are usually inside another chip and there
-  was no way to see them while you worked.
-- The extra bar appears only when something is in it, and clicking in it does nothing. Clicking in
+- The note grid now shows what the rest of the row plays around the instrument you are editing:
+  one bar before it, and everything after it to the last note on that row. It is drawn faded and
+  you cannot touch it, and the bar before is on screen the moment the grid opens, so you can see
+  how what you are writing joins what came before and what comes next. Instruments on a row
+  overlap in this game, so those notes are almost always inside another chip and there was no way
+  to see them while you worked.
+- Neither side appears when there is nothing in it, and clicking in them does nothing. Clicking in
   the empty space to the right of a short grid used to drop a note at the end of the grid instead,
   which was never what anyone meant.
-- "Find the notes" still looks only at the instrument you are editing, never at the faded bar.
+- "Find the notes" still looks only at the instrument you are editing, never at the faded parts.
+- Clicking the song you already have open, in the song list, now closes the list. It used to be
+  the one row in there that did nothing at all, and it never asks about unsaved changes or reloads
+  the song: it is a way out of the list, not a way back in.
 
 ## 0.2.25 (2026-09-10)
 
