@@ -37,6 +37,14 @@ From the ordered `R*` name list at file `0xe4e405` (`RTexture` = 1, confirmed in
 `PInstrument.Instrument` serialises with type tag `0x30` = 48 → a reference to an `RInstrument`.
 ennuo's `ResourceType.java` agrees (`INSTRUMENT = 48`, `SAMPLE = 49`).
 
+**A chip is three GUIDs and a colour, not one GUID.** Beside the `RInstrument` it plays, a
+placement carries the popit plan it came from (the Thing's `planGuid`), the icon drawn on it
+(`PInstrument.Icon`) and the tint it wears (`Colour`, below). None of the three reaches playback
+and all are properties of the instrument rather than of the music, except where a creator has
+re-tinted; `packages/cwlib-ts/src/chips.ts` is the measured
+`RInstrument → (plan, icon, colour)` table for **all 68** of the game's instruments, read out of
+their own popit plans.
+
 ## `PSequencer` — serialiser at `v0xd37d10`
 
 Offsets from the part's base; the allocation is `0x60` bytes.
@@ -78,7 +86,7 @@ the schema was wrong somewhere between `+0x48` and `+0x50`.
 |---|---|---|---|---|
 | `+0x10` | ref(48) | `Instrument` | | → `RInstrument` |
 | `+0x18` | string | `Name` | version ≥ `0x35b` | the Thing's label — 4,353 of 62,158 corpus placements carry one, 23 distinct strings, all the editor's own defaults (`Synth: Ray Gun`) |
-| `+0x20` | i32 | `Colour` | | UI only |
+| `+0x20` | i32 | `Colour` | | the chip's tint, **packed RGBA** — UI only, and see below |
 | `+0x24` | i32 | `Loops` | | **1 in every one of 105,785 corpus instruments** |
 | `+0x28` | i32 | `Key` | | a transposition: `key mod 12`, C at 12, 0 the untouched default — [synth-engine.md](synth-engine.md) |
 | `+0x2c` | i32 | `Scale` | | 0 chromatic, 1..5 a table the engine snaps to |
@@ -90,6 +98,45 @@ the schema was wrong somewhere between `+0x48` and `+0x50`.
 | `+0x48` | ref(1) | `Icon` | version ≥ `0x379` | texture |
 | `+0x60` | i32 | *(unnamed)* | | copied into the engine's clip as its **length in steps**; not named by the serialiser walk |
 | `+0x68` | array | **`Notes`** | | **4 bytes per element** — the note grid; the array's count sits at `+0x70` |
+
+### `Colour` — packed RGBA, and white means "no tint"
+
+The field the engine never reads is the one a composer sees most: it is the colour of the chip on
+the board. Three measurements settle what is in it, all taken 2026-09-10.
+
+**It is RGBA, not ARGB.** Over 68,568 placements (the ten-level corpus, the 17 gallery plans and
+the 103-level archive sample — `packages/cwlib-ts/dev/chip-table.ts`) there are **25 distinct
+values**, and 24 of them end in `ff`. Read as ARGB that is a palette in which every colour a
+creator ever picked has full blue and an alpha that varies over `00`, `40`, `80`, `bf`, `ff`, so
+most chips would be invisible; read as RGBA it is a set of saturated hues at full opacity, and the
+one exception is the factory green below.
+
+**A chip is placed from the instrument's own popit plan, and that plan carries the colour.**
+`tools/InstrumentColours.java` reads `PInstrument.Colour` out of all 68 `instrument_*.plan` files
+in the game's own data, and the answer is one colour per **instrument family**: synth
+`0x00bfffff` (23 instruments), percussion `0x40ff0100` (15), plucked and the Move pack
+`0xff0000ff` (13), tuned percussion `0x0000ffff` (7), wind and voice `0xff00ffff` (5), SFX
+`0xffffffff` (3), keys `0xffff00ff` (2). The table lives in
+`packages/cwlib-ts/src/chips.ts` beside the plan GUID and the icon, which the same run re-measured
+and which agreed with the corpus tally on 50 of 50 rows.
+
+⚠️ **`0xffffffff` is the identity of a tint, not a chip painted white.** It appears in **no file
+below revision `0x3ec`** — 0 of the 27,094 placements in the four oldest corpus levels — and then
+takes over: 6,868 of 7,524 at `0x3ef`, and 12,545 of 12,706 at `0x3f4`, where `Ascetic`'s own
+1,150 chips are every one of them white. A creator does not paint twelve thousand chips white; an
+editor writes the neutral. So the tracker **draws** an untinted chip in its instrument's own
+colour (`drawnColour`) and **stores** the byte it was given. Across the three corpora that is
+45,222 placements at the instrument's own colour, 21,508 untinted and **1,838 (2.7%) tinted to
+something else**.
+
+⚠️ **The field is signed and the table is not.** `readInstrumentPart` returns `s.i32()`, so a red
+chip is −16776961 where `chips.ts` writes `0xff0000ff`; comparing the two directly reported every
+red, magenta, yellow and white placement in the corpus as re-tinted, and 6.5% looked as plausible
+as 2.7%. `factoryColour` normalises, and `test/song.test.ts` pins it.
+
+⚠️ Two things about it are still guesses and live in [open-questions.md](open-questions.md): what
+the game does with the low byte (the percussion family's factory green carries `00` where every
+other value carries `ff`), and whether Create Mode draws a creator's tint at all.
 
 **`Notes` element size is 4 bytes**, measured: the array's growth helper (`v0xd68370`, passed as
 the element callback) allocates `count * 4`. The same mechanism gives 1 for `Name`, a string — so
@@ -403,6 +450,22 @@ corpus's 1,030 open-board placements: the bare delta puts 78.93% on a cell (one 
 to something rotated), the board's basis **100.00%**, worst fractional part 0.0004 of a cell, and
 all 1,030 carry the odd-multiple fingerprint. `dev/verify-levels.ts` asserts the stronger property
 over the whole corpus: **62,158 board cells whole and distinct**.
+
+**Cell to board position, and the chip's own size** — the inverse, which a writer needs
+([export-to-game.md](export-to-game.md)):
+
+```
+x      = (gridX + 1) * 52.5
+y      = -(gridY + 0.5) * 105
+scaleY = 1.4666666f                          (0x3fbbbbbb)
+scaleX = scaleY * (ceil((highest step + 1) / 16) - 1)
+```
+
+✔ Measured over **3,724 instrument components** in 17 LBP3 sequencer plans: `scaleY` is that one
+value on every one of them, and `scaleX` is an exact multiple of it — ×3 on 2,056, ×2 on 625, ×7 on
+457, ×1 on 384. ⚠️ **Two of the multiples are not the product**: three cells is `4.4f` and six is
+`8.8f`, each one ulp above `cells * 1.4666666f`, so the widths are a table of the game's own bit
+patterns rather than an expression.
 
 **The tile** — the board's square is 105 world units a side, and a placed instrument covers one:
 its default note grid is 32 steps, which is two of the 52.5-unit half-tile positions `gridX`

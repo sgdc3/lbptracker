@@ -5,8 +5,10 @@ import {
   bandOf,
   barOfCell,
   boardCellAt,
+  boardChipRect,
   boardRect,
   boardX,
+  rectsMeet,
   noteName,
   onGrid,
   positionLabel,
@@ -137,3 +139,15 @@ test('find the notes: the window that shows the most of them, not the middle of 
   assert.equal(bestNoteWindow(wide, view, { row: 0, step: 0 }).visible, 1);
   assert.equal(bestNoteWindow([], view, { row: 7, step: 2 }).row, 7, 'no notes, no movement');
 });
+
+test('board: a chip is as long as its grid, and a rectangle catches it by touching it', () => {
+  const chip = { cell: 2, row: 1, steps: 32 };
+  assert.deepEqual(boardChipRect(board, chip), { x: 104, y: 48, w: 80, h: 30 });
+  assert.deepEqual(boardChipRect(board, { ...chip, steps: 48 }), { x: 104, y: 48, w: 120, h: 30 });
+  const r = boardChipRect(board, chip);
+  assert.equal(rectsMeet({ x: 100, y: 40, w: 10, h: 10 }, r), true, 'a corner in');
+  assert.equal(rectsMeet({ x: 0, y: 0, w: 500, h: 500 }, r), true, 'the chip inside');
+  assert.equal(rectsMeet({ x: 184, y: 48, w: 10, h: 10 }, r), false, 'against the right edge is not a touch');
+  assert.equal(rectsMeet({ x: 110, y: 78, w: 10, h: 10 }, r), false, 'against the bottom edge is not a touch');
+  assert.equal(rectsMeet({ x: 120, y: 60, w: 0, h: 0 }, r), true, 'a point inside');
+});

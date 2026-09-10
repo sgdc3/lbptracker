@@ -65,6 +65,25 @@ export function boardX(layout: BoardLayout, step: number): number {
   return layout.gutter + (step / STEPS_PER_CELL) * layout.cellW;
 }
 
+/** A rectangle on a canvas, in content pixels. */
+export interface Rect {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/** A chip's rectangle on the board: from its cell to the end of its grid, one row high. */
+export function boardChipRect(layout: BoardLayout, chip: { cell: number; row: number; steps: number }): Rect {
+  const r = boardRect(layout, chip.cell, chip.row);
+  return { ...r, w: Math.max(1, chip.steps / STEPS_PER_CELL) * layout.cellW };
+}
+
+/** Whether two rectangles share any area: a marquee catches a chip by touching it, and an edge is not a touch. */
+export function rectsMeet(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
 /**
  * The mixer channel a row feeds: the board cut into `channels` bands of equal
  * height, as `channelVolume` computes it. Kept here for drawing the bands;

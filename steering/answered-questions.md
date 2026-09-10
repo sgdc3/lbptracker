@@ -755,6 +755,103 @@ which is `0x003F8000`: a zero byte followed by three quarters of the `1.0f` of t
 after it. Dumping the raw bytes then settled it in one look. 31 of 32 archived chunks → 32 of 32,
 5,832 Things recovered, the golden fixture unchanged.
 
+## 46. Does the game open a plan this writer wrote? — yes, once the icon is not null
+
+**Answer**: LBP3 imports an exported `.plan` as an ordinary popit object, on one condition:
+`InventoryItemDetails.Icon` must carry a descriptor. With a null one the resource never becomes
+ready — its status byte stays 9 instead of reaching 4 — and `AddInventoryItem` never adds it.
+The measurement, and which icon to default to, are in [export-to-game.md](export-to-game.md).
+
+⚠️ **The first default was the wrong gadget's icon** — `electronics_inventory_logic_sequencer.tex`,
+which belongs to the *logic* sequencer, picked because its name reads right. The music sequencer's
+is found rather than recognised: follow the mesh (127558) to the only plan that depends on it
+(120863) and read that plan's own `Icon`. It imported either way; only the picture in the popit was
+wrong. **A name that reads right is not a derivation.**
+
+Measured in the game itself, 1.28 under shadPS4, on 2026-09-10, by the project's owner — and the
+**method** is the part worth copying, because the fault was in a field nothing about the file
+looked wrong in:
+
+1. **A control that fails.** The game's own sequencer imports; the same object read by this
+   project and written back does not. Two files, one difference to find.
+2. **Graft the halves.** Original Thing data with the writer's tail: no. The writer's Thing data
+   with the original tail: **yes**. That put the fault in `InventoryItemDetails` and took the whole
+   Thing graph — the part with all the interesting decisions in it — out of the running in one
+   experiment.
+3. **Degrade one field at a time**, from the working original rather than towards it. `Colour` −1
+   imports, a null `CreationHistory` imports, an empty creator imports, a null `Icon` **does not**.
+4. **Confirm the other way round.** Adding an icon to three failing files — the round trip, the
+   demo plan, a real exported song — made all three import.
+
+⚠️ **The descriptor only has to be there.** An icon that resolves to nothing, a hash in no archive,
+imports just as well: this is a presence check inside the loader, not a texture it needs.
+
+❗ **Everything else this writer simplifies was cleared by the same bisection, and the list is
+worth keeping** — it is the difference between "a plan is fragile" and "a plan needs one field".
+Innocent, all measured rather than assumed: `createdBy`/`changedBy` of −1, `Colour` −1, a null
+`CreationHistory`, an empty `NetworkPlayerID`, no `STICKERS`, a single-link `GROUP` chain, fewer
+Things than the original, a shorter dependency table, and multi-chunk payloads.
+
+⚠️ **The wrong turn this project would have taken on its own** is in the shape of the question it
+had written down: *36* used to enumerate four things to suspect — container, object, board, sound
+— in risk order, and the fault was in none of them. It was in the one part of the file the reader
+had never read and the writer had transcribed from cwlib without a corpus to check it against.
+**The unread field is where to look**, not the elaborate part.
+
+## 48. Eighteen instruments have no chip — all 68 do now
+
+**Answer**: read the table out of the game instead of out of a corpus. A chip is placed from its
+instrument's own `instrument_*.plan`, so that plan carries the `planGuid`, the icon **and** the
+chip's factory colour; `tools/InstrumentColours.java` walks all 68 through the FileDB and prints
+the row — [export-to-game.md](export-to-game.md). The corpus tally that had 50 of them agrees on
+**50 of 50 rows**, which is what makes the other 18 trustworthy rather than merely present.
+
+⚠️ The route was written down in this question a day before it was taken, and it was right: the
+plan that *names* an instrument is the plan a chip is placed *from*. **A corpus can only answer for
+what somebody used**; the game's own data answers for everything it ships.
+
+## 49. `PInstrument.Colour` — packed RGBA, and white means no tint
+
+**Answer**: the chip's tint, one factory colour per instrument family, and `0xffffffff` is the
+identity rather than a chip painted white — [sequencer-data-model.md](sequencer-data-model.md) has
+the three measurements, `chips.ts` the table and `drawnColour` the rule. What is *not* settled is
+what the game does with the low byte and whether Create Mode draws a creator's own tint at all;
+both are *49* in [open-questions.md](open-questions.md), under the same number.
+
+❌ **The wrong turn was made before the question was asked.** The plan writer had put the constant
+`0x41000000` in this field for a day, on a comment claiming every measured plan holds it — while
+the reader was throwing the field away, so nothing in the project could contradict it. The corpus
+holds 25 values and that is not one of them. **A constant written for a field the reader skips is
+unfalsifiable by construction**; the fix was to read the field, and the tell was that `0x41000000`
+is 8.0f, which is what a misread float looks like.
+
+❌ **And the first count of "how many chips did a creator re-tint?" was wrong by more than
+double, in the direction that flatters the feature.** The table spells its colours unsigned
+(`0xff0000ff`) and `readInstrumentPart` returns `s.i32()`, so red, magenta, yellow and white
+never compared equal to their own family's value: 6.5% re-tinted, where the answer is 2.7%.
+**A comparison between two spellings of the same number fails silently and plausibly** — nothing
+throws, the count merely comes out high, and 6.5% is exactly as believable as 2.7%. It was caught
+by reading the diff, not by a test; `test/song.test.ts` pins the signedness now.
+
+⚠️ And the field looked like a per-file default twice on the way. `0x00bfffff` dominates the older
+levels and `0xffffffff` the newer ones, so either reading — "the editor's default changed" and "the
+creator painted them" — fits a per-revision tally. Neither is it: the first is the *synth family's*
+colour, and the corpus is mostly synths, and the second is the neutral. **Correlating a value with
+a file before correlating it with the instrument put two plausible stories in front of the true
+one.**
+
+## 47. The zlib window — either CINFO, and the browser is fine
+
+**Answer**: the game writes `0x68` (CINFO 6, a 16 KiB window) and accepts `0x78` (CINFO 7) just as
+happily. Settled by the same in-game session as *46*: plans written by
+`packages/lbp-tracker-lib/dev/export-plan.ts` carry `68 da`/`68 de` and plans written by the page
+carry `78 da`/`78 9c`, and both import. `nodeDeflate` still asks for `windowBits: 14` so that a hex
+dump of our output lines up with the game's own — [export-to-game.md](export-to-game.md).
+
+⚠️ This had been written down as the likeliest cause if a page-written file failed where a
+CLI-written one worked. It was a reasonable hypothesis and it was **not** the answer; keeping it as
+a suspect cost nothing, and acting on it before the bisection would have cost a session.
+
 ## The PS3 backup that "cannot be read" — it reads fine
 
 **Answer**: the numbered files are the game's own `FAR4` archive under XXTEA with a constant key;

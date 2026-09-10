@@ -88,6 +88,14 @@ export interface Track {
   /** The `RInstrument` GUID, or 0 when the placement has no instrument. */
   readonly guid: number;
   readonly name: string;
+  /**
+   * The chip's tint -- `PInstrument.Colour`, packed RGBA, and UI only.
+   *
+   * Carried because it is the placement's own and nothing else in the file
+   * says it. `INSTRUMENT_COLOURS` in `chips.ts` is the value each instrument
+   * ships with; anything else is a creator's own choice.
+   */
+  readonly colour: number;
   /** Board cell. `gridY` groups tracks into rows. */
   readonly gridX: number;
   readonly gridY: number;
@@ -171,6 +179,7 @@ export function trackFrom(placement: Placement): Track {
   return {
     guid: instrument.guid,
     name: instrument.name,
+    colour: instrument.colour,
     gridX,
     gridY,
     stepOffset: gridX * STEPS_PER_CELL,

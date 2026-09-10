@@ -866,11 +866,24 @@ export function readSwitch(s: Serializer, readers: ReadonlyMap<string, PartReade
   if (subVersion > 0x102) s.i32(); // stickerSwitchMode
 }
 
-/** One component placed on a circuit board: which Thing, and where on the grid. */
+/**
+ * One component placed on a circuit board: which Thing, and where on the grid.
+ *
+ * ❗ **`scaleX` is the chip's width and it is derived, not decorative.** Measured
+ * over 3,746 components in 17 real LBP3 sequencer plans: `scaleY` is
+ * 1.4666666 on every one of them and `scaleX` is an exact multiple of it --
+ * 4.4 (×3) on 2,057, 2.9333 (×2) on 625, 10.2667 (×7) on 457, and so on. A
+ * writer that leaves them at 1 draws every instrument as a one-cell stub, so
+ * they are carried out of the reader rather than stepped over.
+ */
 export interface Component {
   readonly thing?: Thing;
   readonly x: number;
   readonly y: number;
+  readonly angle: number;
+  readonly scaleX: number;
+  readonly scaleY: number;
+  readonly flipped: boolean;
 }
 
 /** What a `MICROCHIP` part yields: the board's name and what is on it. */
@@ -928,11 +941,8 @@ const NAMED_ENTITIES = new Map<string, string>([
  * single regex sees each `&…;` once, so `&amp;apos;` correctly comes out as the
  * text `&apos;`.
  *
- * ⚠️ **This is a decode at read time, so a writer has to re-escape.** Step 7,
- * round-trip export, must put `&` and `'` back before writing a name, or every
- * save-and-reload strips another layer. There is deliberately no encoder here
- * yet: writing one now would be untested speculation about which characters the
- * editor escapes, and the corpus only proves two of them.
+ * ⚠️ **This is a decode at read time, so a writer has to re-escape** --
+ * `escapeEntities` below, or every save-and-reload strips another layer.
  */
 export function decodeEntities(text: string): string {
   if (!text.includes('&')) return text;
@@ -947,6 +957,28 @@ export function decodeEntities(text: string): string {
     if (code >= 0xd800 && code <= 0xdfff) return whole;
     return String.fromCodePoint(code);
   });
+}
+
+/**
+ * Put the editor's XML escaping back, for a name on its way into a file.
+ *
+ * The exact inverse of `decodeEntities` over the five names it knows, and
+ * nothing more: numeric escapes are decoded on the way in and are **not**
+ * re-encoded on the way out, because the corpus only ever shows the named form
+ * and inventing `&#233;` for an accented character would be a guess about the
+ * editor rather than a reading of it.
+ *
+ * ⚠️ **`&` first, and once.** `escape(decode(x)) === x` holds for every name in
+ * the 22-level dump; what it does not do is survive a name a user typed with a
+ * literal `&amp;` in it, which comes back as `&amp;amp;`. That is the correct
+ * direction to be wrong in -- the alternative loses the user's text.
+ */
+export function escapeEntities(text: string): string {
+  return text.replace(/[&'"<>]/g, (c) =>
+    c === '&' ? '&amp;'
+      : c === "'" ? '&apos;'
+        : c === '"' ? '&quot;'
+          : c === '<' ? '&lt;' : '&gt;');
 }
 
 /**
@@ -979,11 +1011,11 @@ export function readMicrochip(
       const thing = readThingRef(s, readers);
       const x = s.f32();
       const y = s.f32();
-      s.f32(); // angle
-      s.f32(); // scaleX
-      s.f32(); // scaleY
-      s.bool(); // flipped
-      components.push({ thing, x, y });
+      const angle = s.f32();
+      const scaleX = s.f32();
+      const scaleY = s.f32();
+      const flipped = s.bool();
+      components.push({ thing, x, y, angle, scaleX, scaleY, flipped });
     }
     sizeX = s.f32(); // circuitBoardSizeX
     sizeY = s.f32(); // circuitBoardSizeY
@@ -1063,6 +1095,16 @@ export interface InstrumentPart {
   /** The `RInstrument` GUID, or 0 when the placement is empty. */
   readonly guid: number;
   readonly name: string;
+  /**
+   * `PInstrument.Colour` at `+0x20`, exactly as the file holds it: the chip's
+   * tint, packed **RGBA**, and UI only -- nothing musical reads it.
+   *
+   * `chips.ts` has the colour each instrument ships with, and what
+   * `0xffffffff` means. Carried out rather than stepped over because a writer
+   * needs it and because it is the one thing about a placement a composer sets
+   * that has no other home.
+   */
+  readonly colour: number;
   readonly loops: number;
   readonly key: number;
   readonly scale: number;
@@ -1072,6 +1114,15 @@ export interface InstrumentPart {
   readonly reverbSend: number;
   /** The note records, four bytes each, exactly as they sit on disk. */
   readonly notes: Uint8Array;
+  /**
+   * The chip's icon texture GUID, or 0.
+   *
+   * ❗ Carried out because a **writer** needs it: the icon is a property of the
+   * instrument the chip holds, not of the music, and a plan written without one
+   * puts a blank chip on the board. `INSTRUMENT_CHIPS` in `chips.ts` is the
+   * table measured out of the corpus.
+   */
+  readonly icon: number;
 }
 
 /**
@@ -1085,7 +1136,7 @@ export function readInstrumentPart(s: Serializer): InstrumentPart {
   const { version } = s.revision;
   const resource = s.resource();
   const name = version >= 0x35b ? decodeEntities(s.wstr()) : '';
-  s.i32(); // color
+  const colour = s.i32();
   const loops = s.i32();
   const key = s.i32();
   const scale = s.i32();
@@ -1101,10 +1152,12 @@ export function readInstrumentPart(s: Serializer): InstrumentPart {
   }
   const count = s.i32();
   const notes = s.bytes(count * 4).slice();
-  if (version >= 0x379) s.resource(); // icon
+  const icon = version >= 0x379 ? s.resource() : undefined;
   return {
     guid: resource?.guid ?? 0,
+    icon: icon?.guid ?? 0,
     name,
+    colour,
     loops,
     key,
     scale,

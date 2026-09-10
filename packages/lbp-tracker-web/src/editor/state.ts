@@ -22,8 +22,13 @@ import { addRow, removeRow, type Clip, type Song, type SongNote, type SongPoint 
  * What an edit touched, so the page knows what to do about it: the plan has
  * to be rebuilt for a note, a placement or an instrument; the mixer and the
  * clock are applied live for a setting; the output stage is one message.
+ *
+ * ❗ **`look` is a change to the song that nothing plays** -- the chip's tint,
+ * so far. It marks the song dirty and redraws the canvases like any other
+ * edit, and `daw/session.ts` deliberately does nothing with it: rebuilding a
+ * plan for a colour would cut the voices a chip is sounding.
  */
-export type ChangeKind = 'notes' | 'settings' | 'effects' | 'selection' | 'mix';
+export type ChangeKind = 'notes' | 'settings' | 'effects' | 'selection' | 'mix' | 'look';
 
 export interface Selection {
   /**
@@ -31,8 +36,19 @@ export interface Selection {
    * playhead is inside on this row is the one shown. Row 0 to begin with.
    */
   row: number;
-  /** The clip whose grid the piano roll shows. */
+  /**
+   * The clip whose grid the piano roll shows: the one clicked last, or the
+   * one the playhead is inside on the selected row.
+   */
   clipId: number | null;
+  /**
+   * The board's selection: the chips chosen as a block, by a click, a
+   * Shift+drag rectangle or Ctrl+click, which the board's keys and a drag act
+   * on as one. `clipId` is normally in it -- clicking a chip selects it
+   * alone -- but not always: the playhead moves `clipId` on and leaves a
+   * block where it is, so the roll can follow the song while a block waits.
+   */
+  clips: Set<number>;
   /**
    * **The selection is a set of points, not of notes**: for each note id, the
    * indices of its selected points. A note counts as selected when every one
@@ -54,7 +70,9 @@ export class EditorState {
   song: Song;
   /** Ticks on every change; the Vue panels depend on it. */
   readonly version = ref(0);
-  readonly selection: Selection = { row: 0, clipId: null, points: new Map(), point: null, cursor: null };
+  readonly selection: Selection = {
+    row: 0, clipId: null, clips: new Set(), points: new Map(), point: null, cursor: null,
+  };
   /** The piano roll's grid: thirds of a step when on, whole steps when off. */
   triplets = false;
   /**
@@ -122,6 +140,7 @@ export class EditorState {
         : { ...this.selection.cursor, row: this.selection.cursor.row - 1 };
     }
     this.edit('notes', (song) => { removeRow(song, row); });
+    this.pruneClips();
     // The selection may name the chips that went; a row's worth of them.
     if (!this.clip()) {
       this.selection.clipId = null;
@@ -228,6 +247,7 @@ export class EditorState {
     const first = [...song.clips].sort((a, b) => a.cell - b.cell || a.row - b.row)[0];
     this.selection.row = first?.row ?? 0;
     this.selection.clipId = first?.id ?? null;
+    this.selection.clips = new Set(first ? [first.id] : []);
     this.mutedRows.clear();
     this.soloRows.clear();
     this.selection.points = new Map();
@@ -238,9 +258,13 @@ export class EditorState {
 
   private afterRestore(): void {
     // The selection may name things the restored song no longer has.
+    this.pruneClips();
     const clip = this.clip();
     if (!clip) {
       this.selection.clipId = this.song.clips[0]?.id ?? null;
+      if (this.selection.clips.size === 0 && this.selection.clipId !== null) {
+        this.selection.clips.add(this.selection.clipId);
+      }
       this.selection.points = new Map();
       this.selection.point = null;
     } else {
@@ -280,10 +304,11 @@ export class EditorState {
       .sort((a, b) => a.cell - b.cell)[0];
   }
 
-  /** Select a clip, and with it the row it sits on. */
+  /** Select a clip alone, and with it the row it sits on. Any block selected before goes. */
   selectClip(id: number | null): void {
     const clip = this.clip(id);
     if (clip) this.selection.row = clip.row;
+    this.selection.clips = new Set(clip ? [clip.id] : []);
     if (this.selection.clipId === id) {
       this.notify('selection');
       return;
@@ -306,6 +331,69 @@ export class EditorState {
       return;
     }
     this.selectClip(this.firstClipOnRow(row)?.id ?? null);
+  }
+
+  /**
+   * The roll follows the playhead into another chip. A chip selected alone
+   * follows with it, as the selection always has; a block stays where it is,
+   * so the song can play on while a block waits to be moved or copied.
+   *
+   * ⚠️ Not `selectClip`: that collapses the block, and the playhead crosses
+   * a chip every few seconds.
+   */
+  followClip(id: number): void {
+    if (this.selection.clipId === id) return;
+    const was = this.selection.clipId;
+    const { clips } = this.selection;
+    if (clips.size === 0 || (clips.size === 1 && was !== null && clips.has(was))) {
+      this.selection.clips = new Set([id]);
+    }
+    this.selection.clipId = id;
+    this.selection.points = new Map();
+    this.selection.point = null;
+    this.notify('selection');
+  }
+
+  /**
+   * Replace the board's selection with these chips. `lead` is the one the
+   * roll shows; without one the roll keeps its chip if it is in the set and
+   * takes the set's first by position otherwise. An empty set leaves the roll
+   * where it is.
+   */
+  selectClips(ids: Iterable<number>, lead?: number): void {
+    const next = new Set<number>();
+    for (const id of ids) if (this.clip(id)) next.add(id);
+    this.selection.clips = next;
+    let show = lead !== undefined && next.has(lead) ? lead : this.selection.clipId;
+    if (next.size > 0 && (show === null || !next.has(show))) show = this.boardSelection()[0].id;
+    if (show !== this.selection.clipId) {
+      this.selection.clipId = show;
+      this.selection.points = new Map();
+      this.selection.point = null;
+    }
+    const shown = this.clip();
+    if (shown) this.selection.row = shown.row;
+    this.notify('selection');
+  }
+
+  /** Ctrl+click: a chip into the block, or out of it. */
+  toggleClip(id: number): void {
+    const next = new Set(this.selection.clips);
+    if (!next.delete(id)) next.add(id);
+    this.selectClips(next, next.has(id) ? id : undefined);
+  }
+
+  /** The chips selected on the board, in board order: by cell, then by row. */
+  boardSelection(): Clip[] {
+    return this.song.clips
+      .filter((c) => this.selection.clips.has(c.id))
+      .sort((a, b) => a.cell - b.cell || a.row - b.row);
+  }
+
+  /** Drop from the board's selection whatever the song no longer holds. */
+  private pruneClips(): void {
+    const ids = new Set(this.song.clips.map((c) => c.id));
+    for (const id of [...this.selection.clips]) if (!ids.has(id)) this.selection.clips.delete(id);
   }
 
   // ------------------------------------------------------------ selecting

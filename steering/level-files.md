@@ -5,6 +5,10 @@ Read before writing a parser for any LBP resource, save or archive. Everything b
 Thing graph is open is in [sequencer-data-model.md](sequencer-data-model.md); the implementation
 is `packages/cwlib-ts`, and `tools/lbpres.py` is the Python reference for the container.
 
+Everything here is read by `packages/cwlib-ts/src/resource.ts` and written back by
+`writer.ts` — the container, the chunk table and the dependency table have a write side since
+2026-09-09, and [export-to-game.md](export-to-game.md) is where that lives.
+
 All integers are **big-endian**, including in the PS4 build — measured: the array serialiser at
 eboot `v0xcc0f20` reads four bytes and byte-swaps them with `movbe` before storing (`v0xcc0f9d`,
 `v0xcc1025`). LBP's formats are PS3-era and stayed that way.
@@ -28,7 +32,9 @@ parser never uses, so 18 hits on it is not a coincidence.
 ...            chunk payloads back to back, each a complete zlib stream
 ```
 
-- Chunks are `0x8000` bytes raw except the last, which is short.
+- Chunks are `0x8000` bytes raw except the last, which is short. ⚠️ Both sizes in the table are
+  `u16`, which is *why*: `0x10000` would not fit, and a chunk that deflates larger than `0xffff`
+  cannot be written at all.
 - ⚠️ **The zlib header is `0x68 0xNN`, not `0x78 0xNN`** — CINFO 6, a 16 KiB window. Grepping a
   resource for the familiar `78 9c` / `78 da` finds nothing and looks like proof the payload is not
   zlib. It is.

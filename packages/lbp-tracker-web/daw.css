@@ -132,7 +132,19 @@ main { flex: 1 0 auto; width: 100%; box-sizing: border-box; margin: 0; max-width
   position: absolute; inset: 0; overflow: auto; background: var(--panel-2);
 }
 .board-scroller canvas { position: sticky; top: 0; left: 0; display: block; z-index: 1; }
-.board-scroller:focus-visible, .roll-scroller:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/*
+ * The grid's focus ring goes on the CANVAS, not on the scroller around it.
+ *
+ * ⚠️ Two things put it there. The canvas is `position: sticky` with `z-index:
+ * 1`, so it paints over its parent's outline; and it is sized from
+ * `clientWidth`, an integer, so on a display at 125% it ends up a fraction of a
+ * pixel short of the box it covers. Together those turned a ring into a sliver
+ * of green down the right edge and along the bottom -- the only two edges where
+ * the parent still showed. On the canvas the ring is the visible area exactly,
+ * because the canvas IS the visible area.
+ */
+.board-scroller:focus-visible canvas,
+.roll-scroller:focus-visible canvas { outline: 2px solid var(--accent); outline-offset: -2px; }
 .chip-panel {
   position: absolute; left: 0; right: 0; bottom: 0; height: var(--panel-h, 46%);
   min-height: 10rem; max-height: 92%; display: flex; flex-direction: column;
@@ -224,6 +236,14 @@ main { flex: 1 0 auto; width: 100%; box-sizing: border-box; margin: 0; max-width
 .song-group { margin-bottom: 1rem; }
 #mixer .live { grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); }
 .knob output { font: .78rem/1 ui-monospace, Consolas, monospace; color: var(--dim); text-align: right; }
+/* The chip's tint: a swatch the width of a slider, and a button back to the
+   instrument's own colour where the readout would be. */
+.knob input[type="color"].swatch {
+  width: 100%; height: 1.7rem; padding: 0 2px; background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 7px; cursor: pointer;
+}
+.knob input[type="color"].swatch:hover { border-color: var(--accent); }
+.knob button.mini { padding: .2rem .4rem; font-size: .78rem; }
 .group.off { opacity: .55; }
 .group.off .knob { opacity: .6; }
 .inspector { display: grid; grid-template-columns: 1fr; gap: .8rem; }
@@ -301,6 +321,22 @@ kbd {
   overflow: hidden; touch-action: none; display: flex;
 }
 #kb-piano:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/*
+ * A ring the pointer put there is noise, and the browser cannot tell.
+ *
+ * ❗ **Chrome counts holding Shift as keyboard use**, so shift+drag on the
+ * board -- the marquee that selects a block of instruments -- matches
+ * `:focus-visible` and leaves a ring behind on every gesture. `data-pointer` on
+ * the root says the last thing the user touched was a pointer; `daw.ts` sets it
+ * on `pointerdown` and clears it on `keydown`, both in the capture phase, so a
+ * Tab still rings and a click never does. Only the four grids opt in: a button
+ * or a field is the browser's own business.
+ */
+html[data-pointer] .board-scroller:focus-visible canvas,
+html[data-pointer] .roll-scroller:focus-visible canvas,
+html[data-pointer] #rd-wave:focus-visible,
+html[data-pointer] #kb-piano:focus-visible { outline: none; }
 .wkey {
   position: relative; flex: 1 1 0; min-width: 0; height: 100%;
   background: linear-gradient(#eef1f4, #cdd3da);

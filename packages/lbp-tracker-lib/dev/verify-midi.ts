@@ -20,7 +20,9 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { factoryColour } from '@lbptracker/cwlib/chips.ts';
 import { midiToSequencer, sameNotes, sequencerToMidi } from '../src/midi.ts';
+import { metaString, readMidi, varLength } from '../src/smf.ts';
 import { schedule, type Sequencer } from '@lbptracker/cwlib/project.ts';
 import { readLevelProject } from '@lbptracker/cwlib/project.ts';
 import { blockRoot, notePitch } from '../src/scale.ts';
@@ -108,8 +110,73 @@ let bent = 0;
 const totals = {
   shared: 0, dropped: 0, clampedPitch: 0, clampedBend: 0, bytes: 0, lengthened: 0,
   flattened: 0, deviating: 0, automated: 0, dragged: 0, timbred: 0,
-  clips: 0, clipsChanged: 0, records: 0, patched: 0, unpatched: 0,
+  clips: 0, clipsChanged: 0, records: 0, patched: 0, unpatched: 0, tinted: 0, tintsLost: 0,
 };
+
+/**
+ * The budget: which carrier every byte of the file goes to.
+ *
+ * ❗ **Exact, because `writeMidi` does not use running status**: an event costs
+ * `varLength(delta) + data.length` and nothing else, so the rows below add up
+ * to the file minus its headers and its End of Track events. The two fields
+ * that are not events of their own -- `fix` and the chip tint, which live
+ * inside a `LBP-TRK` meta -- are weighed by re-serialising the meta without
+ * them, which is what they add to it.
+ *
+ * `LBP_MIDI_BUDGET=1` prints the table in steering/midi-interchange.md.
+ */
+const budget = process.env.LBP_MIDI_BUDGET === '1';
+const weights = new Map<string, { bytes: number; events: number }>();
+
+function put(name: string, bytes: number, events = 1): void {
+  const row = weights.get(name) ?? { bytes: 0, events: 0 };
+  row.bytes += bytes;
+  row.events += events;
+  weights.set(name, row);
+}
+
+/** What a meta's JSON costs without one of its fields, as bytes. */
+function fieldCost(text: string, keys: readonly string[]): number {
+  const at = text.indexOf('{');
+  if (at < 0) return 0;
+  try {
+    const parsed = JSON.parse(text.slice(at)) as Record<string, unknown>;
+    const whole = JSON.stringify(parsed).length;
+    for (const key of keys) delete parsed[key];
+    return whole - JSON.stringify(parsed).length;
+  } catch {
+    return 0;
+  }
+}
+
+function weigh(bytes: Uint8Array): void {
+  for (const track of readMidi(bytes).tracks) {
+    let previous = 0;
+    for (const event of track.events) {
+      const size = varLength(event.tick - previous) + event.data.length;
+      previous = event.tick;
+      const status = event.data[0] & 0xf0;
+      const text = metaString(event);
+      if (text?.type === 0x01 && text.text.startsWith('LBP-TRK ')) {
+        const fix = fieldCost(text.text, ['fix']);
+        const tint = fieldCost(text.text, ['colour', 'colours']);
+        put('LBP-TRK meta -- placement and cells', size - fix - tint);
+        if (fix > 0) put('LBP-TRK `fix` -- verbatim records', fix);
+        put('LBP-TRK `colour` -- the chip tint', tint);
+      } else if (text?.type === 0x01 && text.text.startsWith('LBP-SEQ ')) put('LBP-SEQ meta -- the sequencer', size);
+      else if (text?.type === 0x03) put('track name meta', size);
+      else if (event.data[0] === 0xff) put('tempo, time signature, end of track', size);
+      else if (status === 0xe0) put('pitch bend -- the glide', size);
+      else if (status === 0xd0) put('channel pressure -- the volume', size);
+      else if (status === 0x90) put('note on', size);
+      else if (status === 0x80) put('note off', size);
+      else if (status === 0xb0 && event.data[1] === 74) put('CC 74 -- the modulation', size);
+      else if (status === 0xb0 && [7, 10, 90, 91].includes(event.data[1])) put('CC 7/10/90/91 -- the mixer', size);
+      else if (status === 0xb0) put('RPN / MPE configuration', size);
+      else put('everything else', size);
+    }
+  }
+}
 
 /** What `partsOf` groups on, plus the cell: a clip's identity across a trip. */
 const clipKey = (t: Sequencer['tracks'][number]) =>
@@ -143,6 +210,7 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
     totals.clampedPitch += exported.clampedPitch;
     totals.clampedBend += exported.clampedBend;
     totals.bytes += exported.bytes.length;
+    if (budget) weigh(exported.bytes);
     totals.lengthened += imported.lengthened;
     totals.patched += exported.patched;
     totals.unpatched += exported.unpatched;
@@ -173,10 +241,25 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
     // damaged for a difference no note has. Order WITHIN a chain still counts.
     // `sameNotes` is the exporter's own rule, imported rather than restated.
     const afterRecords = new Map<string, Uint8Array>();
-    for (const t of imported.sequencer.tracks) afterRecords.set(clipKey(t), t.records);
+    const afterColour = new Map<string, number>();
+    for (const t of imported.sequencer.tracks) {
+      afterRecords.set(clipKey(t), t.records);
+      afterColour.set(clipKey(t), t.colour);
+    }
     for (const t of seq.tracks) {
       totals.clips += 1;
       totals.records += t.records.length / 4;
+      // The chip's tint: a `LBP-TRK` field with no MIDI message behind it, so
+      // it comes back or it does not. Counted apart from the notes because a
+      // colour that changed is not a clip that plays differently.
+      if (t.colour !== factoryColour(t.guid)) totals.tinted += 1;
+      const tint = afterColour.get(clipKey(t));
+      if (tint !== undefined && tint !== t.colour) {
+        totals.tintsLost += 1;
+        if (problems.length < 3) {
+          problems.push(`clip at ${t.gridX},${t.gridY}: colour ${t.colour} -> ${tint}`);
+        }
+      }
       const theirs = afterRecords.get(clipKey(t));
       if (theirs !== undefined && sameNotes(t.records, theirs)) continue;
       totals.clipsChanged += 1;
@@ -334,6 +417,21 @@ console.log(
       `${totals.clipsChanged} came back different; ` +
       `${totals.patched.toLocaleString()} clips carried verbatim, ${totals.unpatched} unpatchable`,
 );
+console.log(
+  `${totals.tinted.toLocaleString()} chips are tinted away from their instrument's own ` +
+    `colour; ${totals.tintsLost} tints came back different`,
+);
+if (budget) {
+  const sum = [...weights.values()].reduce((n, r) => n + r.bytes, 0);
+  console.log(`
+| carrier | share | events |
+|---|---|---|`);
+  for (const [name, row] of [...weights].sort((a, b) => b[1].bytes - a[1].bytes)) {
+    console.log(`| ${name} | ${((row.bytes / totals.bytes) * 100).toFixed(2)}% | ${row.events.toLocaleString()} |`);
+  }
+  console.log(`${totals.bytes.toLocaleString()} bytes of file, ${sum.toLocaleString()} in events ` +
+    `(${(((totals.bytes - sum) / totals.bytes) * 100).toFixed(2)}% is track headers and End of Track)`);
+}
 /**
  * What this gates on, and what it only reports.
  *
@@ -370,6 +468,9 @@ if (unexplained !== 0) {
 process.exit(
   failed === 0
     && worstPitch <= 0.5 + 1e-9 && worstVolume <= 0.5 + 1e-9 && worstMod <= 0.5 + 1e-9
+    // The tint has no MIDI message and rides in `LBP-TRK` alone, so it is
+    // exact on either setting or it is a bug.
+    && totals.tintsLost === 0
     && (loose || (totals.clipsChanged === 0 && totals.unpatched === 0))
     ? 0
     : 1,

@@ -393,8 +393,10 @@ the quietest (`polyphony.ts`).
    and playback of every edit through the shared player. [editor.md](editor.md) has it, including
    what is not there yet.
 7. **Round-trip export** back into a game-loadable resource — the feature that makes the project
-   matter to the LBP community. `cwlib`'s `zip.ts` already writes; the resource writer does not
-   exist yet.
+   matter to the LBP community. **Built**: `cwlib`'s `writer.ts` and `write-plan.ts` write a
+   `PLNb` plan holding a Music Sequencer, self-contained because everything it names is a GUID.
+   [export-to-game.md](export-to-game.md) has the measured Thing shape, the deviations, and what
+   proves it; what is *not* proved is the only thing left — that the game opens it.
 
 | where | what |
 |---|---|

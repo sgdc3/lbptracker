@@ -570,8 +570,10 @@ export class Player {
    * rather than the whole song's (Ascetic: 1,150 tracks, 50-100 ms, and every
    * one of the look-ahead window's voices posted twice).
    *
-   * Voices of that track already handed to the worklet stay as they were,
-   * old notes and all, and the new plan of it takes over past the frontier.
+   * Voices of that track already handed to the worklet sound as they were,
+   * old notes and all, and the new plan of it takes over past the frontier;
+   * but the PLAN holds the fresh voices from the start, so a seek back, or the
+   * section's next time round, plays the edit. See `dropTracks` for the trap.
    */
   async retrack(
     key: number,
@@ -588,22 +590,30 @@ export class Player {
     const one: Sequencer = { ...seq, tracks: [track], lengthSteps: Math.max(seq.lengthSteps, endStep) };
     await this.collect(one, loader, node, fresh, this.noteBase, () => key);
     this.noteBase = fresh.reduce((m, v) => Math.max(m, v.note + 1), this.noteBase);
-    // ⚠️ By the pass's step, not the plan's: inside a looped section the
-    // frontier carries the pass, and comparing the bare step would keep every
-    // old voice and drop every new one from the second time round.
-    const frontier = this.handedUntilStep;
-    const kept = this.plan.filter((p) => p.track !== key || this.passStep(p) <= frontier);
-    const added = fresh.filter((p) => this.passStep(p) > frontier);
-    this.splice(kept.concat(added), seq, endStep);
+    // The whole track out, the whole fresh plan of it in. `repoint` keeps the
+    // scheduler past `handedUntilStep`, so nothing before the frontier is
+    // posted now -- and nothing is posted twice.
+    this.splice(this.plan.filter((p) => p.track !== key).concat(fresh), seq, endStep);
   }
 
   /**
-   * Take chips out of the plan -- removed, or muted -- keeping only what was
-   * already handed over. Nothing is planned, so it costs one pass over the plan.
+   * Take chips out of the plan -- removed, or muted -- every voice of theirs,
+   * handed over or not. Nothing is planned, so it costs one pass over the plan.
+   *
+   * ❗ **Not "keeping what was already handed over".** The filters here and in
+   * `retrack` used to keep a gone chip's voices up to `handedUntilStep`, so
+   * the plan "still held what the worklet had been given" -- and held it for
+   * good: the plan was no longer the audible song. A solo pressed while the
+   * song played held only from the frontier on, and a seek back played the
+   * muted rows again up to it (measured 2026-09-09 on Ascetic: solo at step
+   * 32, 70 stale voices kept, 53 of them posted after a seek to 0); a looped
+   * section did the same every time round. Not posting twice is `repoint`'s
+   * job, by the frontier -- not the plan's. The voices already in the worklet
+   * finish as they were going to, and the pool's replay forgets them with the
+   * plan.
    */
   dropTracks(keys: ReadonlySet<number>, seq: Sequencer, endStep = seq.lengthSteps): void {
-    const frontier = this.handedUntilStep;
-    this.splice(this.plan.filter((p) => !keys.has(p.track) || this.passStep(p) <= frontier), seq, endStep);
+    this.splice(this.plan.filter((p) => !keys.has(p.track)), seq, endStep);
   }
 
   /** A changed plan under the running clock: sorted, re-indexed, the end refreshed, the scheduler re-pointed. */

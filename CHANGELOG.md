@@ -4,6 +4,50 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.24 (2026-09-09)
+
+- Instruments keep their colour. Every instrument on the board is drawn in the colour the game
+  gives it, which is its category: percussion green, synths sky blue, guitars and strings red,
+  tuned percussion blue, wind and voices magenta, pianos yellow, sound effects white. A level you
+  open shows the colours it was made with, and the ones a composer changed by hand come through
+  as they are.
+- You can change a colour yourself. The instrument panel has a swatch under the two sends: pick
+  anything, and *reset* puts back the colour that instrument comes with. Nothing about the sound
+  changes, and the song does not stop to redraw. The colour travels with the song everywhere it
+  goes: your own song file, a MIDI file exported from here and back, and a .plan put into the
+  game.
+- The song can now go back into LittleBigPlanet. Import/Export has a second button that writes a
+  .plan file: the game's own format for a saved object, holding a Music Sequencer with your
+  instruments on its board, at your tempo, swing, echo, reverb and mixer settings. Put it into a
+  save with a tool that can write one and it is in your popit like anything else you made. Pick
+  PS3 or PS4 first, since each game reads only its own; the summary beside the button says what
+  went into the file, and the thing to look at is that every dependency is a GUID, which means the
+  file needs nothing shipped beside it.
+- The object comes out plain: no stickers on it, and the note grids open where a fresh instrument
+  would rather than where you left them here. Nothing about the music is left out.
+- Shift and drag on the board no longer leaves a green line down the right edge and along the
+  bottom. The grids still show a green frame when you reach them with Tab, which is what it was
+  always for; a mouse gesture does not put one there any more, and when it does appear it is a
+  frame round the whole grid instead of two sides of one.
+- Text in a dialog can be copied again. Selecting a song's name or its number in the picker and
+  pressing Ctrl+C used to copy the board's instruments instead, and the other keys leaked the same
+  way: M muted a row, Delete removed instruments, Space started the song, all while the picker was
+  in front of them. Nothing behind an open dialog answers the keyboard now. Outside a dialog,
+  Ctrl+C and Ctrl+X copy selected text when there is any, and the instruments when there is not.
+
+## 0.2.23 (2026-09-09)
+
+- Muting or soloing a row while the song plays now holds after you move the playhead back. The
+  rows you took out used to come back for the part of the song before the point where you pressed
+  the button, and again on every turn of a loop; a note edited inside a playing chip kept its old
+  notes there in the same way. All three are fixed together.
+- Instruments on the board can now be selected as a block and worked on together: Shift+drag a
+  rectangle over them, Ctrl+click to add or remove one, drag any of them to move the whole block,
+  Delete to remove it, Ctrl+C, Ctrl+X and Ctrl+V to copy, cut and paste it at the cursor cell, or
+  right after the selection, or back where it was cut from, Ctrl+D to duplicate it and Ctrl+A to
+  select every instrument. A paste that would land on a taken cell moves right to the first free
+  one. A duplicated instrument now lands right after the original instead of one cell on.
+
 ## 0.2.22 (2026-09-09)
 
 - Opening a level now says so while it happens, instead of leaving the page looking idle for the

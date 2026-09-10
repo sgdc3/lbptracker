@@ -59,6 +59,35 @@ export const webInflateRaw = async (deflated: Uint8Array, rawSize: number) => {
   return rawSize > 0 && out.length > rawSize ? out.subarray(0, rawSize) : out;
 };
 
+/**
+ * Deflate one resource chunk.
+ *
+ * ⚠️ **The browser writes a `0x78` zlib header where the game writes `0x68`**:
+ * `CompressionStream` has no window-size control, so the stream is a 32 KiB
+ * window rather than a 16 KiB one. Both are valid zlib and both inflate --
+ * ennuo's toolkit writes `0x78` too -- but a file written here is not byte-for
+ * byte a file written by `nodeDeflate`. The tests run in Node, so what they pin
+ * is the `0x68` path.
+ */
+export const webDeflate = async (raw: Uint8Array): Promise<Uint8Array> => {
+  const stream = new Blob([raw as BlobPart])
+    .stream()
+    .pipeThrough(new CompressionStream('deflate'));
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+    chunks.push(chunk);
+    total += chunk.length;
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.length;
+  }
+  return out;
+};
+
 /** Read a resource from a File the user picked. Nothing leaves the browser. */
 export async function loadResourceFile(file: File): Promise<Resource> {
   const bytes = new Uint8Array(await file.arrayBuffer());

@@ -30,6 +30,7 @@
  * relative to the page, never rooted at `/`.
  */
 import MIXER_WORKLET_URL from '@lbptracker/lib/audio/mixer-worklet.ts?worker&url';
+import { focusOwnsKeys } from '../keys.ts';
 import { createApp, h, watch, type Component } from 'vue';
 import { asset } from '../assets.ts';
 import ControlPanel from '../controls/ControlPanel.vue';
@@ -1057,10 +1058,8 @@ function bindKeyboard(): void {
   });
 
   window.addEventListener('keydown', (event) => {
-    if (!active()) return;
+    if (!active() || focusOwnsKeys(event)) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
-    const target = event.target as HTMLElement | null;
-    if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
 
     if (event.code === 'Escape') {
       panic();

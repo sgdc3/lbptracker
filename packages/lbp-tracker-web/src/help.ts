@@ -23,6 +23,7 @@ export type HelpTopic =
   | 'engine'
   | 'render'
   | 'export'
+  | 'plan'
   | 'import'
   | 'keyboard';
 
@@ -119,9 +120,18 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
       h('Placing instruments') +
       p('<strong>Drag across empty cells</strong> to draw a new instrument as long as the drag, four bars at least ' +
         'and then two at a time; pick which instrument when you let go. A double-click draws a four-bar one. ' +
-        'Click an instrument to open its notes, drag it to another cell, <kbd>Delete</kbd> removes it and ' +
-        '<kbd>Ctrl+D</kbd> duplicates it into the cursor cell. Instruments may overlap in time, though the game\'s ' +
-        'composers rarely let them.') +
+        'Click an instrument to open its notes and drag it to another cell. Instruments may overlap in time, ' +
+        'though the game\'s composers rarely let them.') +
+      h('Selecting, moving and copying') +
+      p('<strong>Shift+drag</strong> a rectangle to select every instrument it touches; <kbd>Ctrl</kbd> with it ' +
+        'adds to the selection, and <kbd>Ctrl</kbd>+click or <kbd>Shift</kbd>+click puts one instrument in or out. ' +
+        'Drag any instrument of the selection and the whole block moves with it, staying on the board. ' +
+        '<kbd>Delete</kbd> removes the selection, <kbd>Ctrl+C</kbd> and <kbd>Ctrl+X</kbd> copy and cut it, ' +
+        '<kbd>Ctrl+V</kbd> pastes it at the cursor cell, or right after the selection when there is no cursor, ' +
+        'or back where it was cut from; <kbd>Ctrl+D</kbd> duplicates it the same way, and <kbd>Ctrl+A</kbd> ' +
+        'selects every instrument. A paste that would land on a taken cell moves right to the first free one, ' +
+        'and the board grows to hold rows pasted below its last. These keys reach the board when it has the ' +
+        'focus or the note panel is closed; otherwise they work on the notes in the panel.') +
       h('Rows, channels and the end') +
       p('The corner cell between the row numbers and the bar numbers zooms the board in time: ' +
         '<strong>-</strong> and <strong>+</strong> make the bars narrower or wider, the glass puts them back; the rows keep ' +
@@ -144,24 +154,39 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
         'add a point, double-click a point to remove it; right-click removes a point or, on the line, the whole note. ' +
         'The point card on the right edits the selected point with sliders.') +
       h('Selection and keys') +
-      p('<kbd>Shift</kbd>+drag on empty space draws a rectangle, and what it catches is the <strong>points</strong> ' +
-        'inside it, not whole notes: you can take the tail of a glide and leave its head where it is. The line ' +
-        'under the grid counts them as you drag. Hold <kbd>Ctrl</kbd> as well and the rectangle adds to what is ' +
-        'already selected, and <kbd>Ctrl</kbd>+click puts one point in or takes it out. Clicking the line of a note ' +
-        'takes the whole note, every point of it, and dragging any selected point moves the whole selection.') +
-      p('Arrow keys nudge the selected points a cell sideways or a semitone up and down, with <kbd>Shift</kbd> ' +
-        'a whole octave; <kbd>+</kbd>/<kbd>-</kbd> change their volume and <kbd>[</kbd>/<kbd>]</kbd> their timbre. ' +
-        '<kbd>Delete</kbd> removes them, and a note whose last point goes with them goes too. ' +
-        '<kbd>Ctrl+D</kbd> duplicates one step further on, <kbd>Ctrl+X</kbd>/<kbd>C</kbd>/<kbd>V</kbd> cut, copy ' +
-        'and paste (half a glide copies as half a glide), <kbd>Ctrl+A</kbd> takes every point in the chip and ' +
-        '<kbd>Ctrl+Z</kbd>/<kbd>Y</kbd> undo and redo. A paste lands at the playhead when it is inside the chip, ' +
-        'otherwise a step after the selection, or back where it was cut from when nothing is selected.') +
+      p('<kbd>Shift</kbd>+drag on empty space draws a rectangle, and what it catches is the <strong>points</strong> ' +
+
+        'inside it, not whole notes: you can take the tail of a glide and leave its head where it is. The line ' +
+
+        'under the grid counts them as you drag. Hold <kbd>Ctrl</kbd> as well and the rectangle adds to what is ' +
+
+        'already selected, and <kbd>Ctrl</kbd>+click puts one point in or takes it out. Clicking the line of a note ' +
+
+        'takes the whole note, every point of it, and dragging any selected point moves the whole selection.') +
+
+      p('Arrow keys nudge the selected points a cell sideways or a semitone up and down, with <kbd>Shift</kbd> ' +
+
+        'a whole octave; <kbd>+</kbd>/<kbd>-</kbd> change their volume and <kbd>[</kbd>/<kbd>]</kbd> their timbre. ' +
+
+        '<kbd>Delete</kbd> removes them, and a note whose last point goes with them goes too. ' +
+
+        '<kbd>Ctrl+D</kbd> duplicates one step further on, <kbd>Ctrl+X</kbd>/<kbd>C</kbd>/<kbd>V</kbd> cut, copy ' +
+
+        'and paste (half a glide copies as half a glide), <kbd>Ctrl+A</kbd> takes every point in the chip and ' +
+
+        '<kbd>Ctrl+Z</kbd>/<kbd>Y</kbd> undo and redo. A paste lands at the playhead when it is inside the chip, ' +
+
+        'otherwise a step after the selection, or back where it was cut from when nothing is selected.') +
+
       p('<kbd>T</kbd> switches to the triplet grid, three cells to the beat instead of four; notes on ' +
         'the other grid are drawn faded. The keyboard on the left plays the instrument.') +
       h('The instrument') +
       p('<strong>grid</strong> is how long the instrument is, in bars. <strong>key</strong> and <strong>scale</strong> ' +
         'transpose and fold its notes the way the game does. <strong>level</strong> and <strong>pan</strong> are its own ' +
         'volume and position; the two <strong>sends</strong> say how much of it goes to the song\'s echo and reverb. ' +
+        '<strong>colour</strong> is the chip\'s own on the board, the way the game keeps it: a new chip takes the ' +
+        'colour its instrument comes with in the popit, <em>reset</em> puts it back, and it travels in a MIDI ' +
+        'file and in an exported plan. Nothing plays it. ' +
         '<strong>Loop this chip</strong> cuts the song off and goes round the chip\'s bars with every other row at a ' +
         'fifth of its volume, to hear the part in place while you edit it. It follows the chip you select; pressing ' +
         'it again leaves the song at the chip\'s start, playing on from there if it was playing before, and stop, ' +
@@ -229,6 +254,25 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
       h('What cannot be carried') +
       p('A very dense passage runs out of MPE channels: notes that have to share one lose their own glide, and the ' +
         'tally says how many. Key and scale are folded into the notes, so an import comes back chromatic, sounding the same.'),
+  },
+  plan: {
+    title: 'Sending the song back to LittleBigPlanet',
+    body:
+      p('<strong>Download .plan</strong> writes the song as the file the game itself uses for a saved object: ' +
+        'a Music Sequencer with your chips on its board, the tempo, the swing, the echo, the reverb and the ' +
+        'mixer, ready to drop into a level.') +
+      h('Which build') +
+      p('LBP3 on PS3 and on PS4 write the same file with one number different, and each game reads only its ' +
+        'own. Pick the one the save is going into. PS3 is also the right answer for RPCS3.') +
+      h('What the summary says') +
+      p('<strong>Dependencies</strong> are the things the plan points at — the gadget’s mesh, and one ' +
+        'instrument and one icon per chip. They are all <em>GUIDs</em>, meaning assets already in the game, so ' +
+        'the file needs nothing shipped beside it. A hashed dependency would be somebody’s own resource and ' +
+        'would have to travel with it; this export never writes one.') +
+      h('Getting it into the game') +
+      p('A .plan is not something the game opens by itself: it goes into a save with a tool that can write ' +
+        'one — ennuo’s Craftworld Toolkit is the usual one — and then it is in your popit like anything else. ' +
+        'The object comes out plain: no stickers on it, and the note grids open where you left them here.'),
   },
   import: {
     title: 'Importing a MIDI file',

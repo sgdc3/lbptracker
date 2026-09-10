@@ -89,6 +89,33 @@ export function instrumentsFrom(
   return out;
 }
 
+/**
+ * A chip's own tint as a CSS colour -- `PInstrument.Colour`, packed RGBA.
+ *
+ * ⚠️ **The low byte is dropped.** It is `ff` on every colour a creator picked
+ * (24 of the 25 distinct values over 68,568 corpus placements) and **0** on the
+ * factory green the fifteen percussion instruments ship with, so honouring it
+ * as an opacity would draw every untinted drum kit invisible. `chips.ts` has
+ * the measurement; what the game does with that byte is an open question.
+ */
+export function chipColour(value: number): string {
+  const rgb = (value >>> 8) & 0xffffff;
+  return `#${rgb.toString(16).padStart(6, '0')}`;
+}
+
+/**
+ * A CSS `#rrggbb` back to the packed value, opaque -- what a picked colour is.
+ *
+ * ⚠️ **Pure white lands on `UNTINTED`**, and there is nothing to be done about
+ * it: `0xffffffff` is the format's own "no tint" and a chip painted white is
+ * not distinguishable from one nobody touched. Picking white therefore reads
+ * back as the instrument's own colour, which is also what the game would show.
+ */
+export function chipColourValue(css: string): number {
+  const rgb = Number.parseInt(css.replace('#', ''), 16);
+  return (((rgb & 0xffffff) << 8) | 0xff) | 0;
+}
+
 /** What to show for a placement with no instrument, or one not in the assets. */
 export const MISSING_INSTRUMENT: InstrumentInfo = {
   guid: 0, name: '(no instrument)', category: '', label: '', family: '',

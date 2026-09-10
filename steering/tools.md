@@ -51,6 +51,7 @@ every access uses the same base.** The harness is reusable on `fmodsmsreverb.prx
 | `trace-icons.py` | those PNGs into the SVG paths of `src/editor/icons.ts`: drop the frame, close the stripes down the y axis, marching squares, Douglas-Peucker. ⚠️ Both traps are in its header, and the second one bites anyone simplifying a closed loop. `EPS` is the one knob |
 | `ReverbOrder.java` | a compiled `.ff` script through the LAMS table: every `LoadConstInstructionInt` operand in a function, translated. ⚠️ **The int is inline in the instruction word**, which is why searching a script's bytes for a LAMS id finds nothing. This is how the reverb list's order was read |
 | `InstrumentNames.java` | every `*instrument_*.plan` → its inventory `titleKey` → the LAMS table → **the name the game shows for each sound**, joined to the `.rinst` GUID through the plan's dependencies. Feeds `src/editor/instrument-labels.ts` |
+| `InstrumentColours.java` | the same 68 plans read as **what a chip the game has just placed holds**: `PInstrument.Colour` (the family's tint), the plan GUID, the chip icon, and the mixer defaults. Feeds `packages/cwlib-ts/src/chips.ts`, all 68 rows of it. ⚠️ It uses cwlib rather than our own reader on purpose — these plans are revision `0x397` and `packages/cwlib-ts` stops at `0x3b7` |
 
 The sequencer's real samples and its `.rinst` instrument definitions come out of the game with:
 
@@ -99,6 +100,11 @@ disassembler nobody has written; the strings alone still say which script owns a
 | `packages/cwlib-ts/dev/walk-levels.ts` | walk a directory of resources and name the next part with no reader, rather than throwing a stack trace |
 | `packages/cwlib-ts/dev/verify-levels.ts` | the golden fixture: the walk against `fixtures/levels/sequencers.jsonl`, plus the structural check that every board cell is whole and distinct |
 | `packages/cwlib-ts/dev/board-probe.ts` | the measurement behind `boardCell` — why the cell of a component on an open board is the delta in the board's basis and not the bare delta |
+| `packages/cwlib-ts/dev/fetch-plan.ts` | a root level's **plan dependencies**, out of the public archive: `node packages/cwlib-ts/dev/fetch-plan.ts <root hash or local file>` drops every type-38 dependency into `fixtures/plans/`. How the 17 real sequencer plans behind [export-to-game.md](export-to-game.md) were gathered |
+| `packages/cwlib-ts/dev/dump-fields.ts` | **every primitive read the parse makes, with its offset and its VALUE** — the technique level-files.md calls for, since widths align at any offset and values do not. `dump-fields.ts <file> [PART,PART] [start..end]`. This is how the parts the reader discards were read back out for the writer |
+| `packages/cwlib-ts/dev/chip-table.ts` | **the check on `src/chips.ts`**, which `tools/InstrumentColours.java` now writes: `(RInstrument GUID) → (planGuid, icon)` tallied over every sequencer in the directories given, reporting any GUID that answers twice. It also tallies `PInstrument.Colour`, which the table cannot get from a corpus at all — a creator re-tints a chip and the corpus then holds the choice, not the default |
+| `packages/cwlib-ts/dev/verify-export.ts` | **what proves the plan writer**: every sequencer in the files given written out, read back and compared — settings field by field, note records byte for byte — plus a span-by-span diff of the non-musical parts against the game's own bytes |
+| `packages/cwlib-ts/dev/dry-search.ts` | the archive's index by name: `dry-search.ts "music gallery"` over `dry.db`, printing slot id, game and root hash. The way to find a level to fetch when all you have is its title |
 | `packages/cwlib-ts/dev/archive-sample.mjs` | **a corpus from the archive's own index**: `node packages/cwlib-ts/dev/archive-sample.mjs 60` reads `dry.db`, picks an even spread of ids per game, downloads the root levels into `fixtures/archive/` and leaves them for `walk-levels.ts` |
 
 - ❗ **Reach for `CwlibTrace` before tracing bytes by hand.** Question 28 spent one session on a hex
@@ -210,9 +216,10 @@ question can be answered in seconds instead of by ear.
 | harness | what it proves |
 |---|---|
 | `render-level.ts [seqIndex] [seconds]` | one sequencer from a real level to a WAV, through the whole pipeline in `src/render.ts`. The Node half of the wrapper whose browser half is `packages/lbp-tracker-web/src/render-worker.ts`; the two produced the same 70,704,044-byte file on 2026-09-02 |
-| `verify-midi.ts` | the MIDI round trip over the corpus: every sequencer exported and read back, records compared byte for byte, and the loose (no-patch) numbers with `LBP_MIDI_LOOSE=1` |
+| `verify-midi.ts` | the MIDI round trip over the corpus: every sequencer exported and read back, records compared byte for byte, the chip tints checked (they have no MIDI message and no patch behind them), the loose (no-patch) numbers with `LBP_MIDI_LOOSE=1`, and the byte budget in [midi-interchange.md](midi-interchange.md) with `LBP_MIDI_BUDGET=1` |
 | `live-sim.ts` | the live scheduler under Node: the plan built as `Player.load` builds it, fed to a `Mixer` in look-ahead bursts, compared against the plain render. All three variants are bit-identical to the direct render; ⚠️ **when this file and the renderer disagree, suspect this file first** — it has to imitate two cadences at once, and *34* in answered-questions.md is what that cost |
 | `live-settings.ts` | that tempo, swing and the channel mixer can be applied live without re-planning: bit-identical against a render that had those settings all along, and 0 of 163 notes handed over twice |
+| `export-plan.ts` | **the command line into the game**: a level, a plan or a `.lbptracker.json` song in, a `.plan` out, with the revision and the whole dependency table printed. `export-plan.ts <in> [out] [--ps4] [--seq <uid>]`; a level with several sequencers lists the others |
 | `pitch-probe.ts` | that `Notes.y`, `basenote` and `Splitnotes` share one numbering: zones against their own base notes, and the corpus's notes against the samples they resolve to |
 
 ⚠️ **A render that normalises cannot see a gain error.** `render-level.ts` normalises its WAV, and a
@@ -245,3 +252,4 @@ a gain question out.
 | `LBP_STRIP=envelope,filter,…` | `live-sim.ts` | fields to delete from every voice spec before it is played, to bisect a divergence by feature |
 | `LBP_TEMPO`, `LBP_SWING`, `LBP_CHANNELS` | `live-settings.ts` | the settings to turn to, as a listener would |
 | `LBP_MIDI_LOOSE=1` | `verify-midi.ts` | export without the verbatim record patch, so MIDI alone is measured |
+| `LBP_MIDI_BUDGET=1` | `verify-midi.ts` | print which carrier every byte of the corpus's export goes to — the table in [midi-interchange.md](midi-interchange.md) |

@@ -2,10 +2,12 @@
 
 Read before planning a work session. Nothing here is a guess dressed up as a fact, and **nothing
 here blocks the build**: the note format, the containers, the level walk, the asset chain and the
-whole signal path are measured, and import and playback are built. What is left is four
+whole signal path are measured, and import, playback and export are built. What is left is four
 *decisions* where the project knowingly departs from the measured engine, a short list of measured
-residues nothing models yet, and two questions that are not about fidelity at all. When one gets
-resolved, move the answer into the descriptive file it belongs to and delete the entry.
+residues nothing models yet, one loose end left over from the export, three things about the chip
+tint that only Create Mode can answer, and three questions that are not about fidelity at all.
+When one gets resolved, move the answer into the descriptive file it belongs to and delete the
+entry.
 
 ## The decisions — deliberate deviations from the measured engine
 
@@ -164,10 +166,16 @@ have none.
   likeliest sources are the component's `scaleX` on the board and the highest `x` in `Notes` —
   or save a level with an empty six-bar grid and see what changes in the file.
 
-## 40. What a new sequencer starts at — the editor's defaults are the corpus's modes
+## 40. What a new SEQUENCER starts at — the editor's defaults are the corpus's modes
 
-Nothing has been read out of the game about the values a freshly placed Music Sequencer or
-Instrument holds. `NEW_SONG_DEFAULTS` in `packages/lbp-tracker-lib/src/song.ts` uses the corpus's
+✔ **The instrument half of this is answered.** All 68 of the game's `instrument_*.plan` popit
+items carry the same `PInstrument` — level 1, pan 0.5, both sends 0, key 0, scale 0, `Loops` 1, no
+name, no notes, and the family's colour — so a chip the game has just placed holds exactly
+`NEW_CLIP_DEFAULTS`, which used to be a reading of cwlib's field initialisers.
+`tools/InstrumentColours.java` prints them beside the colour.
+
+What is left is the **sequencer**: nothing has been read out of the game about the values a freshly
+placed Music Sequencer holds. `NEW_SONG_DEFAULTS` in `packages/lbp-tracker-lib/src/song.ts` uses the corpus's
 corpus medians for the echo (2.00 beats, feedback 0.45,
 mix 0.5), on the reasoning that a mode that strong across 338 user sequencers is most likely the
 value the editor starts at. A decision, not a measurement.
@@ -209,6 +217,38 @@ fewer records than the file, 10 the same count with different notes.
   bucketed by a guess rather than by diffing the records ("73 clips are a ramp re-cut", "31 clips
   mix the resting bit, look for runs", "five are not diagnosed"). **Print the diff first; the
   theorising is what produced the buckets.**
+
+## 49. The chip's tint — three things the file cannot say
+
+`PInstrument.Colour` is read, drawn, carried through MIDI and written back
+([sequencer-data-model.md](sequencer-data-model.md)), and *49* in
+[answered-questions.md](answered-questions.md) is the part that is settled. What is left needs the
+game, not the bytes:
+
+- **The low byte.** It is `ff` on 24 of the 25 values the corpus holds, and `00` on the factory
+  green all fifteen percussion instruments ship with. `chipColour` drops it, because honouring it
+  as an opacity draws every untinted drum kit invisible — but "drop it" is a choice, not a
+  reading. **What would settle it**: place a percussion chip and a synth chip in Create Mode and
+  look at whether one is fainter than the other.
+- **Whether a creator's tint is drawn at all.** 1,838 of 68,568 placements (2.7%) carry a colour
+  that is neither white nor their instrument's own, so the tweak menu evidently offers it; nobody
+  has watched the game draw one. If it turns out the game colours a chip by instrument and ignores
+  the field, the tracker is showing something the game does not — and the field would still have
+  to be carried, because it is in the file. **What would settle it**: open a corpus level with a
+  tinted chip (`dev/chip-table.ts` names them) in Create Mode.
+- **What palette the tweak menu offers.** The 25 corpus values are hues at a few saturations, not
+  an obvious grid, and the editor here offers a free `<input type="color">` — which may be able to
+  write a colour the game's own picker cannot reach. Harmless if so. **What would settle it**:
+  `gamedata/scripts/tweak*.ff` through `lbpres.py --raw` ([tools.md](tools.md)).
+
+## 50. Should the instrument picker use the game's colours?
+
+`FAMILY_COLOURS` in `src/editor/instruments.ts` is ours: eleven families, softened for a dark UI,
+and it is what the picker and the inspector's glyph paint. The board no longer uses it — a chip
+has its own colour now — so the two palettes sit side by side, close but not equal (the game has
+seven families, saturated). Adopting the measured colours would make the picker match the board
+exactly and lose some of the separation eleven families give. **A taste decision, and the owner's**;
+it costs one table either way.
 
 ## 28. What still will not open — the archive sweep's leftovers
 

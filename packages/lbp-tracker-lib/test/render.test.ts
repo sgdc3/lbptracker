@@ -8,6 +8,7 @@ import test from 'node:test';
 import { buildMipChain } from '../src/audio/mipmap.ts';
 import { type SampleBuffer } from '../src/audio/mixer.ts';
 import { RATE, renderSequencer, toPcm16, type LoadedInstrument } from '../src/render.ts';
+import { DEFAULT_CHIP_COLOUR } from '@lbptracker/cwlib/chips.ts';
 import { readLevelProject, type Sequencer } from '@lbptracker/cwlib/project.ts';
 import { readInstrument, usedSlots } from '../src/rinstrument.ts';
 import { loadResourceFile, nodeInflate } from '@lbptracker/cwlib/platform/node.ts';
@@ -181,7 +182,7 @@ test('a glide is linear in steps, so under swing it bends at every step it cross
     echoFeedback: 0, echoTime: 1, echoMix: 0, reverb: 5,
     loop: false, startPoint: 0, numChannels: 1, volumes: [1, 1, 1, 1, 1, 1], boardRows: 0,
     tracks: [{
-      guid: 1, name: 't', gridX: 0, gridY: 0, stepOffset: 0, level: 1, pan: 0.5,
+      guid: 1, name: 't', colour: DEFAULT_CHIP_COLOUR, gridX: 0, gridY: 0, stepOffset: 0, level: 1, pan: 0.5,
       echoSend: 0.5, reverbSend: 0, key: 0, scale: 0, notes,
       records: new Uint8Array(0), trailingRecords: 0,
     }],

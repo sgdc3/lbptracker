@@ -33,6 +33,7 @@ import { writeZip } from '@lbptracker/cwlib/zip.ts';
 import { type Sequencer } from '@lbptracker/cwlib/project.ts';
 import { songFromSequencer } from '@lbptracker/lib/song.ts';
 import { currentSequencer, ensureAssets, openSong, rinstIndex, state } from './session.ts';
+import { mountPlanExport } from './plan-export.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -189,6 +190,9 @@ export function mountConvert(opts: { isActive: () => boolean; onShow: (l: () => 
     timer = window.setTimeout(convert, 250);
   });
   opts.onShow(() => void ensureAssets().then(convert, () => convert()));
+
+  // The other export on this view: the song as a `.plan` the game can load.
+  mountPlanExport({ isActive: opts.isActive, onShow: opts.onShow, log });
 
   // ---------------------------------------------------------------- import
 

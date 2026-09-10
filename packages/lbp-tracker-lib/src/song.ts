@@ -34,6 +34,7 @@ import {
   type Note,
   type WriteNote,
 } from '@lbptracker/cwlib/notes.ts';
+import { factoryColour } from '@lbptracker/cwlib/chips.ts';
 import { STEPS_PER_CELL, type Sequencer, type Track } from '@lbptracker/cwlib/project.ts';
 
 /** One control point. `thirds` is the position within the clip, `timbre` the 0..15 nibble. */
@@ -58,6 +59,12 @@ export interface Clip {
   /** The `RInstrument` GUID; 0 for an empty placement. */
   guid: number;
   name: string;
+  /**
+   * The chip's tint, packed RGBA -- `PInstrument.Colour`, which the game shows
+   * and nothing plays. A new chip takes the instrument's own factory value
+   * (`factoryColour`); anything else is the composer's.
+   */
+  colour: number;
   /** Board column: 16 steps each. */
   cell: number;
   /** Board row, 0 at the top. */
@@ -168,7 +175,15 @@ export const NEW_SONG_DEFAULTS = {
   boardRows: 8,
 } as const;
 
-/** Defaults for a placement, from `PInstrument`'s initialisers. */
+/**
+ * Defaults for a placement.
+ *
+ * ✔ **Measured, 2026-09-10**: all 68 of the game's `instrument_*.plan` popit
+ * items carry exactly these on the `PInstrument` they place -- level 1, pan
+ * centred, no sends, key 0, chromatic -- so a chip the game has just made holds
+ * them (`tools/InstrumentColours.java`). The tint is not here because it is
+ * the instrument's own; `addClip` takes it from `factoryColour`.
+ */
 export const NEW_CLIP_DEFAULTS = {
   key: 0,
   scale: 0,
@@ -240,6 +255,7 @@ export function addClip(song: Song, at: { cell: number; row: number }, guid: num
     row: Math.max(0, Math.round(at.row)),
     steps: DEFAULT_CLIP_STEPS,
     ...NEW_CLIP_DEFAULTS,
+    colour: factoryColour(guid),
     rest: 1,
     notes: [],
   };
@@ -257,6 +273,7 @@ export function duplicateClip(song: Song, clip: Clip, at: { cell: number; row: n
   copy.pan = clip.pan;
   copy.echoSend = clip.echoSend;
   copy.reverbSend = clip.reverbSend;
+  copy.colour = clip.colour;
   copy.rest = clip.rest;
   for (const note of clip.notes) {
     copy.notes.push({ id: song.nextId++, points: note.points.map((p) => ({ ...p })) });
@@ -269,6 +286,102 @@ export function removeClip(song: Song, id: number): boolean {
   if (at < 0) return false;
   song.clips.splice(at, 1);
   return true;
+}
+
+// ------------------------------------------------------------ chips as a block
+// The board's selection is a set of chips, and these move, copy and place it
+// as one. Pure over the song, so `test/song.test.ts` holds them.
+
+/** A shift across the board, in cells and rows. */
+export interface ClipShift {
+  cells: number;
+  rows: number;
+}
+
+/** The top-left of a set of chips: the lowest cell and the lowest row among them; the origin for none. */
+export function clipsAnchor(clips: readonly { cell: number; row: number }[]): { cell: number; row: number } {
+  if (!clips.length) return { cell: 0, row: 0 };
+  return {
+    cell: Math.min(...clips.map((c) => c.cell)),
+    row: Math.min(...clips.map((c) => c.row)),
+  };
+}
+
+/** One cell past the right edge of a set of chips: where the next block goes to sit edge to edge. */
+export function clipsEndCell(clips: readonly { cell: number; steps: number }[]): number {
+  return clips.reduce((end, c) => Math.max(end, c.cell + Math.ceil(c.steps / STEPS_PER_CELL)), 0);
+}
+
+/**
+ * A shift of a set of chips, clamped so that none of them leaves the board:
+ * no cell before the first, no row above the top or below the last of
+ * `boardRows`. A set taller than the board keeps its top row on it.
+ */
+export function clampClipShift(
+  clips: readonly { cell: number; row: number }[],
+  shift: ClipShift,
+  boardRows: number,
+): ClipShift {
+  const cells = Math.round(shift.cells);
+  const rows = Math.round(shift.rows);
+  if (!clips.length) return { cells, rows };
+  const anchor = clipsAnchor(clips);
+  const bottom = Math.max(...clips.map((c) => c.row));
+  return {
+    cells: Math.max(-anchor.cell, cells),
+    rows: Math.max(-anchor.row, Math.min(boardRows - 1 - bottom, rows)),
+  };
+}
+
+/** Move a set of chips as one, by a shift clamped to the board; what was applied comes back. */
+export function moveClips(song: Song, ids: Iterable<number>, shift: ClipShift): ClipShift {
+  const wanted = new Set(ids);
+  const chosen = song.clips.filter((c) => wanted.has(c.id));
+  const applied = clampClipShift(chosen, shift, song.boardRows);
+  for (const clip of chosen) {
+    clip.cell += applied.cells;
+    clip.row += applied.rows;
+  }
+  return applied;
+}
+
+/**
+ * Whether a set of chips, shifted, would have one anchored on a cell that a
+ * chip outside the set is anchored on. Overlap in time is the game's to
+ * allow (55 of the corpus's 72,726 neighbours do); two chips on one cell is
+ * what `addClip`'s callers refuse. `except` names chips to disregard -- the
+ * set itself, when it is the one moving.
+ */
+export function clipsCollide(
+  song: Song,
+  clips: readonly { cell: number; row: number }[],
+  shift: ClipShift,
+  except: ReadonlySet<number> = new Set(),
+): boolean {
+  const taken = new Set(song.clips.filter((c) => !except.has(c.id)).map((c) => `${c.cell}:${c.row}`));
+  return clips.some((c) => taken.has(`${c.cell + shift.cells}:${c.row + shift.rows}`));
+}
+
+/**
+ * The first shift at or to the right of `shift` under which no chip of the
+ * set lands on a taken cell: where a paste or a duplicate goes when the cell
+ * it was aimed at is taken, as a single chip has always found the next free
+ * cell. The rows are not touched.
+ */
+export function freeClipShift(
+  song: Song,
+  clips: readonly { cell: number; row: number }[],
+  shift: ClipShift,
+  except?: ReadonlySet<number>,
+): ClipShift {
+  let cells = shift.cells;
+  while (clipsCollide(song, clips, { cells, rows: shift.rows }, except)) cells += 1;
+  return { cells, rows: shift.rows };
+}
+
+/** Copies of a set of chips as one block, shifted together, with fresh ids throughout. */
+export function duplicateClips(song: Song, clips: readonly Clip[], shift: ClipShift): Clip[] {
+  return clips.map((c) => duplicateClip(song, c, { cell: c.cell + shift.cells, row: c.row + shift.rows }));
 }
 
 /** One more row at the bottom of the board. False at the limit. */
@@ -644,6 +757,7 @@ export function songFromSequencer(seq: Sequencer): Song {
       id: song.nextId++,
       guid: track.guid,
       name: track.name,
+      colour: track.colour,
       cell: track.gridX,
       row: track.gridY,
       steps: clipStepsFor(track.notes.reduce((m, n) => Math.max(m, n.endStep), -1)),
@@ -684,6 +798,7 @@ export function trackFromClip(clip: Clip): Track {
   return {
     guid: clip.guid,
     name: clip.name,
+    colour: clip.colour,
     gridX: clip.cell,
     gridY: clip.row,
     stepOffset: clip.cell * STEPS_PER_CELL,
@@ -796,6 +911,9 @@ export function songFromJson(text: string): Song {
     clip.pan = num(c.pan, 0.5);
     clip.echoSend = num(c.echoSend, 0);
     clip.reverbSend = num(c.reverbSend, 0);
+    // A file written before the tint was carried has none, and the chip keeps
+    // the factory colour `addClip` gave it.
+    clip.colour = num(c.colour, clip.colour) | 0;
     clip.rest = c.rest === 0 ? 0 : 1;
     for (const n of Array.isArray(c.notes) ? (c.notes as Partial<SongNote>[]) : []) {
       if (!n || !Array.isArray(n.points) || n.points.length === 0) continue;

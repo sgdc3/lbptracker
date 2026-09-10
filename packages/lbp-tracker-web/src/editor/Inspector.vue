@@ -15,7 +15,8 @@ import { SCALE_NAMES } from '@lbptracker/lib/scale.ts';
 import { CLIP_STEP_CHOICES, highestStep, resizeClip, type ChangeKindLike } from './inspector-support.ts';
 import { STEPS_PER_BAR, barOfCell, noteName, positionLabel } from './geometry.ts';
 import type { Clip } from '@lbptracker/lib/song.ts';
-import type { InstrumentInfo } from './instruments.ts';
+import { chipColour, chipColourValue, type InstrumentInfo } from './instruments.ts';
+import { UNTINTED, drawnColour, factoryColour } from '@lbptracker/cwlib/chips.ts';
 import Glyph from './Glyph.vue';
 import { pickInstrument } from './instrument-picker.ts';
 import type { EditorState } from './state.ts';
@@ -69,9 +70,43 @@ const chooseSound = async () => {
   if (guid === null) return;
   props.state.edit('notes', () => {
     const c = props.state.clip();
-    if (c) c.guid = guid;
+    if (!c) return;
+    // ❗ A chip nobody has tinted takes the new sound's own colour, the way a
+    // chip placed from the popit would; one the composer coloured keeps the
+    // colour they chose. `UNTINTED` stays as it is -- it already means "the
+    // instrument's own", whichever instrument that now is.
+    if (c.colour === factoryColour(c.guid)) c.colour = factoryColour(guid);
+    c.guid = guid;
   }, 'guid');
 };
+
+/**
+ * The chip's tint -- `PInstrument.Colour`, which the game draws on the board.
+ *
+ * ⚠️ **`look`, not `notes`.** Nothing plays it, and rebuilding the plan would
+ * cut whatever the chip is sounding for a change to a colour.
+ */
+const setColour = (event: Event) => {
+  const css = (event.target as HTMLInputElement).value;
+  props.state.edit('look', () => {
+    const c = props.state.clip();
+    if (c) c.colour = chipColourValue(css);
+  }, 'colour');
+};
+
+/** Back to the colour the instrument's own popit item carries. */
+const resetColour = () => {
+  props.state.edit('look', () => {
+    const c = props.state.clip();
+    if (c) c.colour = factoryColour(c.guid);
+  });
+};
+
+/** The swatch shows what the board draws, so white reads as the sound's own colour. */
+const colourCss = (c: { colour: number; guid: number }) => chipColour(drawnColour(c.guid, c.colour));
+/** Untinted: the instrument's own colour, however the file spells it. */
+const isFactoryColour = (c: { colour: number; guid: number }) =>
+  c.colour === factoryColour(c.guid) || c.colour === UNTINTED;
 
 const setSteps = (event: Event) => {
   const c = props.state.clip();
@@ -154,6 +189,15 @@ const fmt = (v: number, dp = 2) => v.toFixed(dp);
           <input id="clipReverb" type="range" min="0" max="100" step="1" :value="Math.round(clip.reverbSend * 100)" autocomplete="off"
                  @input="setClip('notes', 'reverbSend', (v, c) => { c.reverbSend = v / 100; })($event)">
           <output>{{ fmt(clip.reverbSend) }}</output>
+        </div>
+        <div class="knob">
+          <label for="clipColour">colour</label>
+          <input id="clipColour" class="swatch" type="color" :value="colourCss(clip)" autocomplete="off"
+                 title="The chip's colour on the board, the way the game draws it"
+                 @input="setColour">
+          <button type="button" class="mini" :disabled="isFactoryColour(clip)"
+                  title="Back to the colour this instrument comes with"
+                  @click="resetColour">{{ isFactoryColour(clip) ? 'default' : 'reset' }}</button>
         </div>
         <div class="row" style="margin-top:.6rem">
           <span class="hintline" style="margin:0">bar {{ barOfCell(clip.cell) }}, row {{ clip.row }} · {{ clip.notes.length }} note{{ clip.notes.length === 1 ? '' : 's' }}</span>

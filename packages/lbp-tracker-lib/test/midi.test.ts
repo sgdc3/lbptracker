@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
 
+import { DEFAULT_CHIP_COLOUR } from '@lbptracker/cwlib/chips.ts';
 import { readNotes, NOTE_RECORD_SIZE } from '@lbptracker/cwlib/notes.ts';
 import { STEPS_PER_CELL, schedule, type Sequencer, type Track } from '@lbptracker/cwlib/project.ts';
 import { blockRoot, notePitch, quantise, unquantise, MAX_SCALE } from '../src/scale.ts';
@@ -44,7 +45,7 @@ function makeTrack(notes: Point[][], over: Partial<Track> = {}): Track {
   }
   const grouped = readNotes(bytes);
   return {
-    guid: 1234, name: 'test', gridX: 0, gridY: 0, stepOffset: 0,
+    guid: 1234, name: 'test', colour: DEFAULT_CHIP_COLOUR, gridX: 0, gridY: 0, stepOffset: 0,
     level: 1, pan: 0.5, echoSend: 0, reverbSend: 0, key: 0, scale: 0,
     notes: grouped.notes, records: bytes, trailingRecords: grouped.trailing.length,
     ...over,
@@ -689,7 +690,7 @@ test('every sequencer and placement field that survives, does', () => {
   // `Track` and forgetting the header meta shows up here rather than in a DAW.
   const seq = makeSequencer(
     [makeTrack([[{ step: 0, pitch: 60 }]], {
-      guid: 4242, name: 'kalimba', gridY: 5,
+      guid: 4242, name: 'kalimba', gridY: 5, colour: 0xff8000ff | 0,
       level: 0.375, pan: 0.8, echoSend: 0.25, reverbSend: 0.6,
     })],
     {
@@ -711,7 +712,11 @@ test('every sequencer and placement field that survives, does', () => {
   }
   assert.deepEqual(back.volumes, seq.volumes);
   for (const field of [
-    'guid', 'name', 'gridY', 'level', 'pan', 'echoSend', 'reverbSend',
+    // ⚠️ `colour` is here because the chip's tint has no MIDI message at all:
+    // drop it from `LBP-TRK` and 22,188 of the corpus's 62,158 chips come back
+    // wearing their instrument's factory colour instead of the one they were
+    // given. Measured by `dev/verify-midi.ts`.
+    'guid', 'name', 'colour', 'gridY', 'level', 'pan', 'echoSend', 'reverbSend',
   ] as const) {
     assert.deepEqual(back.tracks[0][field], seq.tracks[0][field], `track.${field}`);
   }
@@ -949,6 +954,37 @@ test('clips of one part keep their own names', () => {
     [...back.tracks].sort((x, y) => x.gridX - y.gridX).map((t) => t.name),
     ['Synth: Ray Gun', 'Synth: Square Wave'],
   );
+});
+
+test('clips of one part keep their own tints, and a foreign file gets the factory one', () => {
+  // ❗ **A part is a group of placements that share a mixer, and the tint is
+  // not in that key** -- so it rides beside the name: one value for the part
+  // and a map for the clips that disagree. 22,188 of the corpus's 62,158 chips
+  // are tinted away from their instrument's own colour.
+  const seq = makeSequencer([
+    makeTrack([[{ step: 0, pitch: 60 }]], { gridX: 0, guid: 129031, colour: 0x40ff0100 }),
+    makeTrack([[{ step: 0, pitch: 62 }]], { gridX: 1, guid: 129031, colour: 0xff8000ff | 0 }),
+  ]);
+  const back = midiToSequencer(sequencerToMidi(seq).bytes).sequencer;
+  assert.deepEqual(
+    [...back.tracks].sort((x, y) => x.gridX - y.gridX).map((t) => t.colour),
+    [0x40ff0100, 0xff8000ff | 0],
+  );
+  // ⚠️ A file nobody wrote a `LBP-TRK` into -- a DAW's own -- says nothing
+  // about a tint, and nothing about an instrument either: the label is read
+  // only against the meta's, so `guid` stays 0 and the chip takes
+  // `factoryColour`'s fallback rather than a family's colour. That is the same
+  // rule the board draws such a placement by.
+  const file = readMidi(sequencerToMidi(seq).bytes);
+  const stripped = writeMidi({
+    format: 1, division: file.division,
+    tracks: file.tracks.map((t) => ({
+      events: t.events.filter((e) => metaString(e)?.type !== 0x01),
+    })),
+  });
+  const plain = midiToSequencer(stripped);
+  assert.equal(plain.ours, false);
+  assert.equal(plain.sequencer.tracks[0].colour, DEFAULT_CHIP_COLOUR);
 });
 
 test('two placements sharing a label are told apart, and come back', () => {

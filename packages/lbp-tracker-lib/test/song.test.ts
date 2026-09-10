@@ -12,6 +12,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
+import { DEFAULT_CHIP_COLOUR, factoryColour } from '@lbptracker/cwlib/chips.ts';
 import { decodeRecords, encodeNotes, readNotes, type WriteNote } from '@lbptracker/cwlib/notes.ts';
 import { readLevelProject, type Track } from '@lbptracker/cwlib/project.ts';
 import { nodeInflate } from '@lbptracker/cwlib/platform/node.ts';
@@ -21,6 +22,14 @@ import {
   addNote,
   addRow,
   addPoint,
+  clampClipShift,
+  clipsAnchor,
+  clipsCollide,
+  clipsEndCell,
+  duplicateClip,
+  duplicateClips,
+  freeClipShift,
+  moveClips,
   clipStepsFor,
   movePoint,
   lastThirds,
@@ -107,6 +116,7 @@ test('a song round-trips through a sequencer and through JSON', () => {
   song.numChannels = 2;
   song.boardRows = 6;
   const clip = addClip(song, { cell: 3, row: 2 }, 129085, 'lead');
+  clip.colour = 0xffff00ff | 0;
   clip.key = 14;
   clip.scale = 3;
   clip.level = 0.7;
@@ -127,6 +137,7 @@ test('a song round-trips through a sequencer and through JSON', () => {
   const track = seq.tracks[0];
   assert.equal(track.stepOffset, 48);
   assert.equal(track.gridY, 2);
+  assert.equal(track.colour, 0xffff00ff | 0);
   assert.equal(track.key, 14);
   assert.equal(track.notes.length, 3);
   // The bend at step 0 comes first, then the held note at step 1, then the triplet.
@@ -149,6 +160,7 @@ test('a song round-trips through a sequencer and through JSON', () => {
   assert.equal(again.cell, 3);
   assert.equal(again.row, 2);
   assert.equal(again.steps, 32);
+  assert.equal(again.colour, 0xffff00ff | 0);
   assert.equal(again.rest, 1);
   assert.equal(again.notes.length, 3);
   const flat = (c: typeof clip) =>
@@ -161,6 +173,7 @@ test('a song round-trips through a sequencer and through JSON', () => {
   const parsed = songFromJson(text);
   assert.deepEqual(flat(parsed.clips[0]), flat(clip));
   assert.equal(parsed.clips[0].key, 14);
+  assert.equal(parsed.clips[0].colour, 0xffff00ff | 0, 'the chip keeps its tint through the file');
   assert.equal(parsed.boardRows, 6);
   assert.throws(() => songFromJson('{"format":"something else"}'), /not an LBP Tracker song/);
 
@@ -241,6 +254,25 @@ test('rows: one more at the bottom; a removed row takes its chips and closes the
   assert.equal(song.boardRows, 1);
   assert.equal(removeRow(song, 0), -1, 'the last row stays');
   void b;
+});
+
+test('a new chip wears the colour its instrument comes with, and a copy the chip has', () => {
+  const song = newSong();
+  // ✔ The factory colours, out of the game's own popit plans (`chips.ts`): the
+  // percussion family's green, the synth family's sky blue, and the fallback
+  // for an instrument the game has not got.
+  assert.equal(addClip(song, { cell: 0, row: 0 }, 129031).colour, 0x40ff0100);
+  assert.equal(addClip(song, { cell: 1, row: 0 }, 129085).colour, DEFAULT_CHIP_COLOUR);
+  assert.equal(addClip(song, { cell: 2, row: 0 }, 999999).colour, DEFAULT_CHIP_COLOUR);
+  // ⚠️ **Signed, like the field in the file.** The table spells the colours
+  // unsigned because they read better that way, and a placement's own comes
+  // out of `s.i32()`; comparing the two called every red, magenta, yellow and
+  // white chip in the corpus "tinted" until `factoryColour` normalised.
+  assert.equal(addClip(song, { cell: 4, row: 0 }, 125100).colour, 0xff0000ff | 0);
+  assert.equal(factoryColour(125100) < 0, true);
+  const tinted = addClip(song, { cell: 3, row: 0 }, 129031);
+  tinted.colour = 0xff00ffff | 0;
+  assert.equal(duplicateClip(song, tinted, { cell: 5, row: 0 }).colour, 0xff00ffff | 0);
 });
 
 test('clipStepsFor: four bars by default, then two more at a time, never past 128', () => {
@@ -331,3 +363,38 @@ test('a set of a note’s points moves as one, with the unselected ones as its w
   movePoints(clip, note, [2, 3], -99, 0);
   assert.equal(at(), '0/60 6/60 6/64 12/64', 'point 2 lands on point 1 and stops');
 });
+
+test('a block of chips moves as one, stays on the board, and copies onto free cells', () => {
+  const song = newSong();
+  song.boardRows = 4;
+  const a = addClip(song, { cell: 1, row: 1 }, 1);
+  const b = addClip(song, { cell: 3, row: 2 }, 2);
+  const other = addClip(song, { cell: 6, row: 1 }, 3);
+  addNote(song, a, { thirds: 6, pitch: 60 });
+  assert.deepEqual(clipsAnchor([a, b]), { cell: 1, row: 1 });
+  assert.deepEqual(clipsAnchor([]), { cell: 0, row: 0 });
+  assert.equal(clipsEndCell([a, b]), 5, 'a four-bar chip at cell 3 ends at cell 5');
+  // Clamped to the board: never before cell 0, never above row 0 or below the last row.
+  assert.deepEqual(clampClipShift([a, b], { cells: -5, rows: -3 }, 4), { cells: -1, rows: -1 });
+  assert.deepEqual(clampClipShift([a, b], { cells: 2, rows: 5 }, 4), { cells: 2, rows: 1 });
+  assert.deepEqual(
+    clampClipShift([a, b], { cells: 0, rows: 0 }, 1), { cells: 0, rows: -1 },
+    'taller than the board: the top row stays on it',
+  );
+  assert.deepEqual(moveClips(song, [a.id, b.id], { cells: -3, rows: 1 }), { cells: -1, rows: 1 });
+  assert.deepEqual([a.cell, a.row, b.cell, b.row], [0, 2, 2, 3]);
+  assert.deepEqual([other.cell, other.row], [6, 1], 'a chip outside the block stays');
+  // The block's own chips are not in its way; another one is.
+  assert.equal(clipsCollide(song, [a, b], { cells: 0, rows: 0 }, new Set([a.id, b.id])), false);
+  assert.equal(clipsCollide(song, [a, b], { cells: 0, rows: 0 }), true);
+  assert.deepEqual(
+    freeClipShift(song, [a, b], { cells: 6, rows: -1 }), { cells: 7, rows: -1 },
+    'a would land on the other chip at (6, 1): one cell further',
+  );
+  const copies = duplicateClips(song, [a, b], { cells: 7, rows: -1 });
+  assert.deepEqual(copies.map((c) => [c.cell, c.row, c.guid]), [[7, 1, 1], [9, 2, 2]]);
+  assert.equal(song.clips.length, 5);
+  assert.equal(new Set(song.clips.map((c) => c.id)).size, 5, 'fresh ids');
+  assert.deepEqual(copies[0].notes.map((n) => n.points), a.notes.map((n) => n.points), 'the notes come along');
+  assert.notEqual(copies[0].notes[0].id, a.notes[0].id);
+});

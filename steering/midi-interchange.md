@@ -12,13 +12,15 @@ second layer and the measurement of the whole.
 
 Every number here comes from `packages/lbp-tracker-lib/dev/verify-midi.ts` over the ten-level corpus
 (149 sequencers, 62,158 clips, 953,791 notes, 1,448,224 records — [level-files.md](level-files.md)),
-last taken 2026-09-05. Run it after touching either file.
+last taken 2026-09-10. Run it after touching either file; `LBP_MIDI_BUDGET=1` adds the byte
+table below.
 
 ## The result: the round trip is exact, and MIDI alone is close
 
 ```
 62,158 clips, 1,448,224 records: 0 came back different
-54 clips carried verbatim, 0 unpatchable, 24.0 MB
+54 clips carried verbatim, 0 unpatchable, 24.1 MB
+22,188 chips tinted away from their instrument's own colour: 0 came back different
 ```
 
 It is a **fixed point from the first trip**: three round trips give the same record count and the
@@ -61,26 +63,37 @@ loses.
 move the end flag into the middle of the chain. Every byte-level comparison goes through `records`;
 the first version of the diff did not, and it invented 66% of notes diverging and a 4 MB patch.
 
-## The budget — where 24 MB of corpus goes
+## The budget — where 24.1 MB of corpus goes
 
-`exact` on, which is what the page writes:
+`exact` on, which is what the page writes. ❗ **Measured by `LBP_MIDI_BUDGET=1`, 2026-09-10**, and
+exact rather than estimated: `writeMidi` never uses running status, so an event costs
+`varLength(delta) + data.length` and the rows add up to the file. The two fields that are not
+events of their own — `fix` and the tint, both inside a `LBP-TRK` meta — are weighed by
+re-serialising the meta without them.
 
 | carrier | share | events |
 |---|---|---|
-| pitch bend — the glide | 23.99% | 1,468,357 |
-| CC 74 — the modulation | 19.74% | 1,208,711 |
-| channel pressure — the volume | 17.00% | 1,388,002 |
-| note on | 15.58% | 953,791 |
-| note off | 15.58% | 953,791 |
-| **`LBP-TRK` meta** — placement and cells | **5.18%** | 4,911 |
-| **`LBP-TRK` `fix`** — verbatim records | **0.06%** | 47 |
-| track name meta | 0.33% | 5,060 |
-| **`LBP-SEQ` meta** — the sequencer | **0.12%** | 149 |
-| tempo, time signature, end of track | 0.09% | 5,358 |
+| pitch bend — the glide | 24.81% | 1,468,357 |
+| CC 74 — the modulation | 19.71% | 1,188,476 |
+| note off | 16.79% | 953,791 |
+| channel pressure — the volume | 16.12% | 1,294,870 |
+| note on | 15.82% | 953,791 |
+| **`LBP-TRK` meta** — placement and cells | **5.43%** | 4,911 |
+| **`LBP-TRK` `colour`** — the chip tint | **0.34%** | 4,911 |
+| track name meta | 0.32% | 3,373 |
+| CC 7/10/90/91 — the mixer | 0.26% | 15,313 |
+| **`LBP-SEQ` meta** — the sequencer | **0.13%** | 149 |
+| tempo, time signature, end of track | 0.07% | 3,671 |
+| **`LBP-TRK` `fix`** — verbatim records | **0.06%** | 17 metas |
 | RPN / MPE configuration | 0.02% | 1,341 |
 
-**The side channels are 6.07% of the file.** Three quarters of that is the cell list, which is
-what gives a level its board back.
+**The side channels are 6.28% of the file**, and 0.12% more is track headers and End of Track.
+Three quarters of that is the cell list, which is what gives a level its board back.
+
+⚠️ **This table used to be an ad-hoc count and several of its rows had gone stale** — 5,060 track
+names for a corpus that merges down to 3,373, and a note-on and note-off share that were equal
+when the deltas are not. It is a script's output now, and re-running it is one environment
+variable.
 
 ## The ordinary MIDI
 
@@ -167,9 +180,30 @@ encodes to exactly the microseconds in the file and takes that one; all 149 corp
 ## 2. `LBP-TRK ` — one text meta per part track
 
 `guid` · `instrument` · `gridY` · `level` · `pan` · `echoSend` · `reverbSend` · `key` · `scale` ·
-`clips` · `name`? · `names`? · `rest`? · `lane`? · `fix`?
+`colour` · `clips` · `name`? · `names`? · `colours`? · `rest`? · `lane`? · `fix`?
 
 A `clips` entry is `[gridX, steps]`, `[gridX, steps, rest]` or `[gridX, steps, rest, bitmap]`.
+
+### `colour` — the chip's tint, which MIDI has no message for at all
+
+`PInstrument.Colour`, packed RGBA ([sequencer-data-model.md](sequencer-data-model.md)). There is
+no controller for a colour and a CC would be the wrong tool anyway — seven bits of one, and a
+synth would act on it — so it rides in the meta and nowhere else. **Measured 2026-09-10 over the
+ten-level corpus: 22,188 of 62,158 chips carry a colour that is not the one their instrument
+ships with, and dropping the field brings back every one of them wrong.** It costs 82,993 bytes,
+**0.34%** of the 24.1 MB export, and `dev/verify-midi.ts` reports the tints that come back
+different and fails on any.
+
+It is written for **every** part rather than only where it differs from `factoryColour`, and that
+is a deliberate 50 kB: the cheaper form makes the file unreadable without our own instrument
+table, which is the trap the `instrument` name beside the GUID exists to avoid. A file that says
+nothing — a DAW's own — leaves the chip on `factoryColour`, the same rule a chip drawn on the
+board follows.
+
+⚠️ **A part is a group of placements that share a mixer, and the tint is not in that key**, so
+`colours` maps `gridX` to the tint of each clip that disagrees with the part's — exactly as
+`names` does for the Thing's label, and for the same reason. Putting the tint in the grouping key
+instead would have split parts and changed every count in this file for a field nothing plays.
 
 ### What a DAW can edit, and what it cannot
 

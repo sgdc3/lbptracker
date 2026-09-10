@@ -19,6 +19,7 @@ import { confirmDialog } from './confirm.ts';
 import { APP_VERSION } from './version.ts';
 import { isSongFile, openedTitle, readOpened, saveNote, type Opened } from './open-level.ts';
 import { seqPicker } from './seq-picker.ts';
+import { focusOwnsKeys } from './keys.ts';
 import { saveSongFile } from './song-file.ts';
 import { mountOpen } from './widgets/open-panel.ts';
 import { loading } from './widgets/loading.ts';
@@ -466,9 +467,23 @@ mountMediaKeys();
  * would sound a note there instead. Those live in the arrange view's own
  * handler, which only answers while that view is shown.
  */
+/*
+ * Which kind of input the user is using, for the focus rings in `daw.css`.
+ *
+ * ❗ **`:focus-visible` alone is not enough here**: Chrome counts holding Shift
+ * as keyboard use, so shift+drag on the board -- the marquee -- focuses the
+ * grid *and* matches `:focus-visible`, leaving a ring behind on every gesture.
+ * Capture phase, so a handler that stops the event cannot desynchronise this.
+ */
+document.addEventListener('pointerdown', () => {
+  document.documentElement.dataset.pointer = '';
+}, true);
+document.addEventListener('keydown', () => {
+  delete document.documentElement.dataset.pointer;
+}, true);
+
 window.addEventListener('keydown', (event) => {
-  const target = event.target as HTMLElement | null;
-  if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
+  if (focusOwnsKeys(event)) return;
   if (event.ctrlKey || event.metaKey) {
     if (event.code !== 'KeyS' || event.shiftKey) return;
     event.preventDefault();          // the browser would offer to save the page

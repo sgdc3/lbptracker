@@ -67,7 +67,7 @@ two?" was the wrong question for four sessions. The same shape recurs: the synth
 - Play back sequences with the game's synthesis model.
 - Compose: a tracker-style grid editor.
 - Export audio (offline render).
-- Import existing LBP sequences, and export back to a game-loadable form.
+- Import existing LBP sequences, and export back to a game-loadable form — [export-to-game.md](export-to-game.md).
 
 **Out of scope, at least for v1**
 - The "Interactive Music" object (stems + sliders). Different system, different data — see

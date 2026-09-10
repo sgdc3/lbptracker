@@ -10,8 +10,12 @@
 
 import { createApp, h } from 'vue';
 import { STEPS_PER_CELL } from '@lbptracker/cwlib/project.ts';
-import { addClip, duplicateClip, removeClip, setSongEnd, type Clip } from '@lbptracker/lib/song.ts';
+import {
+  MAX_BOARD_ROWS, addClip, clampClipShift, clipsAnchor, clipsEndCell, duplicateClips, freeClipShift,
+  moveClips, removeClip, setSongEnd, type Clip, type ClipShift,
+} from '@lbptracker/lib/song.ts';
 import { confirmDialog } from '../confirm.ts';
+import { focusOwnsKeys, hasTextSelection } from '../keys.ts';
 import { BoardView } from '../editor/board.ts';
 import { RollView } from '../editor/roll.ts';
 import { STEPS_PER_BAR, barOfCell } from '../editor/geometry.ts';
@@ -101,11 +105,8 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
       board.followAgain();
       roll.followAgain();
     },
-    onMove: (clip, to) => {
-      state.edit('notes', () => {
-        clip.cell = to.cell;
-        clip.row = to.row;
-      });
+    onMove: (clips, shift) => {
+      state.edit('notes', (s) => { moveClips(s, clips.map((c) => c.id), shift); });
     },
     onCreate: (at) => void createChip(at),
     instrument: (guid) => byGuid.get(guid),
@@ -164,39 +165,106 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     rollScroller.focus({ preventScroll: true });
   }
 
-  function duplicateSelected(): void {
-    const clip = state.clip();
-    if (!clip) return;
-    const song = state.song;
-    let at = state.selection.cursor;
-    if (!at || song.clips.some((c) => c.cell === at!.cell && c.row === at!.row)) {
-      let cell = clip.cell + 1;
-      while (song.clips.some((c) => c.cell === cell && c.row === clip.row)) cell += 1;
-      at = { cell, row: clip.row };
-    }
-    let copy: Clip | null = null;
-    state.edit('notes', (s) => {
-      copy = duplicateClip(s, clip, at!);
-    });
-    state.selection.cursor = null;
-    state.selectClip(copy!.id);
+  // ------------------------------------------------------ chips as a block
+  // The board's selection is a set of chips (`selection.clips`); everything
+  // here acts on it as one -- one entry in the undo stack each -- and a paste
+  // or a duplicate finds free cells the way a single chip always has.
+
+  /** The chips selected on the board, in board order. */
+  const chosenChips = (): Clip[] => state.boardSelection();
+
+  /**
+   * What Ctrl+C lifted: copies, so later edits to the originals do not reach
+   * it, and the block's top-left, so a cut can be put back where it was.
+   * The board's own; the roll keeps one of points (`RollView.clipboard`).
+   */
+  let chipClipboard: { clips: Clip[]; anchor: { cell: number; row: number } } | null = null;
+
+  function copyChips(): void {
+    const chosen = chosenChips();
+    if (!chosen.length) return;
+    chipClipboard = { clips: structuredClone(chosen), anchor: clipsAnchor(chosen) };
+    setStatus(`copied ${chosen.length} instrument${chosen.length === 1 ? '' : 's'}`);
   }
 
-  function removeSelectedClip(): void {
-    const clip = state.clip();
-    if (!clip) return;
+  function removeChips(chosen: readonly Clip[]): void {
+    if (!chosen.length) return;
     state.edit('notes', (s) => {
-      removeClip(s, clip.id);
+      for (const c of chosen) removeClip(s, c.id);
     });
     state.selectClip(null);
+  }
+
+  function cutChips(): void {
+    const chosen = chosenChips();
+    if (!chosen.length) return;
+    copyChips();
+    removeChips(chosen);
+  }
+
+  function selectAllChips(): void {
+    state.selectClips(state.song.clips.map((c) => c.id));
+  }
+
+  /**
+   * Copies of a block on the board, shifted from where the block is, and
+   * selected in its place. The rows are clamped to what a board can hold and
+   * the board grows to hold them; then the block moves right until none of
+   * its chips lands on a taken cell.
+   */
+  function placeChips(clips: readonly Clip[], shift: ClipShift): void {
+    if (!clips.length) return;
+    const fit = clampClipShift(clips, shift, MAX_BOARD_ROWS);
+    const bottom = Math.max(...clips.map((c) => c.row)) + fit.rows + 1;
+    let copies: Clip[] = [];
+    let grew = false;
+    state.edit('notes', (s) => {
+      if (bottom > s.boardRows) {
+        s.boardRows = Math.min(MAX_BOARD_ROWS, bottom);
+        grew = true;
+      }
+      copies = duplicateClips(s, clips, freeClipShift(s, clips, fit));
+    });
+    // A taller board bands its rows into the channels differently: the mixer
+    // is told, as `addRow` tells it.
+    if (grew) state.touch('settings');
+    state.selection.cursor = null;
+    state.selectClips(copies.map((c) => c.id), copies[0]?.id);
+  }
+
+  /**
+   * A copy of the block: at the cursor when there is one, else right after
+   * the block, edge to edge, on its own rows.
+   */
+  function duplicateChips(chosen: readonly Clip[]): void {
+    if (!chosen.length) return;
+    const anchor = clipsAnchor(chosen);
+    const target = state.selection.cursor ?? { cell: clipsEndCell(chosen), row: anchor.row };
+    placeChips(chosen, { cells: target.cell - anchor.cell, rows: target.row - anchor.row });
+  }
+
+  /**
+   * Paste at the cursor when there is one, else right after the selected
+   * block -- and with nothing selected, back where the clipboard was lifted
+   * from, so a cut followed by a paste puts the chips back rather than
+   * dropping them at the start of the board.
+   */
+  function pasteChips(): void {
+    if (!chipClipboard) return;
+    const { clips, anchor } = chipClipboard;
+    const chosen = chosenChips();
+    const target = state.selection.cursor
+      ?? (chosen.length ? { cell: clipsEndCell(chosen), row: clipsAnchor(chosen).row } : anchor);
+    placeChips(clips, { cells: target.cell - anchor.cell, rows: target.row - anchor.row });
   }
 
   createApp({
     render: () => h(Inspector, {
       state,
       instruments: instruments.value,
-      onDuplicate: duplicateSelected,
-      onRemove: removeSelectedClip,
+      // The panel's buttons are for the chip it shows, whatever the board has selected.
+      onDuplicate: () => { const c = state.clip(); if (c) duplicateChips([c]); },
+      onRemove: () => { const c = state.clip(); if (c) removeChips([c]); },
       onStatus: (text: string) => setStatus(text, true),
     }),
   }).mount('#inspector');
@@ -257,7 +325,7 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     const under = chipUnder(step);
     if ((under?.id ?? null) !== followed) {
       followed = under?.id ?? null;
-      if (under && under.id !== state.selection.clipId) state.selectClip(under.id);
+      if (under) state.followClip(under.id);
     }
     const clip = state.clip();
     if (clip) {
@@ -376,25 +444,34 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
   // ------------------------------------------------------------- keyboard
 
   window.addEventListener('keydown', (event) => {
-    if (!opts.isActive()) return;
+    if (!opts.isActive() || focusOwnsKeys(event)) return;
     const target = event.target as HTMLElement | null;
-    if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
     const ctrl = event.ctrlKey || event.metaKey;
     const onBoard = target instanceof Node && boardScroller.contains(target);
+    // The board takes the editing keys when it has the focus, and when the
+    // note panel is closed there is no grid for them to reach but the board.
+    const toBoard = onBoard || panel.hidden;
     switch (event.code) {
-      case 'Escape':
-        // Once to drop the selection, again to close the panel.
-        if (state.selectedCount === 0 && state.selection.point === null && !panel.hidden) {
+      case 'Escape': {
+        // Once to drop the selection -- points, the cursor, a block of chips
+        // down to the one the roll shows -- again to close the panel.
+        const block = state.selection.clips.size > 1;
+        if (state.selectedCount === 0 && state.selection.point === null && !block && !panel.hidden) {
           closePanel();
           return;
         }
         state.selection.cursor = null;
+        if (block) {
+          const lead = state.clip();
+          state.selectClips(lead ? [lead.id] : []);
+        }
         state.selectNotes([]);
         return;
+      }
       case 'Delete':
       case 'Backspace':
         event.preventDefault();
-        if (onBoard) removeSelectedClip();
+        if (toBoard) removeChips(chosenChips());
         else roll.deleteSelection();
         return;
       case 'ArrowLeft':
@@ -461,20 +538,35 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
         event.preventDefault();
         state.redo();
         break;
+      // The clipboard keys go to the board when it has them (`toBoard`), and
+      // to the roll otherwise -- unless the roll has nothing for them: no
+      // points selected to copy, cut or duplicate, nothing lifted to paste.
       case 'KeyA':
         event.preventDefault();
-        roll.selectAll();
+        if (toBoard) selectAllChips();
+        else roll.selectAll();
         break;
+      // ⚠️ Text that somebody has highlighted outranks the chips: copy and cut
+      // go to the browser then, or selecting a name in a panel and pressing
+      // Ctrl+C puts a board full of instruments on the clipboard instead.
       case 'KeyC':
+        if (hasTextSelection()) return;
         event.preventDefault();
-        roll.copy();
+        if (toBoard || state.selectedCount === 0) copyChips();
+        else roll.copy();
         break;
       case 'KeyX':
+        if (hasTextSelection()) return;
         event.preventDefault();
-        roll.cut();
+        if (toBoard || state.selectedCount === 0) cutChips();
+        else roll.cut();
         break;
       case 'KeyV': {
         event.preventDefault();
+        if (toBoard || !roll.hasClipboard) {
+          pasteChips();
+          break;
+        }
         const clip = state.clip();
         let at: number | undefined;
         if (clip && player.hasPlan) {
@@ -486,10 +578,8 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
       }
       case 'KeyD':
         event.preventDefault();
-        // The board's key duplicates the chip; with points selected in the roll
-        // it duplicates those, the way Delete already tells the two apart.
-        if (!onBoard && state.selectedCount > 0) roll.duplicateSelection();
-        else duplicateSelected();
+        if (!toBoard && state.selectedCount > 0) roll.duplicateSelection();
+        else duplicateChips(chosenChips());
         break;
       default:
         break;

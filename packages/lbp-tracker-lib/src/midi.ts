@@ -31,6 +31,7 @@
  * wherever they fall.
  */
 
+import { factoryColour } from '@lbptracker/cwlib/chips.ts';
 import { encodeRecord, readNotes, NOTE_RECORD_SIZE, type NoteRecord } from '@lbptracker/cwlib/notes.ts';
 import {
   CHANNEL_COUNT,
@@ -1558,9 +1559,15 @@ export function sequencerToMidi(
           // import meets first, so a copy on each is bytes nobody reads.
           const fix = lane === 0 ? patch?.get(index) : undefined;
           const odd: Record<string, string> = {};
+          // The chip tints of a part's clips, where one disagrees with the
+          // part's own -- the same shape as `names`, and for the same reason:
+          // a part is a group of placements that share a mixer, and neither
+          // the tint nor the label is in that key.
+          const tints: Record<string, number> = {};
           for (const at2 of part.tracks) {
             const clip = sequencer.tracks[at2];
             if (clip.name !== t.name) odd[String(clip.gridX)] = clip.name;
+            if (clip.colour !== t.colour) tints[String(clip.gridX)] = clip.colour;
           }
           header.push(metaText(0, 0x01, TRK_TAG + JSON.stringify({
             // ⚠️ **No `name`.** It is the track name meta, and carrying a
@@ -1587,6 +1594,15 @@ export function sequencerToMidi(
             // ❗ And per clip where a part's clips disagree, which 7 parts of
             // 4,909 do. Without this their 84 clips came back unnamed.
             ...(Object.keys(odd).length > 0 ? { names: odd } : {}),
+            // ❗ **The chip's tint, which MIDI has no message for.** It is
+            // `PInstrument.Colour`, packed RGBA, and the game draws it; a
+            // controller would be seven bits of a colour and a synth would act
+            // on it. Written for every part, because the alternative -- writing
+            // it only where it differs from `factoryColour` -- makes the file
+            // depend on our own table to be read back, and 4,911 numbers are
+            // 0.3% of the corpus's export.
+            colour: t.colour,
+            ...(Object.keys(tints).length > 0 ? { colours: tints } : {}),
             level: t.level, pan: t.pan, echoSend: t.echoSend, reverbSend: t.reverbSend,
             key: t.key, scale: t.scale, clips: part.clips,
             // Written only when it is not the game's current default, which is
@@ -1760,10 +1776,21 @@ interface RawPart {
   reverbSend: number;
   key: number;
   scale: number;
+  /**
+   * The chip's tint, when the file says it.
+   *
+   * ⚠️ **Undefined is not a colour**: a file that is not ours carries no tint
+   * at all, and the chip then takes the instrument's own factory value --
+   * which needs the GUID, and the GUID is only known once the meta and the
+   * track name have both been read. So it is resolved where the clip is built.
+   */
+  colour?: number;
   /** Byte 3's inert bit 6 for this part's records; see `Part.rest`. */
   rest: number;
   /** Clips whose own `Track.name` differs from the part's, by `gridX`. */
   names: Map<number, string>;
+  /** Clips whose tint differs from the part's, by `gridX`. */
+  colours: Map<number, number>;
   /**
    * Clips whose records the file carries verbatim, by `gridX`.
    *
@@ -1786,9 +1813,14 @@ interface RawPart {
 /**
  * Neutral placement settings for a file that is not ours.
  *
- * ⚠️ These are choices, not measurements. The game's own defaults for a fresh
- * instrument have not been read out of it, and inventing numbers that look
- * measured is how a guess becomes a fact. Unity level, centred, no sends.
+ * ✔ **Measured, 2026-09-10**: every one of the game's 68 `instrument_*.plan`
+ * popit items places a `PInstrument` holding exactly these -- unity level,
+ * centred, no sends -- so they are what a chip the game has just made carries
+ * rather than a guess (`tools/InstrumentColours.java`). This used to say the
+ * opposite, and the numbers happened to be right.
+ *
+ * ⚠️ The tint is not here: it belongs to the instrument, not to the placement,
+ * and `factoryColour` is where an unstated one comes from.
  */
 const NEUTRAL = { level: 1, pan: 0.5, echoSend: 0, reverbSend: 0 };
 
@@ -2060,6 +2092,7 @@ function readPart(
     ...CHROMATIC_C,
     rest: 1,
     names: new Map(),
+    colours: new Map(),
     cells: [],
     fix: new Map(),
     notes: [],
@@ -2181,6 +2214,19 @@ function readPart(
         part.pan = dialled(inForce(10, tick), pick('pan', NEUTRAL.pan));
         part.reverbSend = dialled(inForce(91, tick), pick('reverbSend', NEUTRAL.reverbSend));
         part.echoSend = dialled(inForce(90, tick), pick('echoSend', NEUTRAL.echoSend));
+        // ❗ **The tint, read after the GUID has settled**, and read without
+        // `pick` on purpose: there is no number to fall back to here. A file
+        // that says nothing leaves it undefined and `cutIntoClips` asks
+        // `factoryColour` -- which needs the instrument, and the instrument is
+        // whatever the meta and the label have just agreed on.
+        if (typeof meta.colour === 'number') part.colour = meta.colour | 0;
+        if (meta.colours !== null && typeof meta.colours === 'object') {
+          for (const [cell, tint] of Object.entries(meta.colours as Record<string, unknown>)) {
+            if (Number.isInteger(Number(cell)) && typeof tint === 'number') {
+              part.colours.set(Number(cell), tint | 0);
+            }
+          }
+        }
         // The part's resting bit, and the game's current default without one.
         part.rest = pick('rest', 1) === 0 ? 0 : 1;
         if (meta.fix !== null && typeof meta.fix === 'object') {
@@ -2767,6 +2813,8 @@ function cutIntoClips(
     tracks.push({
       guid: part.guid,
       name: part.names.get(clipStart / STEPS_PER_CELL) ?? part.name,
+      colour: part.colours.get(clipStart / STEPS_PER_CELL)
+        ?? part.colour ?? factoryColour(part.guid),
       gridX: clipStart / STEPS_PER_CELL,
       gridY: part.gridY,
       stepOffset: clipStart,

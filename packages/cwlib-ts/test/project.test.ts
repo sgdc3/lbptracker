@@ -13,6 +13,7 @@ import {
   trackFrom,
   type LevelProject,
 } from '../src/project.ts';
+import { DEFAULT_CHIP_COLOUR } from '../src/chips.ts';
 import type { InstrumentPart, SequencerPart } from '../src/parts.ts';
 import type { Thing } from '../src/thing.ts';
 import { nodeInflate } from '../src/platform/node.ts';
@@ -32,6 +33,7 @@ function instrument(over: Partial<InstrumentPart> = {}): InstrumentPart {
   return {
     guid: 129085,
     name: '',
+    colour: DEFAULT_CHIP_COLOUR,
     loops: 1,
     key: 0,
     scale: 0,
@@ -40,6 +42,7 @@ function instrument(over: Partial<InstrumentPart> = {}): InstrumentPart {
     echoSend: 0,
     reverbSend: 0,
     notes: new Uint8Array(),
+    icon: 0,
     ...over,
   };
 }

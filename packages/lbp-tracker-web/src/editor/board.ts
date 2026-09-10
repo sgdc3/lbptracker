@@ -15,6 +15,18 @@
  * Chips may overlap in time (55 of 72,726 corpus neighbours do); a translucent
  * body keeps the one underneath visible, and the selected one is drawn last.
  *
+ * The pointer's vocabulary, the roll's wherever the two grids share a gesture:
+ *
+ * | on           | plain                                   | shift                                      | ctrl                   | right click |
+ * |--------------|-----------------------------------------|--------------------------------------------|------------------------|-------------|
+ * | empty        | the cursor; drag to draw a chip         | rectangle: the chips it touches (with ctrl: added to the block) | — | — |
+ * | a chip       | select it alone and open it; drag it -- and the block it is in -- to move | rectangle; a click: in or out of the block | in or out of the block | open it |
+ * | double-click | a four-bar chip where none is anchored  |                                            |                        |             |
+ *
+ * The block is `selection.clips` on the state. The page's keys act on it
+ * (`daw/arrange.ts`: Delete, Ctrl+C, X, V, D and A), and a drag of any chip in
+ * it moves the block as one, clamped to the board.
+ *
  * ❗ **The canvas is the size of its viewport, like the roll's**: `Ascetic` is
  * 15,000 pixels wide, and the bar numbers and row numbers have to stay put
  * while the board scrolls either way, so the canvas is `position: sticky` in
@@ -24,17 +36,24 @@
  */
 
 import { STEPS_PER_CELL } from '@lbptracker/cwlib/project.ts';
-import { DEFAULT_CLIP_STEPS, setSongEnd, snapClipSteps, songEndSteps, type Clip } from '@lbptracker/lib/song.ts';
+import {
+  DEFAULT_CLIP_STEPS, clampClipShift, clipsEndCell, setSongEnd, snapClipSteps, songEndSteps,
+  type Clip, type ClipShift,
+} from '@lbptracker/lib/song.ts';
 import {
   bandOf,
   boardCellAt,
+  boardChipRect,
   boardRect,
   boardSize,
   boardX,
   barOfCell,
+  rectsMeet,
   type BoardLayout,
+  type Rect,
 } from './geometry.ts';
-import { MISSING_INSTRUMENT, drawIcon, type InstrumentInfo } from './instruments.ts';
+import { drawnColour } from '@lbptracker/cwlib/chips.ts';
+import { MISSING_INSTRUMENT, chipColour, drawIcon, type InstrumentInfo } from './instruments.ts';
 import { capture, release } from './pointer.ts';
 import { Follow } from './follow.ts';
 import type { EditorState } from './state.ts';
@@ -42,8 +61,11 @@ import type { EditorState } from './state.ts';
 export interface BoardCallbacks {
   /** Board coordinates to seek to; the page turns steps into frames. */
   onSeek(step: number): void;
-  /** A chip was dropped on another cell; the page commits the move. */
-  onMove(clip: Clip, to: { cell: number; row: number }): void;
+  /**
+   * Chips were dropped elsewhere: the block as it was selected, and the shift
+   * it took, already clamped to the board. The page commits the move.
+   */
+  onMove(clips: readonly Clip[], shift: ClipShift): void;
   /**
    * A chip was drawn on empty cells -- a drag for its length, or a double-click
    * for the default -- and wants an instrument. The page asks.
@@ -99,14 +121,22 @@ export class BoardView {
   private readonly follow: Follow;
   private drag:
     | {
-        kind: 'move'; clip: Clip; startX: number; startY: number; at: { cell: number; row: number };
-        /** Cells between the chip's own cell and the one it was grabbed by. */
-        grab: number; moved: boolean;
+        /** The block being dragged, by one chip of it. */
+        kind: 'move'; clips: Clip[]; lead: Clip; startX: number; startY: number;
+        /** Cells between the lead chip's own cell and the one it was grabbed by. */
+        grab: number;
+        /** Where the block would land: one shift for every chip in it, clamped to the board. */
+        shift: ClipShift; moved: boolean;
       }
     /** Drawing a new chip: from the cell pressed to the cell under the pointer. */
     | { kind: 'create'; row: number; startCell: number; endCell: number; startX: number; moved: boolean }
     /** Dragging the song's end: the step it is at now. */
     | { kind: 'end'; step: number; moved: boolean }
+    /**
+     * A rectangle over the board: the chips it touches become the selection
+     * when it is let go -- added to `base`, the selection before, with Ctrl.
+     */
+    | { kind: 'marquee'; x0: number; y0: number; x1: number; y1: number; base: Set<number> | null; moved: boolean }
     | null = null;
   private hover: { cell: number; row: number } | null = null;
   /** The pointer over the gutter: a row's number, or the "+" strip under the last row. */
@@ -125,6 +155,8 @@ export class BoardView {
   private overEnd = false;
   private frame = 0;
   private bottomInset = 0;
+  /** The accent colour as the stylesheet has it, read once per frame for the chips. */
+  private accent = '#6fd3a0';
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -259,6 +291,9 @@ export class BoardView {
     }
     if (this.state.selection.cursor) lastCell = Math.max(lastCell, this.state.selection.cursor.cell + 1);
     if (this.drag?.kind === 'create') lastCell = Math.max(lastCell, this.drag.endCell + 2);
+    if (this.drag?.kind === 'move' && this.drag.moved) {
+      lastCell = Math.max(lastCell, clipsEndCell(this.drag.clips) + this.drag.shift.cells);
+    }
     lastCell = Math.max(lastCell, Math.ceil((this.drag?.kind === 'end' ? this.drag.step : songEndSteps(song)) / STEPS_PER_CELL));
     this.layout = {
       cellW: Math.round(CELL_W * ZOOM_LEVELS[this.zoomIndex]), cellH: CELL_H, gutter: GUTTER, ruler: RULER,
@@ -296,6 +331,7 @@ export class BoardView {
     const ink = styles.getPropertyValue('--ink').trim() || '#e8eaee';
     const dim = styles.getPropertyValue('--dimmer').trim() || '#6e7684';
     const accent = styles.getPropertyValue('--accent').trim() || '#6fd3a0';
+    this.accent = accent;
 
     ctx.clearRect(0, 0, viewW, viewH);
 
@@ -364,21 +400,41 @@ export class BoardView {
       }
     }
 
-    // The chips: each a rectangle as long as its grid. The selected one is
-    // drawn last so it sits on top of whatever it overlaps.
-    const selectedClip = state.clip();
+    // The chips: each a rectangle as long as its grid. The selected ones are
+    // drawn last so they sit on top of whatever they overlap, the roll's chip
+    // just under them when it is not one of them.
+    const lead = state.clip();
     const moving = this.drag?.kind === 'move' && this.drag.moved ? this.drag : null;
+    const lifted = new Set(moving?.clips ?? []);
+    const caught = this.drag?.kind === 'marquee' && this.drag.moved ? this.marqueeHits(this.drag) : null;
+    const chosen = (clip: Clip) => state.selection.clips.has(clip.id) || (caught?.has(clip.id) ?? false);
     const heard = (clip: Clip) => (state.rowAudible(clip.row) ? 1 : 0.35);
     for (const clip of song.clips) {
-      if (moving?.clip === clip) continue;
-      if (clip === selectedClip) continue;
-      this.drawChip(clip, clip.cell, clip.row, false, heard(clip));
+      if (lifted.has(clip) || chosen(clip) || clip === lead) continue;
+      this.drawChip(clip, clip.cell, clip.row, 'plain', heard(clip));
     }
-    if (selectedClip && moving?.clip !== selectedClip) {
-      this.drawChip(selectedClip, selectedClip.cell, selectedClip.row, true, heard(selectedClip));
+    if (lead && !lifted.has(lead) && !chosen(lead)) this.drawChip(lead, lead.cell, lead.row, 'lead', heard(lead));
+    for (const clip of song.clips) {
+      if (lifted.has(clip) || !chosen(clip)) continue;
+      this.drawChip(clip, clip.cell, clip.row, 'selected', heard(clip));
     }
-    // The one being dragged, where it would land.
-    if (moving) this.drawChip(moving.clip, moving.at.cell, moving.at.row, true, 0.85);
+    // The block being dragged, where it would land.
+    if (moving) {
+      for (const clip of moving.clips) {
+        this.drawChip(clip, clip.cell + moving.shift.cells, clip.row + moving.shift.rows, 'selected', 0.85);
+      }
+    }
+    // The rectangle being drawn, over the chips it is catching.
+    if (this.drag?.kind === 'marquee' && this.drag.moved) {
+      const r = this.marqueeRect(this.drag);
+      ctx.fillStyle = 'rgba(111,211,160,0.1)';
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(Math.round(r.x) + 0.5, Math.round(r.y) + 0.5, Math.round(r.w), Math.round(r.h));
+      ctx.setLineDash([]);
+    }
     // The one being drawn: its outline, as long as the drag so far.
     if (this.drag?.kind === 'create' && this.drag.moved) {
       const { cell, cells } = this.creating(this.drag);
@@ -619,24 +675,33 @@ export class BoardView {
   }
 
   /**
-   * One chip: a rectangle from its cell to the end of its grid, the family's
-   * colour as a translucent body so that chips overlapping in time -- which
-   * the game allows and `Ascetic` does every two cells -- read as stacked
-   * rather than hidden, with the glyph and the name at the cell it sits in.
+   * One chip: a rectangle from its cell to the end of its grid, **the chip's
+   * own tint** as a translucent body so that chips overlapping in time --
+   * which the game allows and `Ascetic` does every two cells -- read as
+   * stacked rather than hidden, with the glyph and the name at the cell it
+   * sits in.
+   *
+   * ❗ The colour is the placement's `PInstrument.Colour`, which the game draws
+   * and a composer sets. A chip nobody has tinted shows its instrument's own
+   * colour -- either because it carries it, as every file below revision
+   * `0x3ec` does, or through `drawnColour`, which is what white means -- so the
+   * board reads by instrument family without being told to.
    */
-  private drawChip(clip: Clip, cell: number, row: number, selected: boolean, alpha: number): void {
+  private drawChip(clip: Clip, cell: number, row: number, look: 'plain' | 'lead' | 'selected', alpha: number): void {
     const { ctx, layout } = this;
+    const selected = look === 'selected';
     const r = boardRect(layout, cell, row);
     const cells = Math.max(1, clip.steps / STEPS_PER_CELL);
     const w = cells * layout.cellW;
     const info = this.cb.instrument(clip.guid) ?? MISSING_INSTRUMENT;
+    const tint = chipColour(drawnColour(clip.guid, clip.colour));
     const pad = 2;
     ctx.globalAlpha = alpha;
-    // Body: the family's colour, translucent, over a dark base.
+    // Body: the chip's own tint, translucent, over a dark base.
     roundRect(ctx, r.x + pad, r.y + pad, w - pad * 2, r.h - pad * 2, 5);
     ctx.fillStyle = 'rgba(27,32,39,0.85)';
     ctx.fill();
-    ctx.fillStyle = info.colour;
+    ctx.fillStyle = tint;
     ctx.globalAlpha = alpha * (selected ? 0.34 : 0.2);
     ctx.fill();
     const lit = this.flashOf(this.chipFlash, clip.id, performance.now());
@@ -646,12 +711,13 @@ export class BoardView {
       ctx.fill();
     }
     ctx.globalAlpha = alpha;
-    ctx.strokeStyle = selected ? '#ffffff' : info.colour;
-    ctx.lineWidth = selected ? 2 : 1.2;
+    // White for the block; the accent for the roll's chip when it is outside the block.
+    ctx.strokeStyle = selected ? '#ffffff' : look === 'lead' ? this.accent : tint;
+    ctx.lineWidth = selected ? 2 : look === 'lead' ? 1.6 : 1.2;
     ctx.stroke();
     // The glyph, in the first cell.
-    ctx.fillStyle = info.colour;
-    ctx.strokeStyle = info.colour;
+    ctx.fillStyle = tint;
+    ctx.strokeStyle = tint;
     const size = r.h * 0.6;
     drawIcon(ctx, info, r.x + pad + 5, r.y + (r.h - size) / 2, size);
     // The name after it, clipped to the chip.
@@ -694,16 +760,18 @@ export class BoardView {
   }
 
   /**
-   * The chip under a cell: the one anchored there first, then the selected
-   * one if it covers the cell (it is drawn on top), then the topmost cover.
+   * The chip under a cell: the one anchored there first, then a selected one
+   * covering it (the block is drawn on top), then the roll's chip, then the
+   * topmost cover.
    */
   private clipAt(cell: number, row: number): Clip | undefined {
     const anchored = this.anchoredAt(cell, row);
     if (anchored) return anchored;
     const covers = (clip: Clip) =>
       clip.row === row && cell >= clip.cell && cell < clip.cell + clip.steps / STEPS_PER_CELL;
-    const selected = this.state.clip();
-    if (selected && covers(selected)) return selected;
+    for (const clip of this.state.boardSelection()) if (covers(clip)) return clip;
+    const lead = this.state.clip();
+    if (lead && covers(lead)) return lead;
     let found: Clip | undefined;
     for (const clip of this.state.song.clips) if (covers(clip)) found = clip;
     return found;
@@ -714,6 +782,31 @@ export class BoardView {
     const cell = Math.min(drag.startCell, drag.endCell);
     const span = Math.abs(drag.endCell - drag.startCell) + 1;
     return { cell, cells: snapClipSteps(span * STEPS_PER_CELL) / STEPS_PER_CELL };
+  }
+
+  /** The rectangle a marquee drag has drawn so far, in content pixels. */
+  private marqueeRect(drag: { x0: number; y0: number; x1: number; y1: number }): Rect {
+    return {
+      x: Math.min(drag.x0, drag.x1), y: Math.min(drag.y0, drag.y1),
+      w: Math.abs(drag.x1 - drag.x0), h: Math.abs(drag.y1 - drag.y0),
+    };
+  }
+
+  /** The chips a marquee touches, on top of the selection it adds to. */
+  private marqueeHits(drag: { x0: number; y0: number; x1: number; y1: number; base: Set<number> | null }): Set<number> {
+    const rect = this.marqueeRect(drag);
+    const hits = new Set(drag.base ?? []);
+    for (const clip of this.state.song.clips) {
+      if (rectsMeet(rect, boardChipRect(this.layout, clip))) hits.add(clip.id);
+    }
+    return hits;
+  }
+
+  /** A chip clicked: alone, unless it is in the block, which then stays and is led by it. */
+  private pickChip(clip: Clip): void {
+    const { clips } = this.state.selection;
+    if (clips.has(clip.id)) this.state.selectClips(clips, clip.id);
+    else this.state.selectClip(clip.id);
   }
 
   private onDown = (event: PointerEvent): void => {
@@ -749,20 +842,41 @@ export class BoardView {
     }
     const at = boardCellAt(this.layout, x, y);
     if (!at) return;
+    if (event.button === 0 && event.shiftKey) {
+      // A rectangle, wherever it starts: the chips it touches are the
+      // selection when it is let go, added to the one there is with Ctrl.
+      const add = event.ctrlKey || event.metaKey;
+      this.drag = {
+        kind: 'marquee', x0: x, y0: y, x1: x, y1: y,
+        base: add ? new Set(this.state.selection.clips) : null, moved: false,
+      };
+      capture(this.canvas, event);
+      this.schedule();
+      return;
+    }
     const clip = this.clipAt(at.cell, at.row);
+    if (event.ctrlKey || event.metaKey) {
+      // Ctrl on a chip puts it in the block or takes it out; nothing is dragged.
+      if (clip && event.button === 0) this.state.toggleClip(clip.id);
+      return;
+    }
     if (event.button === 2) {
       if (clip) {
-        this.state.selectClip(clip.id);
+        this.pickChip(clip);
         this.cb.onPick?.(clip);
       }
       return;
     }
     if (clip) {
       this.state.selection.cursor = null;
-      this.state.selectClip(clip.id);
+      this.pickChip(clip);
       this.cb.onPick?.(clip);
-      // Grabbed some cells into the chip: keep that offset while it is dragged.
-      this.drag = { kind: 'move', clip, startX: x, startY: y, at: { cell: clip.cell, row: clip.row }, grab: at.cell - clip.cell, moved: false };
+      // Grabbed some cells into the chip: keep that offset while it is dragged,
+      // and the rest of the block keeps its place around it.
+      this.drag = {
+        kind: 'move', clips: this.state.boardSelection(), lead: clip, startX: x, startY: y,
+        grab: at.cell - clip.cell, shift: { cells: 0, rows: 0 }, moved: false,
+      };
       capture(this.canvas, event);
     } else {
       this.state.selection.cursor = at;
@@ -779,7 +893,20 @@ export class BoardView {
     const at = cx < this.layout.gutter || cy < this.layout.ruler ? null : boardCellAt(this.layout, x, y);
     if (this.drag?.kind === 'move') {
       if (!this.drag.moved && Math.hypot(x - this.drag.startX, y - this.drag.startY) > 4) this.drag.moved = true;
-      if (at) this.drag.at = { cell: Math.max(0, at.cell - this.drag.grab), row: at.row };
+      if (at) {
+        const { lead, grab, clips } = this.drag;
+        this.drag.shift = clampClipShift(
+          clips, { cells: at.cell - grab - lead.cell, rows: at.row - lead.row }, this.layout.rows,
+        );
+      }
+      this.schedule();
+      return;
+    }
+    if (this.drag?.kind === 'marquee') {
+      if (!this.drag.moved && Math.hypot(x - this.drag.x0, y - this.drag.y0) > 4) this.drag.moved = true;
+      this.drag.x1 = x;
+      this.drag.y1 = y;
+      this.canvas.style.cursor = 'crosshair';
       this.schedule();
       return;
     }
@@ -821,7 +948,9 @@ export class BoardView {
     this.gutterHover = gutterHover;
     this.cornerHover = corner;
     const removable = gutterHover !== null && gutterHover === this.state.selection.row && this.layout.rows > 1;
-    this.canvas.style.cursor = overEnd ? 'ew-resize' : (corner !== null || (gutterHover !== null && (removable || gutterHover === this.layout.rows))) ? 'pointer' : '';
+    this.canvas.style.cursor = overEnd ? 'ew-resize'
+      : (corner !== null || (gutterHover !== null && (removable || gutterHover === this.layout.rows))) ? 'pointer'
+      : at && event.shiftKey ? 'crosshair' : '';
     if (changed) this.schedule();
   };
 
@@ -847,8 +976,16 @@ export class BoardView {
     if (drag.kind === 'end') {
       if (drag.moved) this.cb.onEnd(drag.step);
     } else if (drag.kind === 'move') {
-      if (drag.moved && (drag.at.cell !== drag.clip.cell || drag.at.row !== drag.clip.row)) {
-        this.cb.onMove(drag.clip, drag.at);
+      if (drag.moved && (drag.shift.cells !== 0 || drag.shift.rows !== 0)) this.cb.onMove(drag.clips, drag.shift);
+    } else if (drag.kind === 'marquee') {
+      this.canvas.style.cursor = '';
+      if (drag.moved) {
+        this.state.selectClips(this.marqueeHits(drag));
+      } else {
+        // A Shift+click that never moved: the chip under it into the block, or out.
+        const at = boardCellAt(this.layout, drag.x0, drag.y0);
+        const clip = at && this.clipAt(at.cell, at.row);
+        if (clip) this.state.toggleClip(clip.id);
       }
     } else if (drag.moved) {
       const { cell, cells } = this.creating(drag);
