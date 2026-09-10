@@ -107,6 +107,17 @@ export interface RollLayout {
   readonly rowH: number;
   /** The clip's grid length. */
   readonly steps: number;
+  /**
+   * Steps drawn past that grid: the bar after the clip, where what the row's
+   * other chips hold there is shown through and cannot be touched. 0 when
+   * there is nothing to show.
+   *
+   * ❗ **Kept apart from `steps` on purpose.** Everything that asks "how long
+   * is this clip" -- where a click may land, what `find the notes` may scroll
+   * to -- reads `steps`, and reads it unchanged; only the drawn width knows
+   * about the tail.
+   */
+  readonly tail: number;
   /** Whether the grid's cells are thirds of a step rather than steps. */
   readonly triplets: boolean;
 }
@@ -131,9 +142,53 @@ export const gridUnit = (triplets: boolean): number => (triplets ? TRIPLET_THIRD
 
 export function rollSize(layout: RollLayout): { width: number; height: number } {
   return {
-    width: layout.keys + layout.steps * layout.stepW,
+    width: layout.keys + (layout.steps + layout.tail) * layout.stepW,
     height: layout.ruler + PITCHES * layout.rowH,
   };
+}
+
+/** One bar of it: the game's bar is 8 steps, and a chip's grid is four of them. */
+export const TAIL_STEPS = STEPS_PER_BAR;
+
+/**
+ * What the row's other chips hold in the bar after this clip.
+ *
+ * ❗ **A chip's clip is not the whole of its row's music.** Chips of one row
+ * overlap heavily -- a cell is 16 steps and a clip may hold 128, and `Ascetic`
+ * places one every two cells -- so the notes that sound right after the one
+ * being edited belong to chips this grid does not show, and the join between
+ * them was invisible. This is the rule for what to draw through in that bar:
+ * a note of another chip on the row whose own span reaches into the window.
+ *
+ * The shift is what to add to each of that note's positions to bring it onto
+ * this clip's grid: chips sit on 16-step cells, so it is always whole steps,
+ * and it is negative for a chip anchored earlier that is still sounding.
+ *
+ * Generic over the note so this stays pure geometry: it needs a position and
+ * nothing else about a note.
+ */
+export function ghostNotes<N extends { points: readonly { thirds: number }[] }>(
+  clip: { cell: number; steps: number },
+  others: readonly { cell: number; notes: readonly N[] }[],
+  tailSteps: number = TAIL_STEPS,
+): { note: N; shift: number }[] {
+  const from = clip.steps * 3;
+  const to = (clip.steps + tailSteps) * 3;
+  const out: { note: N; shift: number }[] = [];
+  for (const other of others) {
+    const shift = (other.cell - clip.cell) * STEPS_PER_CELL * 3;
+    for (const note of other.notes) {
+      if (note.points.length === 0) continue;
+      let first = Infinity;
+      let last = -Infinity;
+      for (const p of note.points) {
+        if (p.thirds < first) first = p.thirds;
+        if (p.thirds > last) last = p.thirds;
+      }
+      if (last + shift >= from && first + shift < to) out.push({ note, shift });
+    }
+  }
+  return out;
 }
 
 /**

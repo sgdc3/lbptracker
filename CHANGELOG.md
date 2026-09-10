@@ -4,6 +4,18 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.26 (2026-09-10)
+
+- The note grid now shows one bar past the end of the instrument you are editing, and what the
+  other instruments on that row play there. It is drawn faded, and you cannot touch it: it is
+  there so you can see how what you are writing joins what comes next. Instruments on a row
+  overlap in this game, so the notes that follow yours are usually inside another chip and there
+  was no way to see them while you worked.
+- The extra bar appears only when something is in it, and clicking in it does nothing. Clicking in
+  the empty space to the right of a short grid used to drop a note at the end of the grid instead,
+  which was never what anyone meant.
+- "Find the notes" still looks only at the instrument you are editing, never at the faded bar.
+
 ## 0.2.25 (2026-09-10)
 
 - The note grid stays where you put it. While the song plays, the grid follows the playhead into

@@ -19,15 +19,51 @@ import {
   rollY,
   segmentDistance,
   bestNoteWindow,
+  ghostNotes,
+  rollSize,
   snapThirds,
   timbreColour,
+  TAIL_STEPS,
   type BoardLayout,
   type RollLayout,
 } from '../src/editor/geometry.ts';
 
 const board: BoardLayout = { cellW: 40, cellH: 30, gutter: 24, ruler: 18, cols: 10, rows: 4 };
-const roll: RollLayout = { keys: 50, ruler: 20, stepW: 24, rowH: 12, steps: 32, triplets: false };
+const roll: RollLayout = { keys: 50, ruler: 20, stepW: 24, rowH: 12, steps: 32, tail: 0, triplets: false };
 const tripletRoll: RollLayout = { ...roll, triplets: true };
+
+test('the roll draws a tail only for what the row holds in it, and shifts it into place', () => {
+  // A cell is 16 steps -- 48 thirds -- and this clip is 32 steps long, so its
+  // own grid ends at third 96 and the bar after it runs to third 120.
+  const clip = { cell: 4, steps: 32 };
+  const note = (from: number, to = from) => ({ points: [{ thirds: from }, { thirds: to }] });
+  const others = [
+    // Anchored two cells later: its third 0 lands on this grid's third 96, so
+    // its opening bar is exactly the tail.
+    // ⚠️ 72 thirds is 24 steps in, three bars past this clip's end: a chip's
+    // own notes reach far further than the bar being shown, and only the ones
+    // inside the window belong in it.
+    { cell: 6, notes: [note(0), note(12), note(72)] },
+    // Anchored before this one and still sounding: a long note of its own that
+    // reaches into the window, and one that stops before it.
+    { cell: 2, notes: [note(0, 200), note(0, 60)] },
+    // Far enough on that nothing of it is in the bar.
+    { cell: 10, notes: [note(0)] },
+  ];
+  const ghosts = ghostNotes(clip, others);
+  assert.deepEqual(
+    ghosts.map((g) => [g.note.points[0].thirds, g.shift]),
+    [[0, 96], [12, 96], [0, -96]],
+    'the note at 72 of the next chip is past the bar, and the far chip has nothing in it',
+  );
+  // The shift is what puts a ghost on this grid: the next chip's third 0 is
+  // this grid's 96, which is where this clip's own notes stop.
+  assert.equal(ghosts[0].note.points[0].thirds + ghosts[0].shift, clip.steps * 3);
+  // ⚠️ And the tail is drawn width, never grid length: `steps` stays the
+  // clip's own, which is what a click and `find the notes` are held to.
+  assert.equal(rollSize({ ...roll, tail: TAIL_STEPS }).width, roll.keys + (32 + 8) * roll.stepW);
+  assert.equal(rollSize(roll).width, roll.keys + 32 * roll.stepW, 'no tail, no extra width');
+});
 
 test('board: a cell and its rectangle agree, and the gutter is not a cell', () => {
   const r = boardRect(board, 2, 1);

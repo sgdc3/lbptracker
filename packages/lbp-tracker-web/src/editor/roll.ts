@@ -54,7 +54,9 @@ import {
 import {
   PITCHES,
   STEPS_PER_BAR,
+  TAIL_STEPS,
   TRIPLET_THIRDS,
+  ghostNotes,
   gridUnit,
   isBlackKey,
   noteName,
@@ -89,6 +91,16 @@ export interface RollCallbacks {
   onHover(text: string): void;
 }
 
+/**
+ * How far through the ghosts of the next chips are drawn.
+ *
+ * ⚠️ Measured on the canvas rather than guessed at: at 0.45 the bluest pixel
+ * of a ghost came back (54,116,210) against the note blue's (66,140,255) --
+ * an 18% difference, which reads as "a note" rather than "not yours". This is
+ * the value where the two cannot be confused.
+ */
+const GHOST_ALPHA = 0.28;
+
 const KEYS = 56;
 const RULER = 20;
 const STEP_W = 22;
@@ -109,7 +121,9 @@ export class RollView {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly state: EditorState;
   private readonly cb: RollCallbacks;
-  private layout: RollLayout = { keys: KEYS, ruler: RULER, stepW: STEP_W, rowH: ROW_H, steps: 32, triplets: false };
+  private layout: RollLayout = { keys: KEYS, ruler: RULER, stepW: STEP_W, rowH: ROW_H, steps: 32, tail: 0, triplets: false };
+  /** What the row's other chips hold in the bar after this clip; see `ghostNotes`. */
+  private ghosts: { note: SongNote; shift: number }[] = [];
   private playStep: number | null = null;
   /** Following the playhead, unless the person scrolled away from it. */
   private readonly follow: Follow;
@@ -259,7 +273,19 @@ export class RollView {
 
   private measure(): void {
     const clip = this.state.clip();
-    this.layout = { ...this.layout, steps: clip?.steps ?? 32, triplets: this.state.triplets };
+    // ❗ **The tail exists only when there is something in it.** An empty bar
+    // of grid nobody can write in is scroll for nothing, and the common case
+    // -- a row whose chips do not reach past this one -- keeps the roll it
+    // always had.
+    this.ghosts = clip
+      ? ghostNotes(clip, this.state.song.clips.filter((c) => c.row === clip.row && c.id !== clip.id))
+      : [];
+    this.layout = {
+      ...this.layout,
+      steps: clip?.steps ?? 32,
+      tail: this.ghosts.length > 0 ? TAIL_STEPS : 0,
+      triplets: this.state.triplets,
+    };
     const full = rollSize(this.layout);
     const viewW = this.scroller.clientWidth;
     const viewH = this.scroller.clientHeight;
@@ -273,6 +299,62 @@ export class RollView {
       this.canvas.style.height = `${viewH}px`;
     }
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  /**
+   * One chain's segments, as ribbons rather than strokes.
+   *
+   * The half-width at each end is that point's volume (`pointLineHalf`) and
+   * the colour at each end that point's timbre, so a segment swells and
+   * shifts hue exactly as the engine's gliding volume and modulation do
+   * between the two -- the engine ramps the modulation as it ramps the volume
+   * (steering/synth-engine.md, the slide rates at `+0x2c`).
+   *
+   * ❗ `px` is passed in rather than taken from the layout: the ghosts of the
+   * next chips are the same picture shifted along, and drawing them any other
+   * way would be a second copy of this.
+   */
+  private drawChain(
+    pts: readonly SongPoint[],
+    alpha: number,
+    weight: number,
+    px: (thirds: number) => number,
+    py: (pitch: number) => number,
+  ): void {
+    const { ctx, layout } = this;
+    for (let i = 0; i < pts.length - 1; i += 1) {
+      const a = pts[i];
+      const b = pts[i + 1];
+      const ax = px(a.thirds);
+      const ay = py(a.pitch);
+      const bx = px(b.thirds);
+      const by = py(b.pitch);
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len = Math.hypot(dx, dy);
+      if (len === 0) continue;
+      // The normal, to offset each end by its own half-width.
+      const nx = (-dy / len) * weight;
+      const ny = (dx / len) * weight;
+      const ha = pointLineHalf(a.volume, layout.rowH);
+      const hb = pointLineHalf(b.volume, layout.rowH);
+      if (a.timbre === b.timbre) {
+        ctx.fillStyle = timbreColour(a.timbre, alpha);
+      } else {
+        // Only the 3.9% of notes that automate the timbre pay for a gradient.
+        const grad = ctx.createLinearGradient(ax, ay, bx, by);
+        grad.addColorStop(0, timbreColour(a.timbre, alpha));
+        grad.addColorStop(1, timbreColour(b.timbre, alpha));
+        ctx.fillStyle = grad;
+      }
+      ctx.beginPath();
+      ctx.moveTo(ax + nx * ha, ay + ny * ha);
+      ctx.lineTo(bx + nx * hb, by + ny * hb);
+      ctx.lineTo(bx - nx * hb, by - ny * hb);
+      ctx.lineTo(ax - nx * ha, ay - ny * ha);
+      ctx.closePath();
+      ctx.fill();
+    }
   }
 
   private draw(): void {
@@ -302,7 +384,7 @@ export class RollView {
     const rowTop = Math.max(0, Math.floor((sy) / layout.rowH));
     const rowBottom = Math.min(PITCHES - 1, Math.ceil((sy + viewH) / layout.rowH));
     const stepLeft = Math.max(0, Math.floor((sx) / layout.stepW));
-    const stepRight = Math.min(layout.steps, Math.ceil((sx + viewW) / layout.stepW));
+    const stepRight = Math.min(layout.steps + layout.tail, Math.ceil((sx + viewW) / layout.stepW));
 
     // Row shading: black-key rows darker, as the game's grid does.
     for (let row = rowTop; row <= rowBottom; row += 1) {
@@ -342,7 +424,8 @@ export class RollView {
         }
       }
     }
-    // Past the clip's end there is nothing to place a note on.
+    // Past the clip's end there is nothing to place a note on, and the dark
+    // over it is what says so -- the ghosts below are drawn on top of it.
     const endX = rollStepX(layout, layout.steps) - sx;
     if (endX < viewW) {
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
@@ -379,41 +462,7 @@ export class RollView {
        * engine ramps the modulation as it ramps the volume
        * (steering/synth-engine.md, the slide rates at `+0x2c`).
        */
-      const weight = on ? 1.35 : 1;
-      const alpha = (on ? 1 : 0.8) * fade;
-      for (let i = 0; i < pts.length - 1; i += 1) {
-        const a = pts[i];
-        const b = pts[i + 1];
-        const ax = px(a.thirds);
-        const ay = py(a.pitch);
-        const bx = px(b.thirds);
-        const by = py(b.pitch);
-        const dx = bx - ax;
-        const dy = by - ay;
-        const len = Math.hypot(dx, dy);
-        if (len === 0) continue;
-        // The normal, to offset each end by its own half-width.
-        const nx = (-dy / len) * weight;
-        const ny = (dx / len) * weight;
-        const ha = pointLineHalf(a.volume, layout.rowH);
-        const hb = pointLineHalf(b.volume, layout.rowH);
-        if (a.timbre === b.timbre) {
-          ctx.fillStyle = timbreColour(a.timbre, alpha);
-        } else {
-          // Only the 3.9% of notes that automate the timbre pay for a gradient.
-          const grad = ctx.createLinearGradient(ax, ay, bx, by);
-          grad.addColorStop(0, timbreColour(a.timbre, alpha));
-          grad.addColorStop(1, timbreColour(b.timbre, alpha));
-          ctx.fillStyle = grad;
-        }
-        ctx.beginPath();
-        ctx.moveTo(ax + nx * ha, ay + ny * ha);
-        ctx.lineTo(bx + nx * hb, by + ny * hb);
-        ctx.lineTo(bx - nx * hb, by - ny * hb);
-        ctx.lineTo(ax - nx * ha, ay - ny * ha);
-        ctx.closePath();
-        ctx.fill();
-      }
+      this.drawChain(pts, (on ? 1 : 0.8) * fade, on ? 1.35 : 1, px, py);
       // ⚠️ Nothing past the last point. The gate closes a step after it, but
       // the game draws no tail: a note's end IS its last point, and a note of
       // one record is one point. A faint tail drawn here read as a second
@@ -447,6 +496,31 @@ export class RollView {
         }
       });
     }
+    // ❗ **The bar after the clip: what the row's other chips hold there.**
+    // Drawn through, over the dark that says the region is not writable, and
+    // clipped to it so nothing of theirs lands on this clip's own grid. They
+    // are not in `clip.notes`, so nothing here can select or move them --
+    // which is the whole point: the join between one chip and the next was
+    // invisible while it is the thing an author is listening for.
+    if (this.ghosts.length > 0) {
+      ctx.save();
+      const from = Math.max(layout.keys, endX);
+      ctx.beginPath();
+      ctx.rect(from, layout.ruler, Math.max(0, viewW - from), viewH - layout.ruler);
+      ctx.clip();
+      for (const { note, shift } of this.ghosts) {
+        const gx = (t: number) => rollX(layout, t + shift) - sx;
+        this.drawChain(note.points, GHOST_ALPHA, 1, gx, py);
+        for (const p of note.points) {
+          ctx.fillStyle = timbreColour(p.timbre, GHOST_ALPHA);
+          ctx.beginPath();
+          ctx.arc(gx(p.thirds), py(p.pitch), pointRadius(p.volume, layout.rowH), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
     // The marquee.
     if (this.drag?.mode === 'marquee') {
       const d = this.drag;
@@ -459,7 +533,7 @@ export class RollView {
       ctx.strokeRect(x0 + 0.5, y0 + 0.5, Math.abs(d.x1 - d.x0), Math.abs(d.y1 - d.y0));
     }
     // The playhead.
-    if (this.playStep !== null && this.playStep >= 0 && this.playStep <= layout.steps) {
+    if (this.playStep !== null && this.playStep >= 0 && this.playStep <= layout.steps + layout.tail) {
       const x = rollStepX(layout, this.playStep) - sx;
       ctx.strokeStyle = ink;
       ctx.lineWidth = 2;
@@ -683,6 +757,11 @@ export class RollView {
       this.schedule();
       return;
     }
+    // ❗ **Nothing past the clip's own grid.** `snapped` clamps to the last
+    // step, so a click in the tail -- or in the empty canvas right of a short
+    // grid, which was already possible -- used to draw a note at the end of
+    // the clip, several bars from where the pointer was.
+    if (rollThirdsAt(this.layout, x) >= clip.steps * 3) return;
     // Empty: a new note, one point, at the snapped position.
     const thirds = this.snapped(x, clip.steps);
     const pitch = rollPitchAt(this.layout, y);

@@ -206,6 +206,23 @@ The editor draws both, as faithfully as the data allows and no further:
   (the slide rates at `+0x2c` in [synth-engine.md](synth-engine.md)), so the ribbon's thickness and
   hue at any x are the volume and modulation that will sound there. A segment whose ends share a
   timbre — 96.1% of notes automate nothing — skips the gradient and fills flat.
+- **The bar after the clip is drawn, through and untouchable** (`ghostNotes` in `geometry.ts`,
+  held by `test/editor-geometry.test.ts`). A chip's grid is not the whole of its row's music:
+  chips of one row overlap heavily — a cell is 16 steps and a clip may hold 128, and `Ascetic`
+  places one every two cells — so what sounds immediately after the clip being edited belongs to
+  chips this grid does not show, and the join between them was invisible. The roll therefore draws
+  one extra bar (`TAIL_STEPS`) holding every note of the row's other chips that reaches into it,
+  shifted onto this grid, at `GHOST_ALPHA`. ⚠️ **Measured rather than eyeballed**: at 0.45 a
+  ghost's bluest pixel came back (54,116,210) against a real note's (66,140,255), which reads as a
+  note; 0.28 gives (42,91,166), which reads as not yours.
+  - ❗ **`RollLayout.tail` is drawn width and never grid length.** Everything that asks how long
+    the clip is — where a click may land, what `find the notes` may scroll to (`stepCount`) —
+    reads `steps`, unchanged. The ghosts are not in `clip.notes`, so no selection, drag or key can
+    reach them; and the tail is only there when something is in it, so a row whose chips do not
+    reach past this one keeps the roll it always had.
+  - ⚠️ A click past the clip's end now does nothing. `snapped` clamps to the last step, so it used
+    to draw a note at the end of the clip several bars from the pointer — already possible in the
+    empty canvas right of a short grid, and the tail would have made it easy.
 - **The selection is a set of POINTS, not of notes** (`Selection.points`, a note id to the indices
 
   of its chosen points). Shift+drag draws a rectangle and it catches the points inside it;
