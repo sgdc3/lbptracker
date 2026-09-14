@@ -289,12 +289,16 @@ export function readShape(s: Serializer, readers: ReadonlyMap<string, PartReader
  * the outer struct adds two 8-byte blocks. Below 0x234 each block is length-
  * prefixed, which this reader never sees.
  */
-function readNetworkPlayerId(s: Serializer): void {
-  s.bytes(16); // handle.data
+function readNetworkPlayerId(s: Serializer): string {
+  const data = s.bytes(16); // handle.data
   s.u8(); // handle.term
   s.bytes(3); // handle.dummy
   s.bytes(8); // opt
   s.bytes(8); // reserved
+  // A PSN online ID: up to 16 ASCII characters, NUL-padded.
+  let end = data.indexOf(0);
+  if (end < 0) end = data.length;
+  return String.fromCharCode(...data.subarray(0, end));
 }
 
 /**
@@ -304,13 +308,20 @@ function readNetworkPlayerId(s: Serializer): void {
  * leading flags word that `resource()` reads by default. Getting that wrong
  * costs four bytes and desynchronises at the next Thing.
  */
-export function readGroup(s: Serializer, readers: ReadonlyMap<string, PartReader>): void {
+export interface GroupPart {
+  /** `PGroup.creator`'s PSN handle, or '' when the group names nobody. */
+  readonly creator: string;
+  /** The plan the group was placed from, or 0. */
+  readonly planGuid: number;
+}
+
+export function readGroup(s: Serializer, readers: ReadonlyMap<string, PartReader>): GroupPart {
   const { version } = s.revision;
   // ❗ Below 0x341 the flags byte does not exist; three separate bools carry
   // COPYRIGHT, EDITABLE and PICKUP_ALL_MEMBERS instead, each at its own gate.
   if (version >= 0x18e && version < 0x341) s.bool(); // COPYRIGHT
-  readNetworkPlayerId(s); // creator
-  s.resource(true); // planDescriptor, a descriptor
+  const creator = readNetworkPlayerId(s);
+  const plan = s.resource(true); // planDescriptor, a descriptor
   if (version >= 0x25e && version < 0x341) s.bool(); // EDITABLE
   if (version >= 0x267) {
     readThingRef(s, readers); // emitter
@@ -320,6 +331,7 @@ export function readGroup(s: Serializer, readers: ReadonlyMap<string, PartReader
   if (version >= 0x26e && version < 0x341) s.bool(); // PICKUP_ALL_MEMBERS
   if (version >= 0x30f && version < 0x341) s.bool(); // mainSelectableObject
   if (version >= 0x341) s.u8(); // flags
+  return { creator, planGuid: plan?.guid ?? 0 };
 }
 
 /**

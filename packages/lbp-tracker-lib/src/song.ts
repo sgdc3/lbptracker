@@ -35,7 +35,7 @@ import {
   type WriteNote,
 } from '@lbptracker/cwlib/notes.ts';
 import { factoryColour } from '@lbptracker/cwlib/chips.ts';
-import { STEPS_PER_CELL, type Sequencer, type Track } from '@lbptracker/cwlib/project.ts';
+import { STEPS_PER_CELL, authorHandle, type Sequencer, type Track } from '@lbptracker/cwlib/project.ts';
 
 /** One control point. `thirds` is the position within the clip, `timbre` the 0..15 nibble. */
 export interface SongPoint {
@@ -89,6 +89,12 @@ export interface Clip {
 
 export interface Song {
   name: string;
+  /**
+   * Who made it, as the game keeps it: a PSN handle, or '' for nobody.
+   * `authorHandle` is what it may hold; a new song names nobody, because this
+   * tracker has no way to know who is using it.
+   */
+  author: string;
   tempo: number;
   swing: number;
   echoFeedback: number;
@@ -204,6 +210,7 @@ export const NEW_SONG_END_STEPS = 2 * DEFAULT_CLIP_STEPS;
 export function newSong(name = 'untitled'): Song {
   return {
     name,
+    author: '',
     ...NEW_SONG_DEFAULTS,
     loop: false,
     startPoint: 0,
@@ -738,6 +745,7 @@ function restingBit(notes: readonly Note[]): 0 | 1 {
 /** Open a level's sequencer for editing. */
 export function songFromSequencer(seq: Sequencer): Song {
   const song = newSong(seq.name);
+  song.author = seq.author;
   song.tempo = seq.tempo;
   song.swing = seq.swing;
   song.echoFeedback = seq.echoFeedback;
@@ -829,6 +837,7 @@ export function sequencerFromSong(song: Song, uid = 1): Sequencer {
   return {
     uid,
     name: song.name,
+    author: authorHandle(song.author),
     tempo: song.tempo,
     swing: song.swing,
     echoFeedback: song.echoFeedback,
@@ -888,6 +897,8 @@ export function songFromJson(text: string): Song {
   }
   const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
   const song = newSong(typeof raw.name === 'string' ? raw.name : 'untitled');
+  // A file written before the author was carried names nobody.
+  song.author = typeof raw.author === 'string' ? authorHandle(raw.author) : '';
   song.tempo = num(raw.tempo, song.tempo);
   song.swing = num(raw.swing, song.swing);
   song.echoFeedback = num(raw.echoFeedback, song.echoFeedback);

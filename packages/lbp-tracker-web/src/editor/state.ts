@@ -23,8 +23,8 @@ import { addRow, removeRow, type Clip, type Song, type SongNote, type SongPoint 
  * to be rebuilt for a note, a placement or an instrument; the mixer and the
  * clock are applied live for a setting; the output stage is one message.
  *
- * ❗ **`look` is a change to the song that nothing plays** -- the chip's tint,
- * so far. It marks the song dirty and redraws the canvases like any other
+ * ❗ **`look` is a change to the song that nothing plays** -- a chip's tint,
+ * the author. It marks the song dirty and redraws the canvases like any other
  * edit, and `daw/session.ts` deliberately does nothing with it: rebuilding a
  * plan for a colour would cut the voices a chip is sounding.
  */

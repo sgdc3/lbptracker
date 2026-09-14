@@ -178,7 +178,7 @@ test('a glide is linear in steps, so under swing it bends at every step it cross
   });
   const { notes } = groupNotes([rec(0, 60, false), rec(3, 72, true)]);
   const seq: Sequencer = {
-    uid: 1, name: 'ramp', tempo: 120, swing: 0.5,
+    uid: 1, name: 'ramp', author: '', tempo: 120, swing: 0.5,
     echoFeedback: 0, echoTime: 1, echoMix: 0, reverb: 5,
     loop: false, startPoint: 0, numChannels: 1, volumes: [1, 1, 1, 1, 1, 1], boardRows: 0,
     tracks: [{

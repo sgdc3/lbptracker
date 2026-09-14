@@ -13,6 +13,11 @@ not before, never how it was done. No `--` or em dash in here; the site's text d
 - Picking pure white for an instrument now keeps it white. It used to snap back to the
   instrument's own colour, because the game's "no colour" and a white you chose were the same
   number.
+- A song now has an author. Opening a level reads who made each sequencer, the way the game keeps
+  it (the PSN name of whoever first grouped it), and Song/Mixer shows it in a field you can change.
+  It travels in your song file and in a MIDI file exported from here, and an exported .plan
+  carries it, so the game's popit says whose it is. A name can hold up to 16 letters, digits,
+  hyphens and underscores, the same as a PSN name; anything else is left out as you type.
 
 ## 0.2.26 (2026-09-10)
 

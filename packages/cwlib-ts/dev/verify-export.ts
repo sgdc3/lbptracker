@@ -68,7 +68,7 @@ async function chassis(bytes: Uint8Array): Promise<Map<string, Uint8Array>> {
 function compare(a: Sequencer, b: Sequencer): string[] {
   const problems: string[] = [];
   const fields = ['tempo', 'swing', 'echoFeedback', 'echoTime', 'echoMix', 'reverb', 'loop',
-    'startPoint', 'numChannels', 'name'] as const;
+    'startPoint', 'numChannels', 'name', 'author'] as const;
   for (const field of fields) {
     if (a[field] !== b[field]) problems.push(`${field}: ${String(a[field])} -> ${String(b[field])}`);
   }

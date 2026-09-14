@@ -111,6 +111,7 @@ test('encodeNotes clamps to the record grid rather than wrapping', () => {
 
 test('a song round-trips through a sequencer and through JSON', () => {
   const song = newSong('test');
+  song.author = 'Festerd_Jester';
   song.tempo = 150;
   song.swing = 0.25;
   song.numChannels = 2;
@@ -132,6 +133,7 @@ test('a song round-trips through a sequencer and through JSON', () => {
 
   const seq = sequencerFromSong(song, 7);
   assert.equal(seq.uid, 7);
+  assert.equal(seq.author, 'Festerd_Jester');
   assert.equal(seq.tempo, 150);
   assert.equal(seq.tracks.length, 1);
   const track = seq.tracks[0];
@@ -153,6 +155,7 @@ test('a song round-trips through a sequencer and through JSON', () => {
   assert.equal(track.notes[1].points[0].modulation, 4 / 15);
 
   const back = songFromSequencer(seq);
+  assert.equal(back.author, 'Festerd_Jester');
   assert.equal(back.tempo, 150);
   assert.equal(back.swing, 0.25);
   assert.equal(back.clips.length, 1);
@@ -175,6 +178,8 @@ test('a song round-trips through a sequencer and through JSON', () => {
   assert.equal(parsed.clips[0].key, 14);
   assert.equal(parsed.clips[0].colour, 0xffff00ff | 0, 'the chip keeps its tint through the file');
   assert.equal(parsed.boardRows, 6);
+  assert.equal(parsed.author, 'Festerd_Jester', 'and through the song file');
+  assert.equal(newSong().author, '', 'a new song names nobody');
   assert.throws(() => songFromJson('{"format":"something else"}'), /not an LBP Tracker song/);
 
   void triplet;

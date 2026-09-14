@@ -73,6 +73,7 @@ function sequencer(over: Partial<Sequencer> = {}): Sequencer {
   return {
     uid: 1,
     name: 'test song',
+    author: '',
     tempo: 130,
     swing: 0,
     echoFeedback: 0.54,
@@ -328,6 +329,27 @@ test('a plan carries the colour the tracker draws, which for white is the family
     [...back.tracks].sort((a, b) => a.gridX - b.gridX).map((t) => (t.colour >>> 0).toString(16)),
     ['bfffff', '40ff0100', 'ffffffff', 'ff40bfff'],
   );
+});
+
+test('the author travels on the group and in the popit block, as a PSN handle', async () => {
+  // ❗ The game keeps the person on the group chain, never on the sequencer
+  // Thing's own group (that one is the gadget's `MM_Studio`), and the 15
+  // gallery plans that name somebody carry the same handle in their inventory
+  // block as well.
+  const seq = sequencer({ author: 'Festerd_Jester' });
+  const back = await roundTrip(seq);
+  assert.equal(back.author, 'Festerd_Jester', 'read back off the group chain');
+  const payload = (await loadResource(await writeSequencerPlan(seq, nodeDeflate), nodeInflate)).data;
+  const text = new TextDecoder('latin1').decode(payload);
+  const first = text.indexOf('Festerd_Jester');
+  const last = text.lastIndexOf('Festerd_Jester');
+  assert.ok(first >= 0 && last > first, 'on the group Thing, and again in the inventory block after it');
+  assert.ok(last > payload.length - 80, 'the second one is the popit block at the end');
+
+  // A handle holds what a PSN ID may: nothing past sixteen characters, and no
+  // character the game could not have written.
+  assert.equal((await roundTrip(sequencer({ author: 'Élan vital: the long one!' }))).author, 'lanvitalthelongo');
+  assert.equal((await roundTrip(sequencer({ author: '' }))).author, '', 'nobody stays nobody');
 });
 
 test('an instrument the chip table has never seen still writes', async () => {

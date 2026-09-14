@@ -204,6 +204,8 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
     title: 'The song',
     body:
       p('The <strong>name</strong> is what the song is saved as, and what a level calls it. ' +
+        'The <strong>author</strong> is who made it, as the game keeps it: the PSN name of whoever first grouped it, ' +
+        'read out of the level, and written back into an exported plan so the popit says whose it is. ' +
         '<strong>Tempo</strong> and <strong>swing</strong> take effect at once, while it plays, and keep your place in the music. ' +
         '<strong>Loop</strong> starts the song over when it ends, here and in the game; the top bar has the same switch.') +
       h('Channels') +

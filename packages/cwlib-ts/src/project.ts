@@ -128,10 +128,32 @@ export interface Track {
   readonly trailingRecords: number;
 }
 
+/**
+ * A PSN online ID as the game stores one: `NetworkOnlineID.data` is 16 bytes.
+ *
+ * Measured 2026-09-14: of the 741 distinct creators in every `PGroup` of every
+ * corpus file -- `Festerd_Jester`, `Hug-Of-War`, `RaZoR-_-HaCk1899` -- 740 are
+ * letters, digits, `_` and `-`, at most 16 long, which is what PSN allows; the
+ * one exception is `Ú'x5`, which is no name. Anything else cannot be what the
+ * game would write, and a character past the sixteenth has nowhere to go.
+ */
+export const AUTHOR_MAX = 16;
+
+/** Text as an author handle can hold it: the characters a PSN ID may use, at most 16. */
+export function authorHandle(text: string): string {
+  return text.replace(/[^A-Za-z0-9_-]/g, '').slice(0, AUTHOR_MAX);
+}
+
 /** One music sequencer from a level. */
 export interface Sequencer {
   readonly uid: number;
   readonly name: string;
+  /**
+   * Who made it: a PSN handle, up to 16 ASCII characters, or '' when the file
+   * names nobody -- the nearest person up the sequencer's group chain
+   * (`sequencerAuthor` in `level.ts` has the measurement).
+   */
+  readonly author: string;
   readonly tempo: number;
   readonly swing: number;
   readonly echoFeedback: number;
@@ -221,6 +243,7 @@ export function importLevel(
     sequencers.push({
       uid: found.uid,
       name: found.name,
+      author: found.author,
       tempo: settings.tempo,
       swing: settings.swing,
       echoFeedback: settings.echoFeedback,

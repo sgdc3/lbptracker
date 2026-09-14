@@ -74,9 +74,37 @@ board. Everything else is the same 68 bytes.
 
 ❗ **`MM_Studio` is the game's own marker, not a name being borrowed.** It sits beside
 `planDescriptor` 120863 on every copy of the gadget in the corpus, and the pair means "this came
-from Mm's plan". The **human** fields — the group Thing's creator and
-`InventoryItemDetails.creator` — are left empty: this tracker has no author to claim, and copying
-one out of a corpus file would put a stranger's name on somebody else's song.
+from Mm's plan".
+
+## The author
+
+The **human** fields — the group Thing's `PGroup.creator` and `InventoryItemDetails.creator` —
+carry `Sequencer.author`. Until 2026-09-14 they were left empty, on the argument that this tracker
+had no author to claim; the owner asked for the author to be loaded, edited and exported, and the
+argument turned out to point the other way: the name was in the file all along, and blanking it
+took the maker's name *off* their own song.
+
+✔ **Where the game keeps it, measured 2026-09-14 over 210 music sequencers** (the toolkit corpus,
+the 17 gallery plans, `fixtures/levels`, the archive sample):
+
+| where | what it holds |
+|---|---|
+| the sequencer Thing's own `PGroup.creator` | `MM_Studio` on 207, empty on 3 — the gadget's marker, never a person |
+| the GROUP-only Things up its `groupHead` chain | a PSN handle on **149**; 61 sequencers have no chain at all, nobody ever grouped them |
+| `InventoryItemDetails` at the end of a plan | the same handle twice on all 15 gallery plans that name somebody — `creator` and the creation history — found by a byte search, since `readPlan` does not parse that block |
+
+⚠️ **Nearest, not outermost.** Seven chains name more than one person, and in every one the uids
+grow outward — `sethe99#7320 → RyanSpiker#7322 → montyferah#7395` — so the nearest group is the
+oldest: whoever made it, with whoever later pasted it into their own contraption wrapped round.
+`sequencerAuthor` in `level.ts` is the rule. The writer puts the author on its one group Thing
+(uid 3, the chain's single link) and in `InventoryItemDetails.creator`; `creationHistory` stays
+null, which *46* in [answered-questions.md](answered-questions.md) cleared.
+
+⚠️ **A handle is 16 bytes of `NetworkOnlineID.data`.** Of the 741 distinct creators in every
+`PGroup` of every file in the same corpora, 740 are letters, digits, `_` and `-`, at most 16 long,
+which is what PSN allows; the odd one out is `Ú'x5`, which is not a name at all. `authorHandle` in
+`project.ts` keeps exactly that and cuts at sixteen, in the song file's reader, the MIDI reader,
+the page's field and the writer alike.
 
 ⚠️ **`PMicrochip.hideInPlayMode` is written as 116.** It is declared a bool and the game writes
 `0x74` into it on the microchip of every one of the 15 plans measured. Any non-zero byte reads as

@@ -150,6 +150,12 @@ The editor draws both, as faithfully as the data allows and no further:
   playhead's follow must not go through `selectClip`**: that collapses the block to one chip, and
   the playhead crosses a chip every few seconds. `followClip` moves the roll's chip and takes a
   *single* selection with it, as the selection always followed, while a block stays.
+- **The song panel carries the author** (`MixerPanel.vue`, `Song.author`). It is read out of the
+  level by `sequencerAuthor` and written into an exported plan — *The author* in
+  [export-to-game.md](export-to-game.md) has where the game keeps it. The field is put back to
+  what `authorHandle` kept on every keystroke, because a character a handle cannot hold changes
+  nothing in the song, Vue then has no new value to render, and the screen would disagree with the
+  file. It edits with the `look` kind: nothing plays an author.
 - **Whether the roll follows the playhead is a state, and the person owns it** —
   `EditorState.followPlayhead`, the switch in the panel head, and `test/editor-follow.test.ts`.
   Clicking a chip means "show me this one" and switches it off; choosing a row means "watch this

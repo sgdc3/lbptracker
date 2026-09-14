@@ -24,7 +24,7 @@
 
 import { loadResource, type Inflate } from './resource.ts';
 import { Serializer, SerializerError, requireLbp3, type RevisionInfo } from './serializer.ts';
-import type { InstrumentPart, Microchip, SequencerPart } from './parts.ts';
+import type { GroupPart, InstrumentPart, Microchip, SequencerPart } from './parts.ts';
 import { readThingRef, type PartReader, type Thing } from './thing.ts';
 
 /** Thrown once `PWorld.things` is in hand, to stop reading the rest. */
@@ -479,6 +479,39 @@ export interface FoundSequencer {
   readonly placements: readonly Placement[];
   /** The circuit board's height in world units — `PMicrochip.circuitBoardSizeY`. */
   readonly boardHeight: number;
+  /** Who made it, as the game keeps it; '' when nobody is named. See `sequencerAuthor`. */
+  readonly author: string;
+}
+
+/**
+ * The PSN handle of whoever made a sequencer: the nearest creator up its
+ * `groupHead` chain that is a person.
+ *
+ * ❗ **Measured 2026-09-14 over 210 music sequencers** (the toolkit corpus, the
+ * 17 gallery plans, `fixtures/levels` and the archive sample). The sequencer
+ * Thing's own `PGroup.creator` is never the author: it is `MM_Studio` on 207
+ * and empty on 3 -- the gadget's marker, beside `planDescriptor` 120863. The
+ * person is in the GROUP-only Things its `groupHead` chain runs through, which
+ * name one on 149 of the 210; the other 61 have no chain at all, a sequencer
+ * nobody ever grouped.
+ *
+ * ⚠️ **Nearest, not outermost.** Seven chains name more than one person, and in
+ * every one of them the uids grow outwards -- `sethe99#7320 -> RyanSpiker#7322
+ * -> montyferah#7395` -- so the nearest group is the oldest: whoever made the
+ * thing, with the people who later pasted it into their own contraptions
+ * wrapped round it. On all 15 gallery plans that name somebody, the same
+ * handle's bytes also occur twice in the plan's inventory block, where
+ * `InventoryItemDetails.creator` and its creation history sit -- a byte search,
+ * not a parse of that block, which `readPlan` still does not read.
+ */
+export function sequencerAuthor(thing: Thing): string {
+  const seen = new Set<Thing>();
+  for (let at: Thing | undefined = thing; at && !seen.has(at); at = at.groupHead) {
+    seen.add(at);
+    const group = at.parts.get('GROUP') as GroupPart | undefined;
+    if (group?.creator && group.creator !== 'MM_Studio') return group.creator;
+  }
+  return '';
 }
 
 /**
@@ -524,6 +557,7 @@ export function musicSequencers(things: readonly (Thing | undefined)[]): FoundSe
     }
     out.push({
       uid: thing.uid, settings, name: chip.name, placements, boardHeight: chip.sizeY,
+      author: sequencerAuthor(thing),
     });
   }
   return out;

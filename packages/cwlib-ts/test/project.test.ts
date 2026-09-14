@@ -14,6 +14,7 @@ import {
   type LevelProject,
 } from '../src/project.ts';
 import { DEFAULT_CHIP_COLOUR } from '../src/chips.ts';
+import { sequencerAuthor } from '../src/level.ts';
 import type { InstrumentPart, SequencerPart } from '../src/parts.ts';
 import type { Thing } from '../src/thing.ts';
 import { nodeInflate } from '../src/platform/node.ts';
@@ -147,6 +148,30 @@ test('a level’s sequencers come back with their components as tracks', () => {
  * music in it. `musicSequencer` is the flag that separates them; without it a
  * level's logic shows up as silent tracks.
  */
+test('the author is the nearest person up the group chain, never the gadget marker', () => {
+  // Measured over 210 corpus sequencers: the sequencer Thing's own group is
+  // `MM_Studio` on 207, and the person sits on the GROUP-only Things its
+  // `groupHead` runs through, the nearest one being the oldest.
+  const group = (creator: string) => ({ creator, planGuid: 0 });
+  const outer = thing(12, [['GROUP', group('montyferah')]]);
+  const middle = thing(11, [['GROUP', group('RyanSpiker')]]);
+  const inner = thing(10, [['GROUP', group('sethe99')]]);
+  const empty = thing(9, [['GROUP', group('')]]);
+  middle.groupHead = outer;
+  inner.groupHead = middle;
+  empty.groupHead = inner;
+  const seq = thing(8, [['GROUP', { creator: 'MM_Studio', planGuid: 120863 }]]);
+  seq.groupHead = empty;
+  assert.equal(sequencerAuthor(seq), 'sethe99', 'the empty group is skipped, and the nearest person wins');
+  assert.equal(sequencerAuthor(thing(7, [['GROUP', { creator: 'MM_Studio', planGuid: 120863 }]])), '');
+  // A chain that loops must not hang the reader.
+  const a = thing(1, [['GROUP', group('')]]);
+  const b = thing(2, [['GROUP', group('')]]);
+  a.groupHead = b;
+  b.groupHead = a;
+  assert.equal(sequencerAuthor(a), '');
+});
+
 test('only music sequencers are imported', () => {
   const things = [
     ...world(7, 'music', [{ x: 0, y: -CELL, instrument: instrument() }]),

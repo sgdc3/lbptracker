@@ -41,6 +41,7 @@ import {
   type Sequencer,
   type Track,
 } from '@lbptracker/cwlib/project.ts';
+import { authorHandle } from '@lbptracker/cwlib/project.ts';
 import { blockRoot, notePitch, unquantise } from './scale.ts';
 import { swungFrame } from './swing.ts';
 import {
@@ -1457,6 +1458,11 @@ export function sequencerToMidi(
       // every track by the fallback modulo instead, which is a different mix.
       boardRows: sequencer.boardRows,
       volumes: sequencer.volumes,
+      // ❗ **The author has no MIDI message.** FF 02 is a *copyright notice*,
+      // and writing a PSN handle there would state something about rights on
+      // somebody's behalf that the game's file never said. Omitted when the
+      // sequencer names nobody, which 61 of the corpus's 210 do.
+      ...(sequencer.author ? { author: sequencer.author } : {}),
     })),
   ];
   if (mpe) {
@@ -1968,6 +1974,7 @@ export function midiToSequencer(
       uid: num('uid', 0),
       // The track name meta, then a v1 header's copy, then the caller's default.
       name: title ?? (typeof header?.name === 'string' ? (header.name as string) : fallbackName),
+      author: typeof header?.author === 'string' ? authorHandle(header.author) : '',
       tempo,
       swing: num('swing', 0),
       echoFeedback: num('echoFeedback', 0),

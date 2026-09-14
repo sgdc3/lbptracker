@@ -153,7 +153,12 @@ there.
 Meta type `0x01`, the tag then JSON. **Only what MIDI has no message for**:
 
 `v` · `uid` · `swing` · `swingBaked` · `echoFeedback` · `echoTime` · `echoMix` · `reverb` · `loop` ·
-`startPoint` · `numChannels` · `volumes` · `boardRows`
+`startPoint` · `numChannels` · `volumes` · `boardRows` · `author`?
+
+⚠️ **`author` is not FF 02.** A MIDI file has a *copyright notice* meta, which is the nearest
+standard carrier and the wrong one: writing a PSN handle there states something about rights on
+somebody's behalf that the game's file never said. It rides here, and only when the sequencer
+names somebody ([export-to-game.md](export-to-game.md), *The author*).
 
 `boardRows` is the clearest case for the rule: MIDI has no circuit board, and the board's height in
 cells is what bands a track to a mixer channel (`channelVolume`, *9* in answered-questions.md).

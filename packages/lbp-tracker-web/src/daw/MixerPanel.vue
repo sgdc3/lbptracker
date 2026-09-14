@@ -12,6 +12,7 @@
  */
 import { computed } from 'vue';
 import { MIXER_CHANNELS, type Song } from '@lbptracker/lib/song.ts';
+import { AUTHOR_MAX, authorHandle } from '@lbptracker/cwlib/project.ts';
 import { REVERB_SETTINGS, reverbSummary } from '@lbptracker/lib/audio/effects.ts';
 import { bandOf } from '../editor/geometry.ts';
 import type { EditorState } from '../editor/state.ts';
@@ -47,6 +48,21 @@ const set = (kind: ChangeKind, key: string, fn: (value: number, s: Song) => void
   props.state.edit(kind, (s) => fn(value, s), key);
 };
 const fmt = (v: number) => v.toFixed(2);
+
+/**
+ * The author, as a PSN handle can hold it.
+ *
+ * ⚠️ **The field is put back to what was kept**, not left showing what was
+ * typed: a character a handle cannot hold changes nothing in the song, so Vue
+ * has no new value to render and the field would go on showing it -- and the
+ * exported plan would then disagree with the screen.
+ */
+const setAuthor = (event: Event) => {
+  const field = event.target as HTMLInputElement;
+  const clean = authorHandle(field.value);
+  if (field.value !== clean) field.value = clean;
+  props.state.edit('look', (s) => { s.author = clean; }, 'author');
+};
 
 /**
  * The reverb is a **choice, not a dial**: `ReverbSetting` picks one of the
@@ -85,6 +101,14 @@ const reverbOptions = computed(() => {
         <label for="mx-name">name</label>
         <input id="mx-name" type="text" class="wide" :value="song.name" placeholder="untitled" autocomplete="off"
                @input="state.edit('selection', (s) => { s.name = text($event); }, 'name')">
+        <output></output>
+      </div>
+      <div class="knob">
+        <label for="mx-author">author</label>
+        <input id="mx-author" type="text" class="wide" :value="song.author" placeholder="nobody" autocomplete="off"
+               :maxlength="AUTHOR_MAX" spellcheck="false"
+               title="Who made it, as the game keeps it: a PSN name, up to 16 letters, digits, - and _"
+               @input="setAuthor">
         <output></output>
       </div>
     </div>

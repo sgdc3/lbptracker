@@ -52,7 +52,7 @@
 
 import { chipFor, drawnColour } from './chips.ts';
 import { escapeEntities } from './parts.ts';
-import { CELL_HEIGHT, CELL_WIDTH, type Sequencer, type Track } from './project.ts';
+import { CELL_HEIGHT, CELL_WIDTH, authorHandle, type Sequencer, type Track } from './project.ts';
 import type { RevisionInfo } from './serializer.ts';
 import { PARTS } from './thing.ts';
 import { Writer, writeResource, type Deflate, type DependencyOut } from './writer.ts';
@@ -412,7 +412,9 @@ function switchPart(type: number, player: number): PartOut {
  * 120863 -- the pair means "this came from Mm's plan", and a copy that says
  * anything else is a copy that came from somewhere it did not. The **human**
  * fields, the group Thing's own creator and `InventoryItemDetails.creator`,
- * are left empty: this tracker has no author to claim.
+ * carry `Sequencer.author`: the handle the level named, kept, or whatever the
+ * composer typed -- and empty when that is nobody, which the game imports too
+ * (answered question 46 cleared an empty creator).
  */
 const STOCK_CREATOR = 'MM_Studio';
 
@@ -643,7 +645,11 @@ function microchip(
 /** The Things a sequencer plan holds, in the order the plan's array lists them. */
 export function sequencerThings(sequencer: Sequencer): ThingOut[] {
   const groupThing: ThingOut = { uid: 3, planGuid: 0, parts: [] };
-  groupThing.parts.push(group(undefined));
+  // ❗ **The author goes on the group, not on the sequencer.** That is where
+  // the game keeps the person -- the sequencer Thing's own `PGroup` is the
+  // gadget's `MM_Studio` on 207 of 210 corpus sequencers -- and it is where
+  // `sequencerAuthor` reads it back from (`level.ts`).
+  groupThing.parts.push(group(undefined, authorHandle(sequencer.author)));
 
   const root: ThingOut = {
     uid: 2, groupHead: groupThing, planGuid: MUSIC_SEQUENCER_PLAN, parts: [],
@@ -703,6 +709,12 @@ export interface PlanDetails {
    * See `DEFAULT_PLAN_ICON`.
    */
   readonly icon?: number;
+  /**
+   * `InventoryItemDetails.creator`: whose the item is in the popit. The same
+   * handle the group Thing carries -- on the 15 gallery plans that name
+   * somebody, the chain's author also sits in this block -- and '' for nobody.
+   */
+  readonly creator?: string;
 }
 
 /**
@@ -746,7 +758,7 @@ function writeInventoryDetails(w: Writer, details: PlanDetails): void {
   w.i16(-1); // categoryIndex
   w.i16(0); // primaryIndex
   const creator = {};
-  w.reference(creator, (self) => writeNetworkPlayerId(self, ''));
+  w.reference(creator, (self) => writeNetworkPlayerId(self, authorHandle(details.creator ?? '')));
   w.i8(0); // toolType
   w.i8(0); // flags
 }
@@ -844,6 +856,7 @@ export async function writeSequencerPlan(
     name,
     description: options.description,
     icon: options.icon,
+    creator: sequencer.author,
   });
   return writeResource(
     { magic: 'PLNb', revision, compressionFlags, payload, dependencies },
