@@ -90,7 +90,20 @@ const setColour = (event: Event) => {
   const css = (event.target as HTMLInputElement).value;
   props.state.edit('look', () => {
     const c = props.state.clip();
-    if (c) c.colour = chipColourValue(css);
+    if (!c) return;
+    const factory = factoryColour(c.guid);
+    const picked = chipColourValue(css);
+    // Picking the instrument's own colour lands on it exactly, low byte and
+    // all, so the button reads "default" again rather than "reset".
+    if ((picked >>> 8) === (factory >>> 8)) c.colour = factory;
+    // ⚠️ **Pure white has to dodge `UNTINTED`**, which it packs to: the board
+    // and the exported plan read that as the instrument's own colour, so a
+    // white chip would come back as the family's. `fe` in the low byte is a
+    // white that is not the neutral, and it is white under every reading of
+    // that byte the game might have: ignored it is nothing, and as an opacity
+    // it is 99.6%. What the game really does with it is open question 49.
+    else if ((picked | 0) === UNTINTED) c.colour = 0xfffffffe | 0;
+    else c.colour = picked;
   }, 'colour');
 };
 

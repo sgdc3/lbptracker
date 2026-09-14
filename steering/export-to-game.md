@@ -131,6 +131,13 @@ The tint is one colour per instrument **family**, and
 [sequencer-data-model.md](sequencer-data-model.md) has the reading of the field; `factoryColour`
 is the lookup and `drawnColour` is what an untinted chip shows.
 
+❗ **The writer puts `drawnColour`, not the byte it was handed.** Measured in the game on
+2026-09-14: a plan whose chips carried `0xffffffff`, exactly as the level stores them, imported as a
+white board while the tracker had shown them in their family colours. The game draws the value;
+the tracker's reading of white as "the instrument's own" is the owner's decision, and the plan
+follows it so that what the board showed is what arrives in the popit. `verify-export` compares the
+colour as drawn for the same reason.
+
 ⚠️ **The writer used to put the constant `0x41000000` in `PInstrument.Colour`**, on a comment
 saying it was what every plan measured holds. It is in none of them: over 68,568 placements the
 field takes 25 values and that is not one of them. It went in while the reader was still throwing

@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { DEFAULT_CHIP_COLOUR } from '../src/chips.ts';
+import { DEFAULT_CHIP_COLOUR, UNTINTED } from '../src/chips.ts';
 import { readPlan } from '../src/level.ts';
 import { decodeEntities, escapeEntities, partReaders } from '../src/parts.ts';
 import { nodeDeflate, nodeInflate } from '../src/platform/node.ts';
@@ -305,6 +305,29 @@ test('a caller can choose the icon, and choosing none is possible and refused by
   // can be reproduced, not for anybody to use.
   const none = await writeSequencerPlan(sequencer(), nodeDeflate, { icon: 0 });
   assert.deepEqual(await iconDescriptor(none), { flags: 0, guid: 0 });
+});
+
+test('a plan carries the colour the tracker draws, which for white is the family colour', async () => {
+  // ❗ Measured in the game, 2026-09-14: a plan whose chips carried
+  // `0xffffffff` straight out of the level imported as a board of WHITE chips,
+  // while the tracker showed them in their family colours. The plan now
+  // writes what the board showed.
+  const back = await roundTrip(sequencer({
+    tracks: [
+      // untinted synth: the synth family's sky blue
+      track({ gridX: 0, guid: 129085, colour: UNTINTED }),
+      // untinted percussion: the percussion family's green, low byte and all
+      track({ gridX: 2, guid: 129031, colour: UNTINTED }),
+      // untinted SFX: that family ships white, so white it stays
+      track({ gridX: 4, guid: 125386, colour: UNTINTED }),
+      // a creator's own tint is nobody's to change
+      track({ gridX: 6, guid: 129085, colour: 0xff40bfff | 0 }),
+    ],
+  }));
+  assert.deepEqual(
+    [...back.tracks].sort((a, b) => a.gridX - b.gridX).map((t) => (t.colour >>> 0).toString(16)),
+    ['bfffff', '40ff0100', 'ffffffff', 'ff40bfff'],
+  );
 });
 
 test('an instrument the chip table has never seen still writes', async () => {

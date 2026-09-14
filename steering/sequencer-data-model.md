@@ -120,14 +120,22 @@ in the game's own data, and the answer is one colour per **instrument family**: 
 `packages/cwlib-ts/src/chips.ts` beside the plan GUID and the icon, which the same run re-measured
 and which agreed with the corpus tally on 50 of 50 rows.
 
-⚠️ **`0xffffffff` is the identity of a tint, not a chip painted white.** It appears in **no file
-below revision `0x3ec`** — 0 of the 27,094 placements in the four oldest corpus levels — and then
-takes over: 6,868 of 7,524 at `0x3ef`, and 12,545 of 12,706 at `0x3f4`, where `Ascetic`'s own
-1,150 chips are every one of them white. A creator does not paint twelve thousand chips white; an
-editor writes the neutral. So the tracker **draws** an untinted chip in its instrument's own
-colour (`drawnColour`) and **stores** the byte it was given. Across the three corpora that is
-45,222 placements at the instrument's own colour, 21,508 untinted and **1,838 (2.7%) tinted to
-something else**.
+⚠️ **`0xffffffff` is the neutral tint, and the game draws it as a WHITE chip.** It appears in
+**no file below revision `0x3ec`** — 0 of the 27,094 placements in the four oldest corpus levels —
+and then takes over: 6,868 of 7,524 at `0x3ef`, and 12,545 of 12,706 at `0x3f4`, where `Ascetic`'s
+own 1,150 chips are every one of them white. A creator does not paint twelve thousand chips white;
+an editor writes the neutral. ✔ **What the neutral looks like was measured in the game on
+2026-09-14**: a plan whose 552 chips carried it, copied out of Festerd_Jester's `Smite`, imported
+as a white board — every chip Thing's `planGuid` and icon correct, so nothing else explains it.
+Across the three corpora that is 45,222 placements at the instrument's own colour, 21,508
+untinted and **1,838 (2.7%) tinted to something else**.
+
+❗ **The tracker reads the neutral as the instrument's own colour, and that is a decision, not a
+reading** — the owner's, made twice: for what the board shows when a level opens, and for what an
+exported plan carries. `drawnColour` in `chips.ts` is where it happens; the byte itself is kept,
+so a MIDI file and a song file carry it unchanged, and the plan writer is the one place that
+writes the reading rather than the byte. The consequence worth knowing: a white level sent back
+through the tracker arrives in the game coloured, which is not what the original looks like there.
 
 ⚠️ **The field is signed and the table is not.** `readInstrumentPart` returns `s.i32()`, so a red
 chip is −16776961 where `chips.ts` writes `0xff0000ff`; comparing the two directly reported every
@@ -136,7 +144,8 @@ as 2.7%. `factoryColour` normalises, and `test/song.test.ts` pins it.
 
 ⚠️ Two things about it are still guesses and live in [open-questions.md](open-questions.md): what
 the game does with the low byte (the percussion family's factory green carries `00` where every
-other value carries `ff`), and whether Create Mode draws a creator's tint at all.
+other value carries `ff`), and whether Create Mode draws a creator's own non-white tint — which
+the white result makes very likely, and nobody has yet watched.
 
 **`Notes` element size is 4 bytes**, measured: the array's growth helper (`v0xd68370`, passed as
 the element callback) allocates `count * 4`. The same mechanism gives 1 for `Name`, a string — so

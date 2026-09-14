@@ -21,6 +21,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
+import { drawnColour } from '../src/chips.ts';
 import { readPlan } from '../src/level.ts';
 import { partReaders } from '../src/parts.ts';
 import { nodeDeflate, nodeInflate } from '../src/platform/node.ts';
@@ -82,8 +83,14 @@ function compare(a: Sequencer, b: Sequencer): string[] {
     const x = a.tracks[i];
     const y = b.tracks[i];
     for (const field of ['guid', 'gridX', 'gridY', 'level', 'pan', 'echoSend', 'reverbSend',
-      'key', 'scale', 'name', 'colour'] as const) {
+      'key', 'scale', 'name'] as const) {
       if (x[field] !== y[field]) problems.push(`track ${i} ${field}: ${String(x[field])} -> ${String(y[field])}`);
+    }
+    // ⚠️ The colour is compared as DRAWN: the writer puts what the tracker
+    // shows, and an untinted chip is shown in its family colour. Measured in
+    // the game on 2026-09-14 -- see `write-plan.ts`.
+    if (drawnColour(x.guid, x.colour) !== y.colour) {
+      problems.push(`track ${i} colour: ${x.colour} (drawn ${drawnColour(x.guid, x.colour)}) -> ${y.colour}`);
     }
     if (hex(x.records) !== hex(y.records)) problems.push(`track ${i} records differ`);
   }

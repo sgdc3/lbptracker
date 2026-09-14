@@ -136,29 +136,38 @@ export function chipFor(guid: number): InstrumentChip | undefined {
 export const DEFAULT_CHIP_COLOUR = 0x00bfffff | 0;
 
 /**
- * `0xffffffff`: **no tint**, which is not the same as a chip painted white.
+ * `0xffffffff`: the neutral tint, which **this tracker** reads as "the
+ * instrument's own colour".
  *
  * ❗ **Measured over the ten-level corpus, 2026-09-10.** White appears in no
  * file below revision `0x3ec` -- 0 of the 27,094 placements in the four oldest
  * -- and then takes over: 6,868 of 7,524 at `0x3ef` and 12,545 of 12,706 at
  * `0x3f4`, whole levels of it. A creator does not paint twelve thousand chips
- * white; an editor writes the identity of a multiplicative tint, and white is
- * that identity (cwlib's `PShape.color` defaults to it for the same reason).
- * So a chip carrying it shows its instrument's own colour, and `drawnColour`
- * is where that is decided.
+ * white; an editor writes the identity of a multiplicative tint.
  *
- * ⚠️ It is stored and written back exactly as it is found. This says what to
- * DRAW, never what to keep.
+ * ❌ **And the identity renders as a WHITE chip, not as the family colour.**
+ * That step was inferred here for four days and it was wrong: measured in the
+ * game on 2026-09-14, a plan whose 552 chips carried this value -- copied
+ * verbatim out of Festerd_Jester's `Smite` -- imported as a white board. So
+ * the game draws it white, and those levels are white boards in the game too.
+ *
+ * ⚠️ **Reading it as the family colour is therefore a decision, the owner's**,
+ * made twice: once for what the board shows when a level opens, and once for
+ * what an exported plan carries. It is stored exactly as found, so a MIDI file
+ * and a song file keep the byte; `drawnColour` is where the reading happens,
+ * and the plan writer is the one place that writes the reading rather than the
+ * byte.
  */
 export const UNTINTED = -1;
 
 /**
- * What colour a chip actually shows: its own, unless it carries no tint.
+ * What colour a chip shows on this tracker's board and carries into the game:
+ * its own, unless it is `UNTINTED`, which is the instrument's.
  *
  * ⚠️ What the game does with a tint that is neither white nor the factory
  * value -- 1,838 of the corpus's 68,568 placements, 2.7% -- has not been seen
- * in Create Mode, and this draws them in the colour they name
- * (steering/open-questions.md).
+ * in Create Mode. That white drew white is the best evidence yet that the game
+ * draws the field as it is (steering/open-questions.md).
  */
 export function drawnColour(guid: number, colour: number): number {
   return (colour | 0) === UNTINTED ? factoryColour(guid) : colour;

@@ -810,13 +810,24 @@ the row — [export-to-game.md](export-to-game.md). The corpus tally that had 50
 plan that *names* an instrument is the plan a chip is placed *from*. **A corpus can only answer for
 what somebody used**; the game's own data answers for everything it ships.
 
-## 49. `PInstrument.Colour` — packed RGBA, and white means no tint
+## 49. `PInstrument.Colour` — packed RGBA, and the neutral white draws white
 
-**Answer**: the chip's tint, one factory colour per instrument family, and `0xffffffff` is the
-identity rather than a chip painted white — [sequencer-data-model.md](sequencer-data-model.md) has
-the three measurements, `chips.ts` the table and `drawnColour` the rule. What is *not* settled is
-what the game does with the low byte and whether Create Mode draws a creator's own tint at all;
-both are *49* in [open-questions.md](open-questions.md), under the same number.
+**Answer**: the chip's tint, one factory colour per instrument family; `0xffffffff` is the neutral
+the newer editors write, and **the game draws it as a white chip** —
+[sequencer-data-model.md](sequencer-data-model.md) has the measurements, `chips.ts` the table and
+`drawnColour` the tracker's reading of white as the family colour, which is the owner's decision
+and which the plan writer follows. What is *not* settled is what the game does with the low byte
+and whether it draws a creator's non-white tint; both are *49* in
+[open-questions.md](open-questions.md), under the same number.
+
+❌ **"White is the identity of a tint, so the game shows the family colour" was wrong for four
+days, and it was shipped.** The first half is right — the neutral is what an editor writes, and
+nobody paints twelve thousand chips white — and the second half does not follow from it: the
+identity of a tint leaves the chip as it is, and the chip as it is is white. The tracker drew those
+chips coloured and the plan writer copied the byte, so a level sent back to the game arrived as a
+white board, which is how the owner found it (2026-09-14, `Smite`, 552 chips). **An inference about
+what the game draws is a guess until the game draws it**, however good the corpus argument that led
+to it; the import that settled it took a minute.
 
 ❌ **The wrong turn was made before the question was asked.** The plan writer had put the constant
 `0x41000000` in this field for a day, on a comment claiming every measured plan holds it — while

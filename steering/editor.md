@@ -171,7 +171,10 @@ The editor draws both, as faithfully as the data allows and no further:
   ([sequencer-data-model.md](sequencer-data-model.md)) — and a sound with no icon falls back to a
   family glyph. A placement nobody has tinted shows the colour its instrument ships with, which
   is a colour per family, so a board reads by family without being told to; `drawnColour` is
-  where white, the game's own neutral, turns into that.
+  where the neutral white turns into that. ⚠️ **The game draws that white as white** (measured by
+  import, 2026-09-14): showing the family colour is the owner's decision, and the exported plan
+  carries the same reading so the board and the popit agree. Picking pure white in the swatch
+  stores `0xfffffffe`, a white that is not the neutral, or it would come back as the family's.
 
   ⚠️ **`FAMILY_COLOURS` in `src/editor/instruments.ts` is a different palette and still ours**:
   eleven families where the game has seven, and softer. It is what the instrument **picker** and

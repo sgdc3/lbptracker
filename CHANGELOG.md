@@ -4,6 +4,16 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.27 (2026-09-14)
+
+- A song sent back into the game now keeps the instrument colours you see on the board. Many
+  levels store their instruments as plain white, which the tracker shows in each instrument's own
+  category colour; the exported .plan copied the white instead, so the whole board arrived in the
+  game white. It now carries the colours the board showed.
+- Picking pure white for an instrument now keeps it white. It used to snap back to the
+  instrument's own colour, because the game's "no colour" and a white you chose were the same
+  number.
+
 ## 0.2.26 (2026-09-10)
 
 - The note grid now shows what the rest of the row plays around the instrument you are editing:

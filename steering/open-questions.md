@@ -230,12 +230,16 @@ game, not the bytes:
   as an opacity draws every untinted drum kit invisible — but "drop it" is a choice, not a
   reading. **What would settle it**: place a percussion chip and a synth chip in Create Mode and
   look at whether one is fainter than the other.
-- **Whether a creator's tint is drawn at all.** 1,838 of 68,568 placements (2.7%) carry a colour
-  that is neither white nor their instrument's own, so the tweak menu evidently offers it; nobody
-  has watched the game draw one. If it turns out the game colours a chip by instrument and ignores
-  the field, the tracker is showing something the game does not — and the field would still have
-  to be carried, because it is in the file. **What would settle it**: open a corpus level with a
-  tinted chip (`dev/chip-table.ts` names them) in Create Mode.
+- **Whether a creator's non-white tint is drawn.** 1,838 of 68,568 placements (2.7%) carry a
+  colour that is neither white nor their instrument's own. ✔ Half of this is answered: the game
+  draws the field — a plan of `0xffffffff` chips imported as a white board (2026-09-14), where a
+  game that coloured chips by instrument would have shown the families. Nobody has yet watched a
+  coloured tint. **What would settle it**: import a plan exported from the tracker since that date,
+  whose untinted chips now carry their family colours explicitly, and look at the board.
+- **The decision this left behind.** The tracker reads the neutral white as the family colour, on
+  the board and in an exported plan — the owner's choice, and a deliberate departure from how the
+  game shows a white level. Nothing measurable would change it; it is recorded so that nobody
+  mistakes the family colours on a white level's board for what the game shows.
 - **What palette the tweak menu offers.** The 25 corpus values are hues at a few saturations, not
   an obvious grid, and the editor here offers a free `<input type="color">` — which may be able to
   write a colour the game's own picker cannot reach. Harmless if so. **What would settle it**:

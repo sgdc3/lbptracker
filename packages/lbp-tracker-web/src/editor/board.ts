@@ -684,8 +684,10 @@ export class BoardView {
    * ❗ The colour is the placement's `PInstrument.Colour`, which the game draws
    * and a composer sets. A chip nobody has tinted shows its instrument's own
    * colour -- either because it carries it, as every file below revision
-   * `0x3ec` does, or through `drawnColour`, which is what white means -- so the
-   * board reads by instrument family without being told to.
+   * `0x3ec` does, or through `drawnColour`, which reads the neutral white as
+   * that -- so the board reads by instrument family without being told to.
+   * ⚠️ The game draws that white as white; showing the family colour is the
+   * owner's decision, and the exported plan follows it (`chips.ts`).
    */
   private drawChip(clip: Clip, cell: number, row: number, look: 'plain' | 'lead' | 'selected', alpha: number): void {
     const { ctx, layout } = this;

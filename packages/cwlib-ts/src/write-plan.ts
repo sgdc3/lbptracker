@@ -50,7 +50,7 @@
  * span by span, so the constants are checked rather than remembered.
  */
 
-import { chipFor } from './chips.ts';
+import { chipFor, drawnColour } from './chips.ts';
 import { escapeEntities } from './parts.ts';
 import { CELL_HEIGHT, CELL_WIDTH, type Sequencer, type Track } from './project.ts';
 import type { RevisionInfo } from './serializer.ts';
@@ -515,11 +515,15 @@ function instrument(track: Track): PartOut {
       const { version } = w.revision;
       w.resource(track.guid ? { guid: track.guid, type: TYPE_INSTRUMENT } : undefined, TYPE_INSTRUMENT);
       if (version >= 0x35b) w.wstr(escapeEntities(track.name));
-      // The chip's tint, packed RGBA. The placement's own: a level's value
-      // comes back out of `PInstrument.Colour`, and a chip this tracker made
-      // starts on the factory colour `chips.ts` measured out of the
-      // instrument's own popit plan.
-      w.i32(track.colour); // colour
+      // The chip's tint, packed RGBA -- and ❗ **what the tracker DRAWS, not
+      // the byte it read.** Measured in the game on 2026-09-14: a plan whose
+      // chips carried `0xffffffff` (Festerd_Jester's `Smite`, all 552 of them,
+      // as the level stores them) imported as a board of WHITE chips, while
+      // the tracker had been showing them in their family colours. The game
+      // draws the value; `drawnColour` is the tracker's reading of white as
+      // "the instrument's own", so the plan writes that, and what a composer
+      // saw on the board is what arrives in the popit.
+      w.i32(drawnColour(track.guid, track.colour)); // colour
       w.i32(1); // loops -- 1 in every one of 105,785 corpus instruments
       w.i32(track.key);
       w.i32(track.scale);
