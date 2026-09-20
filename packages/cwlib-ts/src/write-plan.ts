@@ -281,11 +281,20 @@ function renderMesh(self: () => ThingOut): PartOut {
 /**
  * `PPos`: where the object is, and whose bone it is.
  *
- * ❗ **The identity matrix, deliberately.** A real plan carries the object's
- * last position in its author's level and a scale their popit had shrunk it to
- * (0.78, 0.73, 0.70 across the corpus, no two alike); the game moves a plan to
- * wherever it is dropped, so the only part of this that survives placement is
- * the **scale**, and 1 is the gadget at its own size.
+ * ❗ **No position, and the gadget's OWN scale -- which is not 1.** A real plan
+ * carries the object's last position in its author's level, and the game moves
+ * a plan to wherever it is dropped, so the translation is left at zero. The
+ * scale survives placement. Measured 2026-09-21 over the 14 sequencers in
+ * `fixtures/plans`: every one whose `poppetRenderScale` is 1.0 and whose
+ * trigger radius is 600 -- the gadget nobody resized -- has a uniform scale of
+ * 0.7333 on all three axes (0.73329..0.73333, the mode `0.7333331f` on four),
+ * and the resized ones are that times their 1.0696549.
+ *
+ * ⚠️ **This wrote the identity until 0.2.29**, on the reading that 1 was "the
+ * gadget at its own size". It made every exported sequencer 1.364 times the
+ * size the game makes one. A player reported the game calling an exported
+ * sequencer too big to place; that this was the cause is inferred, not yet
+ * measured in the game (`steering/open-questions.md`).
  */
 function pos(self: () => ThingOut): PartOut {
   return {
@@ -293,13 +302,17 @@ function pos(self: () => ThingOut): PartOut {
     write(w) {
       w.reference(self(), writeThing); // thingOfWhichIAmABone -- itself
       w.i32(0); // animHash
-      if (w.revision.version < 0x341) w.matrix(IDENTITY);
-      w.matrix(IDENTITY);
+      if (w.revision.version < 0x341) w.matrix(GADGET_POS);
+      w.matrix(GADGET_POS);
     },
   };
 }
 
-const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+/** The scale an unresized music sequencer sits at; the corpus's modal bit pattern. */
+export const GADGET_SCALE = 0.7333331;
+const GADGET_POS = [
+  GADGET_SCALE, 0, 0, 0, 0, GADGET_SCALE, 0, 0, 0, 0, GADGET_SCALE, 0, 0, 0, 0, 1,
+];
 
 /** `PTrigger`, every field measured and identical in all 17 plans. */
 const TRIGGER: PartOut = {

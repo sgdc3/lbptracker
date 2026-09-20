@@ -67,10 +67,18 @@ three are the same deviation stated three times.
 | part | ours | the corpus | why they differ |
 |---|---|---|---|
 | `RENDER_MESH` | mesh GUID 127558, bones `[self, null, null]`, anim null, speed 1, loop true, loopEnd 1, editorColor −8323200, visibility 3, **poppetRenderScale 1.0** | 1.0696549 in eleven, 1.0 in the rest | the object's own scale; 1.0 is the gadget untouched |
-| `POS` | the **identity matrix** | a world position and a scale of 0.70–0.78, no two alike | the game moves a plan to wherever it is dropped; the only part that survives placement is the scale |
+| `POS` | no translation, no rotation, a uniform **scale of `0.7333331f`** | a world position, a hair of rotation, and that scale times the object's own resize | the game moves a plan to wherever it is dropped; the only part that survives placement is the scale |
 | `TRIGGER` | type 0, no inThings, **radius 600**, zRange 5, allZLayers, hysteresis 1, enabled, scoreValue 10 | 594.2279 on a resized object | 600 is the round one, and it goes with a scale of 1 |
 | `SWITCH` ×2 | **radius 250**, angleRange 180, bulletsRequired 1, randomBehavior 1, on-times 30/30, userDefinedColour −8355585, playSwitchAudio, playerMode 1, stickerSwitchMode 1 | 267.4137 = 250 × 1.0696549 | the same scale again |
 | `GROUP` | creator `MM_Studio`, planDescriptor GUID 120863, lifetime 0, **aliveFrames 11**, flags 2 | identical | — |
+
+❗ **The gadget's own scale is 0.7333, not 1.** ✔ Measured 2026-09-21 with `dev/dump-fields.ts`
+over the 14 sequencers in `fixtures/plans`: the eleven with `poppetRenderScale` 1.0 and radius 600
+sit at 0.73329–0.73333 on all three axes (mode `0.7333331f`, four of them to the bit; one outlier
+at 0.7563), and the three resized ones at up to 0.7844 = 0.7333 × 1.0696549. ⚠️ The writer put the
+**identity** until 0.2.29, on the reading that 1 was the untouched gadget — a sequencer 1.364 times
+the game's. It imported, which is all *46* checked; whether it is why the game called one "too big"
+to place is in [open-questions.md](open-questions.md).
 
 ⚠️ **The two switches differ in exactly two fields**: `type` is 36 (`SWITCH_MICROCHIP`) on the
 gadget and 37 on its circuit board, and `manualActivation.player` is 0 on the gadget and −1 on the

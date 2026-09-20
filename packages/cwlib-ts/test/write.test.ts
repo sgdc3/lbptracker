@@ -14,6 +14,7 @@ import { loadResource, readDependencies } from '../src/resource.ts';
 import { Serializer } from '../src/serializer.ts';
 import {
   DEFAULT_PLAN_ICON,
+  GADGET_SCALE,
   LBP3_PS3,
   LBP3_PS4,
   MUSIC_SEQUENCER_MESH,
@@ -183,6 +184,15 @@ test('a written plan is a container the reader accepts', async () => {
   // says so; this pins the Node path the rest of the suite runs on.
   const firstChunk = bytes[0x16 + resource.chunks.length * 4];
   assert.equal(firstChunk, 0x68);
+});
+
+test('the gadget sits at the scale the game gives one, which is not 1', async () => {
+  // ❗ The identity matrix was a sequencer 1.364 times its size, and the game
+  // refused to place it. 0.7333331 is the corpus's unresized gadget.
+  const { things } = await readPlan(await writeSequencerPlan(sequencer(), nodeDeflate), nodeInflate, partReaders());
+  const m = things.find((t) => t?.parts.has('SEQUENCER'))!.parts.get('POS') as Float32Array;
+  assert.deepEqual([m[0], m[5], m[10], m[15]], [Math.fround(GADGET_SCALE), Math.fround(GADGET_SCALE), Math.fround(GADGET_SCALE), 1]);
+  assert.deepEqual([m[12], m[13], m[14]], [0, 0, 0]);
 });
 
 test('a sequencer survives the round trip, records byte for byte', async () => {

@@ -254,6 +254,19 @@ seven families, saturated). Adopting the measured colours would make the picker 
 exactly and lose some of the separation eleven families give. **A taste decision, and the owner's**;
 it costs one table either way.
 
+## 51. "Too big" — why the game would not place an exported sequencer
+
+Reported 2026-09-21 by a player: an exported plan arrives in the popit and the game calls it too
+big when they try to put it down. **Not reproduced here**, and which song it was is not known.
+
+One cause was found and fixed on the bytes: `POS` carried the identity where the game's own gadget
+sits at 0.7333 (*The chassis* in [export-to-game.md](export-to-game.md)), so every export was 1.364
+times the size. ⚠️ That it is **the** cause is inferred. What would settle it: place a 0.2.28 plan
+and a 0.2.29 plan of the same song in Create Mode. If 0.2.29 still fails, the next suspects are the
+ones the corpus bounds and the writer does not — the board's `sizeX`/`sizeY` and the chip count on
+a long song, against the largest board in `fixtures/plans` — and the way to find it is the
+bisection of *46*: swap spans of a plan the game wrote into ours until it places.
+
 ## 28. What still will not open — the archive sweep's leftovers
 
 The reader is measured over 103 archive levels: no failure anywhere in the range it claims, and
