@@ -122,6 +122,18 @@ export function rememberSequencer(row: { key: string; uid: number } | undefined,
 }
 
 /** Is there a link to make? Only a level fetched from the archive has one. */
+/**
+ * Name a song in the address bar BEFORE its level is fetched.
+ *
+ * The demo button's route: `openLevel` reads `?seq=` to decide which of a
+ * level's songs to show, and `rememberLevel` keeps a `seq` that came with the
+ * same hash, so writing both first makes the button one more reader of the
+ * link route rather than a second way in.
+ */
+export function rememberSong(sha1: string, uid: number): void {
+  rewrite({ [LEVEL_PARAM]: sha1, [DEEP_PARAM]: undefined, [SEQ_PARAM]: String(uid) });
+}
+
 export const linkable = (): boolean => levelFromQuery(window.location.search) !== undefined;
 
 /**

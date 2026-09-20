@@ -23,7 +23,10 @@ import { focusOwnsKeys } from './keys.ts';
 import { saveSongFile } from './song-file.ts';
 import { mountOpen } from './widgets/open-panel.ts';
 import { loading } from './widgets/loading.ts';
-import { forgetLevel, linkable, pickWanted, rememberSequencer, songFromQuery, songLink } from './link.ts';
+import { pickDemo, type DemoSong } from './demo-songs.ts';
+import {
+  forgetLevel, linkable, pickWanted, rememberSequencer, rememberSong, songFromQuery, songLink,
+} from './link.ts';
 import {
   RATE, clock, ensureAssets, onPlan, onPlayer, onStatus, openSong, player, setError,
   setErrorSink, setStatus, state,
@@ -338,6 +341,7 @@ async function openLevel(opened: Opened): Promise<void> {
   // route is opening something nobody else can fetch, and a link left over from
   // a previous open would be a link to the wrong song.
   if (!opened.archive) forgetLevel();
+  else demoLanded = true;
   try {
     await ensureAssets();
     job.note(
@@ -432,6 +436,22 @@ const startNew = async () => {
 };
 $('newSong').addEventListener('click', () => void startNew());
 $('homeNew').addEventListener('click', () => void startNew());
+
+// ❗ **A demo is a link somebody pressed for you.** The song is named in the
+// address bar first and then fetched by the route a `?level=&seq=` link takes
+// (`link.ts`, `demo-songs.ts`), so it opens on that song, can be shared, and
+// there is no second way in to keep working.
+let lastDemo: DemoSong | undefined;
+let demoLanded = false;
+$('homeDemo').addEventListener('click', () => void (async () => {
+  if (state.dirty && !(await confirmDialog('Throw away the unsaved changes?', 'throw them away'))) return;
+  lastDemo = pickDemo(lastDemo);
+  demoLanded = false;
+  rememberSong(lastDemo.level, lastDemo.uid);
+  await drop.openArchive(lastDemo.level);
+  // The archive's own complaint is written into a box inside the file dialog.
+  if (!demoLanded) $<HTMLDialogElement>('fileDialog').showModal();
+})());
 
 function saveSong(): void {
   const name = saveSongFile(state.song);

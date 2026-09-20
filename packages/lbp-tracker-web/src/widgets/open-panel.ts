@@ -44,6 +44,8 @@ export interface OpenPanel {
   busy(on: boolean): void;
   /** The compact form the zone takes once something is open. */
   loaded(on: boolean): void;
+  /** Fetch a root level from the public archive, as a `?level=` link does. */
+  openArchive(sha1: string): Promise<void>;
 }
 
 /**
@@ -91,6 +93,7 @@ export function mountOpen(
   }).mount(at as Element);
 
   const ui = held.ui!;
+  let openArchive = async (_sha1: string): Promise<void> => {};
   if (ui.archiveButton && ui.archiveHost) {
     const archive = wireArchiveOpen({
       button: ui.archiveButton,
@@ -104,6 +107,7 @@ export function mountOpen(
     // See `link.ts` for the whole of what a URL may say.
     const wanted = levelFromQuery(window.location.search);
     if (wanted) void archive.open(wanted.sha1, { deep: wanted.deep });
+    openArchive = (sha1) => archive.open(sha1, { deep: false });
   }
 
   void openFromQuery(give);
@@ -112,6 +116,7 @@ export function mountOpen(
     say: (title, hint) => ui.say(title, hint),
     busy: (on) => ui.setBusy(on),
     loaded: (on) => ui.setLoaded(on),
+    openArchive: (sha1) => openArchive(sha1),
   };
 }
 

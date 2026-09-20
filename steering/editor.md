@@ -432,6 +432,13 @@ also stops claiming a level as soon as one is opened from anywhere else: `Opened
 where a pile came from and `forgetLevel` clears the three parameters otherwise, or the button
 would offer a link to a song nobody is looking at.
 
+**The home view's "play a demo song" is that link, pressed for the reader.** `src/demo-songs.ts`
+lists community songs as `(level SHA-1, uid)`; the button picks one at random, never the one just
+played, writes `level` and `seq` into the address bar (`rememberSong`) and then opens the level by
+the archive route, so `openLevel` lands on that song and the result is shareable like any other.
+Nothing of theirs is served from here. ✔ `dev/check-demos.ts` ([tools.md](tools.md)) fetched all 25
+on 2026-09-21 and found every uid, none needing `deep`.
+
 A `?level=` link with no `seq` puts the picker up when the level holds more than one song
 (`openLevel` in `daw.ts`), rather than opening the biggest and hiding the rest behind a button the
 reader has no reason to press; the rows carry the uid beside the name and the search box matches it
