@@ -4,6 +4,15 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.28 (2026-09-21)
+
+- The tracker now opens .mod files, the packages Craftworld Toolkit makes. Drop one where you
+  would drop a level or a zip: every music sequencer in the plans it holds shows up in the song
+  list, named after the path the mod gives it.
+- A song can go out as a .mod as well. Import/Export has a "Download .mod" button beside
+  "Download .plan": it is the same plan, packed so that Craftworld Toolkit can install it, with
+  the song's name as the mod's title and the song's author as its author.
+
 ## 0.2.27 (2026-09-14)
 
 - A song sent back into the game now keeps the instrument colours you see on the board. Many
