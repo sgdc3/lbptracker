@@ -219,12 +219,16 @@ tempoBox.addEventListener('change', () => {
 // ---------------------------------------------------------------- the title
 
 const songName = $<HTMLSpanElement>('songName');
+const songAuthor = $<HTMLSpanElement>('songAuthor');
 const dirty = $<HTMLSpanElement>('dirty');
 function refreshHeader(): void {
   loopButton.setAttribute('aria-pressed', String(state.song.loop));
   player.loop = state.song.loop;
   // Read-only here: the name is edited under Song/Mixer with the description.
   songName.textContent = state.song.name || 'untitled';
+  // `textContent`, never markup: an author is a string out of somebody's file.
+  songAuthor.textContent = state.song.author ? `by ${state.song.author}` : '';
+  songAuthor.hidden = !state.song.author;
   if (document.activeElement !== tempoBox) tempoBox.value = String(state.song.tempo);
   dirty.textContent = state.dirty ? '•' : '';
   document.title = `LBP Tracker${state.dirty ? ' •' : ''} · ${state.song.name || 'untitled'}`;

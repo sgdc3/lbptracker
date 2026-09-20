@@ -4,6 +4,12 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.31 (2026-09-21)
+
+- The bar at the top now shows who made the song, in small print under its name. It is the author
+  from Song/Mixer, so it follows what you type there, and a song that names nobody shows only its
+  name, as before.
+
 ## 0.2.30 (2026-09-21)
 
 - The home page has a "play a demo song" button. It picks one of 25 songs from the community at

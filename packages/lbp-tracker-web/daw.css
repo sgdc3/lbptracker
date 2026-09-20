@@ -54,10 +54,17 @@ main { flex: 1 0 auto; width: 100%; box-sizing: border-box; margin: 0; max-width
 .tabs button:hover { color: var(--ink); background: var(--panel); border-color: transparent; }
 .tabs button[aria-selected="true"] { color: var(--ink); background: var(--panel); border-color: var(--line); }
 .daw-top .spacer { flex: 1 1 0; min-width: 0; }
-#songName {
-  color: var(--ink); font-weight: 600; max-width: 18rem; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap;
+/* The name, and under it whoever made the song -- nothing at all when the
+   file names nobody, so an authorless title sits where it always did. */
+#songTitle {
+  display: flex; flex-direction: column; align-items: flex-end; justify-content: center;
+  max-width: 18rem; min-width: 0; line-height: 1.15;
 }
+#songName, #songAuthor {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#songName { color: var(--ink); font-weight: 600; }
+#songAuthor { color: var(--dim); font-size: .74rem; }
 #dirty { color: var(--warn); font-size: 1.1rem; width: .8rem; text-align: center; }
 .transport { display: flex; align-items: center; gap: .5rem; }
 .transport button { padding: .3rem .7rem; line-height: 1.2; min-width: 2.4rem; }
