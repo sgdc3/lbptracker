@@ -6,7 +6,7 @@ and the environment variables that steer it. Nothing here is a fact about the ga
 the descriptive files — but several of the traps below are why a fact took a session longer than
 it should have.
 
-`tools/` holds **fourteen Python scripts and four Java ones**, deliberately dependency-light. Three
+`tools/` holds **fourteen Python scripts and five Java ones**, deliberately dependency-light. Three
 of the Python ones are the ground truth the TypeScript reproduces (`fsb.py`, `lbpres.py`,
 `wavehammer.py`); the rest are instruments for reading the binaries.
 
@@ -51,6 +51,7 @@ every access uses the same base.** The harness is reusable on `fmodsmsreverb.prx
 | `trace-icons.py` | those PNGs into the SVG paths of `src/editor/icons.ts`: drop the frame, close the stripes down the y axis, marching squares, Douglas-Peucker. ⚠️ Both traps are in its header, and the second one bites anyone simplifying a closed loop. `EPS` is the one knob |
 | `ReverbOrder.java` | a compiled `.ff` script through the LAMS table: every `LoadConstInstructionInt` operand in a function, translated. ⚠️ **The int is inline in the instruction word**, which is why searching a script's bytes for a LAMS id finds nothing. This is how the reverb list's order was read |
 | `InstrumentNames.java` | every `*instrument_*.plan` → its inventory `titleKey` → the LAMS table → **the name the game shows for each sound**, joined to the `.rinst` GUID through the plan's dependencies. Feeds `src/editor/instrument-labels.ts` |
+| `ModCheck.java` | **the check on `packages/cwlib-ts/src/mod.ts`**: `read` opens a `.mod` with cwlib's own `Mod` and prints config and rows, with whether the archive holds each under its hash; `write` has `Mod.save` make one for our reader. cwlib is the format's only definition, so this is the only ground truth there is — *The toolkit's `.mod`* in level-files.md |
 | `InstrumentColours.java` | the same 68 plans read as **what a chip the game has just placed holds**: `PInstrument.Colour` (the family's tint), the plan GUID, the chip icon, and the mixer defaults. Feeds `packages/cwlib-ts/src/chips.ts`, all 68 rows of it. ⚠️ It uses cwlib rather than our own reader on purpose — these plans are revision `0x397` and `packages/cwlib-ts` stops at `0x3b7` |
 
 The sequencer's real samples and its `.rinst` instrument definitions come out of the game with:

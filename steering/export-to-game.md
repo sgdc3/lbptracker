@@ -22,6 +22,10 @@ produces: `readDependencies` on the output has never once returned a hashed entr
 That is the whole argument for exporting a plan rather than a level. A level would need all of
 `RLevel`, and `readLevel` is deliberately a prefix (`level.ts` says so at the top).
 
+**The same plan also goes out as a `.mod`**, the package ennuo's toolkit installs from: the plan's
+bytes unchanged, one FileDB row naming them `plans/lbptracker/<song>.plan`. The format and its check
+are *The toolkit's `.mod`* in [level-files.md](level-files.md).
+
 ## The shape, measured
 
 ✔ **17 real LBP3 sequencer plans** — the plan dependencies of "Music Gallery #3",

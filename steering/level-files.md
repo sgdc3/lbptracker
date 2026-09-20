@@ -234,6 +234,35 @@ plaintext and *builds* the save on the way out. The encryption is something a do
   above already in steering. The wrong turn is *The PS3 backup* in
   [answered-questions.md](answered-questions.md).
 
+## The toolkit's `.mod` — a zip, a FileDB and a `FAR4` in the clear
+
+Not a game format: a `.mod` is Craftworld Toolkit's own package, defined by nothing but cwlib's
+`types/mods/Mod.java`, and the game never sees one — the toolkit installs its rows into a FileDB
+and a FARC. `packages/cwlib-ts/src/mod.ts` reads and writes it; the page opens one like a zip and
+the Import/Export view writes one around the `.plan` ([export-to-game.md](export-to-game.md)).
+
+| entry | what |
+|---|---|
+| `config.json` | `ModInfo`: `ID`, `type` ("pack"), `title`, `version`, `author`, `description` |
+| `data.map` | a FileDB, revision `0x01480100` — LBP3 rows: `i16` path length, path, `u32` date, `u32` size, SHA-1, `u32` GUID; ascending GUID |
+| `data.farc` | the rows' bytes as a `FAR4`: sorted by SHA-1 hex, padded to 4, a 0x84-byte save key holding only the revision (head `0x021803f9`, branch `0x4d5a`/`0xc` — the toolkit's own "Mizuki"), the table, a **zeroed** hashinate |
+| `icon.png`, `patches.json` | optional; neither read nor written here |
+
+A new row's GUID is the first free one from `0x00180000`, cwlib's "not used by any game".
+
+✔ **Measured 2026-09-21 against cwlib itself, both ways** — `tools/ModCheck.java`
+([tools.md](tools.md)): `Mod` opens a file `writeMod` wrote, every row held under its hash; and a
+mod `Mod.save` wrote around a gallery plan opens here as its 116-chip sequencer. Entry for entry,
+**`data.farc` is byte-identical** to cwlib's and `data.map` differs only inside the date.
+⚠️ No `.mod` from the wild was on this disk; the legacy one-file `MODb`/`MODe` that
+`Mod.fromLegacyMod` still reads is not read here.
+
+⚠️ **`data.farc` ends in the magic a save does and is not encrypted.** `readBackup` finds a save
+by that magic and XXTEA-decrypts it, so a mod read as a pile fails every SHA-1 — except that a
+one-plan farc *begins* with `PLNb` and opens by luck, with a save error beside it.
+`readBackupZip` asks `looksLikeMod` before anything else; `readFar` in `savearchive.ts` is the
+archive without the cipher.
+
 ## The public archive — a level from one hash, with no server
 
 The Mm servers closed in 2021 and their resource store survives as an Internet Archive dump

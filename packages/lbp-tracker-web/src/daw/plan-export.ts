@@ -18,6 +18,7 @@
  * wrong is a file that will not open rather than one that sounds wrong.
  */
 
+import { writeMod } from '@lbptracker/cwlib/mod.ts';
 import { readDependencies } from '@lbptracker/cwlib/resource.ts';
 import { LBP3_PS3, LBP3_PS4, writeSequencerPlan } from '@lbptracker/cwlib/write-plan.ts';
 import { webDeflate } from '@lbptracker/cwlib/platform/web.ts';
@@ -44,6 +45,7 @@ export function mountPlanExport(opts: {
   log: (text: string, bad?: boolean) => void;
 }): void {
   const button = $<HTMLButtonElement>('cv-planSave');
+  const modButton = $<HTMLButtonElement>('cv-modSave');
   const build = $<HTMLSelectElement>('cv-planBuild');
   const summary = $<HTMLDivElement>('cv-planSummary');
 
@@ -53,6 +55,8 @@ export function mountPlanExport(opts: {
 
   let bytes: Uint8Array | undefined;
   let fileName = 'song.plan';
+  let title = 'song';
+  let author = '';
 
   async function build_(): Promise<void> {
     const revision = (BUILDS.find((b) => b.value === build.value) ?? BUILDS[0]).revision;
@@ -62,11 +66,14 @@ export function mountPlanExport(opts: {
     } catch (error) {
       bytes = undefined;
       button.disabled = true;
+      modButton.disabled = true;
       summary.innerHTML = `<span class="bad">${
         error instanceof Error ? error.message : String(error)}</span>`;
       return;
     }
     fileName = planFileName(sequencer.name);
+    title = sequencer.name;
+    author = sequencer.author ?? '';
     const dependencies = readDependencies(bytes);
     const hashes = dependencies.filter((d) => d.kind === 'sha1').length;
     const instruments = new Set(sequencer.tracks.map((t) => t.guid)).size;
@@ -78,6 +85,7 @@ export function mountPlanExport(opts: {
       row('size', `${(bytes.length / 1024).toFixed(1)} kB`),
     ].join('');
     button.disabled = false;
+    modButton.disabled = false;
   }
 
   const row = (label: string, value: string) =>
@@ -88,6 +96,25 @@ export function mountPlanExport(opts: {
     download(fileName, bytes, 'application/octet-stream');
     opts.log(`saved ${fileName}, ${(bytes.length / 1024).toFixed(1)} kB`);
     setStatus(`saved ${fileName}`);
+  });
+
+  // ❗ The same bytes as the .plan, wrapped the way ennuo's toolkit installs
+  // things: the FileDB row gives the plan a path and a GUID out of the range no
+  // game uses, and nothing else is in there because a sequencer plan depends on
+  // nothing but GUIDs the game already has.
+  modButton.addEventListener('click', () => {
+    if (!bytes) return;
+    const stem = fileName.replace(/.plan$/, '');
+    void writeMod({
+      ID: stem.toLowerCase(),
+      title,
+      ...(author ? { author } : {}),
+      description: 'A music sequencer exported from LBP Tracker.',
+    }, [{ path: `plans/lbptracker/${fileName}`, bytes }]).then((mod) => {
+      download(`${stem}.mod`, mod, 'application/octet-stream');
+      opts.log(`saved ${stem}.mod, ${(mod.length / 1024).toFixed(1)} kB`);
+      setStatus(`saved ${stem}.mod`);
+    });
   });
 
   build.addEventListener('change', () => void build_());

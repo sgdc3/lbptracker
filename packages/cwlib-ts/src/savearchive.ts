@@ -162,10 +162,25 @@ export async function readSaveArchive(
     at += chunk.length;
   }
 
-  const view = new DataView(archive.buffer);
+  return readFar(archive);
+}
+
+/**
+ * The resources of an archive that is already in the clear.
+ *
+ * ❗ **Not every `FAR4` is encrypted.** A save's chunks are XXTEA'd; the
+ * `data.farc` inside a toolkit `.mod` is the same layout written plain
+ * (`SaveArchive.build` in cwlib never encrypts -- the game's save writer does
+ * that afterwards). `mod.ts` comes in here directly.
+ */
+export async function readFar(archive: Uint8Array): Promise<SaveResource[]> {
+  const size = archive.length;
+  const revision = saveArchiveRevision(archive);
+  if (revision === undefined) throw new Error('not a save archive: no FAR magic at the end');
+  const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength);
   const count = view.getUint32(size - 8, false);
   // ⚠️ A count read out of a file is a length nobody has checked, and this one
-  // came out of a decryption that may have gone wrong. 0x1c bytes per entry.
+  // may have come out of a decryption that went wrong. 0x1c bytes per entry.
   let fat = size - 8 - count * 0x1c;
   if (revision > 2) fat -= 0x14; // the hashinate signature
   if (revision === 5) fat -= 4; // Vita: a fragment count as well
@@ -180,11 +195,64 @@ export async function readSaveArchive(
     const length = view.getUint32(entry + 24, false);
     if (offset + length > fat) throw new Error(`resource ${sha1} runs past the archive`);
     const bytes = archive.subarray(offset, offset + length);
-    if (hex(new Uint8Array(await crypto.subtle.digest('SHA-1', bytes))) !== sha1) bad.push(sha1);
+    if (hex(new Uint8Array(await crypto.subtle.digest('SHA-1', bytes as BufferSource))) !== sha1) bad.push(sha1);
     out.push({ sha1, bytes });
   }
   if (bad.length > 0) {
     throw new Error(`${bad.length} of ${count} resources failed their SHA-1 (${bad[0]}…)`);
   }
+  return out;
+}
+
+/** A game revision as a save key states it: the head, then branch id and revision. */
+export interface FarRevision {
+  readonly head: number;
+  readonly branchId: number;
+  readonly branchRevision: number;
+}
+
+/**
+ * Write a `FAR4`, in the clear -- cwlib's `SaveArchive.build(false)`, field for field.
+ *
+ * Resources sorted by their SHA-1 as hex, padded to a 4-byte boundary, then the
+ * 0x84-byte save key (no root resource: type 0 and a zero hash), the table, a
+ * zeroed hashinate, the count and the magic. Big-endian throughout, which is
+ * what a reader takes a zero `localUserID` to mean.
+ */
+export async function writeFar(
+  resources: readonly Uint8Array[],
+  revision: FarRevision,
+): Promise<Uint8Array> {
+  const byHash = new Map<string, Uint8Array>();
+  for (const bytes of resources) {
+    byHash.set(hex(new Uint8Array(await crypto.subtle.digest('SHA-1', bytes as BufferSource))), bytes);
+  }
+  const hashes = [...byHash.keys()].sort();
+  let data = 0;
+  for (const h of hashes) data += byHash.get(h)!.length;
+  const pad = (4 - (data % 4)) % 4;
+  const KEY = 0x84;
+  const out = new Uint8Array(data + pad + KEY + hashes.length * 0x1c + 0x14 + 8);
+  const view = new DataView(out.buffer);
+  let at = 0;
+  const offsets: number[] = [];
+  for (const h of hashes) {
+    offsets.push(at);
+    out.set(byHash.get(h)!, at);
+    at += byHash.get(h)!.length;
+  }
+  at += pad;
+  view.setUint32(at, revision.head, false);
+  view.setUint32(at + 4, ((revision.branchId << 16) | revision.branchRevision) >>> 0, false);
+  at += KEY; // everything after the two revision words is zero
+  hashes.forEach((h, i) => {
+    for (let k = 0; k < 20; k += 1) out[at + k] = parseInt(h.slice(k * 2, k * 2 + 2), 16);
+    view.setUint32(at + 20, offsets[i], false);
+    view.setUint32(at + 24, byHash.get(h)!.length, false);
+    at += 0x1c;
+  });
+  at += 0x14;
+  view.setUint32(at, hashes.length, false);
+  view.setUint32(at + 4, ((FAR << 8) | 0x34) >>> 0, false);
   return out;
 }

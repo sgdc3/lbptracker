@@ -130,9 +130,13 @@ export async function fromFiles(list: readonly File[]): Promise<Opened | undefin
   };
 }
 
-/** Whether this is an archive rather than a resource. Read by extension only. */
+/**
+ * Whether this is an archive rather than a resource. Read by extension only.
+ *
+ * A Craftworld Toolkit `.mod` is a zip; `readBackupZip` tells the two apart.
+ */
 export function isZip(file: File | { name: string }): boolean {
-  return /\.zip$/i.test(file.name);
+  return /\.(zip|mod)$/i.test(file.name);
 }
 
 /** Whether this is one of this tracker's own song files. Read by extension only. */

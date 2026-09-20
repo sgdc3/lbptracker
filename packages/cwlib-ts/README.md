@@ -22,7 +22,8 @@ console.log(level.things.length, musicSequencers(level).length);
 | `thing.ts`, `parts.ts` | the Thing graph and its part readers — `partReaders().size` is the number (50 as of 2026-09-06) |
 | `level.ts` | the walk: worlds, plans, streamed `CHKb` chunks and islands |
 | `project.ts`, `notes.ts` | the music sequencer as data — note records, chaining, automation |
-| `savearchive.ts` | PS3 `FAR4` saves, XXTEA with a constant key |
+| `savearchive.ts` | PS3 `FAR4` saves, XXTEA with a constant key; the same archive in the clear, read and written |
+| `mod.ts` | Craftworld Toolkit `.mod` packages, read and written |
 | `psf.ts`, `zip.ts` | `PARAM.SFO`, and a stored/deflated ZIP reader and writer |
 | `backup.ts` | the pile: a folder, a zip of one, or a save, in and resources out |
 | `platform/` | the inflate adapters, Node and browser |

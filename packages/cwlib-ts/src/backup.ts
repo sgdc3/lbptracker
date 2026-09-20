@@ -20,6 +20,7 @@
 
 import type { Inflate } from './resource.ts';
 import { readLevelProject, type LevelProject } from './project.ts';
+import { looksLikeMod, readMod } from './mod.ts';
 import { psfName } from './psf.ts';
 import { readSaveArchive, saveArchiveRevision } from './savearchive.ts';
 import { readZip, type InflateRaw } from './zip.ts';
@@ -203,13 +204,23 @@ export async function readBackup(
  * ❗ **One level deep is enough and nesting is not followed.** A zip of a zip is
  * something a person did on purpose and can undo on purpose; guessing at it
  * would mean inflating anything that happened to start with `PK`.
+ *
+ * ❗ **A toolkit `.mod` is a zip too, and it is unpacked HERE, before
+ * `readBackup` sees it**: its `data.farc` carries a save's magic without a
+ * save's encryption (`mod.ts`). What goes on is its resources under the paths
+ * its FileDB gives them.
  */
 export async function readBackupZip(
   bytes: Uint8Array,
   inflate: Inflate,
   inflateRaw: InflateRaw,
 ): Promise<BackupResult> {
-  return readBackup(await readZip(bytes, inflateRaw), inflate);
+  const files = await readZip(bytes, inflateRaw);
+  if (looksLikeMod(files)) {
+    const mod = await readMod(files);
+    return readBackup(mod.entries.map((e) => ({ name: e.path, bytes: e.bytes })), inflate);
+  }
+  return readBackup(files, inflate);
 }
 
 /**
