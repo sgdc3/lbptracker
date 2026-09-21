@@ -303,10 +303,15 @@ The game's budget of sample memory per sequencer, on the page since 0.2.33. **Th
 readings live in [sequencer-data-model.md](sequencer-data-model.md)**; `lib/src/thermometer.ts` is
 the sum, and `web/src/daw/thermometer.ts` feeds it the song and draws it.
 
-- The meter is `#thermo`, a DOM card over the board's top right, beside the "?": blue as the game's
-  is, red past the limit, the share of `MaxSequencerMemory` in the bar and `used / 1.00 MB` under it.
-  Megabytes are **decimal**, so the game's round million reads 1.00. ⚠️ The game puts its thermometer
-  at the left; ours is at the right because the board's top-left corner is the zoom.
+- The meter is `#thermo`, a narrow vertical column down the **left** of the arrange view, where the
+  game's is: blue, red past the limit, filling upwards, the share of `MaxSequencerMemory` above the
+  bar and `used / 1.00 / MB` on three short lines under it. Megabytes are **decimal**, so the game's
+  round million reads 1.00. ❗ **It is beside the arranger, never over it** (the owner's rule, since
+  0.2.34; 0.2.33 had a card over the top right): while it shows, `.view.arrange` sets `--thermo-w`
+  through `:has()`, and both `.board-scroller` and `.chip-panel` start there. Hidden, the width is 0
+  and the board has the whole page. It carries `data-help="thermometer"` and a `tabindex`, so a
+  click or Enter opens its own help topic: its cursor is `help`, and for a day that promised a
+  dialog nothing opened.
 - Sizes come from `fixtures/smp/manifest.json`'s `size` column (the FileDB's, which `stage-site.ts`
   keeps), and each instrument's sample list from its `.rinst`: `instrumentSamples` in `assets.ts`
   reads all 68 once, in the background, at start-up. **Until they are in, the meter is hidden and

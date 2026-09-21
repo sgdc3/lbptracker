@@ -18,6 +18,7 @@ export type HelpTopic =
   | 'app'
   | 'open'
   | 'board'
+  | 'thermometer'
   | 'notes'
   | 'song'
   | 'engine'
@@ -111,6 +112,16 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
       p('A level holding several songs lists them below the box: pick one and it becomes the song. ' +
         'Whatever is open is replaced, so save first if it matters.'),
   },
+  thermometer: {
+    title: 'The thermometer',
+    body:
+      p('The blue bar down the left side is the game\'s own thermometer for a sequencer: how much sample memory its ' +
+        'instruments take, out of the 1 MB the game allows, with the same in megabytes under it. ' +
+        '<strong>Each different sound costs its samples once</strong>, however many times it is placed, sounds that ' +
+        'share samples pay for them once between them, and notes are free. The list that asks which instrument ' +
+        'shows what each one would add, in red when it would not fit. Past 100% the bar turns red: the tracker still ' +
+        'plays the song, but the game would say there are too many instruments on the sequencer.'),
+  },
   board: {
     title: 'The board',
     body:
@@ -133,12 +144,8 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
         'and the board grows to hold rows pasted below its last. These keys reach the board when it has the ' +
         'focus or the note panel is closed; otherwise they work on the notes in the panel.') +
       h('The thermometer') +
-      p('The blue bar at the top right is the game\'s own thermometer for a sequencer: how much sample memory its ' +
-        'instruments take, out of the 1 MB the game allows, with the same in megabytes under it. ' +
-        '<strong>Each different sound costs its samples once</strong>, however many times it is placed, sounds that ' +
-        'share samples pay for them once between them, and notes are free. The list that asks which instrument ' +
-        'shows what each one would add, in red when it would not fit. Past 100% the bar turns red: the tracker still ' +
-        'plays the song, but the game would say there are too many instruments on the sequencer.') +
+      p('The blue bar down the left side is the game\'s budget of sample memory for one sequencer. ' +
+        'Click it to read how it counts.') +
       h('Rows, channels and the end') +
       p('The corner cell between the row numbers and the bar numbers zooms the board in time: ' +
         '<strong>-</strong> and <strong>+</strong> make the bars narrower or wider, the glass puts them back; the rows keep ' +

@@ -112,28 +112,31 @@ main { flex: 1 0 auto; width: 100%; box-sizing: border-box; margin: 0; max-width
 }
 .step .help-btn { margin-left: auto; }
 .board-help { position: absolute; right: 1.2rem; top: .55rem; z-index: 5; }
-/* The sequencer's thermometer, beside it: blue, as the game's is, and red past the limit. */
+/*
+ * The sequencer's thermometer: a narrow column at the left of the arranger, as
+ * the game's is, blue and red past the limit. It is BESIDE the board and the
+ * chip panel, never over them: while it shows, both start at `--thermo-w`.
+ */
 .thermo {
-  position: absolute; right: 3rem; top: .4rem; z-index: 5; width: 7rem; cursor: help; box-sizing: border-box;
-  padding: .25rem .35rem .2rem; background: var(--bg); border: 1px solid var(--line); border-radius: .5rem;
+  position: absolute; left: 0; top: 0; bottom: 0; width: var(--thermo-w); box-sizing: border-box; cursor: help;
+  display: flex; flex-direction: column; align-items: center; gap: .3rem; padding: .4rem 0 .35rem;
+  background: var(--bg); border-right: 1px solid var(--line);
 }
 .thermo[hidden] { display: none; }
+.view.arrange { --thermo-w: 0rem; }
+.view.arrange:has(> .thermo:not([hidden])) { --thermo-w: 2.5rem; }
 .thermo-bar {
-  position: relative; height: 1.3rem; box-sizing: border-box;
-  border: 1px solid var(--line); border-radius: .65rem; overflow: hidden; background: var(--panel-2);
+  position: relative; flex: 1 1 auto; min-height: 2rem; width: .7rem; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: .35rem; overflow: hidden; background: var(--panel-2);
 }
-/* The same in megabytes, under it: used / the game's maximum. */
-.thermo-bytes {
-  margin-top: .15rem; text-align: center; font: .68rem/1.2 ui-monospace, Consolas, monospace;
-  color: var(--dim);
-}
-.thermo.over .thermo-bytes { color: #d9605d; }
-.thermo-fill { position: absolute; left: 0; top: 0; bottom: 0; background: #2f7fd6; transition: width .15s; }
+.thermo-fill { position: absolute; left: 0; right: 0; bottom: 0; background: #2f7fd6; transition: height .15s; }
 .thermo.over .thermo-fill { background: #c8423f; }
-.thermo-text {
-  position: relative; display: block; text-align: center; font: .72rem/1.3rem ui-monospace, Consolas, monospace;
-  color: var(--ink); text-shadow: 0 0 3px var(--bg);
+.thermo-text, .thermo-bytes {
+  flex: 0 0 auto; text-align: center; font: .62rem/1.25 ui-monospace, Consolas, monospace; color: var(--dim);
+  white-space: pre-line;
 }
+.thermo-text { color: var(--ink); font-size: .68rem; }
+.thermo.over .thermo-text, .thermo.over .thermo-bytes { color: #d9605d; }
 .help-dialog .picker-title { font-size: 1.05rem; color: var(--ink); font-weight: 600; }
 .help-body { max-height: min(70vh, 40rem); overflow: auto; overscroll-behavior: contain; color: var(--dim); font-size: .9rem; }
 .help-body p { margin: 0 0 .7rem; }
@@ -158,7 +161,7 @@ main { flex: 1 0 auto; width: 100%; box-sizing: border-box; margin: 0; max-width
 }
 .view.arrange[hidden] { display: none; }
 .board-scroller {
-  position: absolute; inset: 0; overflow: auto; background: var(--panel-2);
+  position: absolute; inset: 0; left: var(--thermo-w); overflow: auto; background: var(--panel-2);
 }
 .board-scroller canvas { position: sticky; top: 0; left: 0; display: block; z-index: 1; }
 /*
@@ -175,7 +178,7 @@ main { flex: 1 0 auto; width: 100%; box-sizing: border-box; margin: 0; max-width
 .board-scroller:focus-visible canvas,
 .roll-scroller:focus-visible canvas { outline: 2px solid var(--accent); outline-offset: -2px; }
 .chip-panel {
-  position: absolute; left: 0; right: 0; bottom: 0; height: var(--panel-h, 46%);
+  position: absolute; left: var(--thermo-w); right: 0; bottom: 0; height: var(--panel-h, 46%);
   min-height: 10rem; max-height: 92%; display: flex; flex-direction: column;
   background: var(--panel); border-top: 1px solid var(--line);
   box-shadow: 0 -12px 34px rgb(0 0 0 / .45); z-index: 5;

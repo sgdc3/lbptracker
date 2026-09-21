@@ -3,7 +3,7 @@
  * an open sequencer, counting bytes of sample against `MaxSequencerMemory`.
  *
  * The rule is the game's and lives in `@lbptracker/lib/thermometer.ts`; this
- * file feeds it the song and the manifests, draws the meter over the board and
+ * file feeds it the song and the manifests, draws the meter beside the board and
  * prices the instrument picker's rows -- the game's own message points at the
  * thermometer "to see how expensive each instrument you place is".
  *
@@ -82,14 +82,18 @@ export function mountThermometer(root: HTMLElement): void {
     const over = overSequencerMemory(bytes);
     root.hidden = false;
     root.classList.toggle('over', over);
-    fill.style.width = `${Math.min(100, (100 * bytes) / MAX_SEQUENCER_MEMORY)}%`;
+    fill.style.height = `${Math.min(100, (100 * bytes) / MAX_SEQUENCER_MEMORY)}%`;
     text.textContent = percentOfLimit(bytes);
-    megabytes.textContent = `${inMegabytes(bytes)} / ${inMegabytes(MAX_SEQUENCER_MEMORY)} MB`;
+    // Three short lines: the column is narrow (`white-space: pre-line`).
+    megabytes.textContent = `${inMegabytes(bytes)}
+/ ${inMegabytes(MAX_SEQUENCER_MEMORY)}
+MB`;
     root.setAttribute('aria-valuenow', String(Math.min(bytes, MAX_SEQUENCER_MEMORY)));
     root.title =
       `Sequencer thermometer: ${bytes.toLocaleString('en')} of ${MAX_SEQUENCER_MEMORY.toLocaleString('en')} bytes of samples. ` +
       'Each different sound costs its samples once, however many chips play it; notes are free. ' +
-      (over ? 'This is more than the game allows on one sequencer.' : 'Past 100% the game says there are too many instruments.');
+      (over ? 'This is more than the game allows on one sequencer.' : 'Past 100% the game says there are too many instruments.') +
+      ' Click for more.';
     // The game says so once, when the cost goes over, and again only after it has been back under.
     if (over && !wasOver) {
       setStatus('There are too many instruments on this sequencer for the game. Try removing or replacing some.', true);
