@@ -147,8 +147,18 @@ export const CLIP_STEPS_INCREMENT = 2 * STEPS_PER_BAR;
 export const MAX_PITCH = 127;
 export const MAX_VOLUME = 127;
 export const MAX_TIMBRE = 15;
-/** How many rows a board may have. Ours: the file's own limit is not measured, and this is far past any level seen. */
-export const MAX_BOARD_ROWS = 64;
+/**
+ * How many rows a board may have. The game's: its editor clamps a board to 2625 units a side,
+ * 25 rows of 105 (eboot `v0x169b35`, *The board's size limit* in steering/sequencer-data-model.md).
+ */
+export const MAX_BOARD_ROWS = 25;
+/** How many cells wide a board may be. The game's too: 26250 units of 52.5, from the same clamp. */
+export const MAX_BOARD_CELLS = 500;
+
+/** The last cell a chip of this length may be anchored on with its right edge still on the board. */
+function lastCellFor(steps: number): number {
+  return MAX_BOARD_CELLS - Math.ceil(steps / STEPS_PER_CELL);
+}
 /** Six mixer channels serialise; the engine keeps eight records. */
 export const MIXER_CHANNELS = 6;
 
@@ -258,7 +268,7 @@ export function addClip(song: Song, at: { cell: number; row: number }, guid: num
     id: song.nextId++,
     guid,
     name,
-    cell: Math.max(0, Math.round(at.cell)),
+    cell: clampInt(at.cell, 0, lastCellFor(DEFAULT_CLIP_STEPS)),
     row: Math.max(0, Math.round(at.row)),
     steps: DEFAULT_CLIP_STEPS,
     ...NEW_CLIP_DEFAULTS,
@@ -321,11 +331,12 @@ export function clipsEndCell(clips: readonly { cell: number; steps: number }[]):
 
 /**
  * A shift of a set of chips, clamped so that none of them leaves the board:
- * no cell before the first, no row above the top or below the last of
- * `boardRows`. A set taller than the board keeps its top row on it.
+ * no cell before the first or past the last the game's board has, no row
+ * above the top or below the last of `boardRows`. A set taller than the board
+ * keeps its top row on it, and one wider its first cell.
  */
 export function clampClipShift(
-  clips: readonly { cell: number; row: number }[],
+  clips: readonly { cell: number; row: number; steps?: number }[],
   shift: ClipShift,
   boardRows: number,
 ): ClipShift {
@@ -334,8 +345,9 @@ export function clampClipShift(
   if (!clips.length) return { cells, rows };
   const anchor = clipsAnchor(clips);
   const bottom = Math.max(...clips.map((c) => c.row));
+  const room = Math.min(...clips.map((c) => lastCellFor(c.steps ?? DEFAULT_CLIP_STEPS) - c.cell));
   return {
-    cells: Math.max(-anchor.cell, cells),
+    cells: Math.max(-anchor.cell, Math.min(room, cells)),
     rows: Math.max(-anchor.row, Math.min(boardRows - 1 - bottom, rows)),
   };
 }
@@ -690,7 +702,7 @@ export function songEndSteps(song: Song): number {
  * last chip -- dragged back that far it becomes "at the last chip" again.
  */
 export function setSongEnd(song: Song, steps: number): void {
-  const cells = Math.max(0, Math.round(steps / STEPS_PER_CELL));
+  const cells = clampInt(steps / STEPS_PER_CELL, 0, MAX_BOARD_CELLS);
   let last = 0;
   for (const clip of song.clips) last = Math.max(last, clip.cell * STEPS_PER_CELL + clip.steps);
   const wanted = cells * STEPS_PER_CELL;

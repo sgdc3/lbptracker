@@ -341,33 +341,33 @@ test('the corpus survives songFromSequencer -> trackFromClip byte for byte, near
   assert.equal(sameNotes, clips, 'every clip plays the same notes after a round trip');
   assert.ok(same / clips >= 0.98, `${same} of ${clips} byte-identical`);
 });
-
-test('a set of a note’s points moves as one, with the unselected ones as its walls', () => {
-  const song = newSong();
-  const clip = addClip(song, { cell: 0, row: 0 }, 129085);
-  const note = addNote(song, clip, { thirds: 0, pitch: 60 });
-  for (const t of [6, 12, 18]) addPoint(clip, note, t);
-  const at = () => note.points.map((p) => `${p.thirds}/${p.pitch}`).join(' ');
-  assert.equal(at(), '0/60 6/60 12/60 18/60');
-
-  // The tail alone: it may not pass the point before it, and the clip's end
-  // is the wall on the other side.
-  const tail = pointShiftLimits(clip, note, [2, 3]);
-  assert.equal(tail.minThirds, -6, 'point 2 stops on point 1');
-  assert.equal(tail.maxThirds, lastThirds(clip) - 18, 'point 3 stops at the end of the grid');
-
-  movePoints(clip, note, [2, 3], 6, 4);
-  assert.equal(at(), '0/60 6/60 18/64 24/64', 'the two moved together, the head stayed');
-
-  // ⚠️ The bug this exists for: clamping each point against its immediate
-  // neighbour pins a group, because the neighbour has not moved yet.
-  movePoints(clip, note, [2, 3], -6, 0);
-  assert.equal(at(), '0/60 6/60 12/64 18/64', 'and back, rather than jamming on each other');
-
-  // A run that would pass a wall is taken as far as it can go, not dropped.
-  movePoints(clip, note, [2, 3], -99, 0);
-  assert.equal(at(), '0/60 6/60 6/64 12/64', 'point 2 lands on point 1 and stops');
-});
+
+test('a set of a note’s points moves as one, with the unselected ones as its walls', () => {
+  const song = newSong();
+  const clip = addClip(song, { cell: 0, row: 0 }, 129085);
+  const note = addNote(song, clip, { thirds: 0, pitch: 60 });
+  for (const t of [6, 12, 18]) addPoint(clip, note, t);
+  const at = () => note.points.map((p) => `${p.thirds}/${p.pitch}`).join(' ');
+  assert.equal(at(), '0/60 6/60 12/60 18/60');
+
+  // The tail alone: it may not pass the point before it, and the clip's end
+  // is the wall on the other side.
+  const tail = pointShiftLimits(clip, note, [2, 3]);
+  assert.equal(tail.minThirds, -6, 'point 2 stops on point 1');
+  assert.equal(tail.maxThirds, lastThirds(clip) - 18, 'point 3 stops at the end of the grid');
+
+  movePoints(clip, note, [2, 3], 6, 4);
+  assert.equal(at(), '0/60 6/60 18/64 24/64', 'the two moved together, the head stayed');
+
+  // ⚠️ The bug this exists for: clamping each point against its immediate
+  // neighbour pins a group, because the neighbour has not moved yet.
+  movePoints(clip, note, [2, 3], -6, 0);
+  assert.equal(at(), '0/60 6/60 12/64 18/64', 'and back, rather than jamming on each other');
+
+  // A run that would pass a wall is taken as far as it can go, not dropped.
+  movePoints(clip, note, [2, 3], -99, 0);
+  assert.equal(at(), '0/60 6/60 6/64 12/64', 'point 2 lands on point 1 and stops');
+});
 
 test('a block of chips moves as one, stays on the board, and copies onto free cells', () => {
   const song = newSong();
@@ -386,6 +386,8 @@ test('a block of chips moves as one, stays on the board, and copies onto free ce
     clampClipShift([a, b], { cells: 0, rows: 0 }, 1), { cells: 0, rows: -1 },
     'taller than the board: the top row stays on it',
   );
+  // The game's board is 500 cells wide: a four-bar chip, two cells, is anchored no further than 498.
+  assert.deepEqual(clampClipShift([a, b], { cells: 900, rows: 0 }, 4), { cells: 495, rows: 0 });
   assert.deepEqual(moveClips(song, [a.id, b.id], { cells: -3, rows: 1 }), { cells: -1, rows: 1 });
   assert.deepEqual([a.cell, a.row, b.cell, b.row], [0, 2, 2, 3]);
   assert.deepEqual([other.cell, other.row], [6, 1], 'a chip outside the block stays');

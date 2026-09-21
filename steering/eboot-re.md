@@ -119,6 +119,7 @@ only**; the `file` column is computed with the `0x8AD0` delta.
 | world length → steps (`x·32/105`) | `v0x1c5cda` |
 | board position → grid cell (`floor(2x/105 − 0.5)`, `floor(−y/105)`) | `v0x1c4ad0`–`v0x1c4b23`; constants `v0xe60f98`, `v0xe60f9c`, `v0xe60fa8` |
 | the clip filler (`PInstrument` → `0x470` clip), and its one caller | `v0x1607c0`; `v0x1c449b` (passes `rdx = 0`); the instrument index written by `v0x1c4420` |
+| the board resize clamp: caps `(26250, 2625)` / `(2625, 2625)`, grids, the ceil-snap; `PMicrochip.CircuitBoardSizeX/Y` at `+0x4c`/`+0x50` | `v0x169b35`–`v0x169bc1`; `v0xe5c9c0`–`v0xe5c9f0`; serialiser `v0xd3afb4` — [sequencer-data-model.md](sequencer-data-model.md) |
 | the clip header writer (channel band), the band divisor, the `<< 4` | `v0x1608d0`; `v0x1c7909`–`v0x1c793c`; `v0x1c452a` |
 | the runtime instrument builder, and the DSP-record builder that copies `Params` at `+0x4e8` | `v0x1c3fb0`; `v0x2a1144` (entry; `v0x2a1190` is mid-function), constructor above it `v0x2a0e80`, the first slot field copied at `v0x2a1220` |
 | sample-preload job spawner, its worker, the `RSample` (type `0x31`) load | `v0x1c3c80`, `v0x1c37f0`, `v0x1c38aa`; `"StartSamplePreload"` at `v0xe61158`, referenced at `v0x1c3ce5` |

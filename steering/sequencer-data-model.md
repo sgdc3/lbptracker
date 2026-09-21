@@ -502,6 +502,28 @@ inside its board. ⚠️ The plugin's `mod 8` is a bounds guard on an already-cl
 mapping, and a modulo shipped for two months: it re-routes 667 of 1,821 tracks on the ten
 multi-channel sequencers.
 
+**The board's size limit** — the editor's resize clamps the board before it snaps it (function
+around `v0x169940`–`v0x169c47`, read 2026-09-21 with `lbpdis.py`; found by scanning the image for
+`25 × 105` as a float — 24, 26, 30, 32, 40, 50 and 64 rows have no such constant at all):
+
+```
+cap  = (26250, 2625)  grid = (52.5, 105)     bit 37 of the Thing's part mask set     v0xe5c9c0, v0xe5c9e0
+cap  = ( 2625, 2625)  grid = (52.5, 52.5)    clear                                   v0xe5c9d0, v0xe5c9f0
+size = max(min(requested, cap), extent of the components)                            v0x169b47, v0x169b4b
+size = ceil(size / grid − 0.1) × grid                                                v0x169b94–v0x169bc1
+```
+
+So a sequencer's board is at most **25 rows** tall and **500 cells** (250 tiles) wide. *Read*: the
+two caps, the two grids and which pairs with which (one `test rcx, rcx` picks both). *Inferred*:
+that the set bit is the sequencer — from the 52.5 × 105 grid being the one `v0x1c4ad0` reads chips
+on, and from the corpus's tallest board being exactly 25. The sizes are `PMicrochip + 0x4c` / `+0x50`
+(serialiser `v0xd3afb4`, `v0xd3afc7`), and `v0x1686b2`–`v0x1686d0` tests both against the same
+2625.0 (`v0xe5d23c`) on another path — ⚠️ not read further; what it does with an oversized board is
+unknown. `MAX_BOARD_ROWS` and `MAX_BOARD_CELLS` in `packages/lbp-tracker-lib/src/song.ts` are the 25 and
+the 500: placing, moving and the song's end stop there. ⚠️ Two routes still pass the right edge —
+lengthening a chip that already sits against it, and a paste walking right off a taken cell — and
+a level that arrives larger is opened as it is.
+
 **`Key` and `Scale`** act in the engine, after the record is read: the note is snapped to the scale
 table first and then transposed by `key mod 12` ([synth-engine.md](synth-engine.md)). Reading 0 as
 "no key" and 0 as "C" happen to agree; reading `Key` as a literal root would drop 96.7% of all
