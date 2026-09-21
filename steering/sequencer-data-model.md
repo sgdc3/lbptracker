@@ -524,6 +524,47 @@ the 500: placing, moving and the song's end stop there. ⚠️ Two routes still 
 lengthening a chip that already sits against it, and a paste walking right off a taken cell — and
 a level that arrives larger is opened as it is.
 
+**The sequencer's thermometer** — a budget of its own, in bytes of sample, read 2026-09-21:
+
+```
+cost  = sum of the FileDB size of every DISTINCT sample GUID among the used SampleGuids_0..7
+        of every RInstrument on the board                                     v0x1c4720
+limit = MaxSequencerMemory = 1000000        gamedata/data/limits_settings.lmt, GUID 45910
+shown = cost of the sequencer a player has open, the largest among the players   v0x74b960
+```
+
+- `v0x1c4720(PSequencer)` collects the board's instruments with `v0x1c49e0` (the same walk over
+  the board's children that computes the grid cell at `v0x1c4ad0`), and for each `RInstrument`
+  that is loaded (`[+0x45] & 0xfe == 4`) inserts the eight `u32` at `+0xc8`..`+0xe4` that differ
+  from the empty value into a `std::set` (`v0xb3ab30`). It then walks the set, asks the file
+  databases for each GUID's row (`v0x10680`) and adds `[row + 4]`. So **a chip costs nothing the
+  second time, two instruments sharing a sample pay for it once, and notes cost nothing.**
+- *Read*: the row keeps its path pointer at `+0x1c` (`v0xf407`), which leaves exactly two `u32`
+  and a 20-byte SHA-1 before it. *Inferred*: that `+4` is the size, from the file's own order
+  (date, size, SHA-1) — and **confirmed by the corpus**, below; a date would fill the budget at once.
+- `limits_settings.lmt` is a resource in its **text** form (magic `LMTt`): tab-separated
+  `name value` lines with the developers' `#` comments, no container to inflate. It is
+  `RLimitsSettings` (type 33, loaded at `v0x27d3d0`), whose serialiser names every field;
+  `MaxSequencerMemory` is `+0xc4` (`v0xc4b8ea`). Read from the base game's `intro_001.farc`; the
+  patch's own FileDB names the same SHA-1 (`03ca65ee…`) for GUID 45910, so 1.28 reads this file.
+- The level thermometer's table has 37 budgets of 20 bytes (`id, max, current, flags, dirty,
+  enabled`); `v0x74af60` fills it, and the sequencer is entry 29: max from `+0xc4`, flags `0x38`.
+  The level's fill takes the largest ratio among entries with `flags & 0x70 == 0x10`
+  (`v0x74cf3b`), so **entry 29 never moves the level thermometer**; its ratio goes to the
+  object's `+0x354` alone (`v0x74cc77`–`v0x74cc9e`).
+- When `current > max` — strictly — and the flag at `+0x377` is clear, `v0x74cb31`–`v0x74cc63`
+  posts game message `0x44`, `EGMT_SEQUENCER_LIMIT_EXCEEDED` by its place in the enum's name
+  list, with LAMS `0xb1304e3b`: *"There are too many instruments on this sequencer! Try removing
+  or replacing some. Check the blue thermometer to the left to see how expensive each instrument
+  you place is."* The flag clears once a sequencer is open and its cost is not over (`v0x74bafa`). ⚠️ **Not read: whether
+  anything refuses the chip.** What was read is a warning.
+
+✔ `packages/lbp-tracker-lib/dev/sequencer-memory.ts` runs the sum over every real sequencer on
+disk: **183 sequencers, none over, the fullest at 999,562 bytes** and 36 of them between 90% and
+100% — creators filled it to the byte, which is what says the size, the set and the million are
+all the right reading. One instrument alone runs from 490 bytes (`sine_wave`) to 340,346
+(`a_kit_1`); the three pianos share their samples, so all three together cost what one does.
+
 **`Key` and `Scale`** act in the engine, after the record is read: the note is snapped to the scale
 table first and then transposed by `key mod 12` ([synth-engine.md](synth-engine.md)). Reading 0 as
 "no key" and 0 as "C" happen to agree; reading `Key` as a literal root would drop 96.7% of all

@@ -132,6 +132,13 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
         'selects every instrument. A paste that would land on a taken cell moves right to the first free one, ' +
         'and the board grows to hold rows pasted below its last. These keys reach the board when it has the ' +
         'focus or the note panel is closed; otherwise they work on the notes in the panel.') +
+      h('The thermometer') +
+      p('The blue bar at the top right is the game\'s own thermometer for a sequencer: how much sample memory its ' +
+        'instruments take, out of the 1 MB the game allows, with the same in megabytes under it. ' +
+        '<strong>Each different sound costs its samples once</strong>, however many times it is placed, sounds that ' +
+        'share samples pay for them once between them, and notes are free. The list that asks which instrument ' +
+        'shows what each one would add, in red when it would not fit. Past 100% the bar turns red: the tracker still ' +
+        'plays the song, but the game would say there are too many instruments on the sequencer.') +
       h('Rows, channels and the end') +
       p('The corner cell between the row numbers and the bar numbers zooms the board in time: ' +
         '<strong>-</strong> and <strong>+</strong> make the bars narrower or wider, the glass puts them back; the rows keep ' +

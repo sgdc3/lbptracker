@@ -20,7 +20,8 @@ import { readInstrument, usedSlots } from '@lbptracker/lib/rinstrument.ts';
 import { engineSample, readWav } from '@lbptracker/lib/wav.ts';
 import { webInflate } from '@lbptracker/cwlib/platform/web.ts';
 
-export type Manifest = Map<number, { file: string; path?: string }>;
+/** `size` is the FileDB's, in bytes: what the sequencer's thermometer counts a sample as. */
+export type Manifest = Map<number, { file: string; path?: string; size?: number }>;
 
 
 /**
@@ -56,8 +57,31 @@ export async function manifest(dir: string): Promise<Manifest> {
   const rows = (await (await fetch(asset(`${dir}/manifest.json`))).json()) as {
     guid: number;
     file: string;
+    size?: number;
   }[];
   return new Map(rows.map((r) => [r.guid, r]));
+}
+
+/**
+ * Every instrument's used sample GUIDs, for the sequencer's thermometer
+ * (`@lbptracker/lib/thermometer.ts`): the cost of an instrument is a property
+ * of its `.rinst`, so pricing the picker's list means reading them all. They
+ * are 68 files of a few hundred bytes. One that fails to load is left out, and
+ * then costs nothing, rather than taking the thermometer down with it.
+ */
+export async function instrumentSamples(rinstIndex: Manifest): Promise<Map<number, number[]>> {
+  const out = new Map<number, number[]>();
+  await Promise.all([...rinstIndex].map(async ([guid, row]) => {
+    try {
+      const response = await fetch(asset(`fixtures/rinst/${row.file}`));
+      if (!response.ok) return;
+      const resource = await loadResource(new Uint8Array(await response.arrayBuffer()), webInflate);
+      out.set(guid, usedSlots(readInstrument(resource.data)).map((s) => s.guid));
+    } catch {
+      // Left out: see above.
+    }
+  }));
+  return out;
 }
 
 export async function loaderFor(

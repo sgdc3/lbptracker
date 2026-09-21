@@ -21,7 +21,12 @@ import Glyph from './Glyph.vue';
 import { pickInstrument } from './instrument-picker.ts';
 import type { EditorState } from './state.ts';
 
-const props = defineProps<{ state: EditorState; instruments: InstrumentInfo[] }>();
+const props = defineProps<{
+  state: EditorState;
+  instruments: InstrumentInfo[];
+  /** Prices for the sound picker, given the chip whose sound is changing. */
+  costs?: (clipId: number) => ((guid: number) => { text: string; over: boolean }) | undefined;
+}>();
 const emit = defineEmits<{ duplicate: []; remove: []; status: [text: string] }>();
 
 // Every computed below touches `version` first so that it re-runs on a change.
@@ -66,7 +71,10 @@ const sound = computed(() => {
 
 /** The sound field: the same modal picker a new chip asks with. */
 const chooseSound = async () => {
-  const guid = await pickInstrument(props.instruments, 'Which sound?');
+  const changing = props.state.clip();
+  const guid = await pickInstrument(
+    props.instruments, 'Which sound?', changing ? props.costs?.(changing.id) : undefined,
+  );
   if (guid === null) return;
   props.state.edit('notes', () => {
     const c = props.state.clip();

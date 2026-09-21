@@ -4,6 +4,14 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.33 (2026-09-21)
+
+- The sequencer's thermometer is here, at the top right of the board: the game's own blue bar for
+  how much sample memory the instruments take, out of the 1 MB it allows, with the megabytes under
+  it. Each different sound counts once however often you place it, and notes cost nothing.
+- The list that asks which instrument now shows what each one would add to the thermometer, in red
+  when it would not fit.
+
 ## 0.2.32 (2026-09-21)
 
 - The board now stops where the game's does: 25 rows tall and 500 cells wide. It used to grow to

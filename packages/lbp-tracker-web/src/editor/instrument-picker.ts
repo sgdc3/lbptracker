@@ -16,6 +16,7 @@ import { confineWheel } from '../help.ts';
 export function pickInstrument(
   instruments: readonly InstrumentInfo[],
   title = 'Which instrument?',
+  cost?: (guid: number) => { text: string; over: boolean },
 ): Promise<number | null> {
   return new Promise((resolve) => {
     const dialog = document.createElement('dialog');
@@ -29,6 +30,7 @@ export function pickInstrument(
       render: () => h(InstrumentPicker, {
         instruments: instruments as InstrumentInfo[],
         title,
+        cost,
         onPick: (guid: number) => finish(guid),
         onCancel: () => finish(null),
       }),

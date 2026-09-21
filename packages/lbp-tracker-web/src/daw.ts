@@ -32,6 +32,7 @@ import {
   setErrorSink, setStatus, state,
 } from './daw/session.ts';
 import { mountArrange } from './daw/arrange.ts';
+import { loadThermometer } from './daw/thermometer.ts';
 import { mountMixer } from './daw/mixer.ts';
 import { mountRender } from './daw/render-view.ts';
 import { mountConvert } from './daw/convert-view.ts';
@@ -571,6 +572,8 @@ void ensureAssets().catch((error: unknown) => {
   setStatus('the game\'s instruments are not available: extract them first', true);
   setError(String((error as Error).stack ?? error));
 });
+// The sequencer's thermometer needs every instrument's sample list; without the assets it stays hidden.
+void loadThermometer().catch(() => undefined);
 mountFooter();
 mountHelp();
 

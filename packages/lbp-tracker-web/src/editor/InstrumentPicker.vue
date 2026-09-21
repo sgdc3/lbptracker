@@ -10,7 +10,12 @@ import { computed, onMounted, ref, useTemplateRef, watch } from 'vue';
 import type { InstrumentInfo } from './instruments.ts';
 import Glyph from './Glyph.vue';
 
-const props = defineProps<{ instruments: InstrumentInfo[]; title: string }>();
+const props = defineProps<{
+  instruments: InstrumentInfo[];
+  title: string;
+  /** What a sound would add to the sequencer's thermometer, as text, and whether it fits. */
+  cost?: (guid: number) => { text: string; over: boolean };
+}>();
 const emit = defineEmits<{ pick: [guid: number]; cancel: [] }>();
 
 const query = ref('');
@@ -113,6 +118,12 @@ onMounted(() => search.value?.focus());
           <Glyph :family="row.item.family" :colour="row.item.colour" :icon="row.item.icon" />
           <span>{{ row.item.name }}</span>
           <span v-if="row.item.category" class="picker-category">{{ row.item.category }}</span>
+          <span
+            v-if="cost"
+            class="picker-cost"
+            :class="{ over: cost(row.item.guid).over }"
+            :title="cost(row.item.guid).over ? 'More than the game allows on one sequencer' : 'Added to the sequencer thermometer'"
+          >{{ cost(row.item.guid).text }}</span>
         </button>
       </template>
       <div v-if="!shown.length" class="picker-none">nothing matches</div>

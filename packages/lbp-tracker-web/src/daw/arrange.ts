@@ -24,6 +24,7 @@ import Inspector from '../editor/Inspector.vue';
 import {
   auditionNote, auditionPitch, byGuid, instruments, onPlan, onPlayer, player, setStatus, state,
 } from './session.ts';
+import { instrumentCosts, mountThermometer, percentOfLimit } from './thermometer.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -152,6 +153,7 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     const bars = at.steps / STEPS_PER_BAR;
     const guid = await pickInstrument(
       instruments.value, `Which instrument, for ${bars} bars at bar ${barOfCell(at.cell)}, row ${at.row}?`,
+      pickerCosts(),
     );
     if (guid === null) return;
     let added: Clip | null = null;
@@ -258,10 +260,26 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
     placeChips(clips, { cells: target.cell - anchor.cell, rows: target.row - anchor.row });
   }
 
+  /**
+   * The picker's prices: what each sound would add to the sequencer's
+   * thermometer, "+0%" for one the board already pays for. Nothing until the
+   * instruments have been read.
+   */
+  function pickerCosts(exceptClip?: number): ((guid: number) => { text: string; over: boolean }) | undefined {
+    const price = instrumentCosts(exceptClip);
+    if (!price) return undefined;
+    return (guid) => {
+      const { added, over } = price(guid);
+      return { text: `+${percentOfLimit(added)}`, over };
+    };
+  }
+  mountThermometer($('thermo'));
+
   createApp({
     render: () => h(Inspector, {
       state,
       instruments: instruments.value,
+      costs: pickerCosts,
       // The panel's buttons are for the chip it shows, whatever the board has selected.
       onDuplicate: () => { const c = state.clip(); if (c) duplicateChips([c]); },
       onRemove: () => { const c = state.clip(); if (c) removeChips([c]); },

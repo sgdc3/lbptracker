@@ -39,19 +39,29 @@ export const instruments = shallowRef<InstrumentInfo[]>([]);
 export const byGuid = new Map<number, InstrumentInfo>();
 export let rinstIndex: Manifest | null = null;
 export let smpIndex: Manifest | null = null;
-let loader: InstrumentLoader | null = null;
+let loading: Promise<InstrumentLoader> | null = null;
 
-/** Make sure the game's assets are indexed and the loader exists. */
-export async function ensureAssets(): Promise<InstrumentLoader> {
-  if (loader) return loader;
-  [rinstIndex, smpIndex] = await Promise.all([manifest('fixtures/rinst'), manifest('fixtures/smp')]);
-  instruments.value = instrumentsFrom(
-    rinstIndex.values() as Iterable<{ guid: number; file: string; path?: string }>,
-  );
-  byGuid.clear();
-  for (const info of instruments.value) byGuid.set(info.guid, info);
-  loader = await loaderFor(rinstIndex, smpIndex);
-  return loader;
+/**
+ * Make sure the game's assets are indexed and the loader exists.
+ *
+ * The promise is what is kept, not the loader: several callers ask at start-up
+ * before the first has an answer, and each used to fetch both manifests again.
+ * A failure is forgotten, so the next caller tries afresh.
+ */
+export function ensureAssets(): Promise<InstrumentLoader> {
+  loading ??= (async () => {
+    [rinstIndex, smpIndex] = await Promise.all([manifest('fixtures/rinst'), manifest('fixtures/smp')]);
+    instruments.value = instrumentsFrom(
+      rinstIndex.values() as Iterable<{ guid: number; file: string; path?: string }>,
+    );
+    byGuid.clear();
+    for (const info of instruments.value) byGuid.set(info.guid, info);
+    return loaderFor(rinstIndex, smpIndex);
+  })().catch((error: unknown) => {
+    loading = null;
+    throw error;
+  });
+  return loading;
 }
 
 /** The song as the exporter reads it: every clip, whatever is muted. */

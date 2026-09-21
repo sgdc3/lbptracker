@@ -147,6 +147,11 @@
   <!-- ================================================================ Arrange -->
   <div id="view-arrange" class="view arrange">
     <button type="button" class="help-btn board-help" data-help="board" title="Help" aria-label="Help">?</button>
+    <!-- The sequencer's thermometer: the game's own budget of sample memory (src/daw/thermometer.ts). -->
+    <div id="thermo" class="thermo" role="meter" aria-label="Sequencer thermometer" aria-valuemin="0" aria-valuemax="1000000" hidden>
+      <div class="thermo-bar"><span class="thermo-fill"></span><span class="thermo-text"></span></div>
+      <div class="thermo-bytes"></div>
+    </div>
     <div id="boardScroller" class="board-scroller" tabindex="0" aria-label="The board">
       <canvas id="board"></canvas>
       <div id="boardSpacer"></div>

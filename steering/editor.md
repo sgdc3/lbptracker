@@ -297,6 +297,30 @@ The editor draws both, as faithfully as the data allows and no further:
   where the gate does close (`duration = lastStep − firstStep + 1`) -- was drawn for a day and
   read as a second point that was not in the data; the owner had it removed.
 
+### The sequencer's thermometer
+
+The game's budget of sample memory per sequencer, on the page since 0.2.33. **The rule and its
+readings live in [sequencer-data-model.md](sequencer-data-model.md)**; `lib/src/thermometer.ts` is
+the sum, and `web/src/daw/thermometer.ts` feeds it the song and draws it.
+
+- The meter is `#thermo`, a DOM card over the board's top right, beside the "?": blue as the game's
+  is, red past the limit, the share of `MaxSequencerMemory` in the bar and `used / 1.00 MB` under it.
+  Megabytes are **decimal**, so the game's round million reads 1.00. ⚠️ The game puts its thermometer
+  at the left; ours is at the right because the board's top-left corner is the zoom.
+- Sizes come from `fixtures/smp/manifest.json`'s `size` column (the FileDB's, which `stage-site.ts`
+  keeps), and each instrument's sample list from its `.rinst`: `instrumentSamples` in `assets.ts`
+  reads all 68 once, in the background, at start-up. **Until they are in, the meter is hidden and
+  the picker shows no prices**, rather than wrong ones.
+- The instrument picker takes an optional `cost(guid)` and shows what each sound would *add* to the
+  board as it stands — `+0%` for one already paid for — in red when the board would then be over.
+  The inspector's "Which sound?" prices against the board **without the chip being changed**
+  (`instrumentCosts(exceptClip)`), since its present sound stops counting unless another chip plays
+  it. The Keyboard view's picker is not about a song and shows none.
+- ❗ **It warns and refuses nothing**: a status line once, when the cost goes over, as the game
+  posts its message once. A refusal was not read in the eboot, and a level can arrive over.
+- Checked in the browser on `Ascetic`: 853,472 bytes, 85%, `0.85 / 1.00 MB`; a piano added takes it
+  to 1.18 MB and red, the honky-tonk piano after it adds nothing, and undo brings 0.85 back.
+
 ## The model — `packages/lbp-tracker-lib/src/song.ts`
 
 `Sequencer` and `Track` are what a level yields: immutable, with the file's record bytes beside the
