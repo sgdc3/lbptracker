@@ -148,10 +148,12 @@ export const MAX_PITCH = 127;
 export const MAX_VOLUME = 127;
 export const MAX_TIMBRE = 15;
 /**
- * How many rows a board may have. The game's: its editor clamps a board to 2625 units a side,
- * 25 rows of 105 (eboot `v0x169b35`, *The board's size limit* in steering/sequencer-data-model.md).
+ * How many rows a board may have. The game's editor clamps a board to 2625 units a side, 25 rows
+ * of 105 (eboot `v0x169b35`), but with cheats a board reaches 33 rows and the game still plays it,
+ * which is the owner's report and the limit here (*The board's size limit* in
+ * steering/sequencer-data-model.md).
  */
-export const MAX_BOARD_ROWS = 25;
+export const MAX_BOARD_ROWS = 33;
 /** How many cells wide a board may be. The game's too: 26250 units of 52.5, from the same clamp. */
 export const MAX_BOARD_CELLS = 500;
 

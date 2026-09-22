@@ -152,7 +152,7 @@ const reverbOptions = computed(() => {
       </div>
       <div class="knob">
         <label for="mx-rows">board rows</label>
-        <input id="mx-rows" type="range" min="1" max="25" step="1" :value="song.boardRows" autocomplete="off"
+        <input id="mx-rows" type="range" min="1" max="33" step="1" :value="song.boardRows" autocomplete="off"
                @input="set('settings', 'rows', (v, s) => { s.boardRows = v; })($event)">
         <output>{{ song.boardRows }}</output>
       </div>

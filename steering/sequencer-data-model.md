@@ -519,8 +519,10 @@ that the set bit is the sequencer — from the 52.5 × 105 grid being the one `v
 on, and from the corpus's tallest board being exactly 25. The sizes are `PMicrochip + 0x4c` / `+0x50`
 (serialiser `v0xd3afb4`, `v0xd3afc7`), and `v0x1686b2`–`v0x1686d0` tests both against the same
 2625.0 (`v0xe5d23c`) on another path — ⚠️ not read further; what it does with an oversized board is
-unknown. `MAX_BOARD_ROWS` and `MAX_BOARD_CELLS` in `packages/lbp-tracker-lib/src/song.ts` are the 25 and
-the 500: placing, moving and the song's end stop there. ⚠️ Two routes still pass the right edge —
+unknown. ⚠️ **The editor's clamp is not the game's ceiling.** With cheats a board reaches **33 rows**
+(3465 units) and the game plays it — the owner's report from the running game, 2026-09-22, not a
+reading; where 33 comes from is not known. `MAX_BOARD_ROWS` in
+`packages/lbp-tracker-lib/src/song.ts` is therefore the 33, and `MAX_BOARD_CELLS` the 500: placing, moving and the song's end stop there. ⚠️ Two routes still pass the right edge —
 lengthening a chip that already sits against it, and a paste walking right off a taken cell — and
 a level that arrives larger is opened as it is.
 

@@ -147,7 +147,7 @@ arithmetic expression, with the product as the fallback past seven cells.
 
 The board is sized to fit: `rows = max(boardRows, lowest row + 2, 3)` and
 `columns = max(rightmost chip's right edge + 1, 4)`, which reproduces the corpus's boards to within
-the slack a creator leaves by hand. The spare row gives way at the game's 25-row cap (*The board's
+the slack a creator leaves by hand. The spare row gives way at 33 rows, the tallest board the game plays (*The board's
 size limit* in [sequencer-data-model.md](sequencer-data-model.md)).
 
 ## The instrument chip table — `src/chips.ts`

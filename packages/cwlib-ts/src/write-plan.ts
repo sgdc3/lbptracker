@@ -687,7 +687,7 @@ export function sequencerThings(sequencer: Sequencer): ThingOut[] {
   // The board is at least as tall as the sequencer says and at least as wide as
   // its rightmost chip, and never smaller than the smallest board the corpus
   // holds (4 columns by 3 rows). The spare row under the lowest chip gives way at
-  // the game's own limit of 25 rows (eboot `v0x169b35`); a chip below that is kept
+  // the tallest board the game plays, 33 rows; a chip below that is kept
   // on the board rather than dropped.
   let rows = Math.max(sequencer.boardRows, 3);
   let columns = 4;
@@ -710,8 +710,8 @@ export function sequencerThings(sequencer: Sequencer): ThingOut[] {
   return [root, groupThing, board, ...placements.map((p) => p.thing)];
 }
 
-/** The tallest board the game's editor makes: 2625 units, `v0xe5c9c0`. */
-const MAX_GAME_ROWS = 25;
+/** The tallest board the game plays: 33 rows with cheats, 25 from its own editor (`v0xe5c9c0`). */
+const MAX_GAME_ROWS = 33;
 
 /* -------------------------------------------------------------- the plan */
 
