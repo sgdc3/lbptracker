@@ -309,7 +309,8 @@ the sum, and `web/src/daw/thermometer.ts` feeds it the song and draws it.
   round million reads 1.00. ❗ **It is beside the arranger, never over it** (the owner's rule, since
   0.2.34; 0.2.33 had a card over the top right): while it shows, `.view.arrange` sets `--thermo-w`
   through `:has()`, and both `.board-scroller` and `.chip-panel` start there. Hidden, the width is 0
-  and the board has the whole page. It carries `data-help="thermometer"` and a `tabindex`, so a
+  and the board has the whole page. A status line, once, when `boardRows` crosses `STOCK_BOARD_ROWS`
+  (25, the editor's clamp): the 33 above it is the cheat's, unsupported. It carries `data-help="thermometer"` and a `tabindex`, so a
   click or Enter opens its own help topic: its cursor is `help`, and for a day that promised a
   dialog nothing opened.
 - Sizes come from `fixtures/smp/manifest.json`'s `size` column (the FileDB's, which `stage-site.ts`

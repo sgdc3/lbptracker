@@ -4,6 +4,12 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.36 (2026-09-23)
+
+- Crossing 25 rows now brings a note in the status bar: the game's own editor stops there, the
+  board can go on to 33 with cheats, which the game does not officially support, and past that it
+  breaks.
+
 ## 0.2.35 (2026-09-22)
 
 - A board may now be 33 rows tall, which is as tall as the game plays one, rather than the 25 its

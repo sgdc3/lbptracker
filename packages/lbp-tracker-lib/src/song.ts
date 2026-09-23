@@ -154,6 +154,8 @@ export const MAX_TIMBRE = 15;
  * steering/sequencer-data-model.md).
  */
 export const MAX_BOARD_ROWS = 33;
+/** The tallest board the game's own editor makes, 2625 units: past it the game is off its own map. */
+export const STOCK_BOARD_ROWS = 25;
 /** How many cells wide a board may be. The game's too: 26250 units of 52.5, from the same clamp. */
 export const MAX_BOARD_CELLS = 500;
 
