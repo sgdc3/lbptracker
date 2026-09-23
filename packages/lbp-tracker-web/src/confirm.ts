@@ -10,6 +10,36 @@
 
 import { confineWheel } from './help.ts';
 
+/** The same dialog with one button: something the person should read before going on. */
+export function noticeDialog(text: string, ok = 'ok'): Promise<void> {
+  return new Promise((resolve) => {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'picker-dialog confirm-dialog';
+    confineWheel(dialog);
+    dialog.innerHTML =
+      '<div class="picker-box"><p class="confirm-question"></p>' +
+      '<div class="row picker-foot"><span class="spacer"></span>' +
+      '<button type="button" class="confirm-yes primary"></button></div></div>';
+    dialog.querySelector('.confirm-question')!.textContent = text;
+    const yes = dialog.querySelector<HTMLButtonElement>('.confirm-yes')!;
+    yes.textContent = ok;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      dialog.close();
+      dialog.remove();
+      resolve();
+    };
+    yes.addEventListener('click', finish);
+    dialog.addEventListener('cancel', (event) => { event.preventDefault(); finish(); });
+    dialog.addEventListener('click', (event) => { if (event.target === dialog) finish(); });
+    document.body.append(dialog);
+    dialog.showModal();
+    yes.focus();
+  });
+}
+
 export function confirmDialog(question: string, doIt = 'do it', dontDoIt = 'cancel'): Promise<boolean> {
   return new Promise((resolve) => {
     const dialog = document.createElement('dialog');

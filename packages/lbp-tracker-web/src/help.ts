@@ -148,8 +148,8 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
         'Click it to read how it counts.') +
       h('Rows, channels and the end') +
       p('The game\'s own editor stops a board at 25 rows. Here it can grow to 33, which the game plays only ' +
-        'with cheats and does not officially support; past that it breaks. A note in the status bar says so when ' +
-        'you cross 25.') +
+        'with cheats and does not officially support; past that it breaks. A message says so when you cross 25, ' +
+        'once, until the board is back at 25 and crosses it again.') +
       p('The corner cell between the row numbers and the bar numbers zooms the board in time: ' +
         '<strong>-</strong> and <strong>+</strong> make the bars narrower or wider, the glass puts them back; the rows keep ' +
         'their height.') +

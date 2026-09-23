@@ -4,6 +4,11 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.37 (2026-09-23)
+
+- The note about crossing 25 rows is a message box now, shown as the 26th row arrives and not
+  again until the board has been back at 25 and grows past it once more.
+
 ## 0.2.36 (2026-09-23)
 
 - Crossing 25 rows now brings a note in the status bar: the game's own editor stops there, the

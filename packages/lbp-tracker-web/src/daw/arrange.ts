@@ -14,7 +14,7 @@ import {
   MAX_BOARD_ROWS, STOCK_BOARD_ROWS, addClip, clampClipShift, clipsAnchor, clipsEndCell, duplicateClips, freeClipShift,
   moveClips, removeClip, setSongEnd, type Clip, type ClipShift,
 } from '@lbptracker/lib/song.ts';
-import { confirmDialog } from '../confirm.ts';
+import { confirmDialog, noticeDialog } from '../confirm.ts';
 import { focusOwnsKeys, hasTextSelection } from '../keys.ts';
 import { BoardView } from '../editor/board.ts';
 import { RollView } from '../editor/roll.ts';
@@ -275,16 +275,16 @@ export function mountArrange(opts: { isActive: () => boolean }): ArrangeHandle {
   }
   mountThermometer($('thermo'));
 
-  // Past the 25 rows the game's own editor stops at, say so once: the board
-  // still grows to 33, which the game plays with cheats and nothing promises.
+  // Past the 25 rows the game's own editor stops at, a modal, once: not again
+  // until the board has been back at 25 and crosses it anew. It still grows to
+  // 33, which the game plays with cheats and nothing promises.
   let wasTall = state.song.boardRows > STOCK_BOARD_ROWS;
   state.onChange(() => {
     const tall = state.song.boardRows > STOCK_BOARD_ROWS;
     if (tall && !wasTall) {
-      setStatus(
-        `The board is taller than the ${STOCK_BOARD_ROWS} rows the game's editor allows. ` +
+      void noticeDialog(
+        `The board is now taller than the ${STOCK_BOARD_ROWS} rows the game's editor allows. ` +
         `It can reach ${MAX_BOARD_ROWS} with cheats, which the game does not officially support, and past that it breaks.`,
-        true,
       );
     }
     wasTall = tall;
