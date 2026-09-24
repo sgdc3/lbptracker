@@ -5,7 +5,8 @@ here blocks the build**: the note format, the containers, the level walk, the as
 whole signal path are measured, and import, playback and export are built. What is left is four
 *decisions* where the project knowingly departs from the measured engine, a short list of measured
 residues nothing models yet, one loose end left over from the export, three things about the chip
-tint that only Create Mode can answer, and three questions that are not about fidelity at all.
+tint that only Create Mode can answer, whether the Ableton set opens in Live 12 and how its Samplers sound, and three
+questions that are not about fidelity at all.
 When one gets resolved, move the answer into the descriptive file it belongs to and delete the
 entry.
 
@@ -266,6 +267,48 @@ and a 0.2.29 plan of the same song in Create Mode. If 0.2.29 still fails, the ne
 ones the corpus bounds and the writer does not — the board's `sizeX`/`sizeY` and the chip count on
 a long song, against the largest board in `fixtures/plans` — and the way to find it is the
 bisection of *46*: swap spans of a plan the game wrote into ours until it places.
+
+## 52. The Ableton set in Live 12
+
+The `.als` export opens in Live 11.3.43 with its tracks, tempo, devices, clips, notes and their MPE
+all seen there ([ableton-interchange.md](ableton-interchange.md)). What is not measured is
+**Live 12.** The set is Live 11.3's schema, and Live 12 upgrades an 11 set on open, which is the
+whole argument for the target — but no Live 12 is installed here, and Live 12 is the reader that
+refuses a missing member. What would settle it: open an export in Live 12 and read its `Log.txt`
+(`tools/open-in-live.ps1` with `LBP_LIVE_EXE` and `LBP_LIVE_LOG` pointed at it); if it names a
+member, the empty-set reference was not complete.
+
+## 53. The Ableton Samplers — what the mapping assumes and nobody has heard
+
+The instruments option puts a Live Sampler on every track, and every member of it is checked to be
+what the file says ([ableton-interchange.md](ableton-interchange.md), *The instruments*). What is
+**not** measured is how each Live value sounds against the engine's, because the Live here is a
+Trial that renders nothing. The one listen so far was the owner's, and it was silence — the pressure,
+below, since fixed and not yet heard. Each item below is a decision where a measurement is missing:
+
+- **Every note's level through Pressure → Volume at 100 %**, velocity 127 — every note's, since at
+  100 a note without pressure is silent (*The instruments* in the same file). Live's law for that
+  modulation is unknown; the engine's is linear in amplitude. Ableton's presets, read off their
+  settings, suggest a positive amount pulls the volume down from the dial as the controller falls
+  (`Inclement Drone Pad` sits at +4.5 dB with Velocity 57.7 and Pressure 59 on its volume) and a
+  negative one as it rises (`The Greatest Pad`, Mod Wheel −84.6 at −14.6 dB). If so, Pressure at
+  −100 with the ramp inverted would leave a flat note on its velocity and a note drawn in Live
+  audible, at the price of a second law for the level and an upside-down pressure lane.
+- **The filter**: Live's Clean 24 dB low-pass for the Stilson/Smith ladder, the cutoff as a fraction
+  of 24 kHz, resonance written straight into Live's 0..1.25, and key tracking at the engine's amount
+  although the engine tracks from each slot's own base note and Live from its own reference. The
+  envelope agrees at the rest and the peak and nowhere between: Live's moves the cutoff in
+  semitones, the engine's in proportion, so at half the envelope an amount of 0.98 sits 22
+  semitones lower in Live. Fitting the sustain level and the peak instead would favour held notes.
+- **The release** is written from the sustain level; the engine releases from wherever the level
+  is, so a note let go during its decay releases for less in the game.
+- **Not carried at all**: the unison stack (`Numstack` layers, `Params[0..2]`), the three LFOs
+  (`Params[15..23]`), the slide's two destinations (unused: which two of an instrument's moving
+  parameters would matter most is a listening question).
+
+What would settle them: a machine with a licensed Live that can export audio, the same song rendered
+from the tracker and from the set, and the comparison `render-level.ts` already makes against a
+capture of the game.
 
 ## 28. What still will not open — the archive sweep's leftovers
 

@@ -4,6 +4,25 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.38 (2026-09-25)
+
+- New, and still a work in progress: Import/Export can write the song as an Ableton Live set, which
+  Live 11 and later open on its Arrangement. Every part is a MIDI track named after its row and
+  instrument, every chip a clip at its own place in the nearest Live colour, and the glides, fades
+  and modulation are the notes' own MPE expression. The tempo comes along, each track's volume and
+  pan give the same level on each side as the game, and the two sends feed a Reverb and an Echo
+  return set from the song.
+- "One track per row", on by default, puts every chip of a row and instrument on one track, whose
+  mixer changes as each chip comes in.
+- "The instruments and their samples", off by default, puts a Live Sampler built from the game's
+  own instrument on every track and downloads a zip holding a Live project with the samples: unzip
+  it and open the set inside. Each Sampler plays at the modulation most of its track's notes use,
+  and the unison layers and the LFOs are not carried yet. A note you add in Live stays silent until
+  you give it some pressure in its Note Expression tab.
+- The MIDI export: a track holding several parts of one row now changes its volume, pan and sends
+  every time a different part takes over. It used to set each part's mixer only once, so a DAW
+  played a part that came back after another with the other part's mixer.
+
 ## 0.2.37 (2026-09-23)
 
 - The note about crossing 25 rows is a message box now, shown as the 26th row arrives and not

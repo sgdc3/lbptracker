@@ -109,8 +109,9 @@ export interface MidiExportOptions {
    * ⚠️ **A placement's identity is eight fields and a track list shows two.**
    * The same kit on the same row at two different pans is two placements to the
    * game; merging puts both on one track and writes the mixer as CC automation
-   * at each clip's start, which is what a DAW does with a mixer that changes
-   * during a song. Measured over the corpus: **a third fewer tracks.**
+   * stepping wherever one's note starts after the other's (`mixerEvents`), which
+   * is what a DAW does with a mixer that changes during a song. Measured over the
+   * corpus: **a third fewer tracks.**
    *
    * ❗ **Placements whose notes overlap in time are NOT merged**, because one
    * track has one mixer state and there is no honest way to give two sounding
@@ -124,7 +125,7 @@ export interface MidiExportOptions {
    * 16 steps and a clip of up to 128 makes easy.
    *
    * ❗ A fader move still comes back: the import reads each controller in force
-   * at the tick of the placement's own first clip.
+   * at one of the placement's own notes.
    *
    * Two placements of DIFFERENT instruments on one row stay separate whatever
    * this says. There is one instrument per track and the label names it.
@@ -189,7 +190,15 @@ export interface MidiExportOptions {
 export interface MidiExportResult {
   readonly bytes: Uint8Array;
   readonly notes: number;
-  /** MIDI tracks written, not counting the conductor. */
+  /**
+   * Parts written: an instrument, a row and a mixer each (`partKey`).
+   *
+   * ⚠️ **Not the MIDI tracks.** `mergeRows` puts several parts on one track and
+   * `laneOf` spreads a busy one over several: `This Is Halloween` is 124 parts
+   * on 46 tracks. This said "MIDI tracks written" until 2026-09-24, and a
+   * reading that trusted it concluded `mergeRows` merged nothing. To count
+   * tracks, count the `MTrk` chunks in `bytes`.
+   */
   readonly parts: number;
   readonly events: number;
   /**
@@ -514,13 +523,118 @@ function clipEntry(
     : [track.gridX, steps, rest, bits];
 }
 
+/**
+ * Which part a placement belongs to: its instrument, its row and every mixer
+ * setting. Exported so `als.ts` groups exactly as this does -- two definitions
+ * of a part would put the same song on different tracks in the two exports.
+ */
+export function partKey(track: Track): string {
+  return [
+    track.guid, track.gridY, track.level, track.pan,
+    track.echoSend, track.reverbSend, track.key, track.scale,
+  ].join('|');
+}
+
+/**
+ * A part's name in a DAW: **`row 4 - saw_wave`**. See `nameOf` in
+ * `sequencerToMidi` for why it is the instrument and never `Track.name`.
+ */
+export function partLabel(
+  track: Track,
+  instrumentName?: (guid: number) => string | undefined,
+): string {
+  return `row ${track.gridY} - ${instrumentName?.(track.guid) || `guid ${track.guid}`}`;
+}
+
+/**
+ * Which parts share one DAW track: indices into `parts`, one array per track,
+ * in board order.
+ *
+ * Without `mergeRows` a group is one part. With it, a group is a board row and
+ * an instrument -- see `MidiExportOptions.mergeRows` -- except that parts
+ * sounding at the same time never share: one track has one mixer state.
+ * Exported so `als.ts` merges exactly as this does.
+ *
+ * `parts` must already be in board order (row, then first cell, then GUID):
+ * the merge is greedy in that order.
+ */
+export function rowGroups(
+  sequencer: Sequencer,
+  parts: readonly { readonly track: Track; readonly tracks: readonly number[] }[],
+  mergeRows: boolean,
+): number[][] {
+  const cellOf = (part: { tracks: readonly number[] }) =>
+    Math.min(...part.tracks.map((index) => sequencer.tracks[index].gridX));
+  /** When each placement is sounding, as coalesced step intervals. */
+  const spansOf = parts.map((part) => {
+    const spans: [number, number][] = [];
+    for (const index of part.tracks) {
+      const clip = sequencer.tracks[index];
+      for (const note of clip.notes) {
+        spans.push([
+          clip.stepOffset + note.startPosition,
+          clip.stepOffset + note.endPosition + 1,
+        ]);
+      }
+    }
+    spans.sort((a, b) => a[0] - b[0]);
+    const merged: [number, number][] = [];
+    for (const span of spans) {
+      const last = merged[merged.length - 1];
+      if (last !== undefined && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+      else merged.push([...span]);
+    }
+    return merged;
+  });
+  /** Whether two placements are ever sounding at the same time. */
+  const clash = (a: [number, number][], b: [number, number][]) => {
+    let i = 0;
+    let j = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i][0] < b[j][1] && b[j][0] < a[i][1]) return true;
+      if (a[i][1] <= b[j][1]) i += 1;
+      else j += 1;
+    }
+    return false;
+  };
+
+  const groups: number[][] = [];
+  const byRow = new Map<string, number[]>();
+  parts.forEach((part, index) => {
+    const key = mergeRows ? `${part.track.gridY}|${part.track.guid}` : `#${index}`;
+    const found = byRow.get(key);
+    if (found) found.push(index);
+    else byRow.set(key, [index]);
+  });
+  for (const row of byRow.values()) {
+    // ❗ Greedy, in the order the parts already sit in, which is board order:
+    // a placement joins the first track whose placements it never overlaps.
+    const made: number[][] = [];
+    const spans: [number, number][][] = [];
+    for (const index of row) {
+      let at = made.findIndex((_, k) => !clash(spans[k], spansOf[index]));
+      if (at < 0) {
+        at = made.length;
+        made.push([]);
+        spans.push([]);
+      }
+      made[at].push(index);
+      spans[at] = [...spans[at], ...spansOf[index]].sort((a, b) => a[0] - b[0]);
+    }
+    groups.push(...made);
+  }
+  // Board order again, since the row map lost it.
+  return groups.sort((a, b) => {
+    const x = parts[a[0]].track;
+    const y = parts[b[0]].track;
+    return x.gridY - y.gridY || cellOf(parts[a[0]]) - cellOf(parts[b[0]]) || x.guid - y.guid;
+  });
+}
+
 function partsOf(sequencer: Sequencer): Part[] {
   const byKey = new Map<string, Part>();
   sequencer.tracks.forEach((track, index) => {
-    const key = [
-      track.guid, track.gridY, track.level, track.pan,
-      track.echoSend, track.reverbSend, track.key, track.scale,
-    ].join('|');
+    const key = partKey(track);
     // How far the clip's own notes reach, which is its window.
     const steps = Math.min(
       128,
@@ -850,7 +964,7 @@ export function sequencerToMidi(
    */
   const instrumentOf = (track: Track) =>
     options.instrumentName?.(track.guid) || `guid ${track.guid}`;
-  const nameOf = (track: Track) => `row ${track.gridY} - ${instrumentOf(track)}`;
+  const nameOf = (track: Track) => partLabel(track, options.instrumentName);
   /**
    * The parts in board order, so a DAW's track list reads like the board.
    *
@@ -880,79 +994,11 @@ export function sequencerToMidi(
    * did. With it, a group is a board row and an instrument -- see the option.
    */
   const mergeRows = options.mergeRows ?? true;
-  const groups: number[][] = [];
+  const groups = rowGroups(sequencer, parts, mergeRows);
   const groupOf: number[] = [];
-  {
-    /** When each placement is sounding, as coalesced step intervals. */
-    const spansOf = parts.map((part) => {
-      const spans: [number, number][] = [];
-      for (const index of part.tracks) {
-        const clip = sequencer.tracks[index];
-        for (const note of clip.notes) {
-          spans.push([
-            clip.stepOffset + note.startPosition,
-            clip.stepOffset + note.endPosition + 1,
-          ]);
-        }
-      }
-      spans.sort((a, b) => a[0] - b[0]);
-      const merged: [number, number][] = [];
-      for (const span of spans) {
-        const last = merged[merged.length - 1];
-        if (last !== undefined && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
-        else merged.push([...span]);
-      }
-      return merged;
-    });
-    /** Whether two placements are ever sounding at the same time. */
-    const clash = (a: [number, number][], b: [number, number][]) => {
-      let i = 0;
-      let j = 0;
-      while (i < a.length && j < b.length) {
-        if (a[i][0] < b[j][1] && b[j][0] < a[i][1]) return true;
-        if (a[i][1] <= b[j][1]) i += 1;
-        else j += 1;
-      }
-      return false;
-    };
-
-    const byRow = new Map<string, number[]>();
-    parts.forEach((part, index) => {
-      const key = mergeRows ? `${part.track.gridY}|${part.track.guid}` : `#${index}`;
-      const found = byRow.get(key);
-      if (found) found.push(index);
-      else byRow.set(key, [index]);
-    });
-    for (const row of byRow.values()) {
-      // ❗ Greedy, in the order the parts already sit in, which is board order:
-      // a placement joins the first track whose placements it never overlaps.
-      const made: number[][] = [];
-      const spans: [number, number][][] = [];
-      for (const index of row) {
-        let at = made.findIndex((_, k) => !clash(spans[k], spansOf[index]));
-        if (at < 0) {
-          at = made.length;
-          made.push([]);
-          spans.push([]);
-        }
-        made[at].push(index);
-        spans[at] = [...spans[at], ...spansOf[index]].sort((a, b) => a[0] - b[0]);
-      }
-      for (const group of made) {
-        for (const index of group) groupOf[index] = groups.length;
-        groups.push(group);
-      }
-    }
-    // Board order again, since the row map lost it.
-    groups.sort((a, b) => {
-      const x = parts[a[0]].track;
-      const y = parts[b[0]].track;
-      return x.gridY - y.gridY || cellOf(parts[a[0]]) - cellOf(parts[b[0]]) || x.guid - y.guid;
-    });
-    groups.forEach((group, index) => {
-      for (const part of group) groupOf[part] = index;
-    });
-  }
+  groups.forEach((group, index) => {
+    for (const part of group) groupOf[part] = index;
+  });
 
   /**
    * Which of the TRACKS sharing a label this one is: `... #2`, `... #3`.
@@ -1485,6 +1531,59 @@ export function sequencerToMidi(
    * differs between the two, so the second import reconstructs exactly what the
    * first one did and the patch it carries still describes the right clips.
    */
+  /**
+   * Each track's mixer, as controller events: a step wherever a part's note
+   * starts after another part's, carrying the dials that differ.
+   *
+   * ❗ **At every note of a part, that part's own dials are in force.** That is
+   * the invariant, it is what a DAW plays, and it is what the import reads back
+   * (`readPart`, at one of the part's own notes). It is not "once per part":
+   * parts sharing a track interleave -- A at cell 0, B at cell 2, A again at
+   * cell 4 -- and until 2026-09-24 each part's values were written once, at its
+   * first cell, so a DAW played A's cell 4 on B's mixer. Measured then:
+   * 65,345 of the 381,082 notes on merged tracks, in 102 of the 150 corpus
+   * sequencers. Our own import read the right value at the first cell and never
+   * noticed.
+   *
+   * The step sits on the note-on's own tick and sorts before it: the mixer goes
+   * into the event list ahead of the notes, and a controller and a note-on
+   * share a rank.
+   */
+  const mixerEvents: MidiEvent[][] = groups.map(() => []);
+  {
+    const starts: { tick: number; part: number }[][] = groups.map(() => []);
+    for (const event of all) {
+      const part = partOfTrack.get(event.track);
+      if (part !== undefined) starts[groupOf[part]].push({ tick: at(event.step), part });
+    }
+    groups.forEach((members, gi) => {
+      const list = starts[gi].sort((a, b) => a.tick - b.tick);
+      // A track with no note at all still says its mixer, where its first clip is.
+      if (list.length === 0) {
+        list.push({ tick: at(cellOf(parts[members[0]]) * STEPS_PER_CELL), part: members[0] });
+      }
+      const held = new Map<number, number>();
+      let current = -1;
+      for (const { tick, part } of list) {
+        if (part === current) continue;
+        current = part;
+        const t = parts[part].track;
+        const dials: [number, number][] = [
+          [7, clamp7(t.level * 127)],
+          [10, clamp7(t.pan * 127)],
+          [91, clamp7(t.reverbSend * 127)],
+          [90, clamp7(t.echoSend * 127)],
+        ];
+        for (const [cc, value] of dials) {
+          // A repeat says nothing a DAW can use and nothing the import needs.
+          if (held.get(cc) === value) continue;
+          held.set(cc, value);
+          mixerEvents[gi].push(controlChange(tick, MASTER, cc, value));
+        }
+      }
+    });
+  }
+
   const assemble = (patch?: Map<number, Record<string, string>>): MidiTrack[] => {
     const tracks: MidiTrack[] = [{ events: sortEvents(head, rank) }];
     groups.forEach((members, gi) => {
@@ -1500,17 +1599,13 @@ export function sequencerToMidi(
         const header: MidiEvent[] = [metaText(0, 0x03, label)];
 
         /**
-         * The mixer, per placement, at the tick that placement's first clip
-         * begins.
+         * The mixer: `mixerEvents`, the same on every lane of the track.
          *
          * ❗ **The mixer on the controllers MIDI has for it.** Level, pan and
          * both sends are CC 7, 10, 91 and 90 -- so a DAW plays the level's own
          * mix instead of every part flat and centred, and a fader move survives
          * the trip back. On a merged track they become automation, which is what
-         * a DAW does with a mixer that changes during a song, and the import
-         * matches each value to a placement by the tick of its first clip. That
-         * is unambiguous because **no two placements of a row group ever share a
-         * cell** -- 0 of 62,158 across the corpus.
+         * a DAW does with a mixer that changes during a song.
          *
          * ⚠️ **CC 90 is UNDEFINED in the specification, and that is why it
          * was chosen.** A delay send has no controller of its own anywhere in
@@ -1535,25 +1630,7 @@ export function sequencerToMidi(
          * un-invertible, and 308 of the corpus's 338 sequencers have one channel
          * at a uniform 0.75, which is a constant and not a balance.
          */
-        const mixer: MidiEvent[] = [];
-        const held = new Map<number, number>();
-        const ordered = [...members].sort((a, b) => cellOf(parts[a]) - cellOf(parts[b]));
-        for (const index of ordered) {
-          const t = parts[index].track;
-          const tick = at(cellOf(parts[index]) * STEPS_PER_CELL);
-          const dials: [number, number][] = [
-            [7, clamp7(t.level * 127)],
-            [10, clamp7(t.pan * 127)],
-            [91, clamp7(t.reverbSend * 127)],
-            [90, clamp7(t.echoSend * 127)],
-          ];
-          for (const [cc, value] of dials) {
-            // A repeat says nothing a DAW can use and nothing the import needs.
-            if (held.get(cc) === value) continue;
-            held.set(cc, value);
-            mixer.push(controlChange(tick, MASTER, cc, value));
-          }
-        }
+        const mixer = mixerEvents[gi];
 
         // ❗ **One meta per placement on the track.** A merged track holds
         // several, each with its own cells and its own mixer, and the import
@@ -2069,6 +2146,8 @@ function readPart(
   let label = '';
   /** How many `LBP-TRK` metas the track carries; a merged one has several. */
   let metas = 0;
+  /** Whether this placement's own meta was read, so there is an exact mixer to weigh the controllers against. */
+  let ours = false;
   /**
    * Every meta's cell list, so a merged track's notes can be split by cell.
    *
@@ -2110,10 +2189,10 @@ function readPart(
    * Read before the meta, because the meta needs them: only a controller that
    * DISAGREES with the meta's exact value is an edit.
    *
-   * ❗ **Kept per tick, because a merged track's mixer is automation.** Each
-   * placement's values are written at the tick its own first clip begins, so
-   * this reads them back the same way. On an unmerged track there is one tick
-   * and it is the first clip's.
+   * ❗ **Kept per tick, because a merged track's mixer is automation.** The
+   * exporter keeps each part's own dials in force at every one of its notes
+   * (`mixerEvents`), so this reads them at one of the part's notes, once the
+   * notes are split between the placements -- see the end of this function.
    */
   const mixer = new Map<number, { tick: number; value: number }[]>();
   for (const event of track.events) {
@@ -2156,12 +2235,6 @@ function readPart(
         part.guid = pick('guid', 0);
         part.gridY = pick('gridY', index);
 
-        // ❗ **The controller wins the moment it stops agreeing.** Written and
-        // read as a pair: seven bits cannot hold the editor's steps, so a file
-        // nobody touched keeps the meta's exact 0.25, and a file whose fader
-        // moved gets what the fader says. The same rule the tempo uses.
-        const dialled = (cc: number | undefined, exact: number) =>
-          cc === undefined || cc === clamp7(exact * 127) ? exact : cc / 127;
         // ❗ A lane's track is named `... (n)` so a DAW's track list reads; the
         // suffix is the exporter's and comes straight back off. The meta says
         // which lane this is, so what to strip is known exactly rather than
@@ -2204,23 +2277,13 @@ function readPart(
             }
           }
         }
-        // ❗ At the tick this placement's own first clip begins, which is where
-        // the exporter wrote them. Unambiguous because no two placements of a
-        // row group ever share a cell -- 0 of 62,158 across the corpus.
-        //
-        // ⚠️ Read from `meta.clips` and not from `part.cells`, which is filled
-        // in further down: taking it from there made every placement look like
-        // it began at cell 0, so the second one on a merged track read the
-        // first one's pan and came back at 0.598 instead of 0.3.
-        const firstCell = Array.isArray(meta.clips) && meta.clips.length > 0
-          ? Math.min(...(meta.clips as unknown[]).map((clip) =>
-            (Array.isArray(clip) ? Number(clip[0]) : Number(clip)) || 0))
-          : 0;
-        const tick = Math.round(firstCell * STEPS_PER_CELL * ticksPerStep);
-        part.level = dialled(inForce(7, tick), pick('level', NEUTRAL.level));
-        part.pan = dialled(inForce(10, tick), pick('pan', NEUTRAL.pan));
-        part.reverbSend = dialled(inForce(91, tick), pick('reverbSend', NEUTRAL.reverbSend));
-        part.echoSend = dialled(inForce(90, tick), pick('echoSend', NEUTRAL.echoSend));
+        // The meta's exact mixer. The controllers are weighed against it once
+        // the notes are in -- see `dialled` at the end.
+        part.level = pick('level', NEUTRAL.level);
+        part.pan = pick('pan', NEUTRAL.pan);
+        part.reverbSend = pick('reverbSend', NEUTRAL.reverbSend);
+        part.echoSend = pick('echoSend', NEUTRAL.echoSend);
+        ours = true;
         // ❗ **The tint, read after the GUID has settled**, and read without
         // `pick` on purpose: there is no number to fall back to here. A file
         // that says nothing leaves it undefined and `cutIntoClips` asks
@@ -2439,22 +2502,60 @@ function readPart(
   // they fall in.** No two placements of a row group share a cell -- 0 of
   // 62,158 across the corpus -- so this is a partition, not a guess. A note no
   // placement claims stays with the first, where it would have gone anyway.
-  if (metas > 1 && claimed.length === metas) {
-    const fits = (cells: [number, number][], from: number, to: number) =>
-      cells.some(([cell, steps]) => {
-        const at = cell * STEPS_PER_CELL;
-        return at <= from && to - at < steps;
-      });
+  const fits = (cells: [number, number][], from: number, to: number) =>
+    cells.some(([cell, steps]) => {
+      const at = cell * STEPS_PER_CELL;
+      return at <= from && to - at < steps;
+    });
+  /** The steps a note spans, as the cell lists measure them. */
+  const span = (note: RawNote) => {
+    const startThirds = thirdsOf(note.startTick, ticksPerStep);
+    const endThirds = Math.max(startThirds, thirdsOf(note.endTick, ticksPerStep) - 3);
+    return { from: Math.floor(startThirds / 3), to: Math.floor(endThirds / 3) };
+  };
+  const merged = metas > 1 && claimed.length === metas;
+  if (merged) {
     part.notes = part.notes.filter((note) => {
-      const startThirds = thirdsOf(note.startTick, ticksPerStep);
-      const endThirds = Math.max(startThirds, thirdsOf(note.endTick, ticksPerStep) - 3);
-      const from = Math.floor(startThirds / 3);
-      const to = Math.floor(endThirds / 3);
+      const { from, to } = span(note);
       const mine = fits(claimed[which], from, to);
       if (mine) return true;
       // Nobody's? Then the first pass keeps it rather than the file losing it.
       return which === 0 && !claimed.some((cells) => fits(cells, from, to));
     });
+  }
+
+  // ❗ **The mixer, read at one of the placement's own notes.** The exporter
+  // keeps a part's dials in force at every note it plays, so any of them will
+  // do -- except a note that fits a neighbour's cells as well, which may be the
+  // neighbour's and sit under its mixer. So the first note that only this
+  // placement claims, and the first note at all when every one is shared.
+  //
+  // ⚠️ **Not the first cell, which is where this read until 2026-09-24.** The
+  // exporter wrote each part's dials once, at its first cell, and a DAW then
+  // played a part returning after another on the other's mixer. With a step
+  // at every note instead, the first cell can still be under the part before.
+  //
+  // A placement with no notes reads the meta alone: nothing of it sounds, so no
+  // controller on the track is its.
+  if (ours && part.notes.length > 0) {
+    const byTime = [...part.notes].sort((a, b) => a.startTick - b.startTick);
+    const own = merged
+      ? byTime.find((note) => {
+        const { from, to } = span(note);
+        return claimed.filter((cells) => fits(cells, from, to)).length === 1;
+      })
+      : undefined;
+    const tick = (own ?? byTime[0]).startTick;
+    // ❗ **The controller wins the moment it stops agreeing.** Written and read
+    // as a pair: seven bits cannot hold the editor's steps, so a file nobody
+    // touched keeps the meta's exact 0.25, and a file whose fader moved gets
+    // what the fader says. The same rule the tempo uses.
+    const dialled = (cc: number | undefined, exact: number) =>
+      cc === undefined || cc === clamp7(exact * 127) ? exact : cc / 127;
+    part.level = dialled(inForce(7, tick), part.level);
+    part.pan = dialled(inForce(10, tick), part.pan);
+    part.reverbSend = dialled(inForce(91, tick), part.reverbSend);
+    part.echoSend = dialled(inForce(90, tick), part.echoSend);
   }
   return part.notes.length > 0 || part.guid !== 0 ? { part, unmatched, metas } : undefined;
 }

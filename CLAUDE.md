@@ -49,6 +49,10 @@ Steering files (read on demand, per the hints):
   `packages/lbp-tracker-lib/src/midi.ts`, or before adding a field to `Sequencer` or `Track`**:
   every side channel the MIDI file carries, what each costs over the corpus, and which one can go
   stale.
+- [steering/ableton-interchange.md](steering/ableton-interchange.md) — **read before touching
+  `packages/lbp-tracker-lib/src/als.ts`, `als-xml.ts` or `als-sampler.ts`**: why the `.als` is Live
+  11.3's schema member for member, the units read off Live's own files and Live itself, the optional
+  Samplers built from the game's instruments, the corpus numbers, and how Live was made to check it.
 - [steering/tracker-architecture.md](steering/tracker-architecture.md) — read before starting
   implementation: the three packages and where the seam runs, why the mixer is ours and lives in
   an AudioWorklet, why the web layer has a bundler and Vue and the libraries have neither, the
@@ -90,7 +94,7 @@ point in the web package. Imports cross by package name:
 
 - `npm install` — **required**: workspaces resolve the package names through symlinks in
   `node_modules`. Nothing is downloaded for the libraries.
-- `npm test` — `node --test`, all three workspaces at once, from the root (368 tests, 2026-09-21);
+- `npm test` — `node --test`, all three workspaces at once, from the root (390 tests, 2026-09-24);
   `npm test -w @lbptracker/lib` for one package.
 - `npm run typecheck` — fans out to each package's own `typecheck` script: `tsc -p .` in the two
   libraries, `vue-tsc` for the web package. ⚠️ **The web package checks `.vue` through

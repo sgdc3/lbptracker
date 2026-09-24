@@ -24,6 +24,7 @@ export type HelpTopic =
   | 'engine'
   | 'render'
   | 'export'
+  | 'als'
   | 'plan'
   | 'import'
   | 'keyboard';
@@ -280,6 +281,41 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
       h('What cannot be carried') +
       p('A very dense passage runs out of MPE channels: notes that have to share one lose their own glide, and the ' +
         'tally says how many. Key and scale are folded into the notes, so an import comes back chromatic, sounding the same.'),
+  },
+  als: {
+    title: 'Exporting an Ableton Live set',
+    body:
+      p('<strong>Download .als</strong> writes the song as a Live set that Live 11 and later open, on its ' +
+        'Arrangement. Every part is a MIDI track named after its row and instrument, and every chip on the board ' +
+        'is a clip at the same place on the timeline, in the Live colour nearest the chip’s own.') +
+      p('Glides, fades and the modulation are the notes’ own MPE expression, exactly as the song draws them: ' +
+        'open a clip and look at its Note Expression tab. The tempo is the song’s, and each track’s volume and ' +
+        'pan are set so that Live puts the same level on each side as the game does. The two sends feed the ' +
+        'returns: <strong>Reverb</strong>, Live’s Reverb set to the song’s room, and <strong>Echo</strong>, ' +
+        'Live’s Delay at the song’s echo time and feedback, feeding the reverb as the game’s echo does.') +
+      p('<strong>One track per row</strong> puts every chip of one row and instrument on a single track, so ' +
+        'there is one instrument to load per row. Where those chips differ in volume, pan or a send, the track ' +
+        'carries it as mixer automation that changes as each one comes in. Chips that play at the same time ' +
+        'stay on tracks of their own. Off, every different mixer setting is a track.') +
+      h('The instruments') +
+      p('Off, the tracks are empty: load an instrument on each, one that answers MPE if you want the glides. ' +
+        '<strong>The instruments and their samples</strong> puts a Live Sampler on every track instead, built ' +
+        'from the game’s own instrument: its samples on the same keys, their loops, the volume and filter ' +
+        'envelopes, the filter and the level. The download is then a zip holding a Live project; unzip it and ' +
+        'open the set inside, and Live finds the samples beside it. The samples are the game’s, which is why ' +
+        'this is off unless you ask.') +
+      p('A Sampler is set at one modulation per track, the one most of its notes use, because a Live Sampler ' +
+        'cannot move as many things per note as the game’s instruments do; the tally counts the notes at a ' +
+        'different one. The unison layers and the three LFOs are not carried.') +
+      p('Each note’s volume, fades included, is its pressure, which the Sampler’s MIDI tab turns into level. ' +
+        'So a note you add in Live stays silent until you draw it some pressure in the Note Expression tab, ' +
+        'or turn the Pressure amount down in the Sampler’s MIDI tab.') +
+      h('What is not in it') +
+      p('The reverb and the echo are Live’s own, set as close as they go to the game’s, not the game’s ' +
+        'themselves. <strong>Bake the swing</strong> writes the swung timing into the notes, which sounds like ' +
+        'the game and puts the notes off Live’s grid.') +
+      p('A glide wider than 48 semitones stops at 48, which is as far as Live goes, and the tally says when ' +
+        'that happens.'),
   },
   plan: {
     title: 'Sending the song back to LittleBigPlanet',

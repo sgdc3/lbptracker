@@ -3,6 +3,8 @@
 Read before changing `packages/lbp-tracker-lib/src/midi.ts`, and before adding a field to
 `Sequencer` or `Track`. `smf.ts` underneath it is the container only — chunks, variable-length
 quantities, running status — and `packages/lbp-tracker-web/src/daw/convert-view.ts` is the view.
+`partKey` and `partLabel` in `midi.ts` are shared with the Ableton export, so changing what a part
+is or what its track is called changes both files ([ableton-interchange.md](ableton-interchange.md)).
 
 A MIDI file can say *notes*. A music sequencer is a board of placements with a mixer, two sends, a
 key, a scale and per-record automation, and most of that has no MIDI message at all. So the file
@@ -12,7 +14,7 @@ second layer and the measurement of the whole.
 
 Every number here comes from `packages/lbp-tracker-lib/dev/verify-midi.ts` over the ten-level corpus
 (149 sequencers, 62,158 clips, 953,791 notes, 1,448,224 records — [level-files.md](level-files.md)),
-last taken 2026-09-10. Run it after touching either file; `LBP_MIDI_BUDGET=1` adds the byte
+last taken 2026-09-24. Run it after touching either file; `LBP_MIDI_BUDGET=1` adds the byte
 table below.
 
 ## The result: the round trip is exact, and MIDI alone is close
@@ -21,6 +23,7 @@ table below.
 62,158 clips, 1,448,224 records: 0 came back different
 54 clips carried verbatim, 0 unpatchable, 24.1 MB
 22,188 chips tinted away from their instrument's own colour: 0 came back different
+the mixer as a DAW plays it: 0 of 953,791 notes under another placement's level, pan or send
 ```
 
 It is a **fixed point from the first trip**: three round trips give the same record count and the
@@ -42,7 +45,7 @@ metas hears, and what the file degrades to if a DAW edits it:
 |---|---|---|
 | which clip a note sat in | 54 clips of 62,158 hold a different set of notes | clips of one part overlap, so a few notes fit two of them and either answer puts them at the same place on the timeline — *24* in open-questions.md |
 | coincident control points | 302 notes (0.03%) | two records on one position collapse to the later, which is what the engine's `t = span > 0 ? … : 1` does |
-| pitch and volume resolution | within half a unit — worst 0.167 semitones and 0.500 | bend is rounded to whole semitones and positions to thirds of a step, which is the record grid |
+| pitch and volume resolution | within half a unit — worst 0.167 semitones and 0.467 (it read 0.500 on 2026-09-10; the committed exporter of 2026-09-24 gives 0.467 too, so the drift predates the mixer change) | bend is rounded to whole semitones and positions to thirds of a step, which is the record grid |
 | `Scale`'s own pitch field | 0 placements in the corpus set it | folded into the note numbers so the file plays anywhere; `unquantise` picks the lowest note that snaps to the one written, which always *sounds* right. `Key` is exact — a transposition is invertible where a projection is not |
 | a glide, to a shared channel | **0** | fifteen member channels against thirty-two voices, and lanes hold the difference |
 | `timbre` bits 4-5, volume > 127 | 0 in the corpus | MIDI has seven bits for either; both ride in the patch for free, and `test/midi.test.ts` is the only place either is exercised |
@@ -65,7 +68,7 @@ the first version of the diff did not, and it invented 66% of notes diverging an
 
 ## The budget — where 24.1 MB of corpus goes
 
-`exact` on, which is what the page writes. ❗ **Measured by `LBP_MIDI_BUDGET=1`, 2026-09-10**, and
+`exact` on, which is what the page writes. ❗ **Measured by `LBP_MIDI_BUDGET=1`, 2026-09-24**, and
 exact rather than estimated: `writeMidi` never uses running status, so an event costs
 `varLength(delta) + data.length` and the rows add up to the file. The two fields that are not
 events of their own — `fix` and the tint, both inside a `LBP-TRK` meta — are weighed by
@@ -73,16 +76,16 @@ re-serialising the meta without them.
 
 | carrier | share | events |
 |---|---|---|
-| pitch bend — the glide | 24.81% | 1,468,357 |
-| CC 74 — the modulation | 19.71% | 1,188,476 |
-| note off | 16.79% | 953,791 |
-| channel pressure — the volume | 16.12% | 1,294,870 |
-| note on | 15.82% | 953,791 |
-| **`LBP-TRK` meta** — placement and cells | **5.43%** | 4,911 |
+| pitch bend — the glide | 24.80% | 1,468,357 |
+| CC 74 — the modulation | 19.70% | 1,188,476 |
+| note off | 16.78% | 953,791 |
+| channel pressure — the volume | 16.11% | 1,294,870 |
+| note on | 15.81% | 953,791 |
+| **`LBP-TRK` meta** — placement and cells | **5.42%** | 4,911 |
 | **`LBP-TRK` `colour`** — the chip tint | **0.34%** | 4,911 |
 | track name meta | 0.32% | 3,373 |
-| CC 7/10/90/91 — the mixer | 0.26% | 15,313 |
-| **`LBP-SEQ` meta** — the sequencer | **0.13%** | 149 |
+| CC 7/10/90/91 — the mixer | 0.28% | 17,022 |
+| **`LBP-SEQ` meta** — the sequencer | **0.14%** | 149 |
 | tempo, time signature, end of track | 0.07% | 3,671 |
 | **`LBP-TRK` `fix`** — verbatim records | **0.06%** | 17 metas |
 | RPN / MPE configuration | 0.02% | 1,341 |
@@ -266,11 +269,12 @@ mixer is on the controllers, so a DAW already shows what differs. A lane's track
 ### One track per row — `mergeRows`, on by default
 
 **4,911 tracks become 3,224**: every placement of one board row and one instrument goes on a single
-track, with one `LBP-TRK` meta each and the mixer written as **CC automation at the tick each
-placement's own first clip begins** — which is what a DAW does with a mixer that changes during a
-song. It stays exact: the import reads each controller *in force* at that tick and hands each note
-to whichever placement declared the cell it falls in, and **no two placements of a row group ever
-share a cell** — 0 of 62,158. Placements *sounding at the same time* are not merged (one track has
+track, with one `LBP-TRK` meta each and the mixer written as **CC automation that steps wherever
+one placement's note starts after another's** — which is what a DAW does with a mixer that changes
+during a song. The invariant is that **at every note, its own placement's dials are in force**. It
+stays exact: the import hands each note to whichever placement declared the cell it falls in — **no
+two placements of a row group ever share a cell**, 0 of 62,158 — and reads each placement's
+controllers *in force* at the first of its notes that no other placement's cells also claim. Placements *sounding at the same time* are not merged (one track has
 one mixer state), and over the corpus that is 2 row groups of 850, which is what makes merging free.
 ⚠️ Overlapping is a clip started at an earlier cell still sounding when a later one begins — a cell
 is 16 steps and a clip may hold 128 — not two Things in one place.
@@ -280,6 +284,23 @@ Two traps, both caught by the corpus rather than by reading the code: **the mixe
 merged track read the first one's pan (0.598 instead of 0.3); and **"the value at that tick" is
 the wrong question** — the exporter skips a controller whose value has not changed, so the value
 *in force* is what to read.
+
+⚠️ **A round trip that is exact can still play wrong in a DAW, and this one did until
+2026-09-24.** The controllers were written once per *part*, at its first cell, and parts sharing a
+track interleave: A at cell 0, B at cell 2, A again at cell 4. The import read the value in force at
+each part's first cell and was right; a DAW played A's cell 4 on B's mixer — **65,345 of the corpus's
+953,791 notes, in 102 sequencers**, all on merged tracks, with another part's level, pan or send.
+Nothing in the round trip could see it, so `verify-midi.ts` now reads the file the way a DAW does
+(`misMixed`: the CCs in force at each note-on against the placement the note came from) and fails
+on any; it reads 0 now, and 65,345 with the old exporter swapped back in. It cost 1,709 controller
+events, the mixer's share going from 0.26% to 0.28% of the file. The Ableton export steps its
+mixer the same way ([ableton-interchange.md](ableton-interchange.md)).
+
+⚠️ **With the steps at the notes, the first cell is the wrong place to read.** A part's first
+cell can still be under the part before it, whose note is sounding there or starts there; read
+at the cell, the controller disagreed with the meta and won. The import reads at one of the part's
+own notes. A placement with no notes reads the meta alone: nothing of it sounds, so no controller
+on the track is its.
 
 ❗ **The tracks come out in board order**, row ascending then cell then GUID. `gridY` is the
 Thing's own y negated, so row 0 is the top of the board and ascending reads top to bottom, the way

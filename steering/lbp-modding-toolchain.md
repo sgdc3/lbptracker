@@ -19,6 +19,8 @@ parts matter, and **they have different authors, which changes how much weight e
   level-extraction logic, ignore its sequencer parsing.** The traversal is sound; the musical
   interpretation on top of it (note grouping, durations, triplet timing) is, in the author's words,
   suboptimal and inconsistent. Where our measurements disagree with it, ours win without argument.
+  Its ALS writer is no reference either: Live 11 refuses its sets, and opens them with every clip
+  gone once the version is rewritten ([ableton-interchange.md](ableton-interchange.md)).
 
 MIT means we may port logic from it with attribution. Prefer porting the *understanding* over the
 code.

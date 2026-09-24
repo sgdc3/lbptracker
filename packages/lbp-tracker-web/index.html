@@ -269,7 +269,19 @@
     </section>
 
     <section>
-      <p class="step"><b>2</b> The song back into the game, as a .plan <button type="button" class="help-btn" data-help="plan" title="Help" aria-label="Help">?</button></p>
+      <p class="step"><b>2</b> The song out, as an Ableton Live set <button type="button" class="help-btn" data-help="als" title="Help" aria-label="Help">?</button></p>
+      <div class="row">
+        <button id="cv-alsSave" class="primary" disabled>Download .als</button>
+      </div>
+      <div id="cv-alsOptions" style="margin-top:.9rem"></div>
+      <div id="cv-alsReport">
+        <div class="tally" id="cv-alsTally"></div>
+        <ul class="lost" id="cv-alsLost"></ul>
+      </div>
+    </section>
+
+    <section>
+      <p class="step"><b>3</b> The song back into the game, as a .plan <button type="button" class="help-btn" data-help="plan" title="Help" aria-label="Help">?</button></p>
       <div class="row">
         <button id="cv-planSave" class="primary" disabled>Download .plan</button>
         <button id="cv-modSave" disabled title="The same plan, packed as a Craftworld Toolkit mod">Download .mod</button>
@@ -280,7 +292,7 @@
     </section>
 
     <section>
-      <p class="step"><b>3</b> A MIDI file in, to become the song <button type="button" class="help-btn" data-help="import" title="Help" aria-label="Help">?</button></p>
+      <p class="step"><b>4</b> A MIDI file in, to become the song <button type="button" class="help-btn" data-help="import" title="Help" aria-label="Help">?</button></p>
       <div class="drop" id="cv-midiDrop">
         <strong id="cv-midiTitle">Open a .mid</strong>
         <span id="cv-midiHint">Click here, or drop a MIDI file onto this box. Anything a DAW writes will do.</span>

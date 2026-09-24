@@ -334,8 +334,8 @@ kbd {
 #rd-status.bad, #cv-status.bad, #cv-midiStatus.bad { color: var(--bad); }
 
 /* ---------------------------------------------------------------- convert */
-#cv-report, #cv-inReport { margin-top: .8rem; display: none; }
-#cv-report.on, #cv-inReport.on { display: block; }
+#cv-report, #cv-alsReport, #cv-inReport { margin-top: .8rem; display: none; }
+#cv-report.on, #cv-alsReport.on, #cv-inReport.on { display: block; }
 .tally { display: flex; flex-wrap: wrap; gap: .4rem .9rem; align-items: baseline; }
 .tally b { font: 600 1.02rem/1.2 ui-monospace, Consolas, monospace; color: var(--ink); }
 .tally .item { display: flex; gap: .35rem; align-items: baseline; }

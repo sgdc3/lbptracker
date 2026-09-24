@@ -6,7 +6,8 @@ and the environment variables that steer it. Nothing here is a fact about the ga
 the descriptive files — but several of the traps below are why a fact took a session longer than
 it should have.
 
-`tools/` holds **fourteen Python scripts and five Java ones**, deliberately dependency-light. Three
+`tools/` holds **fourteen Python scripts and five Java ones**, deliberately dependency-light, and
+one PowerShell script that drives Ableton Live (below). Three
 of the Python ones are the ground truth the TypeScript reproduces (`fsb.py`, `lbpres.py`,
 `wavehammer.py`); the rest are instruments for reading the binaries.
 
@@ -209,6 +210,27 @@ inside the handler (deadlock); the handler must be registered with
 `AddVectoredExceptionHandler(1, …)`. Always arm the eboot entry point as a positive control before
 believing a zero.
 
+## Ableton Live as the reader — `tools/open-in-live.ps1`
+
+`powershell -File tools/open-in-live.ps1 -file song.als [-shot live.png]` starts Live with the set,
+waits for `Loading command-line document: done` in Live's `Log.txt`, prints the load's lines
+(`Loading document`, any `Exception`), captures Live's window if asked, and closes Live. It is how
+the `.als` export was checked; [ableton-interchange.md](ableton-interchange.md) has which members
+of a debug copy make Live show the Arrangement, a track's devices, a clip's notes and their MPE.
+
+- It asks Live to close and kills it only if it is still there 20 s later — which it usually is,
+  since the closing dialog waits for an answer. A killed Live greets its next start with a crash
+  report in the side panel; the capture is unaffected, and nothing goes to Ableton unless someone
+  sends it.
+
+- ⚠️ **A clean log is not a loaded set**: Live 11 opens a set with members missing and fills them
+  with defaults without a word. Look at the capture.
+- ❗ It refuses to start while Live is running, because it may kill Live at the end.
+- ❗ It captures Live's **window** through `PrintWindow`, never the screen, which would take
+  whatever else is open on the desktop.
+- It sends no input. Keys and clicks from the script never reached Live, and a synthetic click on a
+  desktop in use lands in whatever is on top.
+
 ## The sound harnesses — `packages/lbp-tracker-lib/dev/`
 
 All run as `node <file>` — Node 24 strips the types unaided, and `engines` in the root
@@ -221,6 +243,7 @@ question can be answered in seconds instead of by ear.
 | `verify-midi.ts` | the MIDI round trip over the corpus: every sequencer exported and read back, records compared byte for byte, the chip tints checked (they have no MIDI message and no patch behind them), the loose (no-patch) numbers with `LBP_MIDI_LOOSE=1`, and the byte budget in [midi-interchange.md](midi-interchange.md) with `LBP_MIDI_BUDGET=1` |
 | `live-sim.ts` | the live scheduler under Node: the plan built as `Player.load` builds it, fed to a `Mixer` in look-ahead bursts, compared against the plain render. All three variants are bit-identical to the direct render; ⚠️ **when this file and the renderer disagree, suspect this file first** — it has to imitate two cadences at once, and *34* in answered-questions.md is what that cost |
 | `live-settings.ts` | that tempo, swing and the channel mixer can be applied live without re-planning: bit-identical against a render that had those settings all along, and 0 of 163 notes handed over twice |
+| `export-als.ts` | the Ableton export over the corpus: every sequencer to a set, the XML checked well-formed and its ids one space, and the counters summed (the numbers in [ableton-interchange.md](ableton-interchange.md)). With `LBP_ALS_OUT=<file>` it writes one set instead — `LBP_UID`'s, or the largest — gzipped, for `tools/open-in-live.ps1`. ⚠️ Nothing in Node can say whether Live *shows* what the file says |
 | `export-plan.ts` | **the command line into the game**: a level, a plan or a `.lbptracker.json` song in, a `.plan` out, with the revision and the whole dependency table printed. `export-plan.ts <in> [out] [--ps4] [--seq <uid>]`; a level with several sequencers lists the others |
 | `sequencer-memory.ts [dir ...]` | **the sequencer's thermometer over a corpus**: the game's own sum (distinct samples, FileDB sizes) for every sequencer in the toolkit's corpus, `fixtures/archive` and `fixtures/plans`, against `MaxSequencerMemory`; and what each instrument costs alone. It is the check on the reading in [sequencer-data-model.md](sequencer-data-model.md) — nothing may come out over the limit. ⚠️ A sample missing from the manifest counts as 0 and is reported |
 | `pitch-probe.ts` | that `Notes.y`, `basenote` and `Splitnotes` share one numbering: zones against their own base notes, and the corpus's notes against the samples they resolve to |
@@ -256,3 +279,6 @@ a gain question out.
 | `LBP_TEMPO`, `LBP_SWING`, `LBP_CHANNELS` | `live-settings.ts` | the settings to turn to, as a listener would |
 | `LBP_MIDI_LOOSE=1` | `verify-midi.ts` | export without the verbatim record patch, so MIDI alone is measured |
 | `LBP_MIDI_BUDGET=1` | `verify-midi.ts` | print which carrier every byte of the corpus's export goes to — the table in [midi-interchange.md](midi-interchange.md) |
+| `LBP_ALS_OUT`, `LBP_BAKE_SWING=1` | `export-als.ts` | write one set to that path instead of measuring the corpus, and bake the swing into it; `LBP_UID` picks the sequencer |
+| `LBP_ALS_INSTRUMENTS=1` | `export-als.ts` | a Sampler per track from `fixtures/rinst` and `fixtures/smp`: over the corpus it adds the instrument counts, and with `LBP_ALS_OUT` it writes a project folder (set, samples, `Ableton Project Info`) instead of a lone `.als` |
+| `LBP_LIVE_EXE`, `LBP_LIVE_LOG` | `tools/open-in-live.ps1` | Live's program and its `Log.txt`; default this machine's Live 11.3.43 |

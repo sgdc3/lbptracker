@@ -1,5 +1,6 @@
 /**
  * The Import/Export view: the song out as a `.mid`, and any `.mid` in as the song.
+ * The `.als` and the `.plan` beside them are their own modules, mounted from here.
  *
  * The conversion itself is `packages/lbp-tracker-lib/src/midi.ts`, which is
  * where the interesting decisions and the corrected mistakes live. This is
@@ -33,6 +34,7 @@ import { writeZip } from '@lbptracker/cwlib/zip.ts';
 import { type Sequencer } from '@lbptracker/cwlib/project.ts';
 import { songFromSequencer } from '@lbptracker/lib/song.ts';
 import { currentSequencer, ensureAssets, openSong, rinstIndex, state } from './session.ts';
+import { mountAlsExport } from './als-export.ts';
 import { mountPlanExport } from './plan-export.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -191,7 +193,9 @@ export function mountConvert(opts: { isActive: () => boolean; onShow: (l: () => 
   });
   opts.onShow(() => void ensureAssets().then(convert, () => convert()));
 
-  // The other export on this view: the song as a `.plan` the game can load.
+  // The other exports on this view: the song as an Ableton Live set, and as a
+  // `.plan` the game can load.
+  mountAlsExport({ isActive: opts.isActive, onShow: opts.onShow, log });
   mountPlanExport({ isActive: opts.isActive, onShow: opts.onShow, log });
 
   // ---------------------------------------------------------------- import

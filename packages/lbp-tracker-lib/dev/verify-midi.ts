@@ -111,6 +111,7 @@ const totals = {
   shared: 0, dropped: 0, clampedPitch: 0, clampedBend: 0, bytes: 0, lengthened: 0,
   flattened: 0, deviating: 0, automated: 0, dragged: 0, timbred: 0,
   clips: 0, clipsChanged: 0, records: 0, patched: 0, unpatched: 0, tinted: 0, tintsLost: 0,
+  heard: 0, misMixed: 0,
 };
 
 /**
@@ -178,6 +179,58 @@ function weigh(bytes: Uint8Array): void {
   }
 }
 
+/**
+ * Notes a DAW plays under another placement's mixer.
+ *
+ * ❗ **The round trip cannot see this, so it is measured apart.** Our import
+ * reads the mixer from a meta beside the controllers and was exact while a DAW
+ * played 65,345 notes of the corpus on the wrong level, pan or send: each part's
+ * controllers were written once, at its first cell, and parts sharing a track
+ * interleave. This reads the file the way a DAW does -- whatever CC 7, 10, 91
+ * and 90 say at a note-on is what that note gets -- and compares it with the
+ * placement the note came from, found by row, instrument, tick and key.
+ */
+function misMixed(seq: Sequencer, bytes: Uint8Array): { heard: number; wrong: number } {
+  const file = readMidi(bytes);
+  const ticksPerStep = file.division / 4;
+  const c7 = (v: number) => Math.max(0, Math.min(127, Math.round(v * 127)));
+  /** Every mixer a note at this row, instrument, tick and key may rightly hear. */
+  const expected = new Map<string, Set<string>>();
+  for (const e of schedule(seq)) {
+    const t = seq.tracks[e.track];
+    const key = Math.max(0, Math.min(127, notePitch(e.pitch, t.scale, blockRoot(t.key))));
+    const at = `${t.gridY}|${t.guid}|${Math.round(e.step * ticksPerStep)}|${key}`;
+    const set = expected.get(at) ?? new Set<string>();
+    set.add([c7(t.level), c7(t.pan), c7(t.reverbSend), c7(t.echoSend)].join(','));
+    expected.set(at, set);
+  }
+  let heard = 0;
+  let wrong = 0;
+  for (const track of file.tracks) {
+    let identity: string | undefined;
+    for (const event of track.events) {
+      const text = metaString(event);
+      if (text?.type === 0x01 && text.text.startsWith('LBP-TRK ')) {
+        const meta = JSON.parse(text.text.slice(8)) as { gridY: number; guid: number };
+        identity = `${meta.gridY}|${meta.guid}`;
+        break;
+      }
+    }
+    if (identity === undefined) continue;
+    const dials = new Map<number, number>();
+    for (const event of track.events) {
+      const [status, a, b] = event.data;
+      if ((status & 0xf0) === 0xb0 && [7, 10, 91, 90].includes(a)) dials.set(a, b);
+      if ((status & 0xf0) !== 0x90 || b === 0) continue;
+      const set = expected.get(`${identity}|${event.tick}|${a}`);
+      if (set === undefined) continue;
+      heard += 1;
+      if (!set.has([dials.get(7), dials.get(10), dials.get(91), dials.get(90)].join(','))) wrong += 1;
+    }
+  }
+  return { heard, wrong };
+}
+
 /** What `partsOf` groups on, plus the cell: a clip's identity across a trip. */
 const clipKey = (t: Sequencer['tracks'][number]) =>
   [t.guid, t.gridY, t.level, t.pan, t.echoSend, t.reverbSend, t.key, t.scale, t.gridX].join('|');
@@ -199,6 +252,9 @@ for (const entry of await readdir(LEVELS, { withFileTypes: true })) {
     sequencers += 1;
     const exported = sequencerToMidi(seq, loose ? { exact: false } : {});
     const imported = midiToSequencer(exported.bytes);
+    const mixed = misMixed(seq, exported.bytes);
+    totals.heard += mixed.heard;
+    totals.misMixed += mixed.wrong;
     totals.shared += exported.sharedChannel;
     totals.flattened += exported.flattened;
     totals.dragged += exported.dragged;
@@ -421,6 +477,10 @@ console.log(
   `${totals.tinted.toLocaleString()} chips are tinted away from their instrument's own ` +
     `colour; ${totals.tintsLost} tints came back different`,
 );
+console.log(
+  `the mixer as a DAW plays it: ${totals.misMixed.toLocaleString()} of ` +
+    `${totals.heard.toLocaleString()} notes under another placement's level, pan or send`,
+);
 if (budget) {
   const sum = [...weights.values()].reduce((n, r) => n + r.bytes, 0);
   console.log(`
@@ -471,6 +531,8 @@ process.exit(
     // The tint has no MIDI message and rides in `LBP-TRK` alone, so it is
     // exact on either setting or it is a bug.
     && totals.tintsLost === 0
+    // What a DAW plays, which no import can check for us.
+    && totals.misMixed === 0
     && (loose || (totals.clipsChanged === 0 && totals.unpatched === 0))
     ? 0
     : 1,

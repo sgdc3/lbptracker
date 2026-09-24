@@ -1050,8 +1050,9 @@ test('placements sounding at the same time are not merged', () => {
 
 test('mergeRows puts a row on one track, with the mixer as automation', () => {
   // ❗ Two placements of one kit on one row, at different pans: one MIDI track,
-  // one meta each, and CC 10 written at the tick each placement's own first
-  // clip begins. Over the corpus this is 4,911 tracks down to 3,222.
+  // one meta each, and CC 10 written where each placement's notes take over --
+  // here their first notes open their cells. Over the corpus this is 4,911
+  // tracks down to 3,224.
   const seq = makeSequencer([
     makeTrack([[{ step: 0, pitch: 60 }]], { gridX: 0, stepOffset: 0, guid: 5, pan: 0.6 }),
     makeTrack([[{ step: 0, pitch: 62 }]], {
@@ -1075,6 +1076,37 @@ test('mergeRows puts a row on one track, with the mixer as automation', () => {
     [...back.tracks].sort((a, b) => a.gridX - b.gridX).map((t) => [t.gridX, t.pan, t.notes.length]),
     [[0, 0.6, 1], [4, 0.3, 1]],
     'both placements come back, each with its own notes and pan',
+  );
+});
+
+test('a part that comes back after another on a merged track gets its own mixer back', () => {
+  // ❗ A at cell 0, B at cell 2, A again at cell 4. Until 2026-09-24 the CCs
+  // were written once per part, at its first cell, so a DAW played A's cell 4
+  // on B's pan -- 65,345 notes of the corpus -- while our import, reading at
+  // each first cell, never noticed. Every note must be under its own dials.
+  const seq = makeSequencer([
+    makeTrack([[{ step: 0, pitch: 60 }]], { gridX: 0, stepOffset: 0, guid: 5, pan: 0.6 }),
+    // B's note is late in its cell, so its first cell is still under A.
+    makeTrack([[{ step: 5, pitch: 62 }]], { gridX: 2, stepOffset: 2 * STEPS_PER_CELL, guid: 5, pan: 0.3 }),
+    makeTrack([[{ step: 3, pitch: 64 }]], { gridX: 4, stepOffset: 4 * STEPS_PER_CELL, guid: 5, pan: 0.6 }),
+  ]);
+  const out = sequencerToMidi(seq, { mergeRows: true, exact: false });
+  const file = readMidi(out.bytes);
+  assert.equal(file.tracks.length - 1, 1, 'one track');
+  let pan: number | undefined;
+  const heard: [number, number | undefined][] = [];
+  for (const e of file.tracks[1].events) {
+    if ((e.data[0] & 0xf0) === 0xb0 && e.data[1] === 10) pan = e.data[2];
+    if ((e.data[0] & 0xf0) === 0x90 && e.data[2] > 0) heard.push([e.data[1], pan]);
+  }
+  assert.deepEqual(heard, [[60, 76], [62, 38], [64, 76]], 'each note under its own placement\'s pan');
+
+  // And the import reads each at one of its own notes, not at its first cell,
+  // where B's would still be A's.
+  const back = midiToSequencer(out.bytes).sequencer;
+  assert.deepEqual(
+    [...back.tracks].sort((a, b) => a.gridX - b.gridX).map((t) => [t.gridX, t.pan]),
+    [[0, 0.6], [2, 0.3], [4, 0.6]],
   );
 });
 
