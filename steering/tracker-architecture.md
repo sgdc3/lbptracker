@@ -202,6 +202,38 @@ network and the copy it keeps is used only when that fails — because a cache-f
 serve the previous deployment to everyone who already visited. `dev/stage-site.ts` writes
 `Cache-Control: no-cache` for `sw.js` and the manifest for the same reason.
 
+#### Every deploy is announced on Discord
+
+❗ **A deploy is not finished until a Discord webhook has posted what changed.** The community
+follows the tool in `#lbptracker-announcements`, and a new version nobody hears of is a version
+the bug reports in `#lbptracker-help` will not be about. The owner's rule, 2026-09-24.
+
+- **What it says**: the `CHANGELOG.md` sections of every version the deploy makes live, verbatim
+  and newest first, under a line naming the version and linking <https://lbptracker.sgdc3.it>.
+  The changelog is already written for that reader (no `--`, no em dash, no internals), so the
+  post is copied, never rewritten; a deploy with no new section says it was a redeploy of the
+  same version. ⚠️ Unwrap the file's hard-wrapped lines first: Discord keeps every newline, so a
+  bullet copied as it is breaks mid-sentence at column 100. Each version is a `### 0.2.37 ·
+  2026-09-23` heading, a `###` subheading inside a version becomes a bold line, and every message
+  goes with `allowed_mentions: {parse: []}` and `flags: 4` (no link previews).
+- The whole history up to **0.2.37** went out on 2026-09-24 as 18 messages, oldest first, so the
+  channel starts complete; the first deploy after that announces from 0.2.38 on.
+- **Which versions**: those newer than the one the site was running *before* the deploy. ⚠️ Read
+  it off the live site, not out of memory: the entry bundle inlines the web package's manifest
+  (see `src/version.ts`), so `curl -s https://lbptracker.sgdc3.it/` gives the `assets/index-*.js`
+  name and that file contains `name:\`@lbptracker/web\`,version:\`0.2.37\`` (measured 2026-09-24).
+  Read it before `npm run deploy`, since afterwards it is the new one.
+- **How**: one `POST` of `{"content": …}` as JSON to the webhook URL. Discord caps `content` at
+  2000 characters; a longer post is split at a section boundary into several, oldest version
+  first so the channel reads in order.
+- ❗ **The webhook URL is a secret and never enters the repository**: not in a file, a script, a
+  commit message, steering or the changelog. Anyone holding it can post as the tool. It lives in
+  `.discord-webhook` at the repository root (one line, the URL, gitignored), or in the
+  `LBPTRACKER_DISCORD_WEBHOOK` environment variable, which wins. If neither is there, ask the
+  owner for it; do not skip the post.
+- The deploy itself still waits for the owner's go-ahead, and the post rides on that same
+  go-ahead: it is part of the deploy, not a second publication.
+
 ## Vue, and where it is not allowed
 
 The pages are Vue 3, and the first thing to know is the line it does not cross:

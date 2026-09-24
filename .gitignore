@@ -42,3 +42,6 @@ fixtures/
 *.ipr
 *.iws
 out/
+
+# the Discord webhook the deploy announces through -- a secret, see steering/tracker-architecture.md
+.discord-webhook

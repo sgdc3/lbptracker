@@ -105,6 +105,8 @@ point in the web package. Imports cross by package name:
   `fixtures/smp` into `dist/fixtures/` under boring names and writes `_headers`; `deploy` then runs
   `wrangler deploy` on `packages/lbp-tracker-web/wrangler.jsonc`. ⚠️ Plain `build` still never
   copies `fixtures/`. *Deployment* in `steering/tracker-architecture.md` has the measurements.
+  ❗ **Every deploy ends with a Discord post of the changelog**, through a webhook whose URL is a
+  secret kept out of the repository; the rule and the recipe are in that same section.
 - The libraries depend on each other as `"*"`, so a version bump touches the three manifests and
   nothing else; the web footer reads its version out of its own `package.json`
   (`packages/lbp-tracker-web/src/version.ts`), and a test holds the root manifest to the same number.
