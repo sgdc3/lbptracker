@@ -54,7 +54,7 @@ import { chipFor, drawnColour } from './chips.ts';
 import { escapeEntities } from './parts.ts';
 import { CELL_HEIGHT, CELL_WIDTH, authorHandle, type Sequencer, type Track } from './project.ts';
 import type { RevisionInfo } from './serializer.ts';
-import { PARTS } from './thing.ts';
+import { PARTS, partBit } from './thing.ts';
 import { Writer, writeResource, type Deflate, type DependencyOut } from './writer.ts';
 
 /* ------------------------------------------------------------ the gadget */
@@ -175,8 +175,8 @@ export function requireWritable(revision: RevisionInfo): void {
  */
 const PARTS_REVISION = 0x3f;
 
-/** Part name → its bit in the mask, from the reader's own table. */
-const PART_INDEX = new Map(PARTS.map((part) => [part.name, part.index]));
+/** Part name → its entry in the reader's own table, whose `partBit` gives the mask bit. */
+const PART_BY_NAME = new Map(PARTS.map((part) => [part.name, part]));
 
 /* ------------------------------------------------------------ the Things */
 
@@ -232,9 +232,10 @@ function writeThing(w: Writer, thing: ThingOut): void {
   w.s32(PARTS_REVISION);
   let mask = 0n;
   for (const part of thing.parts) {
-    const index = PART_INDEX.get(part.name);
-    if (index === undefined) throw new Error(`no part index for ${part.name}`);
-    mask |= 1n << BigInt(index);
+    const known = PART_BY_NAME.get(part.name);
+    const bit = known && partBit(known, subVersion);
+    if (bit === undefined) throw new Error(`no part bit for ${part.name} at subVersion 0x${subVersion.toString(16)}`);
+    mask |= 1n << BigInt(bit);
   }
   w.u64Big(mask);
   for (const declared of PARTS) {

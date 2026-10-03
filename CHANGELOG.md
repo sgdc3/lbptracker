@@ -4,6 +4,24 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.39 (2026-10-04)
+
+- New: open levels straight from Bonsai, a community server for LittleBigPlanet. "From Bonsai" in
+  the open dialog searches its LBP2 and LBP3 levels by title, or by a creator's whole name in any
+  capitals, reuploads of their levels included, and lists the best matches first. It also opens a
+  level from the link or the number of its page there. The song you pick gets a link of its own,
+  just like a level from the online archive.
+- "Whole backup" on Bonsai also fetches the plans and levels a level depends on, up to sixty, and
+  says how many of them did not come.
+- Some LBP2 levels that would not open now do: the tracker took a part of theirs for a different
+  one. Two music levels on Bonsai that failed now open with all their songs.
+- "Play a demo song" is in the open dialog too, and the demo songs now come as a shuffled deck:
+  every one plays once before any of them plays again.
+- The Ableton Live export with the instruments: every track played 6 dB louder than the game, so
+  the master clipped. It now plays at the game's level, each Sampler's filter follows the game
+  where a held note spends its time, and its volume takes off what the game's filter takes off
+  below its cutoff.
+
 ## 0.2.38 (2026-09-25)
 
 - New, and still a work in progress: Import/Export can write the song as an Ableton Live set, which

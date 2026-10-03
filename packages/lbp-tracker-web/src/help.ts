@@ -108,8 +108,13 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
   open: {
     title: 'Opening something',
     body:
-      p('Drop a file on the box or click it. It can be a level of your own, a save backup, a zip holding either, ' +
-        'or a song file saved here. The archive search finds levels other people published and fetches them for you.') +
+      p('Drop a file on the box or use its buttons. It can be a level of your own, a save backup, a zip holding ' +
+        'either, or a song file saved here. <strong>From the online archive</strong> opens a level published before ' +
+        'the official servers closed, by the hash on its page at zaprit.fish. <strong>From Bonsai</strong> searches ' +
+        'the levels published on Bonsai, a community server, by title or by a creator’s whole name, best match ' +
+        'first, or opens one by its link or number. Either way the level comes straight to your browser, and the ' +
+        'address bar becomes a link to the song you pick. <strong>Play a demo song</strong> opens one of the ' +
+        'community songs picked for this site; each plays once before any plays again.') +
       p('A level holding several songs lists them below the box: pick one and it becomes the song. ' +
         'Whatever is open is replaced, so save first if it matters.'),
   },

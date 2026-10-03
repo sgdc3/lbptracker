@@ -19,7 +19,7 @@
  * | the loop, `[dwStart, dwEnd + 1)` as the game's loader reads it | the sustain loop, forward, no crossfade |
  * | the amplitude ADSR, linear, a stage time `param² × 4 s` | Live's, with linear slopes and the times the engine's rates give |
  * | the Moog ladder's cutoff, resonance, key tracking and envelope | Live's filter, low-pass, set to the same corners |
- * | `Params[24]`, the output level, ×2 | the Sampler's volume |
+ * | `Params[24]`, the output level | the Sampler's volume; the 2 it enters the gain with is the track's (`mixerOf`) |
  * | `Params[26]`, the drive | the Shaper |
  * | the note's level and its ramp | per-note pressure, every note's (`als.ts`), through the Pressure row to Volume |
  *
@@ -36,7 +36,7 @@
 
 import { emitDevice, Ids, v, type DeviceNode } from './als-xml.ts';
 import { ADSR_PARAMS, ADSR_PARAMS_B, evaluateAdsr, evaluateParam, type Adsr } from './envelope.ts';
-import { FILTER_PARAMS } from './audio/moog.ts';
+import { FILTER_BYPASS_CUTOFF, FILTER_PARAMS, ladderCoefficients } from './audio/moog.ts';
 import { zoneCount } from './instrument.ts';
 import { OUTPUT_PARAMS } from './params.ts';
 import { usedSlots, type RInstrument } from './rinstrument.ts';
@@ -269,20 +269,46 @@ export function samplerDevice(
   const zones = samplerZones(instrument, sample, settings.keyShift, settings.tempo);
 
   // The filter, the ladder's own terms put where Live keeps them. The cutoff
-  // is a fraction of Nyquist at the engine's 48 kHz; the envelope multiplies
-  // it by `1 + amount · (env − 1)`, so the cutoff at rest is `cutoff × (1 −
-  // amount)` and the envelope's full swing is that ratio in semitones.
-  // ❗ Past Live's 72 semitones the peak is kept and the rest rises: kept at
-  // the rest, concertina's amount of 1 would peak at 6 % of its cutoff.
+  // is a fraction of Nyquist at the engine's 48 kHz, and envelope B multiplies
+  // it -- and the resonance -- by `1 + amount · (env − 1)` (`moog.ts`).
   const cutoff = P(FILTER_PARAMS.cutoff) ** 2;
+  const resonance = P(FILTER_PARAMS.resonance);
   const amount = P(FILTER_PARAMS.envAmount);
-  const swing = Math.min(72, Math.max(-72, 12 * Math.log2(1 / Math.max(0.001, 1 - amount))));
+  const envA = evaluateAdsr(instrument.params, ADSR_PARAMS, settings.modulation);
+  const envB = evaluateAdsr(instrument.params, ADSR_PARAMS_B, settings.modulation);
+  const factor = (env: number) => Math.max(0.001, 1 + amount * (env - 1));
+  // ❗ **Live's envelope moves the cutoff in semitones, the engine's in
+  // proportion, so the two agree at two levels and nowhere between.** The two
+  // kept are the peak and the sustain, where a held note spends its time, or
+  // the peak and the rest when the sustain is one of those. Fitted at the rest
+  // and the peak, `robot` -- held at 0.58 of an amount of 0.98 -- sat 1.6
+  // octaves under the game for as long as a note was held.
+  // Past Live's 72 semitones the peak is kept and the rest rises: kept at
+  // the rest, concertina's amount of 1 would peak at 6 % of its cutoff.
+  const held = envB.sustain > 0 && envB.sustain < 1;
+  const swing = Math.min(72, Math.max(-72, held
+    ? (12 * Math.log2(1 / factor(envB.sustain))) / (1 - envB.sustain)
+    : 12 * Math.log2(1 / factor(0))));
   const resting = cutoff / 2 ** (swing / 12);
   const bypassed = cutoff >= 0.99 && amount <= 0;
+  // ❗ **The ladder's passband falls as its resonance rises, and Live's does
+  // not.** Each stage of the Stilson/Smith ladder passes DC at 1, so the
+  // feedback `q` leaves `1/(1 + q)` below the cutoff; Live's Clean circuit is
+  // EQ Eight's filter (the Live 11 manual, *Sampler*), flat there. The volume
+  // carries the ladder's gain where the note is heard: at the sustain when the
+  // amplitude holds one, at the peak of a pluck. `saw_wave` loses 5.5 dB there.
+  const heard = envA.sustain > 0 ? envB.sustain : 1;
+  const heardFreq = Math.min(1, cutoff * factor(heard));
+  const passband = bypassed || heardFreq > FILTER_BYPASS_CUTOFF
+    ? 1
+    : 1 / (1 + ladderCoefficients(heardFreq, Math.min(1, resonance * factor(heard))).q);
   const filter = 'Filter.Slot.Value.SimplerFilter';
   const drive = Math.min(1, Math.max(0, P(OUTPUT_PARAMS.drive)));
-  // `Params[24]` enters the gain with a factor of 2 (`synth-engine.md`).
-  const level = 2 * P(OUTPUT_PARAMS.level);
+  // ❗ `Params[24]` alone. The factor of 2 it enters the engine's gain with
+  // (`synth-engine.md`) is already the track's, in the pan law `mixerOf` runs
+  // backwards: written here as well, every track played 6 dB over the game
+  // and the master clipped (2026-09-29).
+  const level = P(OUTPUT_PARAMS.level);
 
   return emitDevice(ids, ['c', 'MultiSampler', { Id: '0' }, SAMPLER_MEMBERS], {
     LastPresetRef: { xml: '<Value />' },
@@ -297,19 +323,19 @@ export function samplerDevice(
     // denser than that; the default retrigger, every overlap.
     'Globals.NumVoices': 14,
     'Globals.RetriggerMode': false,
-    'VolumeAndPan.Volume': level > 0 ? 20 * Math.log10(level) : -36,
+    'VolumeAndPan.Volume': level * passband > 0 ? 20 * Math.log10(level * passband) : -36,
     'VolumeAndPan.VolumeVelScale': 1,
-    ...envelopeSet('VolumeAndPan.Envelope', evaluateAdsr(instrument.params, ADSR_PARAMS, settings.modulation), 0.0003162277571),
+    ...envelopeSet('VolumeAndPan.Envelope', envA, 0.0003162277571),
     'Filter.IsOn': !bypassed,
     [`${filter}.Freq`]: resting * (ENGINE_RATE / 2),
-    [`${filter}.Res`]: P(FILTER_PARAMS.resonance),
+    [`${filter}.Res`]: resonance,
     [`${filter}.ModByPitch`]: Math.min(1, Math.max(0, P(FILTER_PARAMS.keyTrack))),
     [`${filter}.Envelope.IsOn`]: amount !== 0,
     [`${filter}.Envelope.Amount`]: swing,
     [`${filter}.Envelope.DecayLevel`]: 1,
     [`${filter}.Envelope.AttackLevel`]: 0,
     [`${filter}.Envelope.ReleaseLevel`]: 0,
-    ...envelopeSet(`${filter}.Envelope`, evaluateAdsr(instrument.params, ADSR_PARAMS_B, settings.modulation), 0),
+    ...envelopeSet(`${filter}.Envelope`, envB, 0),
     'Shaper.IsOn': drive > 0,
     'Shaper.Slot.Value': drive > 0 ? { xml: emitDevice(ids, SHAPER, { Amount: drive * 100 }) } : { xml: '' },
     // The note's level and its ramp ride on per-note pressure (`als.ts`); the

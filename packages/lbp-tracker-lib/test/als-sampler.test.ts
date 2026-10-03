@@ -3,10 +3,11 @@ import test from 'node:test';
 
 import { DEFAULT_CHIP_COLOUR } from '@lbptracker/cwlib/chips.ts';
 import { readNotes, NOTE_RECORD_SIZE } from '@lbptracker/cwlib/notes.ts';
-import type { Sequencer, Track } from '@lbptracker/cwlib/project.ts';
+import { channelVolume, type Sequencer, type Track } from '@lbptracker/cwlib/project.ts';
 import { alsProjectFiles, sequencerToAls } from '../src/als.ts';
 import { Ids } from '../src/als-xml.ts';
 import { samplerDevice, samplerSampleFile, samplerZones, type SamplerSample } from '../src/als-sampler.ts';
+import { ladderCoefficients, MoogLadder } from '../src/audio/moog.ts';
 import type { SampleSlot } from '../src/instrument.ts';
 import type { RInstrument } from '../src/rinstrument.ts';
 
@@ -135,14 +136,17 @@ test('the Sampler: 32 voices, no retrigger, the level, the envelopes and the fil
   const inst = instrument([slot()], [87], {
     3: 0.5, 4: 0.25, 5: 1, 6: 0.75, // cutoff 0.25 of Nyquist, envelope amount 0.75
     11: 0.5, 12: 0.5, 13: 0.5, 14: 1, // attack 1 s, decay 1 s, sustain 0.5, release 4 s
-    24: 0.25, // output level: 2 x 0.25 = 0.5, -6 dB
+    24: 0.25, // output level 0.25, -12 dB: the engine's factor 2 is the track fader's
   });
   const xml = samplerDevice(new Ids(), inst, () => sample('a.wav', 1000, { start: 10, end: 900 }),
     { modulation: 0, keyShift: 0, tempo: 120, name: 'saw_wave' });
   const at = (path: string) => valueAt(xml, path);
   assert.match(xml, /<NumVoices Value="14" \/>/);
   assert.match(xml, /<RetriggerMode Value="false" \/>/);
-  assert.ok(Math.abs(at('VolumeAndPan.Volume') - 20 * Math.log10(0.5)) < 1e-6);
+  // The level, and the ladder's passband where the note sustains: envelope B
+  // has fallen to 0 there, so the cutoff and the resonance are a quarter each.
+  const passband = 1 / (1 + ladderCoefficients(0.25 * 0.25, 0.25 * 0.25).q);
+  assert.ok(Math.abs(at('VolumeAndPan.Volume') - 20 * Math.log10(0.25 * passband)) < 1e-6);
   assert.equal(at('VolumeAndPan.Envelope.AttackTime'), 1000);
   // The decay falls 1 → 0.5 at one unit a second; the release from the sustain.
   assert.equal(at('VolumeAndPan.Envelope.DecayTime'), 500);
@@ -158,6 +162,37 @@ test('the Sampler: 32 voices, no retrigger, the level, the envelopes and the fil
   assert.match(xml, /<RelativePathType Value="3" \/>\n<RelativePath Value="Samples\/Imported\/a.wav" \/>/);
   // Pressure (`MidiCtrl.0`) to Volume (18).
   assert.match(xml, /<MidiCtrl\.0>\n<ModConnections\.0>\n<Amount Value="100" \/>\n<Connection Value="18" \/>/);
+});
+
+test('a held filter envelope meets the engine at its peak and its sustain, robot\'s shape', () => {
+  // `robot`: cutoff² 0.504, envelope amount 0.98, envelope B holding at 0.58.
+  const inst = instrument([slot()], [87], { 3: Math.sqrt(0.504), 6: 0.98, 9: 0.58, 13: 1 });
+  const xml = samplerDevice(new Ids(), inst, () => sample('a.wav'), { modulation: 0, keyShift: 0, tempo: 120, name: 'robot' });
+  const rest = valueAt(xml, 'SimplerFilter.Freq');
+  const swing = valueAt(xml, 'SimplerFilter.Envelope.Amount');
+  const live = (env: number) => rest * 2 ** ((swing * env) / 12);
+  // The engine: `cutoff² × (1 + amount × (env − 1))`, as a fraction of 24 kHz.
+  const engine = (env: number) => 0.504 * (1 + 0.98 * (env - 1)) * 24000;
+  assert.ok(Math.abs(live(1) / engine(1) - 1) < 1e-6, `peak ${live(1)} against ${engine(1)}`);
+  assert.ok(Math.abs(live(0.58) / engine(0.58) - 1) < 1e-6, `sustain ${live(0.58)} against ${engine(0.58)}`);
+});
+
+test('the Sampler\'s volume carries the ladder\'s passband, which falls as the resonance rises', () => {
+  // `saw_wave`: cutoff² 0.733, resonance 0.76, the amplitude and envelope B both holding at 1.
+  const inst = instrument([slot()], [87], { 3: Math.sqrt(0.733), 4: 0.76, 9: 1, 13: 1, 24: 0.294 });
+  const xml = samplerDevice(new Ids(), inst, () => sample('a.wav'), { modulation: 0, keyShift: 0, tempo: 120, name: 'saw_wave' });
+  const written = valueAt(xml, 'VolumeAndPan.Volume') - 20 * Math.log10(0.294);
+  // What the engine's ladder does to a 110 Hz tone, run: the volume must take the same.
+  const ladder = new MoogLadder();
+  const c = ladderCoefficients(0.733, 0.76);
+  let peak = 0;
+  for (let i = 0; i < 48000; i += 1) {
+    const y = ladder.process(0.1 * Math.sin((2 * Math.PI * 110 * i) / 48000), c);
+    if (i > 24000) peak = Math.max(peak, Math.abs(y));
+  }
+  const measured = 20 * Math.log10(peak / 0.1);
+  assert.ok(measured < -5, `the ladder takes ${measured} dB`);
+  assert.ok(Math.abs(written - measured) < 0.1, `written ${written} dB against the ladder's ${measured} dB`);
 });
 
 test('past Live\'s 72 semitones the filter envelope keeps its peak, and the rest rises', () => {
@@ -215,4 +250,33 @@ test('with instruments the set gets a Sampler per track, its samples and the pro
     'Song _1_ Project/Ableton Project Info/',
     'Song _1_ Project/Samples/Imported/tone.wav',
   ]);
+});
+
+test('with a Sampler, Live plays each channel at the renderer\'s gain: the instrument\'s 2 counted once', () => {
+  const bytes = new Uint8Array(NOTE_RECORD_SIZE);
+  bytes.set([0, 60 | 0x80, 127, 0], 0);
+  const track: Track = {
+    guid: 7, name: '', colour: DEFAULT_CHIP_COLOUR, gridX: 0, gridY: 0, stepOffset: 0,
+    level: 0.8, pan: 0.25, echoSend: 0, reverbSend: 0, key: 0, scale: 0,
+    notes: readNotes(bytes).notes, records: bytes, trailingRecords: 0,
+  };
+  const seq: Sequencer = {
+    uid: 1, name: 'Song', author: '', tempo: 120, swing: 0, echoFeedback: 0, echoTime: 1, echoMix: 0.5,
+    reverb: 0, loop: false, startPoint: 0, numChannels: 1, volumes: [0.5, 1, 1, 1, 1, 1], boardRows: 0,
+    tracks: [track], lengthSteps: 4,
+  };
+  const inst = instrument([slot()], [87], { 24: 0.25 });
+  const { xml } = sequencerToAls(seq, {
+    instruments: new Map([[7, { instrument: inst, samples: new Map([[100, { name: 'tone.smp', bytes: smp(64, 48000) }]]) }]]),
+  });
+  // The track's own mixer comes first; the Sampler's `Volume` is inside `VolumeAndPan`.
+  const mixer = /<Mixer>[\s\S]*?<\/Mixer>/.exec(xml)?.[0] ?? '';
+  const fader = (name: string) => Number(new RegExp(`<${name}>\\n<LomId Value="0" />\\n<Manual Value="([^"]*)"`).exec(mixer)?.[1]);
+  const theta = ((fader('Pan') + 1) * Math.PI) / 4;
+  const sampler = 10 ** (valueAt(xml, 'VolumeAndPan.Volume') / 20);
+  const [left, right] = [Math.cos(theta), Math.sin(theta)].map((g) => Math.SQRT2 * g * fader('Volume') * sampler);
+  // The renderer: level x channel x 2 x `Params[24]`, then `1 - p` and `p`.
+  const gain = 0.8 * channelVolume(seq, track) * 2 * 0.25;
+  assert.ok(Math.abs(left - 0.75 * gain) < 1e-9, `left ${left} against ${0.75 * gain}`);
+  assert.ok(Math.abs(right - 0.25 * gain) < 1e-9, `right ${right} against ${0.25 * gain}`);
 });

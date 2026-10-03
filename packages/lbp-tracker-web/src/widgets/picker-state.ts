@@ -38,8 +38,9 @@ export interface PickerState {
   chosen: string;
   /**
    * Whether these songs can be linked to, which decides if the copy button is
-   * there at all. ❗ **Only a level fetched from the online archive can**: a
-   * level opened off this machine has no name anybody else could open it by.
+   * there at all. ❗ **Only a level fetched from the online archive or from
+   * Bonsai can**: a level opened off this machine has no name anybody else
+   * could open it by.
    */
   linkable: boolean;
 }

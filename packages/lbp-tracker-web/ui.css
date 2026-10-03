@@ -247,6 +247,26 @@ input.archive-q { flex: 1 1 24rem; min-width: 0; text-align: left; }
 .archive-hint b { color: var(--dim); font-weight: 600; }
 .archive-hint a { color: var(--accent); }
 
+/* Bonsai's panel is the archive's, plus the search results between the note and
+   the hint: `.picker-list` rows, so a level reads like the songs in it will.
+   `packages/lbp-tracker-web/src/bonsai-panel.ts` supplies this markup. */
+.bonsai-count { margin: .5rem 0 0; color: var(--dim); font-size: .85rem; }
+.bonsai-results { margin-bottom: .5rem; }
+/* The icon is taller than a line of text, so the row centres rather than
+   lining up baselines as the song picker's do. */
+.picker-row.bonsai-row { align-items: center; }
+.bonsai-icon {
+  flex: 0 0 2rem; width: 2rem; height: 2rem; border-radius: 4px;
+  object-fit: cover; background: var(--panel);
+}
+/* `.picker-row > span:first-child` truncates a song's name; here the first
+   child is the icon, so the title says it for itself. The author gives way
+   before the title does: at phone width, shrinking alike left "Random Musi…"
+   beside "KIXEL…". */
+.bonsai-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bonsai-row .picker-detail { flex: 0 4 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.bonsai-more { display: block; margin: .3rem auto .1rem; }
+
 /* ---------------------------------------------------------------- the foot */
 /* `packages/lbp-tracker-web/src/footer.ts` supplies the markup, so every page gets the same one and the
    licensing line cannot go stale on three of four pages. */

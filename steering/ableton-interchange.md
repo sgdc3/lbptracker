@@ -99,10 +99,14 @@ where the game plays 1.5 : 0.5. It is exact for a source that is the same on bot
 is what a mono sample through an instrument is; a stereo source gets the same gain per channel, and
 whether the game pans a stereo sample that way is not checked.
 
-`Params[24]` itself, the instrument's own output level, is not in the set: it belongs to the
-instrument, and the instrument is whatever the user loads. The 7.1 fold's narrowing of the image is
-not applied here either, for the same reason as in the renderer — the file's own pans — *39* in
-[open-questions.md](open-questions.md).
+`Params[24]` itself, the instrument's own output level, belongs to the instrument: with the
+instruments off it is not in the set, and with them on it is the Sampler's volume — ❗ **without
+the 2, which is already here in the track's law.** Written into both, every track played 6.02 dB
+over the game, and the owner heard the tracks too loud and the master clipping (2026-09-29); a
+test now holds Sampler × fader × Live's pan to the renderer's `level × channelVolume × 2 × P24`
+times `1 − p` and `p`. The 7.1 fold's narrowing of the image is not applied here either, for the
+same reason as in the renderer — the file's own pans — *39* in
+[open-questions.md](open-questions.md), and neither is its gain: the master stays at 0 dB (*53*).
 
 ## The colours — Live's palette, measured
 
@@ -198,10 +202,24 @@ which has the Sampler. `als-sampler.ts` has the mapping table; what it rests on:
   gives both a voice. The export writes 14 and no retrigger.
 - **Filter and envelopes**, checked on `Ascetic`'s square wave: Clean circuit, 24 dB, 480 Hz at rest
   with an envelope amount of 67 semitones (its envelope amount 0.98 takes the cutoff from 2 % to all
-  of it: 12·log2 50), filter release 4.00 s, volume −8.23 dB. Live's envelope amount stops at 72
+  of it: 12·log2 50), filter release 4.00 s, and the volume as written, −8.23 dB (then `2·P24`,
+  since corrected to `P24`: *The mixer* above). Live's envelope amount stops at 72
   semitones, and past it the export keeps the peak and lets the rest rise: kept at the rest, an
   amount of 1 peaked at 6 % of the cutoff. 13 of the 68 instruments in `fixtures/rinst` pass 72 at
   modulation 0 or 1, `concertina` and `space_piano` at every modulation.
+- ❗ **The filter envelope meets the engine at its peak and its sustain.** Live's envelope moves the
+  cutoff in semitones and the engine's in proportion (`1 + amount·(env − 1)`, `moog.ts`), so they
+  agree at two levels only; the export picks the peak and the sustain, and the peak and the rest
+  when the sustain is 0 or 1. Fitted at the rest and the peak, `robot` — held at 0.58 of an amount
+  of 0.98, in `Ascetic`, `Rotary` and `Voltaic` — sat at 2.3 kHz where the game holds 7.1 kHz;
+  now its rest is 3.4 kHz and its swing 21.9 semitones (2026-09-29).
+- ❗ **The Sampler's volume carries the ladder's passband.** Each stage of the Stilson/Smith ladder
+  passes DC at 1, so its feedback `q` leaves `1/(1 + q)` under the cutoff — measured by running
+  `MoogLadder` on a 110 Hz tone, within 0.1 dB of the formula. Live's Clean circuit is "the same
+  as the filters used in EQ Eight" (the Live 11 manual, *Sampler*), and the export takes its
+  passband as flat. At the point the note is heard — the sustain when the amplitude holds one, the
+  peak of a pluck — the game takes 5.5 dB off `saw_wave`, 7.7 off `noise`, 6.0 off `ghost`, 4.1
+  off `electric_harpsichord` and 3.2 off `triangle_wave`, which the volume now does too.
 
 ⚠️ **Measured to be what the file says, not to sound like the game.** This Live is a Trial that
 renders nothing, so no Sampler here has been compared by ear or by capture; what is unmeasured in

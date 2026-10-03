@@ -14,14 +14,17 @@
  * *next* Thing. Treat a marker failure as "the part before this one is wrong",
  * not as a corrupt file.
  *
- * ## Revision gates, and one that does not hold
+ * ## Revision gates
  *
  * Fields are gated on `version` (the head's low half) and `subVersion` (its high
  * half). ⚠️ **Nine of the ten corpus levels report `subVersion` 0** — by cwlib's
  * own test (`isLBP3()` is `head >> 16 != 0`) they are LBP2-revision files that
- * LBP3 wrote. Every `subVersion >= n` gate is therefore false on them, and where
- * that turned out to be wrong the code says so at the line: see `extraFlags` in
- * `thing.ts`.
+ * LBP3 wrote. Every `subVersion >= n` gate is therefore false on them, and that
+ * is right: the game's own loaders compare the whole head word (`PQuest` at
+ * `v0xdc0290` against `0x9d0000`, `0x1410000` and `0x51ffff`, `PWormhole` at
+ * `v0xd46f20` against `0x1110000`), so a subVersion-0 file takes the old side of
+ * every one. This header used to say a gate had failed on them; the failure
+ * was a part read under the wrong mask bit (`partBit` in `thing.ts`).
  */
 
 import { Serializer, SerializerError } from './serializer.ts';
@@ -2207,19 +2210,52 @@ function readMetadata(s: Serializer): void {
   if (version >= 0x205) s.bool(); // allowEmit
 }
 
+/**
+ * `PQuest`, as the game's own loader reads it: `v0xdc0290` in `eboot-v128.bin`.
+ *
+ * ❗ **Read off the eboot, not off cwlib**, which throws on every type but 5.
+ * The loader's gates are on the head word and match cwlib's `subVersion` gates
+ * one for one (`>= 0x9d0000` is `subVersion > 0x9c`, and so on); the block after
+ * them is a jump table on `type - 1` at `v0xdc087c`: type 1 to `v0xdc064b`, 2 to
+ * `v0xdc06e6`, 3 and 4 to `v0xdc0613`. Every string goes through the same
+ * routine, `v0xbdd2a0`, which is the one `questID` uses.
+ *
+ * ⚠️ **Type 5 has no block, and anything outside 1..5 is an error in the game
+ * too** (`0x7a`, when the per-type data was not allocated and the type is not
+ * 5). Every quest measured so far is type 5 at subVersion `0x218`: 47 of them
+ * in LBP3 levels off Bonsai, 2026-10-04. The "type 2" that two LBP2 levels
+ * seemed to carry was a `PWormhole` read under the wrong mask bit (`partBit` in
+ * `thing.ts`); types 1 to 4 have not been seen in a file.
+ */
 function readQuest(s: Serializer): void {
+  const { subVersion } = s.revision;
   const type = s.i32();
-  // ⚠️ cwlib refuses anything but 5 and so does this: the other types carry a
-  // trailing block whose shape depends on the type, and none of the corpus's
-  // 2,553 islands has one to check it against.
-  if (type !== 5) throw new SerializerError(`quest type ${type} has no reader`);
-  s.wstr(); // questID
-  s.wstr(); // objectiveID
-  s.i32(); // questKey
-  s.i32(); // objectiveKey
+  if (type < 1 || type > 5) throw new SerializerError(`quest type ${type} is not one the game reads`);
+  if (subVersion > 0x9c) {
+    s.wstr(); // questID
+    s.wstr(); // objectiveID
+  }
+  if (subVersion > 0x140) {
+    s.i32(); // questKey
+    s.i32(); // objectiveKey
+  }
+  if (subVersion < 0x52) s.u8();
+  if (type === 5 || subVersion < 0x47) return;
+  if (type === 1) {
+    s.wstr();
+    s.wstr();
+    s.u8();
+    if (subVersion >= 0x5e && subVersion < 0x127) s.u8();
+  } else if (type === 2) {
+    s.wstr();
+  } else {
+    s.i32();
+    s.wstr();
+    s.wstr();
+    s.wstr();
+  }
 }
 
-/** `PWormhole`: the door between two islands. */
 /**
  * `PEffector`: the volume physics behaves differently inside — gravity, and
  * water.
@@ -2252,9 +2288,18 @@ function readEffector(s: Serializer): void {
   s.f32(); // modScale
 }
 
+/**
+ * `PWormhole`: the door between two islands.
+ *
+ * ⚠️ **The second field is gated, and this read it unconditionally.** The
+ * game's loader, `v0xd46f20`, reads `ActiveTypeForTwoWayHole` only when the
+ * head is `>= 0x1110000`, as cwlib says. Measured on the bytes too: the two
+ * wormholes in LBP2 levels #24 and #19883 off Bonsai are exactly eight fields
+ * long, and an extra byte would have eaten the next Thing's first one.
+ */
 function readWormhole(s: Serializer): void {
   s.s32(); // type
-  s.i8(); // activeTypeForTwoWayHole, subVersion >= 0x111
+  if (s.revision.subVersion >= 0x111) s.i8(); // activeTypeForTwoWayHole
   s.s32(); // playerMode
   s.bool(); // audioEnabled
   s.bool(); // trigger

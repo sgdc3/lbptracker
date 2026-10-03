@@ -27,6 +27,9 @@ import {
 } from '@lbptracker/cwlib/backup.ts';
 import { webInflate, webInflateRaw } from '@lbptracker/cwlib/platform/web.ts';
 import { looksLikeSongJson, sequencerFromSong, songFromJson } from '@lbptracker/lib/song.ts';
+// A type and nothing else: the render worker imports this file (see the
+// header), and the address bar `link.ts` writes to is no business of a worker.
+import type { LinkedLevel } from './link.ts';
 
 /**
  * Files bigger than this are skipped without being read.
@@ -48,13 +51,13 @@ export interface Opened {
   /** True when the source was a folder or an archive rather than one file. */
   readonly many: boolean;
   /**
-   * Set when this came out of the Internet Archive, which is the only source
-   * whose songs can be linked to: `archive-panel.ts` puts the hash it fetched
-   * here, and the page turns it into the URL (`link.ts`). A level off this
-   * machine has no name anybody else could open, and says so by leaving this
-   * out.
+   * Set when this came out of the Internet Archive or off Bonsai, the only
+   * sources whose songs can be linked to: `archive-panel.ts` puts the hash it
+   * fetched here and `bonsai-panel.ts` the level number, and the page turns it
+   * into the URL (`link.ts`). A level off this machine has no name anybody else
+   * could open, and says so by leaving this out.
    */
-  readonly archive?: { readonly sha1: string; readonly deep: boolean };
+  readonly link?: LinkedLevel;
 }
 
 const read = async (file: File, name = file.name): Promise<BackupFile | undefined> =>

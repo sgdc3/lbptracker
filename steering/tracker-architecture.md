@@ -290,7 +290,8 @@ and `defineExpose` unwraps refs, so `ui.busy.value = true` throws only when the 
 A creator's backup is a **pile**: the game writes each resource under its own SHA-1, so "open your
 level" otherwise means "find the right extensionless file among forty and guess". The app's drop
 zone takes a folder, a zip of one, a single file, one of this tracker's own `.json` song files,
-**or a root level hash out of the public archive**, and every route ends in the same `onOpen`
+**a root level hash out of the public archive, or a level off Bonsai** found by searching it or
+by its number, and every route ends in the same `onOpen`
 with the same `{ name, bytes }[]`, read by `readOpened` in `src/open-level.ts`; a level holding
 several sequencers puts them in the picker, and picking one makes it the song.
 The formats are in [level-files.md](level-files.md); this is the behaviour around them.
@@ -322,6 +323,12 @@ The formats are in [level-files.md](level-files.md); this is the behaviour aroun
   needs a Node process beside the page is the wrong shape for the one route that exists because
   the listener has nothing set up. The dev server makes no outbound requests at all: a level from
   the archive is fetched by the page straight from archive.org, which answers any origin.
+- ❗ **Bonsai's route has a search, and it is the same rule, not an exception to it.** Bonsai
+  answers any origin, so the page asks it for the search, the level and every resource itself,
+  and nothing passes through a server of ours. The rule was never "no search", it was "no proxy";
+  the header that zaprit.fish lacks is the whole difference. The measurements are in *Bonsai* in
+  [level-files.md](level-files.md). The two panels share the dependency walk
+  (`src/resource-walk.ts`) and nothing else, since what each store says on failure is its own.
 
 ## The live player — settings are applied, not re-planned
 

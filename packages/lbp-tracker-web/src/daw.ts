@@ -23,7 +23,7 @@ import { focusOwnsKeys } from './keys.ts';
 import { saveSongFile } from './song-file.ts';
 import { mountOpen } from './widgets/open-panel.ts';
 import { loading } from './widgets/loading.ts';
-import { pickDemo, type DemoSong } from './demo-songs.ts';
+import { demoDeck } from './demo-songs.ts';
 import {
   forgetLevel, linkable, pickWanted, rememberSequencer, rememberSong, songFromQuery, songLink,
 } from './link.ts';
@@ -281,10 +281,10 @@ const picker = seqPicker($<HTMLDivElement>('seq'), async (key) => {
   chose(key);
   fileDialog.close();
 }, {
-  // ❗ **Only a level from the online archive has a link**, which is why this
-  // lives in the picker and not in the top bar beside the song's name: the
-  // button is there when the songs on screen came from a hash anybody can
-  // fetch, and gone otherwise. `setLinkable` below follows each open.
+  // ❗ **Only a level from the online archive or Bonsai has a link**, which is
+  // why this lives in the picker and not in the top bar beside the song's name:
+  // the button is there when the songs on screen came from somewhere anybody
+  // can fetch them, and gone otherwise. `setLinkable` below follows each open.
   // ⚠️ **A copy can be refused and the reader must still get the link.**
   // `navigator.clipboard.writeText` is denied outright in some contexts -- an
   // embedded browser with no clipboard permission is one, measured -- so this
@@ -341,11 +341,12 @@ async function openLevel(opened: Opened): Promise<void> {
   // on the home screen never opens that dialog; reading a big backup is
   // seconds. See `widgets/loading.ts`.
   const job = loading(`Reading ${opened.label}`, 'loading the game’s instruments…');
-  // ❗ **The URL stops claiming a level that is not this one.** The archive
-  // route has already written its hash there (`rememberLevel`); every other
-  // route is opening something nobody else can fetch, and a link left over from
-  // a previous open would be a link to the wrong song.
-  if (!opened.archive) forgetLevel();
+  // ❗ **The URL stops claiming a level that is not this one.** The archive and
+  // Bonsai routes have already written the level's name there
+  // (`rememberLevel`); every other route is opening something nobody else can
+  // fetch, and a link left over from a previous open would be a link to the
+  // wrong song.
+  if (!opened.link) forgetLevel();
   else demoLanded = true;
   try {
     await ensureAssets();
@@ -445,18 +446,23 @@ $('homeNew').addEventListener('click', () => void startNew());
 // ❗ **A demo is a link somebody pressed for you.** The song is named in the
 // address bar first and then fetched by the route a `?level=&seq=` link takes
 // (`link.ts`, `demo-songs.ts`), so it opens on that song, can be shared, and
-// there is no second way in to keep working.
-let lastDemo: DemoSong | undefined;
+// there is no second way in to keep working. Two buttons deal from the one
+// deck -- the home view's and the open dialog's -- so neither can repeat what
+// the other just played.
+const nextDemo = demoDeck();
 let demoLanded = false;
-$('homeDemo').addEventListener('click', () => void (async () => {
+const playDemo = async () => {
   if (state.dirty && !(await confirmDialog('Throw away the unsaved changes?', 'throw them away'))) return;
-  lastDemo = pickDemo(lastDemo);
+  const demo = nextDemo();
   demoLanded = false;
-  rememberSong(lastDemo.level, lastDemo.uid);
-  await drop.openArchive(lastDemo.level);
+  rememberSong(demo.level, demo.uid);
+  await drop.openArchive(demo.level);
   // The archive's own complaint is written into a box inside the file dialog.
-  if (!demoLanded) $<HTMLDialogElement>('fileDialog').showModal();
-})());
+  const dialog = $<HTMLDialogElement>('fileDialog');
+  if (!demoLanded && !dialog.open) dialog.showModal();
+};
+$('homeDemo').addEventListener('click', () => void playDemo());
+$('fileDemo').addEventListener('click', () => void playDemo());
 
 function saveSong(): void {
   const name = saveSongFile(state.song);

@@ -296,12 +296,21 @@ below, since fixed and not yet heard. Each item below is a decision where a meas
   audible, at the price of a second law for the level and an upside-down pressure lane.
 - **The filter**: Live's Clean 24 dB low-pass for the Stilson/Smith ladder, the cutoff as a fraction
   of 24 kHz, resonance written straight into Live's 0..1.25, and key tracking at the engine's amount
-  although the engine tracks from each slot's own base note and Live from its own reference. The
-  envelope agrees at the rest and the peak and nowhere between: Live's moves the cutoff in
-  semitones, the engine's in proportion, so at half the envelope an amount of 0.98 sits 22
-  semitones lower in Live. Fitting the sustain level and the peak instead would favour held notes.
+  although the engine tracks from each slot's own base note and Live from its own reference, which
+  the manual does not name. The envelope now meets the engine at the peak and the sustain, so
+  what is left is between them: a note's attack starts from a rest that is not the engine's.
+  Live's Clean passband is taken as flat from the manual, and the export writes the ladder's
+  `1/(1 + q)` into the volume on that assumption. The resonance goes straight into Live's 0..1.25
+  although the ladder only oscillates near `q = 4` — `saw_wave`'s 0.76 is `q = 0.87` there — so
+  Live may ring far harder than the game; its scale is unmeasured.
 - **The release** is written from the sustain level; the engine releases from wherever the level
   is, so a note let go during its decay releases for less in the game.
+- **The master at 0 dB**, so the set is the engine's own sum: **4.645 dB under the tracker**, which
+  multiplies in the fold's gain last (`FOLD_GAIN`, [lbp-audio-engine.md](lbp-audio-engine.md)).
+  Chosen for headroom: `Ascetic` renders to a 0.934 peak with that gain and the compressor off,
+  and a Live mix at that level has nothing to catch it — in the game `SMS WaveHammer` does, and
+  it is off in the tracker (*38*) and not in the set. Raising the master by the fold's +4.645 dB
+  matches the tracker's playback.
 - **Not carried at all**: the unison stack (`Numstack` layers, `Params[0..2]`), the three LFOs
   (`Params[15..23]`), the slide's two destinations (unused: which two of an instrument's moving
   parameters would matter most is a listening question).
@@ -310,11 +319,12 @@ What would settle them: a machine with a licensed Live that can export audio, th
 from the tracker and from the set, and the comparison `render-level.ts` already makes against a
 capture of the game.
 
-## 28. What still will not open — the archive sweep's leftovers
+## 28. What still will not open — the archive sweep's leftovers, and Bonsai's
 
 The reader is measured over 103 archive levels: no failure anywhere in the range it claims, and
 19 of 19 LBP1 files identical to cwlib with the bound lowered by hand
-([level-files.md](level-files.md)). What is left is not layout:
+([level-files.md](level-files.md)). Levels off Bonsai turned one of the items below, the Vita
+branch, into one that stands between a reader and a song. What is left:
 
 - **The allowed-set decision.** `LBP3_MIN_VERSION` is `0x3b7` and all nineteen LBP1 files are
   refused, deliberately: LBP1 has no Music Sequencer, so opening them buys the tracker nothing
@@ -323,12 +333,14 @@ The reader is measured over 103 archive levels: no failure anywhere in the range
   **allowed set** — `0x272` plus `0x3b7..0x3ff`, refusing the untested span between — and it is a
   design decision to take on purpose.
 - **`0x26e`** — one level whose chunk table is not where this reader looks; a container question.
-- **Branch `0x4431`** — one level in the saves, `f331efa7`, version `0x3e2`. Nothing in the archive
-  sample is on it; one file is not enough to reverse a branch from.
-- **A quest of a type other than 5** — never seen in 103 archive levels or the saves; `readQuest`
-  refuses rather than guessing.
+- **Branch `0x4431`** — LBP Vita: one level in the saves, `f331efa7`, version `0x3e2`, and nothing
+  in the archive sample. ❗ **Bonsai is the corpus that was missing**: its Vita levels are on this
+  branch, revision `0x87`, and a search for "a" alone finds 847 of them; six of six music levels
+  fail with "the world Thing carried no WORLD part" ([level-files.md](level-files.md)). Vita has a
+  Music Sequencer, so this one is in the way of music.
 - **One truncated file** — the archive itself stores `0-aaaffe` short. Nothing to fix.
 
-None of it is in the way of music, and `packages/cwlib-ts/dev/archive-sample.mjs` is how the next
-one gets found: every real reader bug since 2026-09-05 came out of a file no PS3 save on this
-machine contains.
+The archive's leftovers are not in the way of music; Vita is. The next one is
+found by `packages/cwlib-ts/dev/archive-sample.mjs` for what Mm's servers held, and by a search
+over Bonsai's API for what has been published since: every real reader bug since 2026-09-05 came
+out of a file no PS3 save on this machine contains.

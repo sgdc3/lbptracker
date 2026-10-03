@@ -17,7 +17,8 @@ found" is not "not there" (*37*); a claim added to a steering file must be check
 the file already says (*12*); when a note quotes an address range, disassemble past its end
 (*12*); a dump you produce to support a conclusion is a dump you are not reading (*the PS3
 backup*); a partial fix that improves the number is the most misleading result there is (*34*); a
-render that normalises cannot see a gain error (*22*).
+render that normalises cannot see a gain error (*22*); a reader that fails inside a part may have
+entered the wrong part (*54*).
 
 ---
 
@@ -917,6 +918,42 @@ note in `serializer.ts` was wrong about its own code — it said cwlib's older b
 stripped in the port, when `parts.ts` carries 238 distinct version gates spanning `0x137`–`0x3f0`
 and 163 subVersion gates; the branches were all there, never run against a file old enough to take
 one, so "widening the range" means finding which ported branches are wrong, not adding them.
+
+## 54. "Quest type 2 has no reader" — it was a wormhole, under a mask bit that moves
+
+**Answer**: below subVersion `0x107` the part mask carries `PCreatorAnim` on bit `0x29` and every
+part above index `0x28` one bit higher; read with the live bits, an LBP2 level's `PWormhole`
+(index `0x30`, bit `0x31`) parsed as a `PQuest`. The rule and its eboot address are in *The Thing
+stream* in [level-files.md](level-files.md); `partBit` in `thing.ts` applies it, and `readQuest`
+now reads every type as the game's loader does (`v0xdc0290`). Two of twelve "music" levels off
+Bonsai, #24 and #19883, open with 3 and 4 songs; the archive sample, the plans and the toolkit
+corpora read identically before and after (142 files, 441 sequencers), and so does the golden
+fixture.
+
+The wrong turns, in the order they were taken, because each was reasonable:
+
+- ❌ **"The quest's type-2 block is unknown, so decode it from the bytes."** Nine and ten bytes
+  followed the type, and they decoded plausibly as strings, keys and object references, three
+  different ways. Bytes that fit a guess are not evidence for it when the guess has enough free
+  fields to fit anything.
+- ❌ **"cwlib's `subVersion` gates do not hold on subVersion-0 files"** — said in `parts.ts` about
+  `extraFlags`, and briefly believed here because cwlib's `PQuest` would read only the type and one
+  byte. The game's own `PQuest` loader was found next to its named reflection (`v0xdc0bb0` names
+  `m_eType`; the loader is the function before, recognisable by `cmp …, 0x9d0000`,
+  `0x1410000`, `0x51ffff`), and it has exactly cwlib's gates. So the part *was* two bytes long at
+  subVersion 0, and the next eight did not belong to it.
+- ✔ **What settled it**: the mask decoded to `RENDER_MESH POS TRIGGER SCRIPT SHAPE SWITCH` plus bit
+  `0x31`, and cwlib's `Thing.java` has a line *"Offset due to PCreatorAnim"* that `thing.ts` had
+  dropped on the strength of its own header — which said the accepted range rules the creator anim
+  out, true only from subVersion `0x107`. As a `PWormhole` at subVersion 0 (no
+  `ActiveTypeForTwoWayHole`, which the game's loader `v0xd46f20` gates on `0x1110000`) the bytes
+  are exactly eight fields in both files, and the next Thing's header starts on the following
+  byte.
+
+⚠️ **The trap to keep**: a reader that fails *inside* a part may have entered the wrong part. Before
+decoding a body, check that the part is the one the mask means at this revision. And a header that
+says "the range rules this out" is a claim about a range; check it against the lowest subVersion in
+that range, which here is 0.
 
 ## 34. The live scheduler's −57 dB — it was the simulator
 

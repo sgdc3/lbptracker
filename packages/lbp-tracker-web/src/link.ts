@@ -1,17 +1,19 @@
 /**
  * The page's own query string: what a link to a song says, and how it is read.
  *
- * ❗ **A link names a level by its hash and a song by its uid**, because that is
- * all either of them has for a name here: `?level=<40 hex digits>` fetches a
- * published level out of the Internet Archive (`lbparchive.ts` has where from
- * and why it needs no server), `&seq=<uid>` picks one of the sequencers inside
- * it, and `&deep=1` also fetches the resources the level depends on. Nothing
- * else is encoded, so a link costs this site nothing, survives a redeploy, and
- * works from any copy of the page including a dev server.
+ * ❗ **A link names a level by the name its store gives it, and a song by its
+ * uid**, because that is all either of them has for a name here:
+ * `?level=<40 hex digits>` fetches a published level out of the Internet
+ * Archive (`lbparchive.ts` has where from and why it needs no server),
+ * `?bonsai=<number>` fetches one off Bonsai by the number in its page's address
+ * (`bonsai.ts`), `&seq=<uid>` picks one of the sequencers inside it, and
+ * `&deep=1` also fetches the resources the level depends on. Nothing else is
+ * encoded, so a link costs this site nothing, survives a redeploy, and works
+ * from any copy of the page including a dev server.
  *
- * ⚠️ **Everything read out of here is validated, not trusted.** The hash goes
- * into a fetch URL and the uid into a map key, and both arrive from whatever
- * somebody pasted into the address bar.
+ * ⚠️ **Everything read out of here is validated, not trusted.** The hash and
+ * the number go into a fetch URL and the uid into a map key, and all three
+ * arrive from whatever somebody pasted into the address bar.
  *
  * The address bar is written back to as the reader opens things
  * (`rememberLevel`, `rememberSequencer`), so the URL is always the link to what
@@ -19,9 +21,30 @@
  * not a page the Back button should have to step through.
  */
 
+import { isLevelId } from './bonsai.ts';
+
 export const LEVEL_PARAM = 'level';
+export const BONSAI_PARAM = 'bonsai';
 export const DEEP_PARAM = 'deep';
 export const SEQ_PARAM = 'seq';
+
+/**
+ * A level somebody else can fetch, named the way its store names it.
+ *
+ * ❗ **The only kind of level a link can carry.** A level off this machine has
+ * no name anybody else could open, and says so by not being one of these.
+ */
+export type LinkedLevel =
+  | { readonly from: 'archive'; readonly sha1: string; readonly deep: boolean }
+  | { readonly from: 'bonsai'; readonly id: number; readonly deep: boolean };
+
+/** Whether two links name the same level, whatever their walk says. */
+export function sameLevel(a: LinkedLevel | undefined, b: LinkedLevel | undefined): boolean {
+  if (!a || !b) return false;
+  if (a.from === 'archive' && b.from === 'archive') return a.sha1 === b.sha1;
+  if (a.from === 'bonsai' && b.from === 'bonsai') return a.id === b.id;
+  return false;
+}
 
 /** A sequencer inside a backup: unique on `file#uid`, and often just the uid. */
 export type WantedSong = { readonly key: string } | { readonly uid: number };
@@ -32,13 +55,30 @@ export type WantedSong = { readonly key: string } | { readonly uid: number };
  * ⚠️ **The walk is off unless the link says otherwise.** It costs seconds and
  * duplicate rows on most levels; only a link that asks for it pays that. See
  * `open_` in `archive-panel.ts` for the measurement.
+ *
+ * A link this page writes names one store (`levelParams` clears the other
+ * parameter); one written by hand with both is read as the archive's, so the
+ * answer does not depend on the order they were typed in.
  */
-export function levelFromQuery(search: string): { sha1: string; deep: boolean } | undefined {
+export function levelFromQuery(search: string): LinkedLevel | undefined {
   const params = new URLSearchParams(search);
-  const wanted = params.get(LEVEL_PARAM)?.trim() ?? '';
-  if (!/^[0-9a-f]{40}$/i.test(wanted)) return undefined;
-  const deep = params.get(DEEP_PARAM);
-  return { sha1: wanted.toLowerCase(), deep: deep === '1' || deep === 'true' };
+  const flag = params.get(DEEP_PARAM);
+  const deep = flag === '1' || flag === 'true';
+  const sha1 = params.get(LEVEL_PARAM)?.trim() ?? '';
+  if (/^[0-9a-f]{40}$/i.test(sha1)) return { from: 'archive', sha1: sha1.toLowerCase(), deep };
+  const number = params.get(BONSAI_PARAM)?.trim() ?? '';
+  const id = /^\d{1,10}$/.test(number) ? Number(number) : NaN;
+  if (isLevelId(id)) return { from: 'bonsai', id, deep };
+  return undefined;
+}
+
+/** The parameters that name a level: its store's set, the other store's cleared. */
+function levelParams(level: LinkedLevel): Record<string, string | undefined> {
+  return {
+    [LEVEL_PARAM]: level.from === 'archive' ? level.sha1 : undefined,
+    [BONSAI_PARAM]: level.from === 'bonsai' ? String(level.id) : undefined,
+    [DEEP_PARAM]: level.deep ? '1' : undefined,
+  };
 }
 
 /**
@@ -90,22 +130,18 @@ function rewrite(changes: Record<string, string | undefined>): void {
 }
 
 /**
- * Put an opened level's hash in the address bar, so the URL is the link.
+ * Put an opened level's name in the address bar, so the URL is the link.
  *
  * ⚠️ **`seq` survives only a re-open of the same level.** It named a
  * song inside the level that was there before, and dropping it on a *different*
- * hash is not tidiness: this runs before the level is read, so a stale `seq`
+ * level is not tidiness: this runs before the level is read, so a stale `seq`
  * left in the URL is one the reader never asked for and the open would then act
- * on. Re-opening the same hash -- which is what a `?level=…&seq=…` link does --
+ * on. Re-opening the same level -- which is what a `?level=…&seq=…` link does --
  * has to keep it, or the link could never reach the song it names.
  */
-export function rememberLevel(sha1: string, deep: boolean): void {
-  const before = levelFromQuery(window.location.search);
-  const changes: Record<string, string | undefined> = {
-    [LEVEL_PARAM]: sha1,
-    [DEEP_PARAM]: deep ? '1' : undefined,
-  };
-  if (before?.sha1 !== sha1) changes[SEQ_PARAM] = undefined;
+export function rememberLevel(level: LinkedLevel): void {
+  const changes = levelParams(level);
+  if (!sameLevel(levelFromQuery(window.location.search), level)) changes[SEQ_PARAM] = undefined;
   rewrite(changes);
 }
 
@@ -121,7 +157,6 @@ export function rememberSequencer(row: { key: string; uid: number } | undefined,
   rewrite({ [SEQ_PARAM]: row ? (unique ? String(row.uid) : row.key) : undefined });
 }
 
-/** Is there a link to make? Only a level fetched from the archive has one. */
 /**
  * Name a song in the address bar BEFORE its level is fetched.
  *
@@ -131,9 +166,10 @@ export function rememberSequencer(row: { key: string; uid: number } | undefined,
  * link route rather than a second way in.
  */
 export function rememberSong(sha1: string, uid: number): void {
-  rewrite({ [LEVEL_PARAM]: sha1, [DEEP_PARAM]: undefined, [SEQ_PARAM]: String(uid) });
+  rewrite({ ...levelParams({ from: 'archive', sha1, deep: false }), [SEQ_PARAM]: String(uid) });
 }
 
+/** Is there a link to make? Only a level fetched from a store has one. */
 export const linkable = (): boolean => levelFromQuery(window.location.search) !== undefined;
 
 /**
@@ -148,9 +184,10 @@ export function songLink(row: { key: string; uid: number } | undefined, unique: 
   const level = levelFromQuery(window.location.search);
   if (!level || !row) return undefined;
   const url = new URL(window.location.href);
-  url.searchParams.set(LEVEL_PARAM, level.sha1);
-  if (level.deep) url.searchParams.set(DEEP_PARAM, '1');
-  else url.searchParams.delete(DEEP_PARAM);
+  for (const [key, value] of Object.entries(levelParams(level))) {
+    if (value === undefined) url.searchParams.delete(key);
+    else url.searchParams.set(key, value);
+  }
   url.searchParams.set(SEQ_PARAM, unique ? String(row.uid) : row.key);
   return url.toString();
 }
@@ -158,11 +195,16 @@ export function songLink(row: { key: string; uid: number } | undefined, unique: 
 /**
  * Stop the URL claiming a level.
  *
- * ❗ **What is open now did not come from the archive**, so the link that is
- * in the address bar is to something else entirely -- a level from this machine
- * or a new song. Left there, the picker would offer to copy a link to a song
+ * ❗ **What is open now did not come from a store**, so the link that is in
+ * the address bar is to something else entirely -- a level from this machine or
+ * a new song. Left there, the picker would offer to copy a link to a song
  * nobody is looking at.
  */
 export function forgetLevel(): void {
-  rewrite({ [LEVEL_PARAM]: undefined, [DEEP_PARAM]: undefined, [SEQ_PARAM]: undefined });
+  rewrite({
+    [LEVEL_PARAM]: undefined,
+    [BONSAI_PARAM]: undefined,
+    [DEEP_PARAM]: undefined,
+    [SEQ_PARAM]: undefined,
+  });
 }

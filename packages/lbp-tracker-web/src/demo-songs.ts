@@ -1,5 +1,6 @@
 /**
- * Songs the home view's "play a demo song" button picks from.
+ * Songs the "play a demo song" buttons deal from, on the home view and in the
+ * open dialog.
  *
  * Each is a music sequencer in a level of the public archive, named the way a
  * shared link names one (`link.ts`): the root level's SHA-1 and the sequencer
@@ -47,19 +48,41 @@ export const DEMO_SONGS: readonly DemoSong[] = [
   ),
 ];
 
+const same = (a: DemoSong | undefined, b: DemoSong | undefined): boolean =>
+  a !== undefined && b !== undefined && a.level === b.level && a.uid === b.uid;
+
 /**
- * One demo at random, never the one just played.
+ * A shuffled deck of the demos: each call deals the next one, and every song
+ * comes up once before any comes up again.
  *
- * ❗ Pressing the button twice and getting the same song reads as a button
- * that did nothing. `random` is a parameter so that a test can turn the dice.
+ * ❗ **A deck, not a die.** The button used to pick at random and only refused
+ * the song just played, so with 25 songs one came round again within a handful
+ * of presses -- which reads as a list far shorter than it is. Now the whole
+ * list is shuffled (Fisher-Yates) and dealt; when it runs out it is shuffled
+ * again, and a reshuffle that would start with the song just heard swaps that
+ * one away from the top, so not even the seam repeats.
+ *
+ * `random` is a parameter so that a test can stack the deck.
  */
-export function pickDemo(
-  last: DemoSong | undefined,
-  random: () => number = Math.random,
+export function demoDeck(
   songs: readonly DemoSong[] = DEMO_SONGS,
-): DemoSong {
-  const pool = songs.length > 1 && last
-    ? songs.filter((s) => s.level !== last.level || s.uid !== last.uid)
-    : songs;
-  return pool[Math.min(pool.length - 1, Math.floor(random() * pool.length))];
+  random: () => number = Math.random,
+): () => DemoSong {
+  let deck: DemoSong[] = [];
+  let last: DemoSong | undefined;
+  return () => {
+    if (deck.length === 0) {
+      deck = [...songs];
+      for (let i = deck.length - 1; i > 0; i -= 1) {
+        const j = Math.min(i, Math.floor(random() * (i + 1)));
+        [deck[i], deck[j]] = [deck[j], deck[i]];
+      }
+      // Dealt from the end, so the end is the top of the deck.
+      if (deck.length > 1 && same(deck[deck.length - 1], last)) {
+        [deck[0], deck[deck.length - 1]] = [deck[deck.length - 1], deck[0]];
+      }
+    }
+    last = deck.pop()!;
+    return last;
+  };
 }

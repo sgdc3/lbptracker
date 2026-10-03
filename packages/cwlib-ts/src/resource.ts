@@ -41,7 +41,8 @@ export interface Resource {
   readonly data: Uint8Array;
 }
 
-const HEADER_MIN = 0x16;
+/** The shortest a resource's header can be; anything shorter is not a resource. */
+export const HEADER_MIN = 0x16;
 
 export class ResourceFormatError extends Error {}
 

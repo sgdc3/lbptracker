@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { levelFromQuery, pickWanted, songFromQuery } from '../src/link.ts';
+import { levelFromQuery, pickWanted, sameLevel, songFromQuery } from '../src/link.ts';
 import { matches, uidLabel } from '../src/widgets/picker-state.ts';
 
 const SHA1 = '8febe1f91343b2b97843530297d54df113043b89';
@@ -18,12 +18,43 @@ const SHA1 = '8febe1f91343b2b97843530297d54df113043b89';
 // walk rides along because it changes what the link opens.
 test('a level link carries a hash, and a bad one is no level at all', () => {
   const sha1 = SHA1;
-  assert.deepEqual(levelFromQuery(`?level=${sha1.toUpperCase()}`), { sha1, deep: false });
-  assert.deepEqual(levelFromQuery(`?level=${sha1}&deep=1`), { sha1, deep: true });
-  assert.deepEqual(levelFromQuery(`?level=${sha1}&deep=0`), { sha1, deep: false });
+  const from = 'archive';
+  assert.deepEqual(levelFromQuery(`?level=${sha1.toUpperCase()}`), { from, sha1, deep: false });
+  assert.deepEqual(levelFromQuery(`?level=${sha1}&deep=1`), { from, sha1, deep: true });
+  assert.deepEqual(levelFromQuery(`?level=${sha1}&deep=0`), { from, sha1, deep: false });
   assert.equal(levelFromQuery(''), undefined);
   assert.equal(levelFromQuery('?level=deadbeef'), undefined);
   assert.equal(levelFromQuery(`?level=${sha1}0`), undefined);
+});
+
+// A Bonsai level is named by the number in its page's address, which goes
+// into a fetch URL like the hash does.
+test('a Bonsai link carries a level number, and nothing else is one', () => {
+  const from = 'bonsai';
+  assert.deepEqual(levelFromQuery('?bonsai=2488'), { from, id: 2488, deep: false });
+  assert.deepEqual(levelFromQuery('?bonsai=2488&deep=1&seq=7'), { from, id: 2488, deep: true });
+  for (const bad of ['0', '-3', '2488x', '1e3', '0x10', '99999999999', '2147483648', '']) {
+    assert.equal(levelFromQuery(`?bonsai=${bad}`), undefined, bad);
+  }
+  assert.deepEqual(levelFromQuery('?bonsai=2147483647'), { from, id: 2147483647, deep: false });
+});
+
+// The page never writes both; one written by hand reads the same whichever
+// order its parameters were typed in.
+test('a link naming both stores is the archive\'s', () => {
+  const want = { from: 'archive', sha1: SHA1, deep: false };
+  assert.deepEqual(levelFromQuery(`?bonsai=2488&level=${SHA1}`), want);
+  assert.deepEqual(levelFromQuery(`?level=${SHA1}&bonsai=2488`), want);
+});
+
+test('two links are the same level when the store and its name agree, walk or no walk', () => {
+  const archive = { from: 'archive', sha1: SHA1, deep: false } as const;
+  const bonsai = { from: 'bonsai', id: 2488, deep: false } as const;
+  assert.ok(sameLevel(archive, { ...archive, deep: true }));
+  assert.ok(sameLevel(bonsai, { ...bonsai, deep: true }));
+  assert.ok(!sameLevel(bonsai, { ...bonsai, id: 2489 }));
+  assert.ok(!sameLevel(archive, bonsai));
+  assert.ok(!sameLevel(undefined, bonsai));
 });
 
 // A uid is what the picker's rows are keyed on inside one level; a backup of

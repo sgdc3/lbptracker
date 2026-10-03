@@ -9,6 +9,7 @@
 
 import { createApp, h } from 'vue';
 import { wireArchiveOpen } from '../archive-panel.ts';
+import { wireBonsaiOpen } from '../bonsai-panel.ts';
 import { levelFromQuery } from '../link.ts';
 import { asset } from '../assets.ts';
 import { fromDrop, fromFiles, type Opened } from '../open-level.ts';
@@ -56,9 +57,10 @@ export interface OpenPanel {
  * drifted apart; see `widgets/OpenLevel.vue`. A page now supplies an empty
  * element and this returns the three things it actually drives.
  *
- * ❗ **The archive is the third button and it lives here** rather than beside
- * each page's own wiring. Three pages open levels; the last time two of them
- * grew their own copy of something this small it cost a day.
+ * ❗ **The archive is the third button and Bonsai the fourth, and they live
+ * here** rather than beside each page's own wiring. Three pages open levels;
+ * the last time two of them grew their own copy of something this small it cost
+ * a day.
  */
 export function mountOpen(
   at: string | Element,
@@ -78,6 +80,8 @@ export function mountOpen(
     setLoaded(on: boolean): void;
     archiveButton: HTMLElement | null;
     archiveHost: HTMLElement | null;
+    bonsaiButton: HTMLElement | null;
+    bonsaiHost: HTMLElement | null;
   }
   const held: { ui: Mounted | null } = { ui: null };
 
@@ -94,20 +98,35 @@ export function mountOpen(
 
   const ui = held.ui!;
   let openArchive = async (_sha1: string): Promise<void> => {};
-  if (ui.archiveButton && ui.archiveHost) {
+  if (ui.archiveButton && ui.archiveHost && ui.bonsaiButton && ui.bonsaiHost) {
     const archive = wireArchiveOpen({
       button: ui.archiveButton,
       host: ui.archiveHost,
       onOpen: opts.onOpen,
     });
-    // ❗ **`?level=<sha1>` is the shareable link to a song**, and it is
-    // handled here rather than in the panel so that both query routes are in
-    // one place. It is not the same thing as `?open=`: that one fetches a file
-    // this site serves, this one fetches a published level from archive.org.
-    // See `link.ts` for the whole of what a URL may say.
+    const bonsai = wireBonsaiOpen({
+      button: ui.bonsaiButton,
+      host: ui.bonsaiHost,
+      onOpen: opts.onOpen,
+    });
+    // One panel at a time: each button shows its own and puts the other away.
+    // The panels' own listeners run first, having been added first.
+    const { archiveHost, bonsaiHost } = ui;
+    ui.archiveButton.addEventListener('click', () => (bonsaiHost.hidden = true));
+    ui.bonsaiButton.addEventListener('click', () => (archiveHost.hidden = true));
+    // ❗ **`?level=<sha1>` and `?bonsai=<number>` are the shareable links to a
+    // song**, and they are handled here rather than in the panels so that every
+    // query route is in one place. Neither is the same thing as `?open=`: that
+    // one fetches a file this site serves, these fetch a published level from
+    // archive.org or from Bonsai. See `link.ts` for the whole of what a URL may
+    // say.
     const wanted = levelFromQuery(window.location.search);
-    if (wanted) void archive.open(wanted.sha1, { deep: wanted.deep });
-    openArchive = (sha1) => archive.open(sha1, { deep: false });
+    if (wanted?.from === 'archive') void archive.open(wanted.sha1, { deep: wanted.deep });
+    if (wanted?.from === 'bonsai') void bonsai.open(wanted.id, { deep: wanted.deep });
+    openArchive = (sha1) => {
+      bonsaiHost.hidden = true;
+      return archive.open(sha1, { deep: false });
+    };
   }
 
   void openFromQuery(give);

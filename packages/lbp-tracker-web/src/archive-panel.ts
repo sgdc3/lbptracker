@@ -25,20 +25,13 @@ import ArchivePanel from './widgets/ArchivePanel.vue';
 import { readPaste, rootLevelUrl, SEARCH_HOST } from './lbparchive.ts';
 import { rememberLevel } from './link.ts';
 import { loading, type LoadingJob } from './widgets/loading.ts';
-import { OPENABLE_DEPENDENCIES, readDependencies } from '@lbptracker/cwlib/resource.ts';
-import { looksLikeLevel } from '@lbptracker/cwlib/backup.ts';
-import type { BackupFile } from '@lbptracker/cwlib/backup.ts';
+import { mustWalk, walkNote, walkParts } from './resource-walk.ts';
 import type { Opened } from './open-level.ts';
 
 /**
  * How many resources one paste may pull in, and how many at a time.
  *
- * ⚠️ **The walk fetches only what can be opened, and the list is measured.** A
- * level's dependency table names its textures, meshes and materials too, and
- * `packages/cwlib-ts/src/backup.ts` would throw every one of them away -- it opens `LVLb`,
- * `PLNb` and `CHKb` and nothing else. So the walk follows exactly the three
- * types that are those: 9, 38 and 61, each checked against the magic of what
- * actually came back. See `OPENABLE_DEPENDENCIES`.
+ * What the walk follows, and why only that, is in `resource-walk.ts`.
  *
  * The cap is a guard against a level that references half the archive, not a
  * measured limit: "Music Gallery #3" needs 17, and an adventure map's levels and
@@ -127,30 +120,6 @@ export function wireArchiveOpen(opts: {
   }
 
   /**
-   * The openable resources this one depends on that have not been asked for yet.
-   *
-   * A resource whose tail will not parse contributes nothing and is not an
-   * error: the level itself is already in hand, and one unreadable dependency
-   * table is no reason to refuse the songs that did arrive.
-   */
-  function partsOf(bytes: Uint8Array, seen: Set<string>): string[] {
-    const out: string[] = [];
-    let deps;
-    try {
-      deps = readDependencies(bytes);
-    } catch {
-      return out;
-    }
-    for (const dep of deps) {
-      if (dep.kind !== 'sha1' || seen.has(dep.sha1)) continue;
-      if (!OPENABLE_DEPENDENCIES.includes(dep.type)) continue;
-      seen.add(dep.sha1);
-      out.push(dep.sha1);
-    }
-    return out;
-  }
-
-  /**
    * Fetch a level and the plans it depends on, and hand the pile over.
    *
    * ❗ **This is the whole backup as far as the tracker is concerned**, and the
@@ -159,9 +128,6 @@ export function wireArchiveOpen(opts: {
    * as the level, while a GUID one is a game asset that is not in the archive at
    * all (140 of "Music Gallery #3"'s 160 dependencies are GUIDs).
    *
-   * ⚠️ **A missing plan is not a failed open.** Only the level itself is
-   * required; anything else that will not come is counted and said out loud.
-   *
    * ❗ **The walk is a checkbox, off by default.** Measured on "Music Gallery
    * #3": the level plus its 17 plans took 10 s against 3 s for the level alone,
    * and gave 46 sequencer rows instead of 31 — but **16 distinct songs either
@@ -169,13 +135,7 @@ export function wireArchiveOpen(opts: {
    * most levels it is seven seconds and fifteen duplicate rows for nothing,
    * which is why it is off; the one thing it can find that the level cannot, a
    * song living only as a plan, is one tick away and `?deep=1` in a link.
-   *
-   * ⚠️ **Except when the root cannot be opened at all**, and then the walk is
-   * not optional. An adventure (`ADCb`) has no world of its own: `readBackup`
-   * skips it on its magic and its levels are type-9 dependencies, so with the
-   * box unticked a perfectly good hash would do nothing whatsoever. Four of
-   * twelve "adventure map" hashes taken off the index are `ADCb`, so this is not
-   * a corner case.
+   * ⚠️ Except when the root cannot be opened at all: see `mustWalk`.
    */
   async function open_(sha1: string, deep = ui.deep): Promise<void> {
     if (busy) return;
@@ -186,59 +146,36 @@ export function wireArchiveOpen(opts: {
     job = loading(`Opening ${sha1.slice(0, 8)}… from the archive`);
     progress(`fetching ${sha1.slice(0, 8)}…`, 'asking archive.org for the level…');
     try {
-      const root = await grab(sha1);
-      const files: BackupFile[] = [{ name: sha1, bytes: root }];
-      const seen = new Set([sha1]);
+      const root = { sha1, bytes: await grab(sha1) };
       // ❗ **Read once, at the start.** Ticking the box while eighteen fetches
       // are in flight must not change what this open is doing halfway through.
-      // ❗ Not optional when the root is not itself openable: see above.
-      const withParts = deep || !looksLikeLevel(root);
-      const queue = withParts ? partsOf(root, seen) : [];
-      let missing = 0;
-      while (queue.length > 0 && files.length < RESOURCE_LIMIT) {
-        progress(`${files.length} of ${files.length + queue.length} resources…`);
-        const wave = await Promise.all(
-          queue.splice(0, AT_A_TIME).map(async (hash) => {
-            try {
-              return [hash, await grab(hash)] as const;
-            } catch {
-              return [hash, undefined] as const;
-            }
-          }),
-        );
-        for (const [hash, bytes] of wave) {
-          if (!bytes) {
-            missing += 1;
-            continue;
-          }
-          files.push({ name: hash, bytes });
-          // An adventure names levels, a level names chunks and plans, and a
-          // plan can name further plans, so the walk continues from what came
-          // back rather than stopping at the root's own list.
-          queue.push(...partsOf(bytes, seen));
-        }
-      }
-      say(
-        missing === 0
-          ? ''
-          : `${missing} of its parts ${missing === 1 ? 'is' : 'are'} not in the archive`,
-        missing > 0,
-      );
-      host.hidden = missing === 0;
+      const walked = mustWalk(root.bytes, deep)
+        ? await walkParts({
+          root,
+          grab,
+          limit: RESOURCE_LIMIT,
+          atATime: AT_A_TIME,
+          progress: (have, known) => progress(`${have} of ${known} resources…`),
+        })
+        : { files: [{ name: sha1, bytes: root.bytes }], missing: 0, skipped: 0 };
+      const note = walkNote(walked, 'in the archive');
+      say(note, note !== '');
+      host.hidden = note === '';
       // ❗ **The address bar becomes the link to share.** A level opened
       // from the archive is fully named by its hash, so writing it into the URL
       // costs one `replaceState` and gives the reader something to copy; the
       // walk goes with it because it changes what the link opens. See
       // `link.ts`.
-      rememberLevel(sha1, deep);
+      const link = { from: 'archive', sha1, deep } as const;
+      rememberLevel(link);
       // No name to give it: naming levels is what the index does, and not
       // needing the index is the point. The songs carry their own titles anyway.
       await onOpen({
         // Files are named after their SHA-1, which is what a backup calls them.
         label: `root level ${sha1.slice(0, 8)}`,
-        files,
-        many: files.length > 1,
-        archive: { sha1, deep },
+        files: walked.files,
+        many: walked.files.length > 1,
+        link,
       });
     } catch (error) {
       say(error instanceof Error ? error.message : String(error), true);

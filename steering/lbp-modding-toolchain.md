@@ -153,6 +153,7 @@ never silently follow the toolkit against our own measurement.
 | 5 | mixer | ignored; tracks grouped by row + instrument | `NumChannels`, `Volume[0..5]` and the row banding, all carried by the MIDI export | the fields exist and are audible; the banding is read at `v0x1c7909` (*9*) |
 | 6 | open-board cell | child's inverse rotation | the delta in the board's basis | *16*: 78.93% of open placements on a cell with the bare delta, 100.00% in the board's basis |
 | 7 | `Key`, `Scale` | not applied | `key mod 12` transposition after a table quantiser | `v0x160806`, PRX `0x240` (*18*) |
+| 8 | `PQuest` types 1–4 | throws *"Unsupported quest type"* before the per-type block it already has | reads that block, which matches the game's | the loader `v0xdc0290` and its jump table at `v0xdc087c` (*54*); no file has carried one yet |
 
 The general shape: their tool converts *to MIDI*, so anything MIDI cannot express gets flattened
 or dropped. We reproduce the instrument, so the things they flatten — per-step automation, the

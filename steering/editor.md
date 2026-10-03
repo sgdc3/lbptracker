@@ -439,7 +439,9 @@ serves only `fixtures/rinst` and `fixtures/smp`, so anything else 404s into the 
 
 `?level=<40 hex digits>&seq=<uid>` is **the site's shareable link to a song**, and the whole of
 what a URL may say is in `src/link.ts`. `level` opens a published level out of the Internet Archive
-by its root hash, exactly as pasting that hash into the archive box does; `seq` picks one sequencer
+by its root hash, exactly as pasting that hash into the archive box does; `bonsai=<number>` opens
+one off Bonsai by the number in its page's address, looked up afresh each time so a republished
+level is followed, and the page never writes both (`levelParams`); `seq` picks one sequencer
 out of the level by its uid (`file#uid` when a backup repeats a uid across levels, which
 `sequencersOf` warns about); `deep=1` turns the dependency walk on -- off by default, box and link
 alike, since on most levels it buys duplicate rows and seconds, and the measurement is on `open_`
@@ -447,25 +449,29 @@ in `archive-panel.ts`. The address bar is written back to as the reader opens a 
 song, so the URL is always the link to what is on screen (`replaceState`, never `pushState`).
 
 ⚠️ Two traps, both paid for once: `rememberLevel` runs *before* the level is read, so it must keep
-`seq` when the hash is unchanged and drop it when it is not — wipe it unconditionally and a link
-can never reach the song it names; and `seq` is written only when `level` is in the URL, since a
-level opened off this machine has no shareable name. Both values are validated before use — the
-hash reaches a fetch URL, the uid a map key.
+`seq` when the level is unchanged and drop it when it is not (`sameLevel`) — wipe it
+unconditionally and a link can never reach the song it names; and `seq` is written only when a
+level is in the URL, since a level opened off this machine has no shareable name. Every value is
+validated before use — the hash and the number reach a fetch URL, the uid a map key.
 
 The picker carries **copy the link**, beside the search box and only for songs that have one:
-`state.linkable` follows each open, and only a level fetched from the archive can be linked to, so
-a level off this machine shows no button rather than a dead one. ⚠️ Two traps: the copy goes
+`state.linkable` follows each open, and only a level fetched from the archive or Bonsai can be
+linked to, so a level off this machine shows no button rather than a dead one. ⚠️ Two traps: the copy goes
 through `navigator.clipboard` and falls back to `execCommand('copy')` — the first is denied
 outright in some embedders (measured in the in-app browser, where the second one works) — and a
 refused copy is not an error but a URL shown in a field for the reader to take by hand. The URL
-also stops claiming a level as soon as one is opened from anywhere else: `Opened.archive` says
-where a pile came from and `forgetLevel` clears the three parameters otherwise, or the button
+also stops claiming a level as soon as one is opened from anywhere else: `Opened.link` says
+where a pile came from and `forgetLevel` clears the four parameters otherwise, or the button
 would offer a link to a song nobody is looking at.
 
-**The home view's "play a demo song" is that link, pressed for the reader.** `src/demo-songs.ts`
-lists community songs as `(level SHA-1, uid)`; the button picks one at random, never the one just
-played, writes `level` and `seq` into the address bar (`rememberSong`) and then opens the level by
-the archive route, so `openLevel` lands on that song and the result is shareable like any other.
+**"Play a demo song" is that link, pressed for the reader**, on the home view and in the open
+dialog's footer. `src/demo-songs.ts` lists community songs as `(level SHA-1, uid)`; both buttons
+deal from **one shuffled deck** (`demoDeck`), so every song plays once before any plays again and a
+reshuffle never starts with the song just heard — a die that only refused the last song brought one
+of the 25 back within a handful of presses. The deck lives as long as the page; a reload shuffles a
+new one. The button writes `level` and `seq` into the address bar (`rememberSong`) and then opens
+the level by the archive route, so `openLevel` lands on that song and the result is shareable like
+any other.
 Nothing of theirs is served from here. ✔ `dev/check-demos.ts` ([tools.md](tools.md)) fetched all 25
 on 2026-09-21 and found every uid, none needing `deep`.
 

@@ -21,20 +21,25 @@
  * header says as much — "a TypeScript walk cannot skip anything" — so the tool
  * was right and the conclusion drawn from it was not.
  *
- * ## What is deliberately absent
+ * ## What is deliberately absent, and the one deprecated part that is not
  *
  * The LBP3 range this project accepts (`serializer.ts`: version `0x3b7`-`0x3ff`;
  * subVersions `0x0` and `0x205`-`0x218` are what the archive sample carries, and
- * nothing range-checks them) rules out every deprecated part by itself:
+ * nothing range-checks them) rules out most deprecated parts by itself:
  *
  * - `head & 0xffff >= 0x13c` excludes indices `0x36`-`0x3c` — the six LBP1 parts;
- * - the same test at `0x18c` excludes `PARTICLE_EMITTER_2` (`0x3d`);
- * - `head >> 16 >= 0x107` excludes `CREATOR_ANIM` (`0x3e`), **and** switches off
- *   the `index++` shim that older files need for every index above `0x28`.
+ * - the same test at `0x18c` excludes `PARTICLE_EMITTER_2` (`0x3d`).
  *
- * So the table below carries only the live parts. Adding an older revision means
- * putting the deprecated entries back *and* restoring that index shift, not just
- * relaxing the version check.
+ * ⚠️ **`CREATOR_ANIM` is NOT ruled out, and this said it was.** It goes at
+ * `subVersion >= 0x107`, and **subVersion 0 is in range** — nine of the ten
+ * corpus levels and every LBP2 level are on it. Below `0x107` it sits on mask bit
+ * `0x29` and every part above `0x28` is one bit higher than its index (`partBit`).
+ * Reading those files with the live bits made a `PWormhole` (index `0x30`, bit
+ * `0x31`) parse as a `PQuest` of type 2, and two of twelve levels off Bonsai
+ * failed on "quest type 2 has no reader" — measured 2026-10-04. The shift is the
+ * game's own: its Thing loader, at `v0xd49d92` in `eboot-v128.bin`, tests the
+ * creator-anim bit only when the head is `<= 0x106ffff` and then tests
+ * `TRANSITION` on bit `0x2a` instead of `0x29`, every later part following.
  */
 
 import { Serializer, SerializerError } from './serializer.ts';
@@ -118,6 +123,10 @@ export const PARTS: readonly { readonly name: string; readonly index: number; re
   { name: 'CONTROLINATOR', index: 0x26, since: 0x2f },
   { name: 'POPPET_POWERUP', index: 0x27, since: 0x30 },
   { name: 'POCKET_ITEM', index: 0x28, since: 0x31 },
+  // Deprecated at subVersion 0x107, and read from older files only: see
+  // `partBit`. It has no reader, so a non-null one is an `UnimplementedPartError`
+  // -- cwlib expects it null too (`Part.serialize`, `i32(0) == 0`).
+  { name: 'CREATOR_ANIM', index: 0x3e, since: 0x32 },
   { name: 'TRANSITION', index: 0x29, since: 0x33 },
   { name: 'FADER', index: 0x2a, since: 0x34 },
   { name: 'ANIMATION_TWEAK', index: 0x2b, since: 0x35 },
@@ -132,6 +141,25 @@ export const PARTS: readonly { readonly name: string; readonly index: number; re
   { name: 'STREAMING_DATA', index: 0x34, since: 0x3e },
   { name: 'STREAMING_HINT', index: 0x35, since: 0x3f },
 ];
+
+/** `PCreatorAnim` went at this subVersion, and the part bits above it moved down one. */
+const CREATOR_ANIM_GONE = 0x107;
+
+/**
+ * Which bit of a Thing's mask says it has this part, or `undefined` when the
+ * part cannot be in a Thing of this subVersion at all.
+ *
+ * ❗ **Below subVersion `0x107` the bits are not the indices.** `PCreatorAnim`
+ * (index `0x3e`) has bit `0x29`, and every part from `TRANSITION` (`0x29`) up is
+ * one bit higher than its index -- cwlib `Part.hasPart`, and the game's own Thing
+ * loader at `v0xd49d92` (head `<= 0x106ffff`). The reader and the plan writer
+ * both ask this, so they cannot drift apart.
+ */
+export function partBit(part: { readonly name: string; readonly index: number }, subVersion: number): number | undefined {
+  const old = subVersion < CREATOR_ANIM_GONE;
+  if (part.name === 'CREATOR_ANIM') return old ? 0x29 : undefined;
+  return old && part.index > 0x28 ? part.index + 1 : part.index;
+}
 
 /**
  * How far the parts table had got when this Thing was written.
@@ -302,9 +330,11 @@ function fillThing(
 
   for (const part of PARTS) {
     if (partsRevision < part.since) continue;
+    const bit = partBit(part, subVersion);
+    if (bit === undefined) continue;
     // `mask` can exceed 2^53, so it is a BigInt all the way rather than
     // `1 << index`, which would silently wrap at 32.
-    if ((mask & (1n << BigInt(part.index))) === 0n) continue;
+    if ((mask & (1n << BigInt(bit))) === 0n) continue;
     const read = readers.get(part.name);
     const partStart = s.position;
     trace?.(part.name, partStart, -1);

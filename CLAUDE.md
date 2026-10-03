@@ -37,8 +37,9 @@ Steering files (read on demand, per the hints):
   the synthesiser: FMOD Ex 4.44.10 and how little of it the game drives, the sequencer's DSP chain
   (`SMS Reverb`, `SMS WaveHammer`), the 7.1 output stage and the stereo fold.
 - [steering/level-files.md](steering/level-files.md) — **read before writing a parser for any LBP
-  resource, save or archive**: the container, the Thing stream, plans, streaming chunks, the
-  dependency table, `FAR4` saves, the public archive, the corpora, and the reader's version bound.
+  resource, save or archive, or touching how a level is fetched**: the container, the Thing
+  stream, plans, streaming chunks, the dependency table, `FAR4` saves, the public archive, Bonsai
+  and its API, the corpora, and the reader's version bound.
 - [steering/lbp-modding-toolchain.md](steering/lbp-modding-toolchain.md) — read before trusting or
   porting anything from ennuo's toolkit: what it covers, the provenance rule, its known
   approximations, and the table of places we deliberately differ from it.
@@ -94,7 +95,7 @@ point in the web package. Imports cross by package name:
 
 - `npm install` — **required**: workspaces resolve the package names through symlinks in
   `node_modules`. Nothing is downloaded for the libraries.
-- `npm test` — `node --test`, all three workspaces at once, from the root (390 tests, 2026-09-24);
+- `npm test` — `node --test`, all three workspaces at once, from the root (421 tests, 2026-10-04);
   `npm test -w @lbptracker/lib` for one package.
 - `npm run typecheck` — fans out to each package's own `typecheck` script: `tsc -p .` in the two
   libraries, `vue-tsc` for the web package. ⚠️ **The web package checks `.vue` through

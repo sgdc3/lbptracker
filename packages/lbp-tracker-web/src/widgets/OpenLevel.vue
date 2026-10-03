@@ -16,9 +16,10 @@
  * from a click on the background. Two buttons, one job each, and the drag stays
  * for a file or a folder.
  *
- * ❗ **The archive is the third button and it lives here** rather than beside
- * each page's own wiring. Three pages open levels; the last time two of them
- * grew their own copy of something this small it cost a day.
+ * ❗ **The archive is the third button and Bonsai the fourth, and they live
+ * here** rather than beside each page's own wiring. Three pages open levels;
+ * the last time two of them grew their own copy of something this small it cost
+ * a day.
  */
 import { ref, useTemplateRef } from 'vue';
 
@@ -34,6 +35,8 @@ const fileInput = useTemplateRef<HTMLInputElement>('fileInput');
 const folderInput = useTemplateRef<HTMLInputElement>('folderInput');
 const archiveButton = useTemplateRef<HTMLButtonElement>('archiveButton');
 const archiveHost = useTemplateRef<HTMLDivElement>('archiveHost');
+const bonsaiButton = useTemplateRef<HTMLButtonElement>('bonsaiButton');
+const bonsaiHost = useTemplateRef<HTMLDivElement>('bonsaiHost');
 
 /**
  * ❗ **The input is cleared after every pick**, which is not tidiness: without
@@ -72,6 +75,8 @@ defineExpose({
   },
   archiveButton,
   archiveHost,
+  bonsaiButton,
+  bonsaiHost,
 });
 </script>
 
@@ -105,8 +110,10 @@ defineExpose({
       <button type="button" class="ghost" @click="fileInput?.click()">open a file…</button>
       <button type="button" class="ghost" @click="folderInput?.click()">open a folder…</button>
       <button ref="archiveButton" type="button" class="ghost">from the online archive…</button>
+      <button ref="bonsaiButton" type="button" class="ghost">from Bonsai…</button>
     </div>
   </div>
-  <!-- Filled by `archive-panel.ts` the first time the button is pressed. -->
+  <!-- Filled by `archive-panel.ts` and `bonsai-panel.ts`; one shows at a time. -->
   <div ref="archiveHost"></div>
+  <div ref="bonsaiHost"></div>
 </template>
