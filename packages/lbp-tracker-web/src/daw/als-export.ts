@@ -21,9 +21,11 @@
 import { createApp, watch } from 'vue';
 import ControlPanel from '../controls/ControlPanel.vue';
 import { als } from '../controls/als.ts';
+import { engine } from '../controls/engine.ts';
 import { CONTROLS } from '../controls/kit.ts';
 import { alsProjectFiles, sequencerToAls, type AlsExportResult } from '@lbptracker/lib/als.ts';
 import type { AlsInstrumentSource } from '@lbptracker/lib/als-sampler.ts';
+import { MASTER_DEFAULTS, type MasterSettings } from '@lbptracker/lib/audio/master.ts';
 import { readInstrument, usedSlots } from '@lbptracker/lib/rinstrument.ts';
 import { type Sequencer } from '@lbptracker/cwlib/project.ts';
 import { loadResource } from '@lbptracker/cwlib/resource.ts';
@@ -113,7 +115,15 @@ export function mountAlsExport(opts: {
     $('cv-alsReport').classList.remove('on');
     if (state.song.clips.length === 0) return;
     const seq = currentSequencer();
+    // The chips as drawn, taken with the song they belong to (the fetch below
+    // can outlast an edit): `sequencerFromSong` makes one track per clip, in
+    // order, and a grid's length is the one thing it cannot carry.
+    const clipSteps = state.song.clips.map((clip) => clip.steps);
     const withInstruments = als.on('instruments');
+    // The master bus as the engine has it: one glue knob, in the Song/Mixer card.
+    const masterBus: MasterSettings | undefined = als.on('masterBus')
+      ? { amount: engine.raw('masterAmount'), ceilingDb: MASTER_DEFAULTS.ceilingDb }
+      : undefined;
     button.textContent = withInstruments ? 'Download .zip' : 'Download .als';
     let instruments: Map<number, AlsInstrumentSource> | undefined;
     if (withInstruments) {
@@ -131,6 +141,8 @@ export function mountAlsExport(opts: {
       mergeRows: als.on('mergeRows'),
       instrumentName: (guid: number) => rinstIndex?.get(guid)?.file.replace('.rinst', ''),
       instruments,
+      clipSteps,
+      masterBus,
     });
     songName = seq.name;
 
@@ -138,15 +150,16 @@ export function mountAlsExport(opts: {
     if (result.clampedBend > 0) {
       lost.push(`${plural(result.clampedBend, 'control point')} glided further than Live’s ±48 semitones and stop there.`);
     }
+    if (result.clampedSlide > 0) {
+      lost.push(`${plural(result.clampedSlide, 'control point')} move the filter further than the Sampler’s slide reaches, six octaves, and stop there.`);
+    }
     if (result.clampedPitch > 0) lost.push(`${plural(result.clampedPitch, 'note')} fell outside MIDI’s 0–127 and were clamped.`);
     if (result.offModulation > 0) {
       lost.push(`${plural(result.offModulation, 'note')} use a modulation other than the one their track’s instrument ` +
-        'is set at, and play at the track’s.');
+        'is set at: their level and filter cutoff follow it, their envelopes and resonance are the track’s.');
     }
-    if (result.offKey > 0) {
-      lost.push(`${plural(result.offKey, 'note')} sit on a track whose parts are in different keys; near a key split ` +
-        'they can pick the neighbouring sample.');
-    }
+    // Parts of one track in different keys are not here either: with a Sampler
+    // each note plays its own zone at its own pitch (`als.ts`, the raw note).
     // Notes of one key overlapping are not here: Live keeps both, as the game
     // does (measured, `AlsExportResult.overlapping`), so nothing is lost.
     const sampleBytes = result.samples.reduce((n, s) => n + s.bytes.length, 0);
@@ -156,6 +169,7 @@ export function mountAlsExport(opts: {
       { value: result.clips.toLocaleString(), label: 'clips' },
       { value: result.notes.toLocaleString(), label: 'notes' },
       { value: result.glides.toLocaleString(), label: 'glides' },
+      ...(masterBus ? [{ value: `glue ${masterBus.amount}`, label: 'master bus' }] : []),
       ...(withInstruments ? [
         { value: String(result.instrumentTracks), label: 'instruments' },
         { value: `${(sampleBytes / 1e6).toFixed(1)} MB`, label: `in ${plural(result.samples.length, 'sample')}` },
@@ -193,7 +207,7 @@ export function mountAlsExport(opts: {
   });
 
   watch(
-    () => [als.on('bakeSwing'), als.on('mergeRows'), als.on('instruments')],
+    () => [als.on('bakeSwing'), als.on('mergeRows'), als.on('instruments'), als.on('masterBus'), engine.raw('masterAmount')],
     () => { if (opts.isActive()) void convert(); },
   );
   // The song changed while the view is up: re-run, but not on every pixel of a drag.

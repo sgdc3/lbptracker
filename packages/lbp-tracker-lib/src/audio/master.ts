@@ -46,11 +46,13 @@ export interface MasterSettings {
 
 export const MASTER_DEFAULTS: MasterSettings = { amount: 4, ceilingDb: -0.3 };
 
-/** The compressor's fixed shape: the knob moves the threshold, not these. */
-const RATIO = 2.5;
-const KNEE_DB = 6;
-const ATTACK_MS = 10;
-const RELEASE_MS = 150;
+/**
+ * The glue's fixed shape: the knob moves the threshold, not these. Exported for
+ * the Ableton export, which sets Live's Compressor to the same (`als-master.ts`).
+ */
+export const GLUE = { ratio: 2.5, kneeDb: 6, attackMs: 10, releaseMs: 150 } as const;
+const RATIO = GLUE.ratio;
+const KNEE_DB = GLUE.kneeDb;
 /** How far the threshold travels across the knob's range. */
 const THRESHOLD_TOP_DB = -6;
 const THRESHOLD_SPAN_DB = 16;
@@ -66,8 +68,20 @@ const THRESHOLD_SPAN_DB = 16;
  */
 const MAKEUP_REFERENCE_DB = -6;
 /** The limiter. 2 ms of lookahead is 96 frames at 48 kHz. */
-const LOOKAHEAD_MS = 2;
-const LIMIT_RELEASE_MS = 80;
+export const LIMITER = { lookaheadMs: 2, releaseMs: 80 } as const;
+
+/**
+ * Where the knob puts the glue's threshold, and the makeup that goes with it.
+ * The makeup takes back what the ratio removes from a signal at
+ * `MAKEUP_REFERENCE_DB`, so turning the knob up squeezes the mix rather than
+ * just making it quieter; at 0 there is none.
+ */
+export function glueLevels(amount: number): { thresholdDb: number; makeupDb: number } {
+  const knob = Math.max(0, Math.min(10, amount));
+  const thresholdDb = THRESHOLD_TOP_DB - (knob / 10) * THRESHOLD_SPAN_DB;
+  const makeupDb = knob === 0 ? 0 : Math.max(0, MAKEUP_REFERENCE_DB - thresholdDb) * (1 - 1 / RATIO);
+  return { thresholdDb, makeupDb };
+}
 
 export class MasterBus {
   private readonly rate: number;
@@ -95,7 +109,7 @@ export class MasterBus {
 
   constructor(sampleRate: number, settings: MasterSettings = MASTER_DEFAULTS) {
     this.rate = sampleRate;
-    this.lookahead = Math.max(1, Math.round((LOOKAHEAD_MS / 1000) * sampleRate));
+    this.lookahead = Math.max(1, Math.round((LIMITER.lookaheadMs / 1000) * sampleRate));
     this.delayL = new Float32Array(this.lookahead);
     this.delayR = new Float32Array(this.lookahead);
     // ⚠️ `lookahead + 1` entries, not `lookahead`: the window has to include the
@@ -104,21 +118,17 @@ export class MasterBus {
     this.targets = new Float32Array(this.lookahead + 1);
     this.targets.fill(1);
     this.deque = new Int32Array(this.lookahead + 2);
-    this.attack = Math.exp(-1 / ((ATTACK_MS / 1000) * sampleRate));
-    this.release = Math.exp(-1 / ((RELEASE_MS / 1000) * sampleRate));
-    this.limitRelease = Math.exp(-1 / ((LIMIT_RELEASE_MS / 1000) * sampleRate));
+    this.attack = Math.exp(-1 / ((GLUE.attackMs / 1000) * sampleRate));
+    this.release = Math.exp(-1 / ((GLUE.releaseMs / 1000) * sampleRate));
+    this.limitRelease = Math.exp(-1 / ((LIMITER.releaseMs / 1000) * sampleRate));
     this.set(settings);
   }
 
   set(settings: MasterSettings): void {
-    const amount = Math.max(0, Math.min(10, settings.amount));
-    this.thresholdDb = THRESHOLD_TOP_DB - (amount / 10) * THRESHOLD_SPAN_DB;
-    // What the ratio takes off a signal sitting at the reference, so a mix
-    // comes back to about the level it went in at rather than well above it.
-    const removed = Math.max(0, MAKEUP_REFERENCE_DB - this.thresholdDb) * (1 - 1 / RATIO);
-    this.makeup = dbToGain(removed);
+    const { thresholdDb, makeupDb } = glueLevels(settings.amount);
+    this.thresholdDb = thresholdDb;
+    this.makeup = dbToGain(makeupDb);
     this.ceiling = dbToGain(settings.ceilingDb);
-    if (amount === 0) this.makeup = 1;
   }
 
   reset(): void {

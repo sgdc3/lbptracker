@@ -10,8 +10,16 @@
 export const esc = (text: string) =>
   text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-/** A number as Live writes one: no exponent, no float noise past the tenth decimal. */
-export const num = (x: number) => String(Math.round(x * 1e10) / 1e10);
+/**
+ * A number as Live writes one: no exponent, no float noise past the tenth decimal.
+ *
+ * ⚠️ JavaScript writes 1e21 and up with an exponent, and Live writes every digit:
+ * the Compressor's ratio range tops out at `340282326356119256160033759537265639424`
+ * in Live's own preset. Every double that large is an integer, so `BigInt` spells
+ * it out exactly as Live does.
+ */
+export const num = (x: number) =>
+  Math.abs(x) >= 1e21 ? BigInt(x).toString() : String(Math.round(x * 1e10) / 1e10);
 
 /** `<Name Value="..." />`, Live's leaf. */
 export const v = (name: string, value: string | number | boolean) =>

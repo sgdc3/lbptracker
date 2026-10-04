@@ -6,7 +6,8 @@ import { readNotes, NOTE_RECORD_SIZE } from '@lbptracker/cwlib/notes.ts';
 import { channelVolume, type Sequencer, type Track } from '@lbptracker/cwlib/project.ts';
 import { alsProjectFiles, sequencerToAls } from '../src/als.ts';
 import { Ids } from '../src/als-xml.ts';
-import { samplerDevice, samplerSampleFile, samplerZones, type SamplerSample } from '../src/als-sampler.ts';
+import { liveDialHz, samplerDevice, samplerSampleFile, samplerZones, trackingRoot, type SamplerSample } from '../src/als-sampler.ts';
+import { kneeHz } from '../dev/ladder-knee.ts';
 import { ladderCoefficients, MoogLadder } from '../src/audio/moog.ts';
 import type { SampleSlot } from '../src/instrument.ts';
 import type { RInstrument } from '../src/rinstrument.ts';
@@ -105,7 +106,7 @@ test('an .smp becomes a WAV with the same frames under a 48 kHz header, and the 
   assert.equal(samplerSampleFile('x.smp', smp(10, 48000)).loop, undefined);
 });
 
-test('the zones are the engine\'s walk run backwards, moved by the track\'s Key', () => {
+test('the zones are the engine\'s walk run backwards, over the raw notes; the track\'s Key is in the pitched roots', () => {
   const inst = instrument([slot({ baseNote: 72 }), slot({ baseNote: 60 }), slot({ baseNote: 48 })], [87, 66, 54]);
   const files = new Map([[100, sample('a.wav')], [101, sample('b.wav')], [102, sample('c.wav')]]);
   const zones = samplerZones(inst, (g) => files.get(g), 0, 120);
@@ -113,9 +114,13 @@ test('the zones are the engine\'s walk run backwards, moved by the track\'s Key'
   assert.deepEqual(zones.map((z) => [z.sample.file, z.lo, z.hi, z.root]), [
     ['a.wav', 66, 127, 72], ['b.wav', 54, 65, 60], ['c.wav', 0, 53, 48],
   ]);
-  // Key 14 transposes by 2: the engine picks the zone off the raw note, Live off the key it gets.
-  const moved = samplerZones(inst, (g) => files.get(g), 2, 120);
-  assert.deepEqual(moved.map((z) => [z.lo, z.hi, z.root]), [[68, 127, 72], [56, 67, 60], [2, 55, 48]]);
+  // Key 14 transposes by 2: the zones stay on the raw notes the engine picks
+  // the slot from, and each root comes 2 down, so a raw note sounds 2 up.
+  const keyed = samplerZones(inst, (g) => files.get(g), 2, 120);
+  assert.deepEqual(keyed.map((z) => [z.lo, z.hi, z.root]), [[66, 127, 70], [54, 65, 58], [0, 53, 46]]);
+  // An unpitched slot plays at one rate whatever the Key: its zones keep their roots.
+  const drum = samplerZones(instrument([slot({ pitched: false }), slot()], [87, 126]), () => sample('k.wav'), 2, 120);
+  assert.deepEqual(drum.map((z) => [z.lo, z.hi, z.root]), [[126, 126, 126], [127, 127, 127], [0, 125, 58]]);
 });
 
 test('fine tune and fitBpm go into the root and the cents; an unpitched slot is a zone per key', () => {
@@ -139,7 +144,7 @@ test('the Sampler: 32 voices, no retrigger, the level, the envelopes and the fil
     24: 0.25, // output level 0.25, -12 dB: the engine's factor 2 is the track fader's
   });
   const xml = samplerDevice(new Ids(), inst, () => sample('a.wav', 1000, { start: 10, end: 900 }),
-    { modulation: 0, keyShift: 0, tempo: 120, name: 'saw_wave' });
+    { modulation: 0, keyShift: 0, trackingRoot: 60, tempo: 120, name: 'saw_wave' });
   const at = (path: string) => valueAt(xml, path);
   assert.match(xml, /<NumVoices Value="14" \/>/);
   assert.match(xml, /<RetriggerMode Value="false" \/>/);
@@ -152,9 +157,10 @@ test('the Sampler: 32 voices, no retrigger, the level, the envelopes and the fil
   assert.equal(at('VolumeAndPan.Envelope.DecayTime'), 500);
   assert.equal(at('VolumeAndPan.Envelope.SustainLevel'), 0.5);
   assert.equal(at('VolumeAndPan.Envelope.ReleaseTime'), 2000);
-  // Resting at cutoff x (1 - amount), the envelope's full swing as semitones.
-  assert.ok(Math.abs(at('SimplerFilter.Freq') - 0.25 * 0.25 * 24000) < 1e-6);
-  assert.ok(Math.abs(at('SimplerFilter.Envelope.Amount') - 12 * Math.log2(4)) < 1e-6);
+  // Resting at cutoff x (1 - amount), the envelope's full swing as semitones, each
+  // end where Live's filter attenuates as the ladder does there (`liveDialHz`).
+  assert.ok(Math.abs(at('SimplerFilter.Freq') - liveDialHz(0.25 * 0.25)) < 1e-6);
+  assert.ok(Math.abs(at('SimplerFilter.Envelope.Amount') - 12 * Math.log2(liveDialHz(0.25) / liveDialHz(0.0625))) < 1e-6);
   assert.equal(at('SimplerFilter.Res'), 0.25);
   assert.equal(at('SimplerFilter.ModByPitch'), 1);
   // The zone: the loop as the loader reads it, forward, and the project-relative file.
@@ -167,12 +173,12 @@ test('the Sampler: 32 voices, no retrigger, the level, the envelopes and the fil
 test('a held filter envelope meets the engine at its peak and its sustain, robot\'s shape', () => {
   // `robot`: cutoff² 0.504, envelope amount 0.98, envelope B holding at 0.58.
   const inst = instrument([slot()], [87], { 3: Math.sqrt(0.504), 6: 0.98, 9: 0.58, 13: 1 });
-  const xml = samplerDevice(new Ids(), inst, () => sample('a.wav'), { modulation: 0, keyShift: 0, tempo: 120, name: 'robot' });
+  const xml = samplerDevice(new Ids(), inst, () => sample('a.wav'), { modulation: 0, keyShift: 0, trackingRoot: 60, tempo: 120, name: 'robot' });
   const rest = valueAt(xml, 'SimplerFilter.Freq');
   const swing = valueAt(xml, 'SimplerFilter.Envelope.Amount');
   const live = (env: number) => rest * 2 ** ((swing * env) / 12);
-  // The engine: `cutoff² × (1 + amount × (env − 1))`, as a fraction of 24 kHz.
-  const engine = (env: number) => 0.504 * (1 + 0.98 * (env - 1)) * 24000;
+  // The engine: `cutoff² × (1 + amount × (env − 1))`, as Live's dial (`liveDialHz`).
+  const engine = (env: number) => liveDialHz(0.504 * (1 + 0.98 * (env - 1)));
   assert.ok(Math.abs(live(1) / engine(1) - 1) < 1e-6, `peak ${live(1)} against ${engine(1)}`);
   assert.ok(Math.abs(live(0.58) / engine(0.58) - 1) < 1e-6, `sustain ${live(0.58)} against ${engine(0.58)}`);
 });
@@ -180,7 +186,7 @@ test('a held filter envelope meets the engine at its peak and its sustain, robot
 test('the Sampler\'s volume carries the ladder\'s passband, which falls as the resonance rises', () => {
   // `saw_wave`: cutoff² 0.733, resonance 0.76, the amplitude and envelope B both holding at 1.
   const inst = instrument([slot()], [87], { 3: Math.sqrt(0.733), 4: 0.76, 9: 1, 13: 1, 24: 0.294 });
-  const xml = samplerDevice(new Ids(), inst, () => sample('a.wav'), { modulation: 0, keyShift: 0, tempo: 120, name: 'saw_wave' });
+  const xml = samplerDevice(new Ids(), inst, () => sample('a.wav'), { modulation: 0, keyShift: 0, trackingRoot: 60, tempo: 120, name: 'saw_wave' });
   const written = valueAt(xml, 'VolumeAndPan.Volume') - 20 * Math.log10(0.294);
   // What the engine's ladder does to a 110 Hz tone, run: the volume must take the same.
   const ladder = new MoogLadder();
@@ -198,10 +204,10 @@ test('the Sampler\'s volume carries the ladder\'s passband, which falls as the r
 test('past Live\'s 72 semitones the filter envelope keeps its peak, and the rest rises', () => {
   // Envelope amount 1, as concertina has it: the engine goes from 0 to the whole cutoff.
   const xml = samplerDevice(new Ids(), instrument([slot()], [87], { 3: 0.5, 6: 1 }), () => sample('a.wav'),
-    { modulation: 0, keyShift: 0, tempo: 120, name: 'concertina' });
+    { modulation: 0, keyShift: 0, trackingRoot: 60, tempo: 120, name: 'concertina' });
   assert.equal(valueAt(xml, 'SimplerFilter.Envelope.Amount'), 72);
   // The peak is 0.25 of Nyquist, as the engine's; the rest is 72 semitones under it.
-  assert.ok(Math.abs(valueAt(xml, 'SimplerFilter.Freq') - 0.25 * 24000 / 64) < 1e-6);
+  assert.ok(Math.abs(valueAt(xml, 'SimplerFilter.Freq') - liveDialHz(0.25) / 64) < 1e-6);
 });
 
 test('with instruments the set gets a Sampler per track, its samples and the project around them', () => {
@@ -279,4 +285,153 @@ test('with a Sampler, Live plays each channel at the renderer\'s gain: the instr
   const gain = 0.8 * channelVolume(seq, track) * 2 * 0.25;
   assert.ok(Math.abs(left - 0.75 * gain) < 1e-9, `left ${left} against ${0.75 * gain}`);
   assert.ok(Math.abs(right - 0.25 * gain) < 1e-9, `right ${right} against ${0.25 * gain}`);
+  // ❗ And nothing else on the way: Vel → Vol at 0, or Live adds 22.8 dB to a
+  // velocity-127 note (measured on Live's meters, 2026-10-04), and every note
+  // goes in at 127, its level on the pressure, which Live applies linearly.
+  assert.equal(valueAt(xml, 'VolumeAndPan.VolumeVelScale'), 0);
+  assert.match(xml, /Velocity="127"/);
+});
+
+test('with a Sampler a note is the raw one; another part\'s Key and the scale ride on per-note pitch', () => {
+  // One row, one instrument: a pitched zone from 40 up, an unpitched one below.
+  const inst = instrument([slot(), slot({ pitched: false })], [87, 40]);
+  const placement = (gridX: number, key: number, scale: number, pitches: number[]): Track => {
+    const bytes = new Uint8Array(pitches.length * NOTE_RECORD_SIZE);
+    pitches.forEach((p, i) => bytes.set([i * 4, p | 0x80, 96, 0], i * NOTE_RECORD_SIZE));
+    return {
+      guid: 7, name: '', colour: DEFAULT_CHIP_COLOUR, gridX, gridY: 0, stepOffset: gridX * 16,
+      level: 1, pan: 0.5, echoSend: 0, reverbSend: 0, key, scale,
+      notes: readNotes(bytes).notes, records: bytes, trailingRecords: 0,
+    };
+  };
+  const seq: Sequencer = {
+    uid: 1, name: 'Keys', author: '', tempo: 120, swing: 0, echoFeedback: 0, echoTime: 1, echoMix: 0,
+    reverb: 0, loop: false, startPoint: 0, numChannels: 1, volumes: [1, 1, 1, 1, 1, 1], boardRows: 1,
+    tracks: [
+      placement(0, 15, 0, [48, 48, 48]), // keyed D#, +3: the track's commonest
+      placement(2, 14, 0, [48, 30]), // keyed D, +2; 30 is on the unpitched slot
+      placement(4, 15, 1, [49]), // major: the engine plays 49 as 48, then +3
+    ],
+    lengthSteps: 80,
+  };
+  const { xml, tracks } = sequencerToAls(seq, {
+    instruments: new Map([[7, { instrument: inst, samples: new Map([[100, { name: 'a.smp', bytes: smp(64, 48000) }], [101, { name: 'k.smp', bytes: smp(64, 48000) }]]) }]]),
+  });
+  assert.equal(tracks, 1);
+  const notes = [...xml.matchAll(/<MidiClip [\s\S]*?<\/MidiClip>/g)].flatMap((clip) => {
+    const bend = new Map([...clip[0].matchAll(/<PerNoteEventList Id="\d+" NoteId="(\d+)" CC="-2">[\s\S]*?Value="([^"]*)"/g)]
+      .map((m) => [m[1], Number(m[2]) / (8192 / 48)]));
+    return [...clip[0].matchAll(/<KeyTrack [\s\S]*?<\/KeyTrack>/g)].flatMap((kt) => {
+      const key = Number(/<MidiKey Value="(\d+)"/.exec(kt[0])![1]);
+      return [...kt[0].matchAll(/NoteId="(\d+)"/g)].map((m) => [key, Math.round((bend.get(m[1]) ?? 0) * 1000) / 1000]);
+    });
+  }).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  // The keys are the raw notes, as the tracker's roll shows them. The +3 is in
+  // the zone's root; the D part is 1 under it, the scaled 49 one under 49, and
+  // the note on the unpitched slot has no pitch at all.
+  assert.deepEqual(notes, [[30, 0], [48, -1], [48, 0], [48, 0], [48, 0], [49, -1]]);
+  assert.match(xml, /<RootKey Value="57" \/>/);
+});
+
+test('the filter dial makes up for Live tracking from key 60 where the engine tracks from the slot\'s root', () => {
+  // ghost's shape: rooted at 48, cutoff 0.11 (290 Hz), tracking 1, on a track keyed +3.
+  const ghost = instrument([slot({ baseNote: 48 })], [87], { 3: 0.11, 5: 1, 13: 1, 24: 0.5 });
+  const freq = (keyShift: number, root: number) => valueAt(samplerDevice(new Ids(), ghost, () => sample('g.wav'),
+    { modulation: 0, keyShift, trackingRoot: root, tempo: 120, name: 'ghost' }), 'SimplerFilter.Freq');
+  const resting = liveDialHz(0.11 ** 2);
+  // The engine plays raw 55 at rate 2^((55 + 3 - 48)/12): its cutoff is 290 Hz times that.
+  // Live, from key 60 an octave per octave: the dial times 2^((55 - 60)/12). The dial
+  // carries the 15 semitones between them.
+  assert.ok(Math.abs(freq(3, 48) - resting * 2 ** (15 / 12)) < 1e-6);
+  // At key 55 the engine's cutoff is the ladder at 290 Hz x 2^(10/12); Live, tracking
+  // the dial from its root's knee, lands within a semitone of the knee there.
+  const engine = liveDialHz(0.11 ** 2 * 2 ** ((55 + 3 - 48) / 12));
+  assert.ok(Math.abs(12 * Math.log2((freq(3, 48) * 2 ** ((55 - 60) / 12)) / engine)) < 1);
+  // No tracking, no correction.
+  const flat = instrument([slot({ baseNote: 48 })], [87], { 3: 0.11, 5: 0, 13: 1, 24: 0.5 });
+  assert.ok(Math.abs(valueAt(samplerDevice(new Ids(), flat, () => sample('g.wav'),
+    { modulation: 0, keyShift: 3, trackingRoot: 48, tempo: 120, name: 'flat' }), 'SimplerFilter.Freq') - resting) < 1e-6);
+  // The root the engine tracks from is the pitched slot the notes play most.
+  const split = instrument([slot({ baseNote: 72 }), slot({ baseNote: 48 })], [87, 60]);
+  assert.equal(trackingRoot(split, [40, 50, 70]), 48);
+  assert.equal(trackingRoot(split, [61, 70, 50]), 72);
+});
+
+test('the level the modulation gives rides on each note\'s pressure, under a Sampler at the loudest', () => {
+  // Params[24] doubles from modulation 0 to 1; no filter, so the level is all there is.
+  const inst = instrument([slot()], [87], { 3: 1, 13: 1, 24: { x: 0.1, y: 0.2 } });
+  const bytes = new Uint8Array(2 * NOTE_RECORD_SIZE);
+  // One note at volume 96 whose modulation swells 0 -> 15 over 16 steps.
+  bytes.set([0, 60, 96, 0], 0);
+  bytes.set([16, 60 | 0x80, 96, 15], NOTE_RECORD_SIZE);
+  const track: Track = {
+    guid: 7, name: '', colour: DEFAULT_CHIP_COLOUR, gridX: 0, gridY: 0, stepOffset: 0,
+    level: 1, pan: 0.5, echoSend: 0, reverbSend: 0, key: 0, scale: 0,
+    notes: readNotes(bytes).notes, records: bytes, trailingRecords: 0,
+  };
+  const seq: Sequencer = {
+    uid: 1, name: 'Swell', author: '', tempo: 120, swing: 0, echoFeedback: 0, echoTime: 1, echoMix: 0,
+    reverb: 0, loop: false, startPoint: 0, numChannels: 1, volumes: [1, 1, 1, 1, 1, 1], boardRows: 1,
+    tracks: [track], lengthSteps: 17,
+  };
+  const { xml } = sequencerToAls(seq, {
+    instruments: new Map([[7, { instrument: inst, samples: new Map([[100, { name: 'a.smp', bytes: smp(64, 48000) }]]) }]]),
+  });
+  assert.ok(Math.abs(valueAt(xml, 'VolumeAndPan.Volume') - 20 * Math.log10(0.2)) < 1e-6);
+  const pressure = /<PerNoteEventList Id="\d+" NoteId="1" CC="-1">[\s\S]*?<\/PerNoteEventList>/.exec(xml)![0];
+  const points = [...pressure.matchAll(/TimeOffset="([^"]*)" Value="([^"]*)"/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  // Half the Sampler's level at the start, all of it at the end: 48 rising to 96,
+  // with a moment at every sixteenth of the modulation between (`courseOf`).
+  assert.equal(points.length, 16);
+  assert.deepEqual(points[0], [0, 48]);
+  assert.deepEqual(points[15], [4, 96]);
+  // A third of the way: 5/15 of the modulation, Params[24] at 0.1333 of the 0.2.
+  assert.ok(Math.abs(points[5][0] - 4 / 3) < 1e-9 && Math.abs(points[5][1] - 96 * (0.1 + 0.1 / 3) / 0.2) < 1e-9);
+});
+
+test('the cutoff the modulation gives rides on each note\'s slide, routed to the filter from the lowest dial', () => {
+  // No filter at modulation 0 (cutoff 1), a quarter of Nyquist at 1 (0.5²): no envelope, no tracking.
+  const inst = instrument([slot()], [87], { 3: { x: 1, y: 0.5 }, 13: 1, 24: 0.5 });
+  const bytes = new Uint8Array(2 * NOTE_RECORD_SIZE);
+  bytes.set([0, 60, 96, 0], 0);
+  bytes.set([16, 60 | 0x80, 96, 15], NOTE_RECORD_SIZE);
+  const track: Track = {
+    guid: 7, name: '', colour: DEFAULT_CHIP_COLOUR, gridX: 0, gridY: 0, stepOffset: 0,
+    level: 1, pan: 0.5, echoSend: 0, reverbSend: 0, key: 0, scale: 0,
+    notes: readNotes(bytes).notes, records: bytes, trailingRecords: 0,
+  };
+  const seq: Sequencer = {
+    uid: 1, name: 'Sweep', author: '', tempo: 120, swing: 0, echoFeedback: 0, echoTime: 1, echoMix: 0,
+    reverb: 0, loop: false, startPoint: 0, numChannels: 1, volumes: [1, 1, 1, 1, 1, 1], boardRows: 1,
+    tracks: [track], lengthSteps: 17,
+  };
+  const { xml, clampedSlide } = sequencerToAls(seq, {
+    instruments: new Map([[7, { instrument: inst, samples: new Map([[100, { name: 'a.smp', bytes: smp(64, 48000) }]]) }]]),
+  });
+  // The filter on, though the commonest modulation (0) has none, the dial at the lowest cutoff.
+  assert.match(xml, /<Filter>\n<IsOn>\n<LomId Value="0" \/>\n<Manual Value="true" \/>/);
+  assert.ok(Math.abs(valueAt(xml, 'SimplerFilter.Freq') - liveDialHz(0.25)) < 1e-6);
+  // The slide row to Filter Freq at 100.
+  assert.match(xml, /<MidiCtrl\.4>\n<ModConnections\.0>\n<Amount Value="100" \/>\n<Connection Value="12" \/>/);
+  // The slide: all the way open at the start (Live's 22 kHz top), nothing at the end.
+  const list = /<PerNoteEventList Id="\d+" NoteId="1" CC="74">[\s\S]*?<\/PerNoteEventList>/.exec(xml)![0];
+  const points = [...list.matchAll(/TimeOffset="([^"]*)" Value="([^"]*)"/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  assert.equal(points.length, 16);
+  assert.ok(Math.abs(points[0][1] - (127 * 12 * Math.log2(22000 / liveDialHz(0.25))) / 72) < 1e-6);
+  assert.equal(points[15][1], 0);
+  // Two thirds through the modulation the cutoff is (1 - 0.5 x 2/3)² of Nyquist, on the curve, not the straight line.
+  const twoThirds = points[10];
+  const cutoff = liveDialHz((1 - 0.5 * (10 / 15)) ** 2);
+  assert.ok(Math.abs(twoThirds[1] - (127 * 12 * Math.log2(cutoff / liveDialHz(0.25))) / 72) < 1e-6);
+  assert.equal(clampedSlide, 0);
+});
+
+test('Live\'s dial for an engine cutoff is where the ladder attenuates as Live does at its dial, -8 dB', () => {
+  // The table is `dev/ladder-knee.ts`'s output; re-derived here off the grid, from the engine's own ladder.
+  for (const nominal of [500, 3000, 9000]) {
+    const derived = kneeHz(nominal / 24000);
+    assert.ok(Math.abs(liveDialHz(nominal / 24000) / derived - 1) < 0.01, `${nominal} Hz: ${liveDialHz(nominal / 24000)} against ${derived}`);
+  }
+  // Under its nominal value low down, over it high up.
+  assert.ok(liveDialHz(500 / 24000) < 500 && liveDialHz(9000 / 24000) > 9000 * 2 ** (4 / 12));
 });

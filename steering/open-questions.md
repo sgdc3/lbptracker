@@ -5,7 +5,8 @@ here blocks the build**: the note format, the containers, the level walk, the as
 whole signal path are measured, and import, playback and export are built. What is left is four
 *decisions* where the project knowingly departs from the measured engine, a short list of measured
 residues nothing models yet, one loose end left over from the export, three things about the chip
-tint that only Create Mode can answer, whether the Ableton set opens in Live 12 and how its Samplers sound, and three
+tint that only Create Mode can answer, whether the Ableton set opens in Live 12, how its Samplers sound and where its
+swing groove puts the notes, and three
 questions that are not about fidelity at all.
 When one gets resolved, move the answer into the descriptive file it belongs to and delete the
 entry.
@@ -91,7 +92,9 @@ limiter with a -0.3 dBFS ceiling, and it runs **after the stereo fold**, where t
 ended: past the plugin's clip, past `SMS Reverb`, past `SMS WaveHammer`. Nothing in LBP does this.
 It exists because the project's owner asked for a mix that holds together, and it is off in the
 live engine and in the render alike, so nothing measured against a capture of the game is affected
-unless somebody switches it on.
+unless somebody switches it on. The Ableton export can carry it too, as Live's Compressor and
+Limiter on the master, off by default ([ableton-interchange.md](ableton-interchange.md), *The
+master bus*).
 
 Measured live on `Ascetic` at the default setting (glue 4): peaks 0.35/0.52 without, 0.56/0.85
 with, a lift of about 4.2 dB, and the limiter holding everything under the ceiling.
@@ -283,26 +286,32 @@ member, the empty-set reference was not complete.
 The instruments option puts a Live Sampler on every track, and every member of it is checked to be
 what the file says ([ableton-interchange.md](ableton-interchange.md), *The instruments*). What is
 **not** measured is how each Live value sounds against the engine's, because the Live here is a
-Trial that renders nothing. The one listen so far was the owner's, and it was silence — the pressure,
-below, since fixed and not yet heard. Each item below is a decision where a measurement is missing:
+Trial that cannot export. Its meters can be read, though, and they settled the level: the pressure
+law is linear like the engine's, and `VolumeVelScale` had added 22.8 dB (*The instruments*, same
+file). Each item below is a decision where a measurement is still missing:
 
-- **Every note's level through Pressure → Volume at 100 %**, velocity 127 — every note's, since at
-  100 a note without pressure is silent (*The instruments* in the same file). Live's law for that
-  modulation is unknown; the engine's is linear in amplitude. Ableton's presets, read off their
-  settings, suggest a positive amount pulls the volume down from the dial as the controller falls
-  (`Inclement Drone Pad` sits at +4.5 dB with Velocity 57.7 and Pressure 59 on its volume) and a
-  negative one as it rises (`The Greatest Pad`, Mod Wheel −84.6 at −14.6 dB). If so, Pressure at
-  −100 with the ramp inverted would leave a flat note on its velocity and a note drawn in Live
-  audible, at the price of a second law for the level and an upside-down pressure lane.
 - **The filter**: Live's Clean 24 dB low-pass for the Stilson/Smith ladder, the cutoff as a fraction
-  of 24 kHz, resonance written straight into Live's 0..1.25, and key tracking at the engine's amount
-  although the engine tracks from each slot's own base note and Live from its own reference, which
-  the manual does not name. The envelope now meets the engine at the peak and the sustain, so
-  what is left is between them: a note's attack starts from a rest that is not the engine's.
-  Live's Clean passband is taken as flat from the manual, and the export writes the ladder's
-  `1/(1 + q)` into the volume on that assumption. The resonance goes straight into Live's 0..1.25
-  although the ladder only oscillates near `q = 4` — `saw_wave`'s 0.76 is `q = 0.87` there — so
-  Live may ring far harder than the game; its scale is unmeasured.
+  of 24 kHz, resonance written straight into Live's 0..1.25. Measured on Live's meters, so no longer
+  open: the curve, the key tracking's reference, and the passband and peak at a resonance of 0.53
+  (*The instruments*, same file). Still open:
+  - The envelope meets the engine at the peak and the sustain, so a note's attack starts from a
+    rest that is not the engine's.
+  - Key tracking between 0 and 1. The engine is linear in the playback rate,
+    `1 + (rate − 1)·amount`; Live's is taken as exponential, `amount` octaves per octave. The two
+    agree at 0 and 1, which is where 58 of the 68 instruments sit.
+  - An instrument whose slots have different roots. The engine tracks each note from its own
+    slot's root, so the cutoff steps at a zone boundary; one Sampler filter tracks from the
+    commonest one.
+  - The resonance anywhere but 0.53. The ladder only oscillates near `q = 4` (`saw_wave`'s 0.76 is
+    `q = 0.87` there), so at other values Live may ring far harder than the game.
+  - The two filters' shapes. The dial now matches the ladder where Live attenuates 8 dB
+    (`liveDialHz`), but the ladder is flatter under its knee and steeper over it. Whether the
+    ear wants the match at −8 dB or elsewhere is a listening question, and so is whether a pulse
+    sweep in Live now sounds like the game's (*The instruments*, same file).
+  - A track whose modulation never moves keeps the envelope fit at its own corners, but its key
+    tracking goes through the knee at the slot's root and then moves exponentially. The engine
+    puts each note's own cutoff through the ladder, so away from the root the two part by up to a
+    semitone (`ghost` at key 55).
 - **The release** is written from the sustain level; the engine releases from wherever the level
   is, so a note let go during its decay releases for less in the game.
 - **The master at 0 dB**, so the set is the engine's own sum: **4.645 dB under the tracker**, which
@@ -312,12 +321,48 @@ below, since fixed and not yet heard. Each item below is a decision where a meas
   it is off in the tracker (*38*) and not in the set. Raising the master by the fold's +4.645 dB
   matches the tracker's playback.
 - **Not carried at all**: the unison stack (`Numstack` layers, `Params[0..2]`), the three LFOs
-  (`Params[15..23]`), the slide's two destinations (unused: which two of an instrument's moving
-  parameters would matter most is a listening question).
+  (`Params[15..23]`). Per note, the modulation now moves the level (pressure) and the cutoff (the
+  slide's first destination, measured). The slide's second destination is free. The resonance,
+  `Params[4]`, is the likeliest use for it, and Live's slide-to-Res law is unmeasured.
 
 What would settle them: a machine with a licensed Live that can export audio, the same song rendered
 from the tracker and from the set, and the comparison `render-level.ts` already makes against a
 capture of the game.
+
+## 58. The Ableton swing groove — what Live does where the manual says nothing
+
+Unbaked, the export swings through a groove every clip follows ([ableton-interchange.md](ableton-interchange.md),
+*The swing*). That Live reads it is checked; what Live plays is not, because the Trial renders
+nothing. The groove and the engine agree exactly where the manual is explicit, a note starting on a
+sixteenth, and the manual says nothing about the rest. Counted on 2026-10-04 by a throwaway walk of
+`schedule()` over the 13 swung sequencers in the toolkit checkout's `data*` folders, 40,897 notes:
+
+- **8,418 (20.6 %) start on an odd sixteenth**: the notes the groove exists to move, and the case
+  the manual covers.
+- **1,200 (2.9 %) start between sixteenths**, on a third of a step. The engine scales the fraction
+  by that step's own length; Live measures each note against its nearest sixteenth, and whether it
+  shifts it by that groove note's offset, interpolates, or leaves it alone is not written down.
+- **17,307 (42.3 %) end where the engine shifts the end by a different amount than the start**: a
+  note from an even step to the odd one lasts `L(1 + swing/2)` in the game, not `L`. If Live keeps a
+  note's length when it moves it, these come out `swing/2` of a step long or short. If Live moves
+  ends on their own, they may be right.
+- Whether Live moves a note's per-note expression with it is not written down either; the engine
+  swings each control point. And a merged track's mixer automation steps at the straight time of
+  the note it waits for, up to `swing/2` of a step early, which lands on a release tail like any
+  switch (*Measured over the corpus*, same file).
+
+Baking has none of this: every time goes through `swungFrame`. What would settle it: a Live that
+renders or records its own master, the same swung song played with the groove and baked, and the
+onsets and ends compared.
+
+Those 13 are every swung sequencer on this machine: a walk of every corpus through `readBackup`
+on 2026-10-04 (the `data*` folders and their saves, `lbp-download/backups`, `fixtures/archive`,
+`fixtures/bonsai`, 221 levels and 658 sequencers) found no others. All 13 are by Velvet--Audio,
+in `data2`. Two of them isolate the cases above:
+- `Unfinished 37` (uid 111984, file `9efab55d…`) is the clean case: swing 60, 8 bars, 177 notes on
+  odd sixteenths and none off the grid.
+- `Unfinished 33` (uid 110511, the same file) is the off-grid case: swing 75, the corpus's
+  highest, with 944 of its 1,436 notes on thirds of a step.
 
 ## 28. What still will not open — the archive sweep's leftovers, and Bonsai's
 

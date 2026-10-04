@@ -292,12 +292,17 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
     body:
       p('<strong>Download .als</strong> writes the song as a Live set that Live 11 and later open, on its ' +
         'Arrangement. Every part is a MIDI track named after its row and instrument, and every chip on the board ' +
-        'is a clip at the same place on the timeline, in the Live colour nearest the chip’s own.') +
+        'is a clip at the same place on the timeline and as long as the chip, empty bars included, in the Live ' +
+        'colour nearest the chip’s own.') +
       p('Glides, fades and the modulation are the notes’ own MPE expression, exactly as the song draws them: ' +
         'open a clip and look at its Note Expression tab. The tempo is the song’s, and each track’s volume and ' +
         'pan are set so that Live puts the same level on each side as the game does. The two sends feed the ' +
         'returns: <strong>Reverb</strong>, Live’s Reverb set to the song’s room, and <strong>Echo</strong>, ' +
         'Live’s Delay at the song’s echo time and feedback, feeding the reverb as the game’s echo does.') +
+      p('The swing is a groove, <strong>LBP swing</strong> and the song’s number, that every clip follows: the ' +
+        'notes stay on Live’s grid, and Live swings them as it plays. Open the Groove Pool to turn it up, down ' +
+        'or off. <strong>Bake the swing</strong> writes the swung timing into the notes instead, with no ' +
+        'groove: that is exactly the game’s timing, and it puts the notes off Live’s grid.') +
       p('<strong>One track per row</strong> puts every chip of one row and instrument on a single track, so ' +
         'there is one instrument to load per row. Where those chips differ in volume, pan or a send, the track ' +
         'carries it as mixer automation that changes as each one comes in. Chips that play at the same time ' +
@@ -310,15 +315,23 @@ export const HELP: Readonly<Record<HelpTopic, Topic>> = {
         'open the set inside, and Live finds the samples beside it. The samples are the game’s, which is why ' +
         'this is off unless you ask.') +
       p('A Sampler is set at one modulation per track, the one most of its notes use, because a Live Sampler ' +
-        'cannot move as many things per note as the game’s instruments do; the tally counts the notes at a ' +
-        'different one. The unison layers and the three LFOs are not carried.') +
+        'cannot move as many things per note as the game’s instruments do. What the modulation does to a note’s ' +
+        'level and filter cutoff still follows it, on the note’s pressure and slide, so a swell or a filter sweep ' +
+        'comes through; its envelopes and resonance stay the track’s, and the tally counts the notes that differ. ' +
+        'The unison layers and the three LFOs are not carried.') +
       p('Each note’s volume, fades included, is its pressure, which the Sampler’s MIDI tab turns into level. ' +
         'So a note you add in Live stays silent until you draw it some pressure in the Note Expression tab, ' +
         'or turn the Pressure amount down in the Sampler’s MIDI tab.') +
+      p('<strong>Our master bus on the master</strong> puts the tracker’s own master bus on Live’s master ' +
+        'track: Live’s Compressor set as the glue, then Live’s Limiter, at the glue the Song/Mixer card is set ' +
+        'to. Like the tracker’s, it is ours and not the game’s, and off unless you ask for it. With it the set ' +
+        'plays about as loud as the tracker does with its master bus on; without it, a little quieter than ' +
+        'the tracker.') +
       h('What is not in it') +
       p('The reverb and the echo are Live’s own, set as close as they go to the game’s, not the game’s ' +
-        'themselves. <strong>Bake the swing</strong> writes the swung timing into the notes, which sounds like ' +
-        'the game and puts the notes off Live’s grid.') +
+        'themselves. The swing groove moves a note that starts on an off-beat to where the game plays it; ' +
+        'what Live does with a note’s end, or with a note between two sixteenths, has not been checked, ' +
+        'so bake the swing when the timing has to be the game’s.') +
       p('A glide wider than 48 semitones stops at 48, which is as far as Live goes, and the tally says when ' +
         'that happens.'),
   },

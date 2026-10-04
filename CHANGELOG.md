@@ -4,6 +4,27 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.41 (2026-10-04)
+
+- The Ableton Live export carries the swing: unless you bake it into the notes, it is a groove in
+  Live's Groove Pool that every clip follows, so the notes stay on Live's grid and still swing.
+- Every clip is as long as its chip on the board, empty bars included, instead of stopping at its
+  last note.
+- New option, off by default: our master bus on Live's master track, a Compressor set as the glue
+  and a Limiter, at the glue the Song/Mixer card is set to. With it the set plays about as loud as
+  the tracker does with its master bus on.
+- With the instruments, every track played far louder than the game, so the master had to come
+  down by about 20 dB to stop clipping. It now plays at the game's level.
+- With the instruments, a row whose chips are in different keys played some notes on the wrong
+  sample, a drum kit's closed hi-hat on its tom. Every note now plays its own sample at its own
+  pitch, and keeps the note number the tracker's piano roll shows. Live names the octaves one
+  lower: C3 in the tracker is C2 in Live.
+- With the instruments, filters that follow the keyboard sat too closed or too open in Live; the
+  ghost was much too dark. They now follow the game.
+- With the instruments, a note whose modulation moves now moves its level and its filter in Live
+  as it does in the game, so swells and filter sweeps come through, at the game's speed. The rest
+  of the instrument stays at the modulation its track uses most.
+
 ## 0.2.40 (2026-10-04)
 
 - The audio readout in the status bar is now one figure, like a DAW's CPU meter: "17 notes · CPU

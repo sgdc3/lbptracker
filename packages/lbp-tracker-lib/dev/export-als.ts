@@ -27,6 +27,7 @@ import { loadResource } from '@lbptracker/cwlib/resource.ts';
 import { alsProjectFiles, sequencerToAls } from '../src/als.ts';
 import type { AlsInstrumentSource } from '../src/als-sampler.ts';
 import { readInstrument, usedSlots } from '../src/rinstrument.ts';
+import { MASTER_DEFAULTS } from '../src/audio/master.ts';
 
 const LEVELS = process.env.LBP_LEVELS ?? 'C:/Users/sgdc3/Desktop/LBP/toolkit/tools/sequencerdump/data';
 const out = process.env.LBP_ALS_OUT;
@@ -34,6 +35,10 @@ const wantUid = Number(process.env.LBP_UID ?? 0);
 const bakeSwing = process.env.LBP_BAKE_SWING === '1';
 /** `LBP_ALS_INSTRUMENTS=1`: a Sampler per track from `fixtures/rinst` and `fixtures/smp`, and `LBP_ALS_OUT` becomes a project folder. */
 const withInstruments = process.env.LBP_ALS_INSTRUMENTS === '1';
+/** `LBP_ALS_MASTER=<glue 0..10>`: the tracker's master bus on the master track, at that glue. */
+const masterBus = process.env.LBP_ALS_MASTER === undefined
+  ? undefined
+  : { amount: Number(process.env.LBP_ALS_MASTER), ceilingDb: MASTER_DEFAULTS.ceilingDb };
 
 const names = await readFile('fixtures/rinst/manifest.json', 'utf8')
   .then((text) => new Map((JSON.parse(text) as { guid: number; file: string }[])
@@ -115,7 +120,7 @@ if (out !== undefined) {
     : [...sequencers].sort((a, b) => b.seq.tracks.length - a.seq.tracks.length)[0];
   if (!pick) throw new Error(`no sequencer ${wantUid} in ${LEVELS}`);
   const instruments = withInstruments ? await loadInstruments(pick.seq) : undefined;
-  const result = sequencerToAls(pick.seq, { instrumentName, bakeSwing, instruments });
+  const result = sequencerToAls(pick.seq, { instrumentName, bakeSwing, instruments, masterBus });
   const problems = check(result.xml);
   if (problems.length > 0) throw new Error(problems.join('; '));
   if (instruments) {
@@ -130,7 +135,7 @@ if (out !== undefined) {
     }
     console.log(
       `${result.instrumentTracks} Samplers, ${result.samples.length} samples; ` +
-      `${result.offModulation} notes off their track's modulation, ${result.offKey} off its Key`,
+      `${result.offModulation} notes off their track's modulation (level and cutoff follow; the rest is the track's)`,
     );
   } else {
     await mkdir(path.dirname(out), { recursive: true });
@@ -144,15 +149,15 @@ if (out !== undefined) {
   );
 } else {
   const sum = {
-    tracks: 0, parts: 0, switches: 0, clips: 0, placements: 0, notes: 0, glides: 0, clampedPitch: 0, clampedBend: 0,
-    overlapping: 0, instrumentTracks: 0, offModulation: 0, offKey: 0,
+    tracks: 0, parts: 0, switches: 0, clips: 0, placements: 0, notes: 0, glides: 0, clampedPitch: 0, clampedBend: 0, clampedSlide: 0,
+    overlapping: 0, instrumentTracks: 0, offModulation: 0,
   };
   let bytes = 0;
   let broken = 0;
   let sampleBytes = 0;
   for (const { level, seq } of sequencers) {
     const instruments = withInstruments ? await loadInstruments(seq) : undefined;
-    const result = sequencerToAls(seq, { instrumentName, instruments });
+    const result = sequencerToAls(seq, { instrumentName, instruments, masterBus });
     sampleBytes += result.samples.reduce((n, s) => n + s.bytes.length, 0);
     const problems = check(result.xml);
     if (problems.length > 0) {
@@ -169,14 +174,13 @@ if (out !== undefined) {
     `${sum.glides} glides, ${(bytes / 1e6).toFixed(1)} MB gzipped`,
   );
   console.log(
-    `clamped: ${sum.clampedPitch} keys, ${sum.clampedBend} bend points; ` +
+    `clamped: ${sum.clampedPitch} keys, ${sum.clampedBend} bend points, ${sum.clampedSlide} slide points; ` +
     `${sum.overlapping} notes overlap one of their own key`,
   );
   if (withInstruments) {
     console.log(
       `instruments: ${sum.instrumentTracks} of ${sum.tracks} tracks got a Sampler, ` +
-      `${(sampleBytes / 1e6).toFixed(1)} MB of samples; ${sum.offModulation} notes off their track's ` +
-      `modulation, ${sum.offKey} off its Key`,
+      `${(sampleBytes / 1e6).toFixed(1)} MB of samples; ${sum.offModulation} notes off their track's modulation (level and cutoff follow; the rest is the track's)`,
     );
   }
 }

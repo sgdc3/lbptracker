@@ -26,16 +26,19 @@
  * |---|---|
  * | a part -- one instrument, row and mixer (`partKey`) | a MIDI track, named as the MIDI export names it |
  * | parts of one row and instrument never sounding together | one track (`mergeRows`, the MIDI export's `rowGroups`), the mixer stepping where each takes over |
- * | a placement | an arrangement clip at its own cell, `stepOffset / 4` beats |
- * | placements on one track whose windows overlap | one clip over the union: Live plays one clip per track at a time |
- * | a note's first control point | the note: key, velocity |
+ * | a placement | an arrangement clip at its own cell, `stepOffset / 4` beats, as long as its chip (`clipSteps`) |
+ * | placements on one track whose notes reach into the next | one clip over the union: Live plays one clip per track at a time |
+ * | a chip covering the next one on its track with silence | cut where the next begins |
+ * | a note's first control point | the note: the sounding key, velocity -- with a Sampler the raw key, `Key` and the scale then pitch |
  * | the glide | per-note pitch, **the control points as written** |
  * | the volume ramp -- and with a Sampler, every note's level | per-note pressure |
- * | the modulation | per-note slide, CC 74 |
+ * | the modulation | per-note slide, CC 74 -- with a Sampler, the filter cutoff it gives; its level rides on the pressure |
  * | `level` x the channel's volume, and `pan` | the track's volume and pan, through Live's pan law backwards so each channel gets the engine's gain (`mixerOf`) |
  * | `reverbSend`, `echoSend` | sends A and B, into two return tracks |
  * | the chip's tint | the nearest of Live's 70 colours (`liveColour`), on the track and on each clip |
  * | tempo | the master's tempo |
+ * | the tracker's master bus, when asked for | Live's Compressor and Limiter on the master (`als-master.ts`) |
+ * | swing | a groove in the pool that every clip follows (`swingGrooveXml`) -- or, with `bakeSwing`, the notes' own times |
  *
  * ⚠️ **A glide is written as its control points and nothing else.** Live draws
  * per-note expression as straight segments between breakpoints -- the curve
@@ -54,7 +57,13 @@ import { channelVolume, schedule, type Sequencer, type Track } from '@lbptracker
 import { deviceHead, dial, Ids, num, routings, target, toggle, v } from './als-xml.ts';
 import { partKey, partLabel, rowGroups } from './midi.ts';
 import { blockRoot, keyOffset, notePitch } from './scale.ts';
-import { samplerDevice, samplerSampleFile, type AlsInstrumentSource, type SamplerSample } from './als-sampler.ts';
+import { masterBusDevices } from './als-master.ts';
+import {
+  heardLevel, heldDial, LIVE_SLIDE_SEMITONES, playsPitched, samplerDevice, samplerSampleFile, slotRate, trackingRoot,
+  type AlsInstrumentSource, type SamplerSample,
+} from './als-sampler.ts';
+import type { MasterSettings } from './audio/master.ts';
+import { clipStepsFor } from './song.ts';
 import { swungFrame } from './swing.ts';
 
 /** Sequencer steps in a Live beat: the grid is sixteenths. */
@@ -72,6 +81,10 @@ const STEPS_PER_BEAT = 4;
 export const ALS_BEND_RANGE = 48;
 const BEND_PER_SEMITONE = 8192 / ALS_BEND_RANGE;
 
+/** Live's Sampler filter dial, top and bottom, in Hz: its own range (`als-sampler.ts`'s tree). */
+const FILTER_OPEN_HZ = 22000;
+const FILTER_FLOOR_HZ = 30;
+
 /** Live's session grid is eight scenes in its own empty set; every track carries a slot per scene. */
 const SCENES = 8;
 
@@ -87,7 +100,10 @@ export interface AlsExportOptions {
    *
    * Off by default for the same reason as the MIDI export's: the straight grid
    * is what the sequencer holds, and a DAW grid that the notes sit on is what
-   * makes the set editable. On is for a set that has to sound like the game.
+   * makes the set editable. Off, the swing is a groove every clip follows
+   * (`swingGrooveXml`) and Live swings the notes as it plays them; on, every
+   * time in the set -- starts, ends, the glides' control points -- is where
+   * the engine plays it, and there is no groove.
    */
   readonly bakeSwing?: boolean;
   /**
@@ -108,6 +124,23 @@ export interface AlsExportOptions {
    * the set is then a file of notes and nothing else of the game's.
    */
   readonly instruments?: ReadonlyMap<number, AlsInstrumentSource>;
+  /**
+   * Each placement's note grid in steps, by its index in `Sequencer.tracks`:
+   * how long its chip is on the board, and so its clip.
+   *
+   * ⚠️ **The file does not hold it** (`clipStepsFor` in `song.ts`), so a
+   * sequencer read from a level gets it the way the editor does on load, from
+   * the notes; the editor passes its own `Clip.steps`, which is the length the
+   * composer drew. Absent, or absent for a placement, it is derived.
+   */
+  readonly clipSteps?: readonly number[];
+  /**
+   * The tracker's own master bus on the master track: Live's Compressor set as
+   * the glue and Live's Limiter (`als-master.ts`). Absent, the master holds no
+   * device, which is the default: like the master bus itself, it is ours and
+   * not the game's.
+   */
+  readonly masterBus?: MasterSettings;
 }
 
 export interface AlsExportResult {
@@ -124,12 +157,14 @@ export interface AlsExportResult {
   /** Placements, which `clips` is at most: overlapping ones share a clip. */
   readonly placements: number;
   readonly notes: number;
-  /** Notes carrying per-note pitch. */
+  /** Notes whose pitch moves: a glide, as the engine plays it. */
   readonly glides: number;
   /** Notes whose key left 0..127 and was clamped to it. */
   readonly clampedPitch: number;
   /** Control points that glided past ±48 semitones and were clamped. */
   readonly clampedBend: number;
+  /** Control points whose modulation moves the filter further than the slide's 72 semitones, which stop there. */
+  readonly clampedSlide: number;
   /**
    * Notes that begin while another of the same key on the same clip is still
    * sounding. Counted, not lost.
@@ -152,15 +187,10 @@ export interface AlsExportResult {
   readonly instrumentTracks: number;
   /**
    * Notes whose modulation is not the one their track's Sampler is set at.
-   * They play at the track's; see `als-sampler.ts` for why there is one.
+   * Their level (the pressure) and their filter cutoff (the slide) follow
+   * their own; the envelopes, the resonance and the rest are the track's.
    */
   readonly offModulation: number;
-  /**
-   * Notes on a track whose parts transpose by different `Key`s, played through
-   * zones shifted by the track's commonest one -- a note near a split can take
-   * the neighbouring sample. Pitch is not affected.
-   */
-  readonly offKey: number;
 }
 
 /* ------------------------------------------------------------------ the XML */
@@ -443,6 +473,47 @@ function delayDevice(ids: Ids, echoTime: number, feedback: number, tempo: number
 /** One control point of one per-note list: where, in beats from the note's start, and what. */
 type Point = readonly [time: number, value: number];
 
+/** A moment of a note: steps from its start, its modulation, volume and sounding pitch. */
+interface Moment {
+  readonly step: number;
+  readonly modulation: number;
+  readonly volume: number;
+  readonly sounding: number;
+}
+
+/**
+ * A note's course for what the modulation moves: its control points, and between
+ * two whose modulation differs, one moment more at every sixteenth of the range
+ * crossed, everything linear between them as the engine ramps it.
+ *
+ * ❗ **The level and the cutoff are curves in the modulation, the lists straight
+ * lines.** Live draws per-note expression straight between points (the curve
+ * controls at 0.5), and the engine ramps the modulation straight between
+ * records, but what the modulation gives -- `Params[24]` times a passband, a
+ * squared cutoff times an envelope factor -- is not straight in it. Between two
+ * points only, `Periastron`'s opening sweep sat 5 semitones darker than the
+ * game halfway; a moment per sixteenth keeps every step of the 16 exact.
+ */
+function courseOf(points: readonly { step: number; modulation: number; volume: number }[], sounding: readonly number[]): Moment[] {
+  const out: Moment[] = [];
+  points.forEach((p, i) => {
+    out.push({ step: p.step, modulation: p.modulation, volume: p.volume, sounding: sounding[i] });
+    const next = points[i + 1];
+    if (next === undefined) return;
+    const pieces = Math.min(15, Math.ceil(Math.abs(next.modulation - p.modulation) * 15 - 1e-9));
+    for (let k = 1; k < pieces; k += 1) {
+      const f = k / pieces;
+      out.push({
+        step: p.step + (next.step - p.step) * f,
+        modulation: p.modulation + (next.modulation - p.modulation) * f,
+        volume: p.volume + (next.volume - p.volume) * f,
+        sounding: sounding[i] + (sounding[i + 1] - sounding[i]) * f,
+      });
+    }
+  });
+  return out;
+}
+
 interface AlsNote {
   readonly key: number;
   /** Beats from the clip's start. */
@@ -470,7 +541,10 @@ interface ClipIds {
   eventList: number;
 }
 
-function clipXml(clip: AlsClip, id: number, counters: ClipIds): string {
+/** The `GrooveId` of a clip that follows no groove, as Live writes it. */
+const NO_GROOVE = -1;
+
+function clipXml(clip: AlsClip, id: number, counters: ClipIds, grooveId = NO_GROOVE): string {
   const color = clip.color;
   const end = clip.start + clip.length;
   const byKey = new Map<number, { note: AlsNote; id: number }[]>();
@@ -519,7 +593,7 @@ function clipXml(clip: AlsClip, id: number, counters: ClipIds): string {
     '<ScrollerTimePreserver>', v('LeftTime', 0), v('RightTime', clip.length), '</ScrollerTimePreserver>',
     '<TimeSelection>', v('AnchorTime', 0), v('OtherTime', 0), '</TimeSelection>',
     v('Legato', false), v('Ram', false),
-    '<GrooveSettings>', v('GrooveId', -1), '</GrooveSettings>',
+    '<GrooveSettings>', v('GrooveId', grooveId), '</GrooveSettings>',
     v('Disabled', false), v('VelocityAmount', 0),
     followAction(),
     '<Grid>', grid(16, false), '</Grid>',
@@ -547,6 +621,54 @@ const followAction = () => [
   v('FollowActionA', 4), v('FollowActionB', 0), v('FollowChanceA', 100), v('FollowChanceB', 0),
   v('JumpIndexA', 0), v('JumpIndexB', 0), v('FollowActionEnabled', false), '</FollowAction>',
 ].join('\n');
+
+/* ---------------------------------------------------------------- the groove */
+
+/** The pool's one groove, when there is one: `GrooveId` names a groove by its `Id` in the pool. */
+const SWING_GROOVE_ID = 0;
+
+/**
+ * The song's swing as a Live groove, for the pool: one bar of sixteenths, each
+ * where the engine plays that step.
+ *
+ * The engine stretches an even step to `L(1 + swing/2)` and squeezes the odd one
+ * after it (`swing.ts`), so an odd sixteenth lands `swing/2` of a step late and
+ * an even one stays. A groove says the same thing the way Live hears it: a
+ * groove note per sixteenth, at its swung place, with a 1/16 Base -- Live
+ * moves a clip's note towards the groove note at its nearest sixteenth, and a
+ * groove note on the grid moves nothing (the Live 11 manual, *Using Grooves*,
+ * 13.1.1). Timing at 100 and nothing else, as Live's own swing grooves
+ * (`Swing MPC 3000 16ths 64.agr`: Base 1/16, Timing 100, Quantize, Random and
+ * Velocity 0); Live's Global Amount is written at 100 on the master.
+ *
+ * The members are the ones Live 11.3 writes for a groove in a set's pool --
+ * the Core Library's `Demo & Sketch.als`, `11.0_11300`, whose nine clips point
+ * at its `Swing 8-75` -- and `Grid` is an index read off Live's own
+ * `Quantize 4/8/8T/16/16T/32.agr`: 0..5 in that order, so 3 is a sixteenth.
+ * Its clip is an ordinary clip of the schema above, so it lives in `clipXml`.
+ */
+function swingGrooveXml(swing: number, counters: ClipIds): string {
+  const name = `LBP swing ${Math.round(swing * 100)}`;
+  const notes: AlsNote[] = Array.from({ length: 4 * STEPS_PER_BEAT }, (_, step) => ({
+    // Key 36 and a sixty-fourth long, as Live's own groove notes are.
+    key: 36,
+    time: swungFrame(step, 1, swing) / STEPS_PER_BEAT,
+    duration: 0.0625,
+    velocity: 127,
+  }));
+  return [
+    `<Groove Id="${SWING_GROOVE_ID}">`,
+    v('LomId', 0), v('Name', name),
+    '<Clip>', '<Value>',
+    clipXml({ start: 0, length: 4, name, color: 0, notes }, 0, counters),
+    '</Value>', '</Clip>',
+    v('Grid', 3),
+    v('QuantizationAmount', 0), v('TimingAmount', 100), v('RandomAmount', 0), v('VelocityAmount', 0),
+    v('Annotation', ''), v('Selection', true),
+    '<SourceContext />',
+    '</Groove>',
+  ].join('\n');
+}
 
 /* ---------------------------------------------------------------- the tracks */
 
@@ -610,8 +732,8 @@ function envelope(
   ].join('\n');
 }
 
-function midiTrackXml(ids: Ids, id: number, part: PartTrack, counters: ClipIds): string {
-  const clips = part.clips.map((clip, i) => clipXml(clip, i, counters));
+function midiTrackXml(ids: Ids, id: number, part: PartTrack, counters: ClipIds, grooveId: number): string {
+  const clips = part.clips.map((clip, i) => clipXml(clip, i, counters, grooveId));
   // The mixer first, for the ids of the dials its envelopes move -- the track
   // head that holds the envelopes comes before it in the file.
   const targets: MixerTargets = { sends: [] };
@@ -689,7 +811,7 @@ function returnTrackXml(
   ].join('\n');
 }
 
-function masterTrackXml(ids: Ids, tempo: number): string {
+function masterTrackXml(ids: Ids, tempo: number, devices?: string): string {
   return [
     '<MasterTrack>',
     trackHead('Master', 5, false),
@@ -698,7 +820,9 @@ function masterTrackXml(ids: Ids, tempo: number): string {
     routings('external'),
     mixer(ids, { volume: 1, pan: 0, tempo }),
     '<FreezeSequencer>', '<AudioSequencer Id="0">', freezeBody(ids, 0), '</AudioSequencer>', '</FreezeSequencer>',
-    emptyDevices,
+    devices === undefined
+      ? emptyDevices
+      : ['<DeviceChain>', '<Devices>', devices, '</Devices>', '<SignalModulations />', '</DeviceChain>'].join('\n'),
     '</DeviceChain>',
     '</MasterTrack>',
   ].join('\n');
@@ -729,8 +853,8 @@ function sceneXml(id: number, tempo: number): string {
   ].join('\n');
 }
 
-/** Everything after the scenes, as Live 11.3 writes it for an empty set. */
-function liveSetTail(lengthBeats: number): string {
+/** Everything after the scenes, as Live 11.3 writes it for an empty set -- but for the grooves in its pool. */
+function liveSetTail(lengthBeats: number, grooves: readonly string[]): string {
   const lane = (id: number, type: number, size: number, minimized: boolean) => [
     `<ExpressionLane Id="${id}">`, v('Type', type), v('Size', size), v('IsMinimized', minimized), '</ExpressionLane>',
   ].join('\n');
@@ -765,7 +889,9 @@ function liveSetTail(lengthBeats: number): string {
     // export switched from 1 to 0 opened on the Arrangement with its clips.
     v('ChooserBar', 0), v('Annotation', ''), v('SoloOrPflSavedValue', true), v('SoloInPlace', true),
     v('CrossfadeCurve', 2), v('LatencyCompensation', 2), v('HighlightedTrackIndex', 0),
-    '<GroovePool>', v('LomId', 0), '<Grooves />', '</GroovePool>',
+    '<GroovePool>', v('LomId', 0),
+    grooves.length === 0 ? '<Grooves />' : ['<Grooves>', ...grooves, '</Grooves>'].join('\n'),
+    '</GroovePool>',
     v('AutomationMode', false), v('SnapAutomationToGrid', true), v('ArrangementOverdub', false),
     v('ColorSequenceIndex', 0),
     '<AutoColorPickerForPlayerAndGroupTracks>', v('NextColorIndex', 0), '</AutoColorPickerForPlayerAndGroupTracks>',
@@ -917,13 +1043,13 @@ export function sequencerToAls(sequencer: Sequencer, options: AlsExportOptions =
   let glides = 0;
   let clampedPitch = 0;
   let clampedBend = 0;
+  let clampedSlide = 0;
   let overlapping = 0;
   let clipCount = 0;
   let switchCount = 0;
   let lengthBeats = 0;
   let instrumentTracks = 0;
   let offModulation = 0;
-  let offKey = 0;
   const seen = new Map<string, number>();
 
   /**
@@ -955,34 +1081,162 @@ export function sequencerToAls(sequencer: Sequencer, options: AlsExportOptions =
     const own = parts[group[0]].track;
     const placements = group.flatMap((part) => parts[part].tracks);
     const source = options.instruments?.get(own.guid);
-    // ❗ **The slide is written for every note of a track or for none of it.**
-    // A note with no slide list leaves a synth on whatever the last one said,
-    // so a track whose modulation ever moves off 0 states it on every note.
-    const slides = placements.some((i) =>
+    const modulationMoves = placements.some((i) =>
       (byPlacement.get(i) ?? []).some((e) => e.points.some((p) => p.modulation !== 0)));
+    // The instrument's settings, from what the track's notes mostly use: one
+    // modulation and one `Key` per Sampler, since a Sampler has one of each.
+    let modulation = 0;
+    let keyShift = 0;
+    if (source !== undefined) {
+      const modulations = new Map<number, number>();
+      const shifts = new Map<number, number>();
+      for (const index of placements) {
+        const shift = keyOffset(sequencer.tracks[index].key);
+        for (const event of byPlacement.get(index) ?? []) {
+          const m = Math.round(event.modulation * 15);
+          modulations.set(m, (modulations.get(m) ?? 0) + 1);
+          shifts.set(shift, (shifts.get(shift) ?? 0) + 1);
+        }
+      }
+      const commonest = (counts: Map<number, number>) =>
+        [...counts].reduce((best, entry) => (entry[1] > best[1] ? entry : best), [0, -1])[0];
+      modulation = commonest(modulations);
+      keyShift = commonest(shifts);
+      for (const [m, count] of modulations) if (m !== modulation) offModulation += count;
+    }
+    // ❗ **The level the modulation gives rides on the pressure, note by note.**
+    // The engine reads `Params[24]` and the filter at each note's modulation,
+    // as it moves, and a Sampler holds one; Live's pressure is linear in
+    // amplitude like the engine's volume (measured). So the Sampler sits at
+    // the loudest level the track's notes reach and every control point's
+    // pressure comes down by its own level against that. `Periastron` opens on
+    // a `pulse_wave` chord that swells from modulation 0 to 13, `Params[24]`
+    // 0.094 to 0.17; the Sampler held 0.094 and the swell was gone.
+    const levels = new Map<number, number>();
+    const levelAt = (m: number): number => {
+      if (source === undefined) return 1;
+      const step = Math.round(m * 15);
+      let hit = levels.get(step);
+      if (hit === undefined) levels.set(step, hit = heardLevel(source.instrument, step / 15));
+      return hit;
+    };
+    const courses = new Map<object, Moment[]>();
+    /** A note's course (`courseOf`), once. */
+    const courseFor = (event: (typeof events)[number]): Moment[] => {
+      let hit = courses.get(event);
+      if (hit === undefined) {
+        const placement = sequencer.tracks[event.track];
+        const blockKey = blockRoot(placement.key);
+        courses.set(event, hit = courseOf(event.points, event.points.map((p) => notePitch(p.pitch, placement.scale, blockKey))));
+      }
+      return hit;
+    };
+    let loudest = 0;
+    if (source !== undefined) {
+      for (const index of placements) {
+        for (const event of byPlacement.get(index) ?? []) for (const m of courseFor(event)) loudest = Math.max(loudest, levelAt(m.modulation));
+      }
+    }
+    /** The pressure a control point takes off the Sampler's volume, 1 without a Sampler. */
+    const gainAt = (m: number) => (source !== undefined && loudest > 0 ? levelAt(m) / loudest : 1);
+
+    // ❗ **The cutoff the modulation gives rides on the slide, note by note.**
+    // The Sampler is set at the commonest modulation and its slide row raises the
+    // dial 72 semitones x slide/127 (`LIVE_SLIDE_SEMITONES`, measured). So when
+    // the track's modulation moves, the dial sits at the lowest any control
+    // point wants (`heldDial`: Live's cutoff, where the note is heard, at the
+    // engine's for that point's modulation and pitch) and each point's slide
+    // carries it up from there. Where the engine bypasses its filter the slide
+    // opens Live's as far as it goes. `Periastron` opens on a `pulse_wave` chord
+    // whose modulation goes 0 to 13, its held cutoff 24 kHz down to 1.6 kHz; the
+    // Sampler held the first and none of the sweep.
+    const root = source === undefined
+      ? 60
+      : trackingRoot(source.instrument, placements.flatMap((i) => (byPlacement.get(i) ?? []).map((e) => e.pitch)));
+    const varies = source !== undefined && placements.some((i) =>
+      (byPlacement.get(i) ?? []).some((e) => e.points.some((p) => Math.round(p.modulation * 15) !== modulation)));
+    /** Each note's moments' dials (its course), in Hz within Live's range, when the modulation moves. */
+    const pointDials = new Map<object, number[]>();
+    let filterOn = false;
+    let lowest = Infinity;
+    let highest = 0;
+    let envelopeCut = 0;
+    if (source !== undefined && varies) {
+      const held = heldDial(source.instrument, modulation / 15, keyShift, root);
+      for (const index of placements) {
+        for (const event of byPlacement.get(index) ?? []) {
+          pointDials.set(event, courseFor(event).map((moment) => {
+            const rate = slotRate(source.instrument, event.pitch, moment.sounding);
+            const wanted = held.at(moment.modulation, event.pitch, rate);
+            if (Number.isFinite(wanted)) filterOn = true;
+            return wanted;
+          }));
+        }
+      }
+      // ❗ **Under Live's floor the envelope gives way, not the dial.** The dial
+      // stops at 30 Hz; what a point wants under that comes off the envelope's
+      // amount instead, which lowers every point's heard cutoff alike (by the
+      // amount times the reference's heard level). `Periastron`'s `pulse_wave`
+      // wanted its dial near 20 Hz at the end of its sweep, and stuck at 1.8 kHz
+      // where the game goes on down to 1.2 kHz.
+      let floorest = Infinity;
+      for (const wanted of pointDials.values()) for (const w of wanted) if (w < floorest) floorest = w;
+      if (floorest < FILTER_FLOOR_HZ && held.heard > 0) envelopeCut = (12 * Math.log2(FILTER_FLOOR_HZ / floorest)) / held.heard;
+      const lift = 2 ** ((envelopeCut * held.heard) / 12);
+      for (const [event, wanted] of pointDials) {
+        pointDials.set(event, wanted.map((w) => {
+          const dial = Math.min(FILTER_OPEN_HZ, Math.max(FILTER_FLOOR_HZ, w * lift));
+          lowest = Math.min(lowest, dial);
+          highest = Math.max(highest, dial);
+          return dial;
+        }));
+      }
+    }
+    const sweeps = varies && filterOn && highest > lowest * 1.0001;
+    const slideFor = (dial: number): number => {
+      const semitones = 12 * Math.log2(dial / lowest);
+      if (semitones > LIVE_SLIDE_SEMITONES + 1e-9) clampedSlide += 1;
+      return Math.min(127, (127 * semitones) / LIVE_SLIDE_SEMITONES);
+    };
+    // ❗ **The slide is written for every note of a track or for none of it.**
+    // A note with no slide list leaves a synth on whatever the last one said.
+    // Without a Sampler it is the modulation, for an instrument the user loads,
+    // on every note of a track whose modulation ever moves off 0.
+    const slides = source !== undefined ? sweeps : modulationMoves;
     /** Every note's start and part, for the mixer's switches. */
     const starts: { at: number; part: number }[] = [];
 
-    // A placement's window: its cell, to where its own last note stops sounding.
+    // A placement's window: its cell, for as long as the chip is on the board --
+    // its note grid, whether or not notes fill it -- and further only if a note
+    // sounds past it. `sounding` is where its own last note stops.
     const windows = placements.map((index) => {
       const track: Track = sequencer.tracks[index];
-      const reach = track.notes.reduce((most, note) => Math.max(most, note.endPosition + 1), 1);
-      return { index, gridX: track.gridX, from: track.stepOffset, to: track.stepOffset + Math.ceil(reach) };
+      const reach = Math.ceil(track.notes.reduce((most, note) => Math.max(most, note.endPosition + 1), 1));
+      const grid = options.clipSteps?.[index]
+        ?? clipStepsFor(track.notes.reduce((most, note) => Math.max(most, note.endStep), -1));
+      return {
+        index, gridX: track.gridX, from: track.stepOffset,
+        to: track.stepOffset + Math.max(grid, reach), sounding: track.stepOffset + reach,
+      };
     }).sort((a, b) => a.from - b.from || a.gridX - b.gridX);
     // ⚠️ **Live plays one arrangement clip per track at a time**: where two
     // overlap, the later hides the earlier's tail and its notes never sound.
-    // So windows that overlap on a track become one clip over the union, whichever
-    // parts they belong to -- two parts share a track only if their NOTES never
-    // sound together, and a window runs from the cell's start, before its notes.
-    const merged: { from: number; to: number; cells: number[]; members: number[] }[] = [];
+    // So windows whose NOTES reach into the next become one clip over the union,
+    // whichever parts they belong to -- two parts share a track only if their
+    // notes never sound together, and a window runs from the cell's start,
+    // before its notes. A chip that only covers the next one with silence is
+    // cut where the next begins, and stays a clip of its own.
+    const merged: { from: number; to: number; sounding: number; cells: number[]; members: number[] }[] = [];
     for (const w of windows) {
       const last = merged[merged.length - 1];
-      if (last !== undefined && w.from < last.to) {
+      if (last !== undefined && w.from < last.sounding) {
         last.to = Math.max(last.to, w.to);
+        last.sounding = Math.max(last.sounding, w.sounding);
         last.cells.push(w.gridX);
         last.members.push(w.index);
       } else {
-        merged.push({ from: w.from, to: w.to, cells: [w.gridX], members: [w.index] });
+        if (last !== undefined) last.to = Math.min(last.to, w.from);
+        merged.push({ from: w.from, to: w.to, sounding: w.sounding, cells: [w.gridX], members: [w.index] });
       }
     }
 
@@ -998,21 +1252,39 @@ export function sequencerToAls(sequencer: Sequencer, options: AlsExportOptions =
         for (const event of byPlacement.get(member) ?? []) {
           starts.push({ at: beats(event.step), part: partOf.get(member) ?? group[0] });
           const first = pitchOf(event.pitch);
-          const key = Math.min(127, Math.max(0, first));
-          if (key !== first) clampedPitch += 1;
+          // ❗ **With a Sampler the note is the raw one, the note the tracker's
+          // roll shows, and `Key` and the scale are pitch.** The engine picks
+          // the slot off the raw note and only then quantises and transposes
+          // (`scale.ts`), so the zones are its walk as it is, the track's
+          // commonest `Key` sits in the pitched zones' roots (`samplerZones`),
+          // and what is left -- another part's `Key`, a note the scale moves, a
+          // glide -- is per-note pitch. A note on an unpitched slot gets none:
+          // the engine plays those at one rate whatever the pitch. Written as
+          // the sounding note instead, a part keyed off the track's commonest
+          // played its notes through the zones next door: `Periastron`'s row 2
+          // kit, keyed D on a track keyed D#, hit the tom for its closed hi-hat
+          // (2026-10-04). Without a Sampler the note is the one that sounds,
+          // as in the MIDI export: an instrument the user loads knows no `Key`.
+          const sampled = source !== undefined;
+          const key = sampled ? event.pitch : Math.min(127, Math.max(0, first));
+          if (!sampled && key !== first) clampedPitch += 1;
           const at = beats(event.step);
           /** Where a control point falls, in beats from the note's start. */
           const offset = (p: { step: number }) => beats(event.step + p.step) - at;
           let pitch: Point[] | undefined;
-          const semitones = event.points.map((p) => pitchOf(p.pitch) - first);
-          if (semitones.some((s) => s !== 0)) {
+          const bends = sampled
+            ? (playsPitched(source.instrument, event.pitch)
+              ? event.points.map((p) => pitchOf(p.pitch) - event.pitch - keyShift)
+              : event.points.map(() => 0))
+            : event.points.map((p) => pitchOf(p.pitch) - first);
+          if (bends.some((s) => s !== 0)) {
             pitch = event.points.map((p, i) => {
-              const s = semitones[i];
+              const s = bends[i];
               if (Math.abs(s) > ALS_BEND_RANGE) clampedBend += 1;
               return [offset(p), Math.max(-ALS_BEND_RANGE, Math.min(ALS_BEND_RANGE, s)) * BEND_PER_SEMITONE];
             });
-            glides += 1;
           }
+          if (event.points.some((p) => pitchOf(p.pitch) !== first)) glides += 1;
           const level = (volume: number) => Math.min(127, Math.max(0, Math.round(volume)));
           // The ramp, and the note that opens at 0: Live has no velocity 0, so
           // that opening rides on the pressure exactly as it does in the MIDI.
@@ -1022,18 +1294,28 @@ export function sequencerToAls(sequencer: Sequencer, options: AlsExportOptions =
           // at 100 leaves a note with no pressure at all silent: the first sets
           // written with only the ramps on it played nothing, every meter flat
           // (2026-09-24).
-          const pressure = ramped
-            ? event.points.map((p): Point => [offset(p), level(p.volume)])
-            : source !== undefined ? [[0, level(event.volume)] as const] : undefined;
+          // With a Sampler the level and the slide follow the note's course, a
+          // moment per sixteenth of modulation crossed; without one, the points.
+          const course = sampled ? courseFor(event) : undefined;
+          const gains = (course ?? event.points).map((m) => gainAt(m.modulation));
+          const swells = gains.some((g) => g !== gains[0]);
+          const pressure = sampled
+            ? (ramped || swells
+              ? course!.map((m, i): Point => [offset(m), Math.min(127, Math.max(0, m.volume)) * gains[i]])
+              : [[0, Math.min(127, Math.max(0, event.volume)) * gains[0]] as const])
+            : ramped ? event.points.map((p): Point => [offset(p), level(p.volume)]) : undefined;
           const slide = slides
-            ? event.points.map((p): Point => [offset(p), Math.round(p.modulation * 127)])
+            ? (sampled
+              ? course!.map((m, i): Point => [offset(m), slideFor(pointDials.get(event)![i])])
+              : event.points.map((p): Point => [offset(p), Math.round(p.modulation * 127)]))
             : undefined;
           clipNotes.push({
             key,
             time: at - start,
             duration: beats(event.step + event.durationSteps) - at,
-            // With a Sampler the pressure holds the whole level: the velocity
-            // as well would take it twice.
+            // With a Sampler the pressure holds the whole level and the
+            // Sampler's Vel → Vol is 0 (`als-sampler.ts`), so the velocity is
+            // only the 127 a note must have to be a note.
             velocity: source !== undefined ? 127 : Math.max(1, level(event.volume)),
             pitch,
             pressure,
@@ -1085,30 +1367,13 @@ export function sequencerToAls(sequencer: Sequencer, options: AlsExportOptions =
     const label = partLabel(own, options.instrumentName);
     const n = (seen.get(label) ?? 0) + 1;
     seen.set(label, n);
-    // The instrument, set at what the track's notes mostly use: one modulation
-    // and one `Key` per Sampler, since a Sampler has one of each.
     let instrument: ((ids: Ids) => string) | undefined;
     if (source !== undefined) {
-      const modulations = new Map<number, number>();
-      const shifts = new Map<number, number>();
-      for (const index of placements) {
-        const shift = keyOffset(sequencer.tracks[index].key);
-        for (const event of byPlacement.get(index) ?? []) {
-          const m = Math.round(event.modulation * 15);
-          modulations.set(m, (modulations.get(m) ?? 0) + 1);
-          shifts.set(shift, (shifts.get(shift) ?? 0) + 1);
-        }
-      }
-      const commonest = (counts: Map<number, number>) =>
-        [...counts].reduce((best, entry) => (entry[1] > best[1] ? entry : best), [0, -1])[0];
-      const modulation = commonest(modulations);
-      const keyShift = commonest(shifts);
-      for (const [m, count] of modulations) if (m !== modulation) offModulation += count;
-      for (const [shift, count] of shifts) if (shift !== keyShift) offKey += count;
       instrumentTracks += 1;
       const name = options.instrumentName?.(own.guid) ?? label;
       instrument = (ids) => samplerDevice(ids, source.instrument, (guid) => sampleFor(source, guid), {
-        modulation: modulation / 15, keyShift, tempo: sequencer.tempo, name,
+        modulation: modulation / 15, keyShift, trackingRoot: root, volume: loudest, tempo: sequencer.tempo, name,
+        filter: sweeps ? { on: true, hz: lowest, slide: true, envelopeCut } : undefined,
       });
     }
     return {
@@ -1123,10 +1388,16 @@ export function sequencerToAls(sequencer: Sequencer, options: AlsExportOptions =
 
   const ids = new Ids();
   const counters: ClipIds = { keyTrack: 0, eventList: 0 };
+  // ❗ **Unbaked, the swing is a groove every clip follows**: the notes stay on
+  // Live's grid, where they can be edited, and Live swings them as it plays.
+  // Baked, the notes already carry it and a groove would swing them twice; with
+  // no swing there is nothing to say and the pool stays empty, as Live's is.
+  const grooved = !bakeSwing && sequencer.swing > 0;
+  const grooveId = grooved ? SWING_GROOVE_ID : NO_GROOVE;
   let trackId = 0;
   const body = [
     '<Tracks>',
-    ...partTracks.map((part) => midiTrackXml(ids, trackId++, part, counters)),
+    ...partTracks.map((part) => midiTrackXml(ids, trackId++, part, counters, grooveId)),
     returnTrackXml(ids, trackId++, 'Reverb', 4, 1, [0, 0], reverbDevice(ids, sequencer.reverb)),
     // ❗ **`EchoMix` is the return's fader and the echo feeds the reverb.** The
     // engine adds `EchoMix` times the delayed signal to all four of its output
@@ -1135,11 +1406,11 @@ export function sequencerToAls(sequencer: Sequencer, options: AlsExportOptions =
     returnTrackXml(ids, trackId++, 'Echo', 11, sequencer.echoMix, [1, 0],
       delayDevice(ids, sequencer.echoTime, sequencer.echoFeedback, sequencer.tempo)),
     '</Tracks>',
-    masterTrackXml(ids, sequencer.tempo),
+    masterTrackXml(ids, sequencer.tempo, options.masterBus && masterBusDevices(ids, options.masterBus)),
     preHearTrackXml(ids),
     '<SendsPre>', '<SendPreBool Id="0" Value="false" />', '<SendPreBool Id="1" Value="false" />', '</SendsPre>',
     '<Scenes>', ...Array.from({ length: SCENES }, (_, i) => sceneXml(i, sequencer.tempo)), '</Scenes>',
-    liveSetTail(lengthBeats),
+    liveSetTail(lengthBeats, grooved ? [swingGrooveXml(sequencer.swing, counters)] : []),
   ].join('\n');
 
   const xml = [
@@ -1169,6 +1440,7 @@ export function sequencerToAls(sequencer: Sequencer, options: AlsExportOptions =
     glides,
     clampedPitch,
     clampedBend,
+    clampedSlide,
     overlapping,
     // Read after the body is written: the Samplers prepare their samples as
     // they are written, and only those are the set's.
@@ -1177,7 +1449,6 @@ export function sequencerToAls(sequencer: Sequencer, options: AlsExportOptions =
       .map((s) => ({ file: s.file, bytes: s.wav })),
     instrumentTracks,
     offModulation,
-    offKey,
   };
 }
 

@@ -5,6 +5,8 @@ import { DEFAULT_CHIP_COLOUR } from '@lbptracker/cwlib/chips.ts';
 import { readNotes, NOTE_RECORD_SIZE } from '@lbptracker/cwlib/notes.ts';
 import { CHANNEL_HEADROOM, type Sequencer, type Track } from '@lbptracker/cwlib/project.ts';
 import { ALS_BEND_RANGE, LIVE_PALETTE, liveColour, sequencerToAls } from '../src/als.ts';
+import { FOLD_GAIN } from '../src/audio/effects.ts';
+import { GLUE, LIMITER, MASTER_DEFAULTS, glueLevels } from '../src/audio/master.ts';
 
 /* ---------------------------------------------------------------- fixtures */
 
@@ -78,11 +80,15 @@ function clipsOf(track: string) {
 
 /* ---------------------------------------------------------------- tests */
 
-test('the set is well-formed and its ids are one space, all below NextPointeeId', () => {
-  const { xml } = sequencerToAls(makeSequencer([
+test('the set is well-formed and its ids are one space, all below NextPointeeId, with the master bus or without', () => {
+  const seq = makeSequencer([
     makeTrack([[{ step: 0, pitch: 60 }, { step: 4, pitch: 72 }]]),
     makeTrack([[{ step: 2, pitch: 40 }]], { gridY: 3 }),
-  ]));
+  ]);
+  for (const masterBus of [undefined, MASTER_DEFAULTS]) wellFormed(sequencerToAls(seq, { masterBus }).xml);
+});
+
+function wellFormed(xml: string) {
   const stack: string[] = [];
   for (const [, close, name, self] of xml.matchAll(/<(\/?)([A-Za-z][\w.]*)[^>]*?(\/?)>/g)) {
     if (self) continue;
@@ -96,7 +102,7 @@ test('the set is well-formed and its ids are one space, all below NextPointeeId'
   assert.ok(Number(value(xml, 'NextPointeeId')) > Math.max(...ids));
   // ❗ The schema Live 11.3 writes, which Live 12 upgrades; see the module header.
   assert.match(xml, /MinorVersion="11\.0_11300"/);
-});
+}
 
 test('without mergeRows a part is a track: named as the MIDI export names it, in board order, beside two returns', () => {
   const { xml, tracks, parts } = sequencerToAls(makeSequencer([
@@ -167,13 +173,37 @@ test('a placement is a clip at its own cell, and its notes are relative to it', 
   assert.equal(clips, 1);
   assert.equal(placements, 1);
   const [clip] = clipsOf(blocks(xml, 'MidiTrack')[0]);
-  // 48 steps is 12 beats; the note reaches step 5 and sounds through it, so the
-  // clip ends 6 steps in.
+  // 48 steps is 12 beats; the note stops at step 6, and the clip goes on to the
+  // end of the chip's grid, four bars of 8 steps.
   assert.equal(clip.time, 12);
-  assert.equal(clip.end, 12 + 6 / 4);
+  assert.equal(clip.end, 12 + 32 / 4);
   assert.equal(clip.name, 'cell 3');
   assert.deepEqual(clip.notes.map((n) => [n.time, n.duration]), [[0.5, 1]]);
   assert.deepEqual(clip.keys, [60]);
+});
+
+test('a clip is as long as its chip: the grid the notes need, or the one the editor drew', () => {
+  const tracks = [
+    // Notes to step 40: a grid of 48, six bars.
+    makeTrack([[{ step: 0, pitch: 60 }, { step: 40, pitch: 60 }]], { gridX: 0, stepOffset: 0 }),
+    makeTrack([[{ step: 0, pitch: 62 }]], { gridX: 8, stepOffset: 128 }),
+  ];
+  const ends = (xml: string) => clipsOf(blocks(xml, 'MidiTrack')[0]).map((c) => [c.time, c.end]);
+  assert.deepEqual(ends(sequencerToAls(makeSequencer(tracks)).xml), [[0, 12], [32, 40]]);
+  // A chip drawn longer than its notes: the clip follows the drawing.
+  assert.deepEqual(ends(sequencerToAls(makeSequencer(tracks), { clipSteps: [48, 96] }).xml), [[0, 12], [32, 56]]);
+});
+
+test('a chip that covers the next one on its track with silence is cut where the next begins', () => {
+  const part = { guid: 9, gridY: 1 };
+  const { xml, clips } = sequencerToAls(makeSequencer([
+    // A 64-step chip whose notes stop at step 4, and the next chip of its row at cell 2.
+    makeTrack([[{ step: 0, pitch: 50 }, { step: 3, pitch: 50 }]], { ...part, gridX: 0, stepOffset: 0 }),
+    makeTrack([[{ step: 0, pitch: 52 }]], { ...part, gridX: 2, stepOffset: 32 }),
+  ]), { clipSteps: [64, 32] });
+  assert.equal(clips, 2);
+  const found = clipsOf(blocks(xml, 'MidiTrack')[0]);
+  assert.deepEqual(found.map((c) => [c.name, c.time, c.end]), [['cell 0', 0, 8], ['cell 2', 8, 16]]);
 });
 
 test('placements of one part whose windows overlap become one clip, and no note is lost', () => {
@@ -188,6 +218,8 @@ test('placements of one part whose windows overlap become one clip, and no note 
   assert.equal(notes, 3);
   const found = clipsOf(blocks(xml, 'MidiTrack')[0]);
   assert.deepEqual(found.map((c) => c.name), ['cells 0-1', 'cell 4']);
+  // The union runs to the end of cell 1's chip, 16 + 32 steps.
+  assert.deepEqual(found.map((c) => [c.time, c.end]), [[0, 12], [16, 24]]);
   assert.deepEqual(found[0].notes.map((n) => n.time).sort((a, b) => a - b), [0, 4]);
 });
 
@@ -268,6 +300,47 @@ test('baking the swing moves an odd step and leaves an even one', () => {
   assert.ok(swung[1] > 0.25);
 });
 
+test('unbaked, the swing is a groove in the pool that every clip follows; baked or absent, there is none', () => {
+  const tracks = [
+    makeTrack([[{ step: 0, pitch: 60 }], [{ step: 1, pitch: 62 }]]),
+    makeTrack([[{ step: 3, pitch: 40 }]], { gridY: 2, gridX: 1, stepOffset: 16 }),
+  ];
+  const grooveIds = (xml: string) =>
+    blocks(xml, 'MidiTrack').flatMap((t) => [...t.matchAll(/<GrooveId Value="(-?\d+)"/g)].map((m) => Number(m[1])));
+  const pool = (xml: string) => blocks(xml, 'GroovePool')[0];
+
+  const xml = sequencerToAls(makeSequencer(tracks, { swing: 0.5 })).xml;
+  const grooves = blocks(pool(xml), 'Groove');
+  assert.equal(grooves.length, 1);
+  const groove = grooves[0];
+  assert.match(groove, /^<Groove Id="0">/);
+  assert.equal(value(groove, 'Name'), 'LBP swing 50');
+  // Base 1/16 (index 3), Timing 100 and nothing else, as Live's own swing grooves.
+  assert.equal(value(groove.split('</Clip>')[1], 'Grid'), '3');
+  assert.equal(value(groove, 'TimingAmount'), '100');
+  for (const amount of ['QuantizationAmount', 'RandomAmount']) assert.equal(value(groove, amount), '0');
+  // One bar of sixteenths: an even one on the grid, an odd one swing/2 of a step late.
+  const times = clipsOf(groove)[0].notes.map((n) => n.time).sort((a, b) => a - b);
+  assert.equal(times.length, 16);
+  assert.equal(times[0], 0);
+  assert.equal(times[1], (1 + 0.25) / 4);
+  assert.equal(times[2], 0.5);
+  assert.equal(times[15], (15 + 0.25) / 4);
+  // The groove's own clip follows nothing; every clip on a track follows it.
+  assert.equal(value(groove, 'GrooveId'), '-1');
+  assert.deepEqual(grooveIds(xml), [0, 0]);
+  // And the notes stay on the grid.
+  assert.deepEqual(clipsOf(blocks(xml, 'MidiTrack')[0])[0].notes.map((n) => n.time).sort(), [0, 0.25]);
+
+  for (const empty of [
+    sequencerToAls(makeSequencer(tracks, { swing: 0.5 }), { bakeSwing: true }).xml,
+    sequencerToAls(makeSequencer(tracks)).xml,
+  ]) {
+    assert.match(pool(empty), /<Grooves \/>/);
+    assert.deepEqual(grooveIds(empty), [-1, -1]);
+  }
+});
+
 test('two notes of one key overlapping on a clip are both written, and counted', () => {
   const { xml, overlapping } = sequencerToAls(makeSequencer([
     makeTrack([[{ step: 0, pitch: 60 }, { step: 1, pitch: 60 }], [{ step: 1, pitch: 60 }]]),
@@ -319,4 +392,38 @@ test('a chip\'s tint becomes the nearest of Live\'s colours, on its track and it
     [14, liveColour(DEFAULT_CHIP_COLOUR)]);
   // Every palette colour is its own nearest.
   LIVE_PALETTE.forEach((rgb, index) => assert.equal(liveColour(((rgb << 8) | 0xff) | 0), index));
+});
+
+test('the master bus, asked for, is Live\'s Compressor set as our glue and Live\'s Limiter, on the master', () => {
+  const seq = makeSequencer([makeTrack([[{ step: 0, pitch: 60 }]])]);
+  const devicesOf = (xml: string) => blocks(xml, 'MasterTrack')[0].split('<FreezeSequencer>')[1];
+  assert.match(devicesOf(sequencerToAls(seq).xml), /<Devices \/>/);
+
+  const master = devicesOf(sequencerToAls(seq, { masterBus: { amount: 7, ceilingDb: -0.3 } }).xml);
+  const [compressor] = blocks(master, 'Compressor2');
+  const [limiter] = blocks(master, 'Limiter');
+  assert.match(compressor, /^<Compressor2 Id="0">/);
+  assert.match(limiter, /^<Limiter Id="1">/);
+  assert.ok(master.indexOf('<Compressor2') < master.indexOf('<Limiter'), 'the glue before the limiter');
+  // The tracker's glue at 7, heard the fold's gain lower: the threshold comes
+  // down by it and the makeup goes up by it.
+  const fold = 20 * Math.log10(FOLD_GAIN);
+  const { thresholdDb, makeupDb } = glueLevels(7);
+  assert.ok(Math.abs(20 * Math.log10(dial(compressor, 'Threshold')) - (thresholdDb - fold)) < 1e-6);
+  assert.ok(Math.abs(dial(compressor, 'Gain') - (makeupDb + fold)) < 1e-6);
+  assert.equal(dial(compressor, 'Ratio'), GLUE.ratio);
+  assert.equal(dial(compressor, 'Knee'), GLUE.kneeDb);
+  assert.equal(dial(compressor, 'Attack'), GLUE.attackMs);
+  assert.equal(dial(compressor, 'Release'), GLUE.releaseMs);
+  // Peak, no lookahead, Live's own makeup off: ours is the Gain above.
+  assert.equal(dial(compressor, 'Model'), 0);
+  assert.equal(dial(compressor, 'LookAhead'), 0);
+  assert.match(compressor, /<GainCompensation>\n<LomId Value="0" \/>\n<Manual Value="false" \/>/);
+  assert.equal(dial(limiter, 'Ceiling'), -0.3);
+  assert.equal(dial(limiter, 'Release'), LIMITER.releaseMs);
+  // 1.5 ms, the nearest of Live's 1.5, 3 and 6 to our 2.
+  assert.equal(dial(limiter, 'Lookahead'), 0);
+  assert.match(limiter, /<AutoRelease>\n<LomId Value="0" \/>\n<Manual Value="false" \/>/);
+  // Live's own digits for the ratio's range, never an exponent.
+  assert.match(compressor, /<Max Value="340282326356119256160033759537265639424" \/>/);
 });

@@ -47,7 +47,11 @@ the silent-default behaviour above, not evidence that the members are optional.
 The two devices were **derived, not transcribed**: a script read each out of the empty set, reduced
 every member to one of four shapes (a float dial with its range, an on/off switch, an enum, a plain
 value) — which is `DeviceMember` in `als.ts` — and the XML rebuilt from the reduction has the same
-elements in the same order as Live's: 430 for the Reverb, 329 for the Delay.
+elements in the same order as Live's: 430 for the Reverb, 329 for the Delay. A device with nested
+members goes through `DeviceNode` instead (`als-xml.ts`), and `packages/lbp-tracker-lib/dev/als-device-tree.ts`
+is the script that reduces it. It reads a preset Live saved, prints the tree, and refuses unless
+`emitDevice` gives back the file's elements in the file's order. The Compressor and Limiter of
+*The master bus* come from it; the Sampler's default rebuilds through it too (904 elements).
 
 Live 12 opens an 11 set and upgrades it; nothing opens the other way round. That is the whole reason
 the target is 11. **Live 12 itself is unchecked** — *52* in [open-questions.md](open-questions.md).
@@ -104,7 +108,8 @@ instruments off it is not in the set, and with them on it is the Sampler's volum
 the 2, which is already here in the track's law.** Written into both, every track played 6.02 dB
 over the game, and the owner heard the tracks too loud and the master clipping (2026-09-29); a
 test now holds Sampler × fader × Live's pan to the renderer's `level × channelVolume × 2 × P24`
-times `1 − p` and `p`. The 7.1 fold's narrowing of the image is not applied here either, for the
+times `1 − p` and `p`. That test could not see the other 22.8 dB, which were Live's own (*Vel → Vol*
+in *The instruments* below). The 7.1 fold's narrowing of the image is not applied here either, for the
 same reason as in the renderer — the file's own pans — *39* in
 [open-questions.md](open-questions.md), and neither is its gain: the master stays at 0 dB (*53*).
 
@@ -139,6 +144,77 @@ when its tail arrives, how dark it is, how loud the early reflections are agains
 time and feedback — and is not the game's sound. The echo's hard clip and the reverb's absolute
 level have no counterpart set.
 
+## The swing — a groove every clip follows
+
+| the sequencer | the set |
+|---|---|
+| `Swing`, unbaked (the default) | one groove in the set's pool, `LBP swing N` (N = swing × 100, the mixer panel's number): a bar of sixteenths at `swungFrame(k, 1, swing) / 4` beats, Base 1/16, Timing 100, Quantize, Random and Velocity 0; every arrangement clip's `GrooveId` is 0. The notes stay on the grid |
+| `Swing`, baked | every time in the set through `swungFrame`, and the pool empty with `GrooveId` −1 — a groove as well would swing the notes twice |
+| `Swing` 0 | the pool empty, as in Live's own empty set |
+
+- **A groove in a set's pool**, member for member: the Core Library's `Templates/Demo & Sketch.als`
+  (`11.0_11300`, Live 11.3d1), whose nine clips say `GrooveId 0` and whose pool holds `<Groove
+  Id="0">` — `LomId`, `Name`, `Clip`/`Value`/`MidiClip`, `Grid`, `QuantizationAmount`,
+  `TimingAmount`, `RandomAmount`, `VelocityAmount`, `Annotation`, `Selection`, `SourceContext`. The
+  clip is an ordinary `MidiClip` of the schema, so `clipXml` writes it. `SourceContext` is empty, as
+  in Live 11.3.11's own `.agr` files; the demo's points at the file its groove came from.
+- **`Grid` is an index**: Live's own `Grooves/Utility/Quantize 4, 8, 8T, 16, 16T, 32.agr` say 0 to 5
+  in that order, so a sixteenth is 3.
+- **Timing 100 and the rest 0** is how Live's own swing grooves are set (`Grooves/Swing/MPC/Swing MPC
+  3000 16ths 64.agr`, Base 3).
+- **Why it is the engine's swing**: Live moves a clip's note towards the groove note at its nearest
+  Base division, and a groove note on the grid moves nothing (the Live 11 manual, *Using Grooves*,
+  13.1.1). So even sixteenths stay and odd ones go `swing/2` of a step late, which is the engine's
+  even/odd stretch ([synth-engine.md](synth-engine.md)). In MPC terms the off-beat sits at
+  `50 × (1 + swing/2)` % of the pair: the corpus's 0.05..0.75 is 51.25..68.75 %, inside the range of
+  Live's own MPC grooves (54..74).
+
+Checked in Live 11.3.43 on 2026-10-04 with `The Tip` (uid 110764, swing 0.6, `data2`): it loads
+with no exception. The control bar shows the Global Groove Amount at 100 %, and the same song
+baked does not. The manual says that slider appears only once clips use a groove. A debug copy
+opened on `cell 0`'s detail shows its Clip box's Groove chooser at `LBP swing 60`. ⚠️ **What Live
+then plays is not measured**: the Trial renders nothing, and the manual is silent about notes off
+the sixteenth grid, note ends and per-note expression — *58* in [open-questions.md](open-questions.md)
+has how many notes that is.
+
+## The master bus — ours, on Live's master, off by default
+
+The tracker's master bus (`audio/master.ts`, *42* in [open-questions.md](open-questions.md)) is not
+the game's, and in the set it is an option like the instruments (`AlsExportOptions.masterBus`, the
+page's "our master bus on the master" at the engine's glue knob, `LBP_ALS_MASTER=<glue>` in
+`export-als.ts`). On, the master track holds two devices, in this order:
+
+| `audio/master.ts` | Live's master |
+|---|---|
+| the glue: peak, 2.5:1, 6 dB knee, 10 / 150 ms (`GLUE`) | **Compressor** (`Compressor2`): Peak, the same ratio, knee, attack and release, no lookahead, Makeup off, Dry/Wet 100 % |
+| the knob's threshold and makeup (`glueLevels`) | Threshold and Gain, each moved by the fold's gain (below) |
+| the limiter: linked, the ceiling, 80 ms, 2 ms lookahead (`LIMITER`) | **Limiter**: Stereo, the same ceiling and release, Auto off, Lookahead 1.5 ms, the nearest of Live's three |
+
+- ❗ **The fold's gain goes into the compressor.** The tracker's bus hears the engine's sum times
+  `FOLD_GAIN`, +4.65 dB. Live's master hears the sum alone, its fader at 0 dB (*The mixer*). A
+  peak detector with a knee in decibels treats a signal `G` dB quieter the same way if its
+  threshold is `G` dB lower. So the Threshold comes down by the fold's gain and the Gain goes up by
+  it, and the Limiter hears what the tracker's limiter hears. With the bus on, the set plays at
+  the tracker's level; off, it stays 4.65 dB under it (*53*).
+- **The Compressor, not the Glue Compressor.** The Glue has ratios of 2, 4 and 10 and its times in
+  steps; the Compressor takes our numbers as they are, and every edition of Live has it.
+- **Units and menus**, read off Live's presets and checked on the device: the Compressor's
+  Threshold is linear (`Basic Peak Compressor` stores 1 for 0 dB), its `Model` 0 is Peak (that
+  preset) and 1 RMS (`Mix Gel`). The Limiter's `Lookahead` 0, 1 and 2 are 1.5, 3 and 6 ms
+  (`Low Latency` 0, `Fast` and `Slow` 1, `Lookahead` 2).
+- ⚠️ The ratio's MIDI range tops out at `340282326356119256160033759537265639424`, every digit,
+  in Live's preset. JavaScript writes that number with an exponent, so `num` in `als-xml.ts` spells
+  out anything from 1e21 up.
+
+Checked in Live 11.3.43 on 2026-10-04 with `Periastron` at glue 4. The set loads with no
+exception. Live does not select the master through `HighlightedTrackIndex`: 22 and 23 both landed
+on the Echo return. So a debug copy also put the same two devices on that return, and the panel
+read back Peak, 2.50:1, 10.0 ms, 150 ms, Auto off, Thresh −17.0 dB, Out 8.49 dB, Makeup off,
+Knee 6.0 dB, Dry/Wet 100 %, then Gain 0.00 dB, Ceiling −0.30 dB, Stereo, Lookahead 1.5 ms,
+Release 80.0 ms, Auto off. That is glue 4's −12.4 dB threshold and +3.84 dB makeup, each moved by
+4.65 dB. ⚠️ Same settings, different algorithms: how Live's ballistics and knee compare with ours
+is unmeasured, and the set is a starting point for a mix, not our output sample for sample.
+
 ## The instruments — Live's Sampler from the `.rinst`, off by default
 
 ❗ **An option, off unless asked for, by the owner's rule (2026-09-24)**: on, the download carries
@@ -151,11 +227,25 @@ which has the Sampler. `als-sampler.ts` has the mapping table; what it rests on:
   1,243 elements in the same order as the file. The Shaper is the one in the Core Library's `Saw
   Filtered Bass` preset. A device in a track's list needs an `Id` the preset file's root lacks —
   without it Live refuses the set: `Not all list members have Ids`.
-- **Zones** are `resolveSlot` run backwards, each shifted by the track's `Key` (the engine picks the
-  zone off the raw note, Live off the key it is given); fine tune and `fitBpm` go into the root and
-  the cents; an unpitched slot is one zone per key, each its own root. Checked in Live on
+- **Zones** are `resolveSlot` run backwards, over the raw notes; fine tune and `fitBpm` go into the
+  root and the cents; an unpitched slot is one zone per key, each its own root. Checked in Live on
   `Ascetic`'s double bass: silence above 73 and below 24 and `db_c3_dsp1` between, root 48, exactly
   as the instrument has it.
+- ❗ **With a Sampler a note is written raw, and `Key` and the scale become pitch.** The engine
+  picks the slot off the raw note and only then quantises and transposes (`scale.ts`). So the
+  MIDI key is the raw note, the one the tracker's roll shows. The track's commonest `Key` lowers
+  every pitched zone's root; unpitched zones keep theirs, since the engine plays them at one rate.
+  Whatever is left is per-note pitch, on notes that land on a pitched slot: another part's `Key`,
+  a note the scale moves, a glide. ❌ Until 2026-10-04 the note was the sounding one and the zones
+  moved by the commonest `Key`. A part keyed otherwise then played through the zones next door,
+  which the export only counted (`offKey`). `Periastron`'s row 2 kit has a part in D and a part in
+  D# on one track; Live showed the D part's raw 48 as key 50, inside the tom's zone, so its 236
+  closed hi-hats hit the tom (the owner, in Live's piano roll). Now every raw 48 is key 48, in the
+  closed hi-hat's zone, and the D part's 572 notes carry −1 semitone each. Without a Sampler the
+  note is still the sounding one, as in the MIDI export: an instrument the user loads has no `Key`.
+- ⚠️ **Live names the octaves one lower than the tracker.** Live calls MIDI 60 `C3`; the roll
+  (`noteName` in `editor/geometry.ts`) and `basenote` call it `C4`. So the raw note the tracker
+  shows as C3 is `C2` in Live, though it is the same number.
 - **Samples** are the `.smp` frames verbatim under a 48 kHz header, since the engine never reads the
   rate: Live then plays the 44.1 kHz ones 8.8 % fast, as the game does, with nothing to correct.
 - **The loop**: Live's Sample tab showed `piano_c4` at Loop Start 20251 and Loop End 36562 —
@@ -196,6 +286,26 @@ which has the Sampler. `als-sampler.ts` has the mapping table; what it rests on:
   track with a Sampler every note gets a pressure list, a flat note's as one point, and velocity
   127: one law for every level. ⚠️ The price: a note drawn in Live, or played on a keyboard without
   aftertouch, is silent until it is given pressure or the row's Amount is turned down.
+- ✔ **Live applies that pressure linearly in amplitude, which is the engine's `v/127`.** Measured
+  2026-10-04 on Live's own peak boxes (*How it was checked* below), with a half-scale 1 kHz sine on
+  each track through the export's Sampler at 0 dB:
+
+  | pressure | 127 | 96 | 64 | 32 | 16 | 8 | 4 | 1 |
+  |---|---|---|---|---|---|---|---|---|
+  | Live, against 127 (dB) | 0 | −2.5 | −5.97 | −11.99 | −18.01 | −24.03 | −30.1 | −42.1 |
+  | `20·log10(p/127)` | 0 | −2.43 | −5.95 | −11.97 | −17.99 | −24.01 | −30.03 | −42.08 |
+
+  112, 80, 48, 42 and 24 agree as closely. ❌ *53* in [open-questions.md](open-questions.md)
+  guessed from Ableton's presets that the law was something else; the presets were not evidence of it.
+- ❗ **Vel → Vol (`VolumeVelScale`) is 0, Live's own default, so the velocity plays no part.** The
+  export wrote 1 from its first version, with no reason given. At 1 Live raised a velocity-127 note
+  **22.8 dB** over the dial, and a velocity-64 one sat 2.4 dB under it. Every note goes in at 127, so
+  every track played 22.8 dB hot, and the owner had to pull the master down 20 dB to stop it
+  clipping (2026-10-04). It was found by one track per suspect, each with one member changed from
+  the reference. Only `VolumeVelScale` 0 moved it, to the expected −8.52 dBFS to the hundredth.
+  These made no difference: 6 voices instead of 32, retrigger on, the sample's loop off, and no
+  pressure list with the row off. The dial (−12 dB moved it −12.02), the fader (0 dB moved it
+  +2.5) and the zone's `Volume` (0.5 moved it −6.04, so linear) all read as the file says.
 - **Voices**: `Globals.NumVoices` is an index — 5 shows 6 voices (the default), 13 shows 24, 14
   shows 32, the engine's pool. The default 6 would cut every chord denser than that; the default
   retrigger (`RetriggerMode`) would end a note where the same key strikes again, and the engine
@@ -216,20 +326,108 @@ which has the Sampler. `als-sampler.ts` has the mapping table; what it rests on:
 - ❗ **The Sampler's volume carries the ladder's passband.** Each stage of the Stilson/Smith ladder
   passes DC at 1, so its feedback `q` leaves `1/(1 + q)` under the cutoff — measured by running
   `MoogLadder` on a 110 Hz tone, within 0.1 dB of the formula. Live's Clean circuit is "the same
-  as the filters used in EQ Eight" (the Live 11 manual, *Sampler*), and the export takes its
-  passband as flat. At the point the note is heard — the sustain when the amplitude holds one, the
-  peak of a pluck — the game takes 5.5 dB off `saw_wave`, 7.7 off `noise`, 6.0 off `ghost`, 4.1
-  off `electric_harpsichord` and 3.2 off `triangle_wave`, which the volume now does too.
+  as the filters used in EQ Eight" (the Live 11 manual, *Sampler*), and its passband is flat:
+  measured +0.08 dB at a resonance of 0.53, an octave and more under the cutoff (below). At the
+  point the note is heard — the sustain when the amplitude holds one, the peak of a pluck — the
+  game takes 5.5 dB off `saw_wave`, 7.7 off `noise`, 6.0 off `ghost`, 4.1 off
+  `electric_harpsichord` and 3.2 off `triangle_wave`, which the volume now does too.
+- ❗ **Live's key tracking runs from key 60; the engine's from the slot's root.** The engine
+  multiplies the cutoff by the playback rate (`moog.ts`), which is 1 at the slot's base note after
+  `Key`. Live's `ModByPitch` at 1 leaves the cutoff at the dial on key 60 and moves it an octave per
+  octave from there. So the dial carries the distance between the two, times the amount
+  (`LIVE_KEY_TRACK_REFERENCE` in `als-sampler.ts`). The root is the pitched slot the track's notes
+  play most (`trackingRoot`). ❌ Until 2026-10-04 the dial was the engine's resting cutoff as it
+  stands. `Periastron`'s `ghost` is rooted at 48 on a track keyed +3, and it sat 15 semitones darker
+  than the game: the owner heard it "too closed, too quiet" in Live. It now plays at 691 Hz, so key
+  55 gets the game's 517 Hz. The same correction makes `pulse_wave` and `square_wave`, rooted above
+  60, darker than they were.
+- **Live's Clean low-pass, measured: the same shape at every frequency.** A sine through the
+  export's Sampler at known dials, with no resonance, against the filter off. The slide and cutoff
+  probes give these readings; the notes stop before the loop comes round, so they are clean:
 
-⚠️ **Measured to be what the file says, not to sound like the game.** This Live is a Trial that
-renders nothing, so no Sampler here has been compared by ear or by capture; what is unmeasured in
-the mapping is *53* in [open-questions.md](open-questions.md).
+  | sine / dial | 0.25 | 0.5 | 0.707 | 1 | 1.414 | 2 | 4 | 8 |
+  |---|---|---|---|---|---|---|---|---|
+  | Live (dB) | −1.8 | −3.3 | −5.3 | −8.0 | −11.6 | −15.9 | −24.5 | −31.0 |
+  | the engine's `MoogLadder` at the same nominal cutoff (dB) | −1.0 | −3.0 | −5.3 | −9.2 | −15.3 | −23.6 | | |
 
-## Measured over the corpus — `packages/lbp-tracker-lib/dev/export-als.ts`, 2026-09-24
+  `dev/probe-als-cutoff.ts` put sines at 250 Hz, 1, 4 and 8 kHz under dials at 0.707, 1 and 1.414
+  of each. They read −5.3, −8.0 and −11.6 at 250 Hz and 1 kHz, −5.3, −8.3 and −11.8 at 4 kHz, and
+  −4.9, −7.4 and −11.1 at 8 kHz (against its own unfiltered reading, which the Sampler plays 1.25 dB
+  down at that rate). So Live's dial is its −8 dB point wherever it is. ⚠️ The 0.25 column is
+  from a reading the loop inflated (*How it was checked*). The filter probe's tracking rows
+  (keys 36 to 84) were inflated too, and they are what first made Live's shape look
+  frequency-dependent. Its key-60 row is still exactly the untracked 1 kHz. At a resonance of 0.53
+  (`ghost`'s) on the cutoff, Live rises 13.9 dB over its resonance-0 reading and the ladder
+  6.3 dB. With the passband compensation above, the two land within 0.7 dB of each other there.
+- ❗ **The dial is where the ladder attenuates as Live does at its dial, not the same nominal
+  frequency.** `liveDialHz` maps the engine's cutoff (`Params[3]²` × keytrack × envelope factor,
+  0..1 of 24 kHz) to the frequency where `MoogLadder` reaches −8.0 dB. That is `LADDER_KNEE`,
+  generated by `dev/ladder-knee.ts` and re-derived off its grid by a test. The ladder's knee sits
+  2 semitones under its nominal value at 500 Hz, on it near 2.3 kHz, and 5 over it at 9 kHz. Mapped
+  nominal to nominal, `Periastron`'s opening `pulse_wave` sweep went dark in Live up to a second
+  early; the owner heard it close "too fast" (2026-10-04). Now Live's dial-equivalent follows the
+  game's through the whole sweep within 0.1 semitone. Every corner of the envelope fit
+  (`filterDial`) and every point's slide (`heldDial`) goes through it.
+  ⚠️ **A compromise between two shapes.** The ladder is flatter under its knee and falls faster
+  over it: 23.6 dB an octave up against Live's 15.9. Matched at −3 dB instead the dial would sit
+  up to 16 semitones higher, matched at −15 dB up to 8 lower, and a least-squares fit over the
+  knee lands between. −8 dB is Live's own definition of its dial; no dial copies the ladder
+  everywhere.
+- **Under Live's floor the envelope gives way.** The dial stops at 30 Hz. When the points of a
+  sweeping track want less, the envelope's amount comes down instead, by the shortfall over the
+  reference's heard level, and every point's heard cutoff comes down with it. `pulse_wave`
+  wanted its dial near 20 Hz at the end of its sweep, and its envelope went from 72 to 65.1
+  semitones.
+- ❗ **The modulation's level rides on the pressure, its cutoff on the slide, note by note.** The
+  engine reads every `Params` range at each note's modulation as it moves; a Sampler holds one,
+  the track's commonest. Two of the moving things go back per note:
+  - **The level** (`heardLevel`: `Params[24]` times the ladder's passband). The Sampler sits at the
+    loudest level the track's notes reach, and each control point's pressure comes down by its
+    own level against that. This is exact because Live's pressure law is linear.
+  - **The cutoff where the note is heard** (`heldDial`), at the point's modulation and pitch,
+    after Live's own key tracking and its filter envelope at the reference.
+    The dial sits at the lowest any point wants, and the slide row (`MidiCtrl.4`) goes to Filter
+    Freq at 100. Each point's slide raises the dial to its own cutoff.
+  `Periastron` opens on a `pulse_wave` chord whose modulation goes 0 to 13 inside each note: its
+  level 0.094 to 0.17 and its held cutoff 24 kHz down to 1.6 kHz. The Sampler held the first of
+  each, and the owner heard the sweep missing (2026-10-04). Both lists follow the note's course
+  (`courseOf`), with a moment at every sixteenth of modulation crossed. What the modulation gives is
+  a curve in it, while Live draws per-note lists straight between points, so with the control
+  points alone that sweep sat 5 semitones darker than the game halfway. Over the corpus 543 of 3,222
+  tracks carry a filter slide, in 765,474 points. 32,250 of them (4.2 %) would need more than the
+  slide's six octaves and stop there (`clampedSlide`); which end of a track's range they sit at is
+  not counted.
+- **The slide's law, measured.** `dev/probe-als-slide.ts`: the dial at 125 Hz, a 1 kHz sine, the
+  slide row to Filter Freq at 100, one held slide per track, read against cutoffs with no slide:
+
+  | slide | 0 | 16 | 32 | 48 | 64 | 80 |
+  |---|---|---|---|---|---|---|
+  | semitones over the dial | 0 | 9.1 | 17.2 | 27.6 | 36.3 | 46.0 |
+  | `72 × slide/127` | 0 | 9.1 | 18.1 | 27.2 | 36.3 | 45.4 |
+
+  So at 0 the dial is where it was, and 127 is 72 semitones up (`LIVE_SLIDE_SEMITONES`). 96, 112
+  and 127 read past the measured curve's end, within 1 dB of the same law.
+- **The filter envelope's law, measured.** `dev/probe-als-envelope.ts` holds the envelope at 1 on
+  a 125 Hz dial. Amounts 12, 24, 36 and 48 read exactly as plain cutoffs of 250, 500, 1,000 and
+  2,000 Hz, so `Amount` is semitones at level 1. An envelope of +24 with a slide of +12 read as
+  1 kHz, so the two add in semitones. `pulse_wave`'s own setting (dial 30 Hz, Amount 67.7, sustain
+  1) read 1.52 kHz against 1.50 expected, and 3.15 kHz with +12 of slide against 3.0. ⚠️ How the
+  amount scales with a sustain under 1 is not read: the peak box holds the millisecond the
+  envelope spends at 1 before it decays.
+- **Per-note `TimeOffset` re-checked in Live's own demos**: of 249 lists in the five `Ninajirachi`
+  sets, none runs past its note's `Duration` and many end exactly on it, on notes at beats 0 to
+  32. It is beats from the note's start, not from the clip's.
+
+⚠️ **The level is measured; the sound is not.** A Sampler's absolute level and its pressure law
+are read off Live's meters (above). The rest is measured only to be what the file says. This Live
+is a Trial that cannot export, so no Sampler here has been compared with the engine by ear or by
+capture; what is unmeasured is *53* in [open-questions.md](open-questions.md).
+
+## Measured over the corpus — `packages/lbp-tracker-lib/dev/export-als.ts`, 2026-09-24, re-run 2026-10-04
 
 ```
 150 sequencers, 0 malformed
-3222 tracks from 4909 parts, 3056 mixer switches, 62094 clips from 62158 placements, 953791 notes, 78647 glides, 19.4 MB gzipped
+3222 tracks from 4909 parts, 3056 mixer switches, 62094 clips from 62158 placements, 953791 notes, 78647 glides, 19.3 MB gzipped
 clamped: 0 keys, 582 bend points; 11528 notes overlap one of their own key
 ```
 
@@ -254,11 +452,19 @@ clamped: 0 keys, 582 bend points; 11528 notes overlap one of their own key
 - **582 control points glide past 48 semitones** — the same 582 the MIDI steering counts past MPE's
   default — and stop at 48, since Live's per-note range is fixed. The MIDI export widens its bend
   range instead; an `.als` has no range to widen.
-- ⚠️ **Only 64 placements share a clip.** A clip's window is its cell to where its own last note stops
-  sounding (`endPosition + 1`), and Live plays one arrangement clip per track at a time, so windows
-  on one track that overlap are merged into one clip, whichever parts they belong to. The MIDI
-  steering's "clips of one part overlap heavily" is about the 128 steps a clip *may* hold; what the
-  notes actually reach rarely leaves the cell.
+- ❗ **A clip is as long as its chip, notes or no notes** (the owner's rule, 2026-10-04). Its window
+  runs from its cell for the chip's note grid. The file holds no grid length, so a sequencer read
+  from a level gets `clipStepsFor` (`song.ts`), the editor's own load rule; the editor passes the
+  `Clip.steps` the composer drew (`AlsExportOptions.clipSteps`). The window runs further only if a
+  note sounds past the grid. Over the corpus that lengthened **19,352 of the 62,053 one-chip clips**;
+  42,686 already ended there, their notes reaching the grid's last step.
+- ⚠️ **Only 64 placements share a clip.** Live plays one arrangement clip per track at a time, so
+  chips on one track whose **notes** reach into the next one's window (`endPosition + 1` past its
+  cell) are merged into one clip, whichever parts they belong to, running to the later chip's end.
+  A chip whose grid only covers the next one with silence is instead **cut where the next begins**
+  and stays its own clip: 15 clips, 8 of them cut right where their notes end. The MIDI steering's
+  "clips of one part overlap heavily" is about the 128 steps a clip *may* hold; what the notes
+  actually reach rarely leaves the cell.
 - ✔ **11,528 notes start while a note of the same key is still sounding on their clip, and Live
   keeps both.** 11,397 of them are inside one placement, the commonest shape (3,751) a two-step note
   re-struck by the same key one step later. A probe clip — a four-beat note with a one-beat note of
@@ -281,6 +487,18 @@ not looked into — so everything Live has to *show* is asked for in the file, i
 | a clip's notes | `ViewStateDetailIsSample` true, the set's `TimeSelection` over the clip, the track's `IsContentSelectedInDocument` true | `Ascetic`'s `cell 41`, sixteen A#3s at velocity 47 |
 | the clip's MPE | and the track's `PreferredContentViewMode` 2 | the Note Expression tab: each note rising in a line and holding, pressure ramping and holding, slide flat — exactly the file's `0:0 0.25:512` pitch (+3 semitones), `0:47 0.25:96` pressure and zero slide |
 | envelopes on a track without an instrument | one of the track's envelopes pointed at the master's tempo | Live shows the envelope's opening 99.00 over the fader's 180, with the automation marker |
+| how loud a Sampler plays | `packages/lbp-tracker-lib/dev/probe-als-level.ts` writes the whole set: one sustained sine per track at a known pressure, the master at −inf, the Session view, the transport looping | **someone presses Play**; each track's peak box is the reading, against the expectation the script prints. The pressure law and *Vel → Vol* above |
+| where a Sampler's filter sits | `dev/probe-als-filter.ts`, on the same frame (`dev/als-probe.ts`): cutoffs around the sine, the resonance, and key tracking on five keys | the curve, the passband and the key-tracking reference above |
+
+⚠️ **Read the peak boxes against each other, or before the loop comes round.** The note lasts
+exactly the loop. At each restart the new note starts while the old one is still releasing, and
+the held peak takes their sum. On 2026-10-04 the filter probe's unfiltered track read −3.63 dBFS
+against the −8.52 it read before the loop first wrapped, and every track rose alike.
+
+❌ **Two ways of making Live play by itself failed.** A space key posted to Live's window
+(`PostMessage`) left the transport where it was. A Max for Live recorder on the master, hand-written
+XML around an unfrozen `.amxd`, crashed Live 11.3.43 at load (`Fatal Error: Unhandled exception`
+in its log, 2026-10-04). Live itself plays and meters fine; it just needs a person to press Play.
 
 ⚠️ **Capture the window, never the screen.** The first capture of this work was a full-screen grab,
 and it took whatever else was open on the owner's desktop instead of Live. `PrintWindow` on Live's
@@ -297,10 +515,12 @@ made `mergeRows` look inert — 124 "tracks" for `This Is Halloween` with it on 
 
 - **The sounds, unless asked for**: with the instruments off the tracks have no device; on, a
   Sampler as above.
-- **Per-note modulation**, with the instruments on: every `Params` range is read at the modulation
-  the track uses most. Over the corpus (`LBP_ALS_INSTRUMENTS=1`): 3,222 of 3,222 tracks got a
-  Sampler, 105.7 MB of samples, and **44,787 notes (4.7 %) sit at another modulation** and play at
-  the track's; 0 notes sit on a track whose parts differ in `Key`.
+- **Per-note modulation**, with the instruments on, beyond the level and the cutoff (above): every
+  other `Params` range is read at the modulation the track uses most. That covers the envelopes'
+  shapes, the resonance, the key tracking's amount and the drive. Over the corpus
+  (`LBP_ALS_INSTRUMENTS=1`): 3,222 of 3,222 tracks got a Sampler, 105.7 MB of samples, and
+  **44,787 notes (4.7 %) sit at another modulation**. A part in another `Key` than its track's is
+  no longer a loss (the raw note, above).
 - **The unison stack, the three LFOs, the mip levels and the ladder's saturation.**
 - **A glide past 48 semitones**, which Live's per-note range cannot hold.
 - **The game's reverb and echo themselves**: the returns hold Live's, set as above.
