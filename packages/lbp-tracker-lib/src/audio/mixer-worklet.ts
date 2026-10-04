@@ -17,6 +17,7 @@ import { Echo, FOLD_GAIN, Reverb, clipToUnit, reverbPreset } from './effects.ts'
 import { INTERPOLATORS, type InterpolatorName } from './interpolate.ts';
 import { Mixer, type SampleBuffer, type VoiceSpec } from './mixer.ts';
 import { buildMipChain } from './mipmap.ts';
+import { LoadMeter, Spinner } from './load-meter.ts';
 
 /** A sample handed over from the main thread, with its channels transferred. */
 export interface SamplePayload {
@@ -85,21 +86,13 @@ export type MixerMessage =
       timbre?: number;
     }
   /**
-   * Forget the health counters and the frame the dropout detector compares to.
-   *
-   * ⚠️ **Sent when playback starts, because a suspended context looks exactly
-   * like a stall.** `process` is not called at all while an AudioContext is
-   * suspended, so the first call after `resume()` sees `currentFrame` jump by
-   * however long the pause lasted -- which the detector reads, correctly by its
-   * own rule, as a lost block. Every session therefore began with one dropout
-   * that meant nothing.
+   * Forget the load: every start. Sound lost is the page's to count, off the
+   * output's own clock (`DropoutCounter` in `dropouts.ts`).
    */
   | { type: 'resetHealth' }
   | { type: 'stopAll' };
 
 declare const sampleRate: number;
-/** The sample index of the block about to be rendered; see `lastFrame`. */
-declare const currentFrame: number;
 declare function registerProcessor(
   name: string,
   processor: typeof MixerProcessor,
@@ -157,72 +150,15 @@ export class MixerProcessor extends AudioWorkletProcessor {
    */
   private sinceReport = 0;
   /**
-   * The worst `process()` cost seen since the last report, as a fraction of the
-   * block's own duration.
+   * How much of the audio thread's time this takes: the "audio %" figure.
    *
-   * ⚠️ **A live renderer can fail in a way an offline one cannot**: if a block
-   * takes longer than it lasts, the device gets nothing and the gap is audible
-   * as notes cutting out at random. It is worth knowing whether that is what is
-   * happening before blaming the scheduler, so the number is measured rather
-   * than guessed at. `currentTime` is not usable here -- it advances per block --
-   * so this uses the wall clock the worklet scope exposes.
+   * ⚠️ **Not a sum of `Date.now()` around each `process()` any more**, which is
+   * what this was until 2026-10-04: the clock ticks once a millisecond and the
+   * callbacks come every 10 ms exactly, so that sum read whatever the callback's
+   * place in the millisecond said -- five times under the truth for half a
+   * minute, measured. `LoadMeter` has the measurements and the cure.
    */
-  /**
-   * Whether the wall clock is readable from this scope at all.
-   *
-   * ⚠️ `performance` is not guaranteed in an AudioWorkletGlobalScope, and a
-   * load that is missing must not look like a load that is zero -- the whole
-   * point of the meter is to tell "the audio thread is fine" apart from "nobody
-   * checked".
-   */
-  /**
-   * Whether a clock is readable at all from this scope.
-   *
-   * ⚠️ **`performance` is NOT exposed to an AudioWorkletGlobalScope** -- probed
-   * in Chrome, `typeof performance === 'undefined'` -- and neither is
-   * `AudioContext.renderCapacity` on the other side. `Date` is, because it is a
-   * language built-in rather than a Web API, and `Date.now()` there returns a
-   * real timestamp with 1 ms resolution.
-   *
-   * ⚠️ **1 ms against a 2.67 ms block is coarse**, so a single block measures 0
-   * or 1 and nothing in between. Summed across the ~37 blocks of a report
-   * window it comes out right on average, because a block's start has no
-   * relationship to the millisecond tick -- the estimate is noisy per window and
-   * unbiased over several, which is why the reported figure is smoothed.
-   *
-   * ⚠️ **The figure is a share of WALL time, on a CPU whose speed follows its
-   * load.** Measured 2026-09-07 on Ascetic from the start, Chrome 148, a
-   * 16-core Windows machine: ~6-8% with the page idle (the old live page and
-   * the Song/Mixer view alike), ~0.3% on the Arrange view, which redraws its
-   * board every frame while playing, and ~2% on Song/Mixer with a 6 ms
-   * busy-loop added per frame. Not the meter: a fixed 3e6-iteration loop on
-   * the main thread took 7-14 ms with the machine idle and 3.5 ms with a
-   * worker spinning beside it. The audio thread really does its work two to
-   * three times faster once something keeps the clock up, so the reading
-   * falls. It is honest; it is not a measure of the mixer's cost in cycles.
-   */
-  private readonly canTime = typeof Date !== 'undefined';
-  /** Milliseconds spent inside `process` since the last report. */
-  private busyMs = 0;
-  /** Wall clock at the last report, for the window's own length. */
-  private windowStart = 0;
-  /** Smoothed busy fraction, so the readout does not flicker with the noise. */
-  private smoothed = 0;
-  /**
-   * The audio clock at the previous `process`, for spotting skipped blocks.
-   *
-   * ⚠️ **This is the metric that works here.** A wall clock is not exposed to an
-   * AudioWorkletGlobalScope -- `performance` is absent in Chrome -- and
-   * `AudioContext.renderCapacity`, which would answer the question directly, is
-   * not implemented either. But `currentFrame` is the sample index of the block
-   * about to be rendered, and it advances by exactly one block per call while
-   * the thread keeps up. When it jumps further, blocks were skipped and the
-   * device got nothing: a dropout, which is what "notes cutting out" sounds
-   * like and the only thing worth reporting.
-   */
-  private lastFrame = -1;
-  private dropouts = 0;
-  private lostFrames = 0;
+  private readonly meter = new LoadMeter(Date.now, Math.random, new Spinner().wait);
   /** Send buses, grown on demand. A render quantum is 128 frames today. */
   private echoL = new Float32Array(128);
   private echoR = new Float32Array(128);
@@ -305,11 +241,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
         this.mixer.expression(message.tag, message.bend, message.pressure, message.timbre);
         break;
       case 'resetHealth':
-        this.lastFrame = -1;
-        this.dropouts = 0;
-        this.lostFrames = 0;
-        this.busyMs = 0;
-        this.windowStart = 0;
+        this.meter.reset();
         break;
       case 'stopAll':
         this.mixer.stopAll();
@@ -318,7 +250,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
   }
 
   process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
-    const began = this.canTime ? Date.now() : 0;
+    this.meter.begin();
     const output = outputs[0];
     if (!output || output.length === 0) return true;
     const left = output[0];
@@ -335,7 +267,7 @@ export class MixerProcessor extends AudioWorkletProcessor {
         if (stereo) right[i] *= FOLD_GAIN;
       }
       if (output.length > 1 && right === left) right.set(left);
-      this.report(left.length, began);
+      this.report(left.length);
       return true;
     }
 
@@ -386,50 +318,20 @@ export class MixerProcessor extends AudioWorkletProcessor {
       }
     }
     if (output.length > 1 && right === left) right.set(left);
-    this.report(left.length, began);
+    this.report(left.length);
     return true; // stay alive across silence; the graph decides when to stop
   }
 
-  private report(frames: number, began: number): void {
-    if (this.canTime) this.busyMs += Date.now() - began;
-    if (this.lastFrame >= 0) {
-      const advanced = currentFrame - this.lastFrame;
-      if (advanced > frames) {
-        this.dropouts += 1;
-        this.lostFrames += advanced - frames;
-      }
-    }
-    this.lastFrame = currentFrame;
+  private report(frames: number): void {
+    this.meter.end();
     this.sinceReport += frames;
     if (this.sinceReport < sampleRate / 10) return;
     this.sinceReport = 0;
     const { total, sounding, notes } = this.mixer.counts();
-    let load: number | null = null;
-    if (this.canTime) {
-      const now = Date.now();
-      const elapsed = this.windowStart > 0 ? now - this.windowStart : 0;
-      // Against the wall clock the window actually took, not against the audio
-      // time it represents: they agree while the thread keeps up, and when they
-      // do not, the wall clock is the honest denominator.
-      if (elapsed > 0) {
-        const raw = this.busyMs / elapsed;
-        this.smoothed = this.smoothed === 0 ? raw : this.smoothed * 0.7 + raw * 0.3;
-        load = this.smoothed;
-      }
-      this.windowStart = now;
-      this.busyMs = 0;
-    }
-    this.port.postMessage({
-      type: 'voices',
-      total,
-      sounding,
-      notes,
-      load,
-      dropouts: this.dropouts,
-      lostFrames: this.lostFrames,
-    });
-    this.dropouts = 0;
-    this.lostFrames = 0;
+    // The dither's waits are spent only while something is playing.
+    this.meter.setActive(total > 0);
+    const load = this.meter.report();
+    this.port.postMessage({ type: 'voices', total, sounding, notes, load });
   }
 }
 

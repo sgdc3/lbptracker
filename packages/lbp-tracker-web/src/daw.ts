@@ -98,20 +98,62 @@ const loadLabel = $<HTMLSpanElement>('load');
 const volSlider = $<HTMLInputElement>('vol');
 const tempoBox = $<HTMLInputElement>('tempoBox');
 
-let health: Health = { sounding: 0, notes: 0, queued: 0, audioLoad: null, dropouts: 0, lostMs: 0 };
+let health: Health = {
+  sounding: 0, notes: 0, queued: 0, audioLoad: null, dropouts: 0, lostMs: 0,
+};
+/**
+ * When the meter turns yellow: half a core on average. ❗ A decision, not a
+ * measurement -- sound was first lost at a reading of 93 % on the machine it
+ * was tried on, and a song's busy passage can sit well above its five-second
+ * average. See *The "audio %" figure* in `steering/tracker-architecture.md`.
+ */
+const BUSY_LOAD = 0.5;
+/** How long the meter stays red after a dropout: a moment's trouble is not the whole song's. */
+const DROPOUT_RED_MS = 10_000;
+let dropoutsSeen = 0;
+let lastDropoutAt = -Infinity;
+
+/**
+ * The footer's readout: `17 notes · CPU 6%`, like a DAW's CPU meter.
+ *
+ * ❗ **One number, and the rest on hover.** It read `audio 6%, peak <30% · no
+ * dropouts` for a day, which was all true and which the owner found
+ * unreadable (2026-10-04): the figure is the average (`LoadMeter`), the colour
+ * says whether to worry, and the sound lost is in the tooltip. Dropouts appear
+ * in the text only when there are some, because then they are the news.
+ */
 function showLoad(): void {
   const { sounding, notes, queued, audioLoad, dropouts, lostMs } = health;
+  if (dropouts > dropoutsSeen) lastDropoutAt = performance.now();
+  dropoutsSeen = dropouts;
   if (!player.playing && sounding === 0 && queued === 0) {
     loadLabel.textContent = player.hasPlan ? 'ready' : 'idle';
+    loadLabel.className = '';
+    loadLabel.title = '';
     return;
   }
-  const dropped = dropouts === 0
-    ? 'no dropouts'
-    : `${dropouts} dropout${dropouts === 1 ? '' : 's'}${lostMs >= 1 ? ` (${lostMs.toFixed(0)} ms lost)` : ''}`;
-  // The audio thread's worst block as a share of realtime -- the CPU figure
-  // the old page showed; null when the worklet has no clock to measure with.
-  const busy = audioLoad === null ? '' : ` · audio ${(audioLoad * 100).toFixed(1)}%`;
-  loadLabel.textContent = `${notes} notes${busy} · ${dropped}`;
+  // Whole percent: the average is good to about half a point.
+  const pct = (share: number) => (share < 0.005 ? '<1%' : `${Math.round(share * 100)}%`);
+  const cpu = audioLoad === null ? '' : ` · CPU ${pct(audioLoad)}`;
+  const dropped = dropouts === 0 ? '' : ` · ${dropouts} dropout${dropouts === 1 ? '' : 's'}`;
+  loadLabel.textContent = `${notes} notes${cpu}${dropped}`;
+  const recentDropout = performance.now() - lastDropoutAt < DROPOUT_RED_MS;
+  const busy = (audioLoad ?? 0) >= BUSY_LOAD;
+  loadLabel.className = recentDropout ? 'bad' : busy ? 'busy' : '';
+  loadLabel.title = [
+    audioLoad === null
+      ? 'Audio engine: measuring…'
+      : `Audio engine: ${pct(audioLoad)} of one CPU core, averaged over the last 5 seconds.`,
+    // ❗ Measured against Windows' own count of the audio thread's time: 11.6 %
+    // where this said 8.0 % on `Rotary`, 3.9 % where it said 1.8 % on
+    // `Ascetic` (2026-10-04). The rest is the browser's, on the same thread,
+    // and nothing inside the worklet can time it -- see `LoadMeter`.
+    audioLoad === null ? null : 'The browser’s own audio work on the same thread adds a few points more.',
+    dropouts === 0
+      ? 'No dropouts since play.'
+      : `${dropouts} dropout${dropouts === 1 ? '' : 's'} since play, ${Math.round(lostMs)} ms of sound lost.`,
+    `${notes} notes sounding.`,
+  ].filter(Boolean).join('\n');
 }
 function paintClock(): void {
   clockLabel.textContent = `${clock(player.position() / RATE)} / ${clock(player.songSeconds)}`;

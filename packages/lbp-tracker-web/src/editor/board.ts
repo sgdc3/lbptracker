@@ -108,7 +108,8 @@ export class BoardView {
   private readonly canvas: HTMLCanvasElement;
   private readonly scroller: HTMLElement;
   private readonly spacer: HTMLElement;
-  private readonly ctx: CanvasRenderingContext2D;
+  /** The screen's context -- or, while `drawBoard` runs, the layer's. */
+  private ctx: CanvasRenderingContext2D;
   private readonly state: EditorState;
   private readonly cb: BoardCallbacks;
   private layout: BoardLayout = { cellW: CELL_W, cellH: CELL_H, gutter: GUTTER, ruler: RULER, cols: 24, rows: 8 };
@@ -154,6 +155,36 @@ export class BoardView {
   /** The pointer is on the song's end marker. */
   private overEnd = false;
   private frame = 0;
+  /**
+   * Whether the board has a size at all, kept by the `ResizeObserver` on its
+   * scroller: a view that is not shown has none, and coming back gives it one.
+   *
+   * ❗ **Nothing is drawn while it is zero.** The playhead asked for a frame
+   * sixty times a second whatever view was on screen, and every one of them
+   * drew the whole board -- measured on `Ascetic`, 10 ms a frame, 60 % of the
+   * main thread, with the Song/Mixer view in front (2026-10-04). Read from the
+   * observer rather than from `clientWidth`, which would force a layout every
+   * time something asks for a frame.
+   */
+  private visible = true;
+  /**
+   * The board as `drawBoard` last drew it, with neither the playhead nor the
+   * flashes, copied to the screen every frame under them (`drawLive`).
+   *
+   * ❗ **Redrawn only when something other than the playhead moved** -- a
+   * `schedule()` from an edit, a scroll, the pointer, a resize -- because the
+   * playhead alone used to repaint every chip in view sixty times a second:
+   * 175 of them in a frame of `Ascetic`, 2.2 of the frame's 2.6 ms, measured.
+   * ⚠️ So anything that changes how the board looks must say so through
+   * `schedule()` or a state change; a frame of the playhead no longer redraws
+   * it by accident. That is why `ensureAssets` touches the state when the
+   * instruments' names and glyphs arrive.
+   */
+  private readonly layer = document.createElement('canvas');
+  private readonly layerCtx = this.layer.getContext('2d')!;
+  private stale = true;
+  /** The playhead's colour, as the stylesheet had it when the layer was drawn. */
+  private ink = '#e8eaee';
   private bottomInset = 0;
   /** The accent colour as the stylesheet has it, read once per frame for the chips. */
   private accent = '#6fd3a0';
@@ -196,7 +227,11 @@ export class BoardView {
       const x = this.xOfStep(this.playStep) - scroller.scrollLeft;
       return x >= this.layout.gutter && x <= scroller.clientWidth;
     });
-    new ResizeObserver(() => this.schedule()).observe(scroller);
+    new ResizeObserver((entries) => {
+      const box = entries[entries.length - 1]?.contentRect;
+      this.visible = box === undefined || (box.width > 0 && box.height > 0);
+      this.schedule();
+    }).observe(scroller);
     state.onChange(() => this.schedule());
     this.schedule();
   }
@@ -207,9 +242,12 @@ export class BoardView {
     this.playStep = step;
     this.lastPlayStep = step;
     // Forward by a little: the notes that began in between light their chips.
-    // A seek, a loop or a stop skips the scan rather than lighting a bar's worth.
-    if (step !== null && last !== null && step > last && step - last < 8) this.flashBetween(last, step);
-    this.schedule();
+    // A seek, a loop or a stop skips the scan rather than lighting a bar's worth,
+    // and a board nobody can see has nothing to light.
+    if (this.visible && step !== null && last !== null && step > last && step - last < 8) {
+      this.flashBetween(last, step);
+    }
+    this.requestFrame();
   }
 
   private flashBetween(from: number, to: number): void {
@@ -226,18 +264,6 @@ export class BoardView {
         }
       }
     }
-  }
-
-  /** How lit something is, 0..1, and gone from the map once dark. */
-  private flashOf(map: Map<number, number>, key: number, now: number): number {
-    const t0 = map.get(key);
-    if (t0 === undefined) return 0;
-    const a = 1 - (now - t0) / FLASH_MS;
-    if (a <= 0) {
-      map.delete(key);
-      return 0;
-    }
-    return a;
   }
 
   /** The content x of a step, for the page to scroll the playhead into view. */
@@ -271,13 +297,22 @@ export class BoardView {
     this.follow.resume();
   }
 
+  /** Something about the board changed: redraw it, layer and all, on the next frame. */
   schedule(): void {
-    if (this.frame) return;
+    this.stale = true;
+    this.requestFrame();
+  }
+
+  /** A frame, for the playhead or a flash: the layer is reused unless it is stale. */
+  private requestFrame(): void {
+    // Hidden: the observer asks again when the view comes back (`visible`).
+    if (this.frame || !this.visible) return;
     this.frame = window.requestAnimationFrame(() => {
       this.frame = 0;
+      if (!this.visible) return;
       this.draw();
       // Anything still lit fades over the next frames.
-      if (this.chipFlash.size > 0 || this.rowFlash.size > 0) this.schedule();
+      if (this.chipFlash.size > 0 || this.rowFlash.size > 0) this.requestFrame();
     });
   }
 
@@ -314,13 +349,55 @@ export class BoardView {
       this.canvas.style.width = `${viewW}px`;
       this.canvas.style.height = `${viewH}px`;
     }
+    if (this.layer.width !== this.canvas.width || this.layer.height !== this.canvas.height) {
+      this.layer.width = this.canvas.width;
+      this.layer.height = this.canvas.height;
+    }
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  /** One frame: the layer, redrawn if stale, then what moves over it. */
   private draw(): void {
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.round(this.scroller.clientWidth * dpr);
+    const h = Math.round(this.scroller.clientHeight * dpr);
+    // Not laid out yet: nothing to see, and `drawImage` throws on a canvas
+    // 0 pixels wide. The resize observer asks again once there is a size.
+    if (w === 0 || h === 0) return;
+    if (this.stale || this.layer.width !== w || this.layer.height !== h) {
+      const screen = this.ctx;
+      this.ctx = this.layerCtx;
+      try {
+        this.drawBoard();
+      } finally {
+        this.ctx = screen;
+      }
+      this.stale = false;
+    }
+    const { ctx } = this;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.drawImage(this.layer, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.drawLive();
+  }
+
+  /** Whether a chip at this cell and row touches the visible window, by its own rectangle. */
+  private chipInView(clip: Clip, cell: number, row: number): boolean {
+    const { layout } = this;
+    const sx = this.scroller.scrollLeft;
+    const sy = this.scroller.scrollTop;
+    const r = boardRect(layout, cell, row);
+    const w = Math.max(1, clip.steps / STEPS_PER_CELL) * layout.cellW;
+    // The stroke's width to spare on every side.
+    return r.x + w >= sx + layout.gutter - 2 && r.x <= sx + this.scroller.clientWidth + 2
+      && r.y + r.h >= sy + layout.ruler - 2 && r.y <= sy + this.scroller.clientHeight + 2;
+  }
+
+  /** The board itself, into whichever context `ctx` is: everything but the playhead and the flashes. */
+  private drawBoard(): void {
     this.measure();
     const { ctx, layout, state } = this;
-    const flashNow = performance.now();
     const song = state.song;
     const { width, height } = boardSize(layout);
     const viewW = this.scroller.clientWidth;
@@ -332,8 +409,15 @@ export class BoardView {
     const dim = styles.getPropertyValue('--dimmer').trim() || '#6e7684';
     const accent = styles.getPropertyValue('--accent').trim() || '#6fd3a0';
     this.accent = accent;
+    this.ink = ink;
 
     ctx.clearRect(0, 0, viewW, viewH);
+
+    // ❗ **Only what is in view is drawn.** All of `Ascetic`'s 1,150 chips were
+    // drawn every frame, clipped away but paid for: 7.4 of the frame's 7.7 ms,
+    // measured. A chip draws nothing outside its own rectangle (`drawChip`), so
+    // the test is that rectangle against the visible window (`chipInView`).
+    const inView = (clip: Clip, cell: number, row: number) => this.chipInView(clip, cell, row);
 
     // The content, in board coordinates offset by the scroll, clipped to the
     // area right of the gutter and below the ruler.
@@ -410,18 +494,22 @@ export class BoardView {
     const chosen = (clip: Clip) => state.selection.clips.has(clip.id) || (caught?.has(clip.id) ?? false);
     const heard = (clip: Clip) => (state.rowAudible(clip.row) ? 1 : 0.35);
     for (const clip of song.clips) {
-      if (lifted.has(clip) || chosen(clip) || clip === lead) continue;
+      if (lifted.has(clip) || chosen(clip) || clip === lead || !inView(clip, clip.cell, clip.row)) continue;
       this.drawChip(clip, clip.cell, clip.row, 'plain', heard(clip));
     }
-    if (lead && !lifted.has(lead) && !chosen(lead)) this.drawChip(lead, lead.cell, lead.row, 'lead', heard(lead));
+    if (lead && !lifted.has(lead) && !chosen(lead) && inView(lead, lead.cell, lead.row)) {
+      this.drawChip(lead, lead.cell, lead.row, 'lead', heard(lead));
+    }
     for (const clip of song.clips) {
-      if (lifted.has(clip) || !chosen(clip)) continue;
+      if (lifted.has(clip) || !chosen(clip) || !inView(clip, clip.cell, clip.row)) continue;
       this.drawChip(clip, clip.cell, clip.row, 'selected', heard(clip));
     }
     // The block being dragged, where it would land.
     if (moving) {
       for (const clip of moving.clips) {
-        this.drawChip(clip, clip.cell + moving.shift.cells, clip.row + moving.shift.rows, 'selected', 0.85);
+        const cell = clip.cell + moving.shift.cells;
+        const row = clip.row + moving.shift.rows;
+        if (inView(clip, cell, row)) this.drawChip(clip, cell, row, 'selected', 0.85);
       }
     }
     // The rectangle being drawn, over the chips it is catching.
@@ -493,16 +581,7 @@ export class BoardView {
       ctx.fillRect(Math.round(endX) - 4, layout.ruler, 9, 12);
     }
 
-    // The playhead.
-    if (this.playStep !== null) {
-      const x = boardX(layout, this.playStep);
-      ctx.strokeStyle = ink;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(x, layout.ruler);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-    }
+    // The playhead is not here: it moves every frame, and `drawLive` draws it.
     ctx.restore();
 
     // The gutter, over the content at the canvas's left edge: row numbers,
@@ -521,11 +600,6 @@ export class BoardView {
         ctx.fillRect(0, y, layout.gutter, r.h);
         ctx.fillStyle = accent;
         ctx.fillRect(0, y, 3, r.h);
-      }
-      const lit = this.flashOf(this.rowFlash, row, flashNow);
-      if (lit > 0) {
-        ctx.fillStyle = `rgba(255,255,255,${(0.1 * lit).toFixed(3)})`;
-        ctx.fillRect(0, y, MUTE_X - 2, r.h);
       }
       // The selected row's number turns into an "x" under the pointer: the
       // way to remove a row without a button that would widen the gutter.
@@ -589,11 +663,6 @@ export class BoardView {
       ctx.fillStyle = c % 2 === 0 ? dim : 'rgba(110,118,132,0.55)';
       ctx.fillText(String(barOfCell(c)), x + 3, layout.ruler / 2);
     }
-    if (this.playStep !== null) {
-      const x = boardX(layout, this.playStep) - sx;
-      ctx.fillStyle = ink;
-      ctx.fillRect(x - 1, 0, 2, layout.ruler);
-    }
     ctx.fillStyle = '#171b21';
     ctx.fillRect(0, 0, layout.gutter, layout.ruler);
     this.drawCorner();
@@ -643,6 +712,75 @@ export class BoardView {
     ctx.lineTo(px, cy + 3.5);
     ctx.stroke();
     ctx.restore();
+  }
+
+  /**
+   * What moves while the song plays, drawn over the layer every frame: the
+   * playhead, and the chips and rows lit by notes starting.
+   *
+   * ⚠️ **A flash is now drawn over its chip, not into it.** The body is
+   * brightened by the same 12 % as before, but on top of the glyph and the name
+   * rather than under them -- the price of keeping the chips out of the frame.
+   * Flashes are forgotten here once dark, in view or not: a chip out of view is
+   * never drawn, and an entry left in the map would keep the frames coming.
+   */
+  private drawLive(): void {
+    const { ctx, layout, state } = this;
+    const now = performance.now();
+    for (const [key, t0] of this.chipFlash) if (now - t0 >= FLASH_MS) this.chipFlash.delete(key);
+    for (const [key, t0] of this.rowFlash) if (now - t0 >= FLASH_MS) this.rowFlash.delete(key);
+    const viewW = this.scroller.clientWidth;
+    const viewH = this.scroller.clientHeight;
+    const sx = this.scroller.scrollLeft;
+    const sy = this.scroller.scrollTop;
+    const { height } = boardSize(layout);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(layout.gutter, layout.ruler, viewW - layout.gutter, viewH - layout.ruler);
+    ctx.clip();
+    ctx.translate(-sx, -sy);
+    if (this.chipFlash.size > 0) {
+      const lifted = this.drag?.kind === 'move' && this.drag.moved ? new Set(this.drag.clips) : null;
+      ctx.fillStyle = '#ffffff';
+      for (const clip of state.song.clips) {
+        const t0 = this.chipFlash.get(clip.id);
+        if (t0 === undefined || lifted?.has(clip) || !this.chipInView(clip, clip.cell, clip.row)) continue;
+        const r = boardRect(layout, clip.cell, clip.row);
+        const w = Math.max(1, clip.steps / STEPS_PER_CELL) * layout.cellW;
+        ctx.globalAlpha = (state.rowAudible(clip.row) ? 1 : 0.35) * 0.12 * (1 - (now - t0) / FLASH_MS);
+        roundRect(ctx, r.x + 2, r.y + 2, w - 4, r.h - 4, 5);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    if (this.playStep !== null) {
+      const x = boardX(layout, this.playStep);
+      ctx.strokeStyle = this.ink;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, layout.ruler);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Rows lit in the gutter.
+    for (const [row, t0] of this.rowFlash) {
+      const r = boardRect(layout, 0, row);
+      const y = r.y - sy;
+      if (y + r.h < layout.ruler || y > viewH) continue;
+      ctx.fillStyle = `rgba(255,255,255,${(0.1 * (1 - (now - t0) / FLASH_MS)).toFixed(3)})`;
+      ctx.fillRect(0, y, MUTE_X - 2, r.h);
+    }
+    // The playhead's mark in the ruler, never over the corner cell.
+    if (this.playStep !== null) {
+      const x = boardX(layout, this.playStep) - sx;
+      if (x - 1 >= layout.gutter) {
+        ctx.fillStyle = this.ink;
+        ctx.fillRect(x - 1, 0, 2, layout.ruler - 1);
+      }
+    }
   }
 
   /** Which third of the corner cell a canvas point is in, or null outside it. */
@@ -706,12 +844,6 @@ export class BoardView {
     ctx.fillStyle = tint;
     ctx.globalAlpha = alpha * (selected ? 0.34 : 0.2);
     ctx.fill();
-    const lit = this.flashOf(this.chipFlash, clip.id, performance.now());
-    if (lit > 0) {
-      ctx.fillStyle = '#ffffff';
-      ctx.globalAlpha = alpha * 0.12 * lit;
-      ctx.fill();
-    }
     ctx.globalAlpha = alpha;
     // White for the block; the accent for the roll's chip when it is outside the block.
     ctx.strokeStyle = selected ? '#ffffff' : look === 'lead' ? this.accent : tint;

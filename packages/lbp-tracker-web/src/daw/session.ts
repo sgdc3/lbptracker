@@ -56,6 +56,9 @@ export function ensureAssets(): Promise<InstrumentLoader> {
     );
     byGuid.clear();
     for (const info of instruments.value) byGuid.set(info.guid, info);
+    // The chips' names and glyphs are known now. ⚠️ The board keeps what it
+    // drew until told otherwise (`layer` in `editor/board.ts`), so it is told.
+    state.touch('look');
     return loaderFor(rinstIndex, smpIndex);
   })().catch((error: unknown) => {
     loading = null;

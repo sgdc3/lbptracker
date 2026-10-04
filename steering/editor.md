@@ -19,9 +19,10 @@ server -- measured 2026-09-07, 0.2.1): a sticky top bar with the views'
 tabs, the song's name, the transport (play, stop, loop, clock, tempo, volume and a VU meter)
 and the file actions (new, open, save); "open" is a modal dialog holding the shared drop zone
 and the picker for a level holding several sequencers; a fixed footer carries the status line,
-the credit and the audio thread's readout (idle, notes sounding, audio load, dropouts; ⚠️ the load is
-a share of wall time and reads lower on the Arrange view because its per-frame redraw keeps the CPU
-clocked up -- measured, see `canTime` in `packages/lbp-tracker-lib/src/audio/mixer-worklet.ts`); and six
+the credit and the audio thread's readout (`17 notes · CPU 6%`, coloured when the margin is thin
+or a dropout happened, the details on hover; what the figure is and how it is kept honest with a
+millisecond clock is *The "audio %" figure* in [tracker-architecture.md](tracker-architecture.md));
+and six
 views, one shown at a time, all reaching the same song through `src/daw/session.ts`. Every card
 has a "?" opening the one help dialog on its topic (`src/help.ts`): the views carry as little
 prose as they can, and what they do carry is for the person using the app, never a measurement;
@@ -401,6 +402,20 @@ offset by the scroll, with the keyboard and the ruler painted over the content a
 edges. **The board works the same way** since the owner asked for its bar and row numbers to stay
 put while it scrolls (`Ascetic` is 15,000 pixels wide); its scroller is resizable in height by
 its corner handle (`resize: vertical`) and fixed in width. The geometry is pure (`src/editor/geometry.ts`, held by `test/editor-geometry.test.ts`).
+
+❗ **The board draws only what is in view, only when it is in view, and only once per change.**
+Measured on `Ascetic` playing, 2026-10-04, with Windows' own per-thread CPU times and the page's
+`requestAnimationFrame` callbacks timed: the main thread sat at **45–64% of a core**, 60% of it one
+callback — the board redrawing all 1,150 chips every frame, 10 ms a frame, **whatever view was in
+front**. Three changes in `src/editor/board.ts`, each measured: a hidden board draws nothing
+(`visible`, kept by the `ResizeObserver`, which fires again when the view comes back); a chip
+outside the visible window is not drawn (`chipInView`: 175 drawn instead of 1,150, 7.7 → 2.6 ms);
+and the board is drawn into a layer that is redrawn only when `schedule()` says something changed,
+the playhead and the flashes going over it every frame (`drawLive`: 0.34 ms a frame). The main
+thread went from 57% to 9.6% of a core. ⚠️ The layer's price: anything that changes how the board
+looks must call `schedule()` or change the state — the playhead no longer redraws it by accident;
+`ensureAssets` touches the state (`'look'`) when the instruments' names and glyphs arrive for that
+reason. And a flash is drawn over its chip now, not under its glyph and name.
 
 `EditorState` (`src/editor/state.ts`) holds the song as a **plain object** and ticks a `version`
 ref on every change; the Vue panel (`Inspector.vue`) reads through the counter and

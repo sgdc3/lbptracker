@@ -97,7 +97,9 @@ main { flex: 1 0 auto; width: 100%; box-sizing: border-box; margin: 0; max-width
 #status { margin: 0; min-height: 1.4em; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #status.bad { color: var(--bad); }
 #load { color: var(--dimmer); font: .82rem/1.4 ui-monospace, Consolas, monospace; white-space: nowrap; }
-#load .bad { color: var(--bad); font-weight: 600; }
+/* Yellow when the margin is thin, red for a while after a dropout (`showLoad`). */
+#load.busy { color: var(--warn); }
+#load.bad { color: var(--bad); }
 
 /* ------------------------------------------------------------- the views */
 .view { margin-top: .8rem; }

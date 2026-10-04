@@ -18,7 +18,10 @@ the file already says (*12*); when a note quotes an address range, disassemble p
 (*12*); a dump you produce to support a conclusion is a dump you are not reading (*the PS3
 backup*); a partial fix that improves the number is the most misleading result there is (*34*); a
 render that normalises cannot see a gain error (*22*); a reader that fails inside a part may have
-entered the wrong part (*54*).
+entered the wrong part (*54*); a quantised clock read at a fixed point of a periodic process is
+not dithered by anything (*55*); a meter that looks wrong may be right about the wrong thing, so
+measure the whole process from outside first (*56*); an alarm is tested by making happen what it
+alarms about (*57*).
 
 ---
 
@@ -954,6 +957,69 @@ The wrong turns, in the order they were taken, because each was reasonable:
 decoding a body, check that the part is the one the mask means at this revision. And a header that
 says "the range rules this out" is a claim about a range; check it against the lowest subVersion in
 that range, which here is 0.
+
+## 55. "The audio % looks too low" — it read the clock's phase, not the work
+
+**Answer**: the meter summed `Date.now()` around each `process()`, a 1 ms clock against
+sub-millisecond bursts that Chrome starts on an exact 10 ms beat, so the reading followed where the
+callback fell inside the millisecond — five times under the truth for half a minute, measured.
+`LoadMeter` dithers one callback in ten with a random wait and averages those samples; the
+measurements and the design are in *The "audio %" figure* in
+[tracker-architecture.md](tracker-architecture.md).
+
+The wrong turns:
+
+- ❌ **"Summed over ~37 blocks it comes out right on average, because a block's start has no
+  relationship to the millisecond tick."** That was the comment on the old meter, and the premise
+  is false: the device callback is periodic at a whole number of milliseconds. Averaging cancels
+  quantisation error only when the phase is random, and "random" has to be checked, not assumed.
+- ❌ **"~0.3% on the Arrange view against 6-8% idle is the CPU clocking up."** Recorded 2026-09-07
+  as honest physics. Clocking explains a factor of two or three (`Rotary`: 4.5% hot in Node,
+  about 10% live); a factor of twenty was mostly the phase.
+- ❌ **"Every 16th callback"** for the dither: Chrome's callbacks cycle 4, 4, 4, 3 quanta, so the
+  stride hit the short one every time and read 80% of the load. Sample at random.
+
+⚠️ **The trap to keep**: before averaging a quantised measurement, look at when it is taken. A
+clock read at a fixed point of a periodic process is not dithered by anything.
+
+## 56. "The audio % is still low" — it was right, and the CPU was the board
+
+**Answer**: after *55* the meter read 5–10% on `Rotary` and Windows' own count of the audio
+thread said 11.6%: the engine is light, and the gap is the browser's share of that thread
+(*The "audio %" figure* in [tracker-architecture.md](tracker-architecture.md)). What made the
+machine work was the **main** thread, 45–64% of a core while playing, nearly all of it the board
+redrawing every chip every frame, even behind another view — fixed in `board.ts`, measured in
+*The two canvases* in [editor.md](editor.md).
+
+⚠️ **The trap to keep**: a meter that looks too low may be right about what it measures. Before
+changing it, measure the whole process from outside — per-thread CPU times cost a minute and
+named the thread that was actually busy.
+
+## 57. "Is the load readout right now?" — it was blind exactly where it mattered
+
+**Answer**: not until it was tried at the one condition it exists to report. With the thread
+overloaded on purpose — a spin in our own `process()` — the figure fell to 8% in the plain colour
+while 688 ms of every 5 s went missing, and the dropout count stayed at zero. Both were rebuilt and
+are now checked against `getOutputTimestamp()`, which is the device's own word on what it played:
+*The "audio %" figure* in [tracker-architecture.md](tracker-architecture.md).
+
+The wrong turns:
+
+- ❌ **"`currentFrame` jumps when blocks are skipped; this is the metric that is exact here."**
+  That was the comment, and nothing had ever made it fire. Chrome skips nothing: it renders late,
+  plays silence, and the audio comes out later from then on.
+- ❌ **Counting a burst when it closes, and taking the samples' mean as the load.** An overloaded
+  thread never closes a burst and produces no samples, so the reading decayed towards zero.
+- ❌ **Measuring sound lost from inside the worklet**, as the lag of `currentFrame` behind
+  `Date.now()` — at the end of each quantum it rose with the load, at the start of each burst with
+  callbacks late but in time. Both counted losses the output never had.
+- ❌ **"5 ms from one reading to the next"** as a loss: a thread just past 100% loses less than that
+  per reading, and most of it went uncounted.
+- ❌ **A spin in a separate node as the overload test.** It split our bursts at its own gaps and
+  read low for a reason the app cannot have; the spin had to be inside our `process()`.
+
+⚠️ **The trap to keep**: test an alarm by making happen what it alarms about. Every number in the
+readout had been checked at the loads where nothing goes wrong, and none at the load where it does.
 
 ## 34. The live scheduler's −57 dB — it was the simulator
 

@@ -4,6 +4,18 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.40 (2026-10-04)
+
+- The audio readout in the status bar is now one figure, like a DAW's CPU meter: "17 notes · CPU
+  6%", with the details on hover. The figure is now right: at light loads it used to read a small
+  fraction of the real work, and when the audio engine was overloaded it fell instead of rising.
+- It turns yellow when the margin is thin, and red when sound was really lost, with the number of
+  dropouts in the text and the milliseconds lost on hover. Until now a dropout was never reported
+  at all.
+- Playing takes much less of your computer: the arrange view redraws only what is on screen and
+  only what changed, and nothing while another view is shown. On a large song the page's own work
+  went from more than half a processor core to a tenth of one.
+
 ## 0.2.39 (2026-10-04)
 
 - New: open levels straight from Bonsai, a community server for LittleBigPlanet. "From Bonsai" in

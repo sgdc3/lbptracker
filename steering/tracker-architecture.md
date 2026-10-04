@@ -400,7 +400,77 @@ everything else reset; every control on the live page carries `autocomplete="off
 shows **notes** (a voice is one record with its layers inside since 2026-09-08; a one-shot outlives
 its gate, a release rings on) and turns red at ⅞ of the pool — reading high by
 design, because the pool gives a record back at the gate while the voice keeps its tag until it has
-finished ringing.
+finished ringing. ⚠️ The 11-26% and 23-60% above were read off the meter as it was before
+2026-10-04, below; at those loads its error was a few points, at light ones it was most of the
+figure. And "no dropouts" was read off a detector that could not see one (below): it is
+unmeasured.
+
+**The "audio %" figure, and the clock it has to use.** It is `LoadMeter`
+(`packages/lbp-tracker-lib/src/audio/load-meter.ts`), driven by the worklet; measured in Chrome on
+2026-10-04:
+
+- ⚠️ **The audio thread's only clock is `Date.now()`, one tick a millisecond.** In an
+  AudioWorkletGlobalScope `performance` is undefined and `Event.timeStamp` is always 0; the page is
+  not cross-origin isolated, so there is no `SharedArrayBuffer`; the context has neither
+  `renderCapacity` nor `playoutStats`.
+- ⚠️ **Chrome renders in bursts on a 10 ms beat**: three or four 128-frame quanta back to back per
+  device callback (`baseLatency` 0.01), in a cycle of 4, 4, 4, 3, and 167 of 198 callback periods
+  exactly 10 ms. So a burst starts at nearly the same point of the millisecond every time, and that
+  point drifts over tens of seconds.
+- ❌ **The meter until then summed `Date.now()` around each `process()`**, and read the phase rather
+  than the work: a constant load measured in one context, 2 s at a time, read **0.3–1.15% for 30 s
+  and then 2–3.4%**; the same load in eight fresh contexts, 2.3–3.95%. It also showed a smoothed
+  average while its comment said "worst block".
+- ✔ **Now about one callback in ten waits a random fraction of a millisecond before its start is
+  read**, which makes that callback's reading an unbiased sample of its length; the samples' mean
+  against the plain mean of the same bursts is the clock's bias per burst, taken out of the plain
+  sum over five seconds (~0.5% of a core in waits, switched off above 60%, where the plain sum is
+  good enough and a millisecond's wait would eat headroom). Chosen at random: a fixed "every
+  16th" landed on the 3-quantum callback of the cycle every time and read 80% of the load.
+  `test/load-meter.test.ts` simulates that geometry; across six phases and five seeds the bias is
+  under 0.1 point and the worst error under 1. On `Rotary` the figure now follows the song,
+  4.6–5.8% for 16 s rising to 10.4% at 30 s, where the old one sat near 8.5% throughout; the same
+  30 s rendered hot in Node, every block timed to the microsecond, rise from 1.9% to 6.6% — the
+  live thread runs at a lower clock than a busy one, so it costs more.
+- The spans are whole callbacks, first quantum to last, so the rest of the graph between our quanta
+  counts (0.2–0.6 points); voice creation in the message handler is 0.25% of realtime and does not.
+- ❌ **Past 100% that meter read lower, not higher.** Tried by making the thread overload: a
+  temporary message that spins a set number of `Date.now()` calls inside our own `process()`
+  (2026-10-04, `Ascetic`, 0.5 to 3 ms a quantum). It counted a burst only when a gap closed it, and
+  an overloaded thread never has a gap: **28% and then 8%** while 282 and then 688 ms of every 5 s
+  were lost, in the plain colour, then 78% once the spin was gone. Its peak (the longest callback
+  over the period) said 100% at a 57% average with nothing lost, two callbacks less than two ticks
+  apart being one burst to this clock; there is no peak any more. Now each report takes the open
+  burst's time so far, and the plain sum is the figure with the samples only correcting it: the
+  same ramp reads 8, 35, 51, 59, 67, 76, 85, 90, 95% and falls back as the load goes.
+  `test/load-meter.test.ts` pins both. ⚠️ A spin in a *separate* node does not test this: it
+  splits our bursts at the gaps it makes and reads low for a reason the app never has.
+- ❌ **`currentFrame` never jumps in Chrome, so the dropout count was always zero.** It counted a
+  skip of more than one quantum between two `process()` calls; with 688 ms lost it counted none.
+  Chrome renders every quantum, late, plays silence for what the device could not get, and from
+  then on the context's audio comes out that much later. ✔ **`getOutputTimestamp()` sees exactly
+  that**: `performanceTime − contextTime` held within about 1 ms per 5 s (the two clocks drift
+  ~200 ppm) at every load up to 90%, and rose 19 ms where a sudden jump caught the CPU at a low
+  clock (below) and 221–249 ms in the 4–5 s at 95–97%. So the page counts sound lost off it, one reading
+  per load report (`DropoutCounter`, `packages/lbp-tracker-lib/src/audio/dropouts.ts`, run from
+  `player.ts`). ❌ The worklet cannot: from inside, the lag of `currentFrame` behind `Date.now()`
+  rose with the load when read at the end of each quantum, and with every callback late but still
+  in time when read at each burst's start (39 ms "lost" after the same kind of jump, where the
+  output lost 1) — it cannot see the device's buffer.
+- ✔ **Checked against Windows' own count of the audio thread's CPU time** (per-thread
+  `TotalProcessorTime` of the renderer, the thread told apart by playing and stopping): `Rotary`
+  11.6% where the meter said 8.0%, `Ascetic`'s opening 3.9% where it said 1.8%, 3.1% with nothing
+  playing. The difference, 2–3.6 points, is the browser's own audio work on the same thread —
+  the rest of the graph after our last quantum, the hand-off to the device, messages — which
+  nothing inside the worklet can time; the tooltip says so rather than adding a guessed constant.
+- ❗ **What the footer shows is one number, like a DAW's CPU meter**: `17 notes · CPU 6%`, the
+  average; yellow from 50%, red for 10 s after sound is lost, and the dropout count in the text
+  only when there is one; the sound lost, in milliseconds, is in the tooltip (`showLoad` in
+  `daw.ts`). ⚠️ It read `audio 6%, peak <30% · no dropouts` for a day — all true, and unreadable
+  to the owner; a peak shown only from three ticks up had been worse still, coming and going with
+  the odd slow callback. The 50% is a decision: on the machine measured, a steady load lost
+  nothing up to a reading of 90%, but a jump from 8% straight to a spin that reads 76% when
+  reached gradually lost 19 ms in its first moments, the CPU still at a low clock.
 
 ## Playback model
 

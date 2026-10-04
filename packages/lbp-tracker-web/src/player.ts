@@ -40,6 +40,7 @@
  * relative to the page, never rooted at `/`.
  */
 import MIXER_WORKLET_URL from '@lbptracker/lib/audio/mixer-worklet.ts?worker&url';
+import { DropoutCounter } from '@lbptracker/lib/audio/dropouts.ts';
 import { type VoiceSpec } from '@lbptracker/lib/audio/mixer.ts';
 import { channelVolume, type Sequencer, type Track } from '@lbptracker/cwlib/project.ts';
 import { LiveVoicePool, VOICES_UNLIMITED, VOICE_POOL_SIZE } from '@lbptracker/lib/polyphony.ts';
@@ -160,13 +161,18 @@ export interface Health {
   /** Voices posted but not yet started. */
   readonly queued: number;
   /**
-   * Worst block cost as a fraction of realtime; over 1 means the device
-   * starved. `null` means the worklet could not read a clock, which must not
-   * read as zero.
+   * The share of the audio thread's time the mixer takes, averaged over a few
+   * seconds (`LoadMeter` in `@lbptracker/lib/audio/load-meter.ts`). `null`
+   * until there is a reading, which must not read as zero.
    */
   readonly audioLoad: number | null;
-  /** Blocks the audio thread failed to deliver since playback started. */
+  /**
+   * Times the audio thread fell behind and the device played silence, since
+   * playback started: counted here, off the output's own clock
+   * (`DropoutCounter` in `@lbptracker/lib/audio/dropouts.ts`).
+   */
   readonly dropouts: number;
+  /** How much sound those cost, in milliseconds. */
   readonly lostMs: number;
 }
 
@@ -304,6 +310,7 @@ export class Player {
   private health: Health = {
     sounding: 0, notes: 0, queued: 0, audioLoad: null, dropouts: 0, lostMs: 0,
   };
+  private readonly lost = new DropoutCounter();
   private auditionTag = AUDITION_TAG_BASE;
 
   constructor(events: PlayerEvents = {}) {
@@ -337,19 +344,23 @@ export class Player {
     node.port.onmessage = (event: MessageEvent) => {
       const data = event.data as {
         type: string; id?: string; total?: number; sounding?: number; notes?: number;
-        load?: number | null; dropouts?: number; lostFrames?: number;
+        load?: number | null;
       };
       if (data.type === 'missingSample') this.events.missingSample?.(data.id ?? '?');
       // The only place that knows what is actually sounding is the audio thread.
       if (data.type === 'voices') {
         const sounding = data.sounding ?? 0;
+        // Read as the report arrives: the two times are one sample's, so how
+        // late the message is does not matter.
+        const out = context.getOutputTimestamp?.();
+        const lost = this.lost.observe(out?.performanceTime ?? 0, out?.contextTime ?? 0);
         this.health = {
           sounding,
           notes: data.notes ?? 0,
           queued: (data.total ?? 0) - sounding,
           audioLoad: data.load ?? null,
-          dropouts: this.health.dropouts + (data.dropouts ?? 0),
-          lostMs: ((data.lostFrames ?? 0) / RATE) * 1000,
+          dropouts: this.health.dropouts + lost.dropouts,
+          lostMs: this.health.lostMs + lost.lostMs,
         };
         this.events.health?.(this.health);
       }
@@ -403,6 +414,7 @@ export class Player {
 
   /** Forget the dropout count: the page's reset button, and every start. */
   resetHealth(): void {
+    this.lost.reset();
     this.health = { ...this.health, dropouts: 0, lostMs: 0 };
     this.events.health?.(this.health);
   }
@@ -1049,9 +1061,8 @@ export class Player {
   play(): void {
     if (!this.context || !this.node || this.playing) return;
     void this.context.resume();
-    // The detector compares against the last block it saw, and a suspended
-    // context has not produced one since before the pause. Tell it to start
-    // over.
+    // Both clocks start over: the load's window, and the dropout counter's
+    // reading of the output, which a pause moves without losing anything.
     this.node.port.postMessage({ type: 'resetHealth' });
     this.resetHealth();
     this.startedAt = this.context.currentTime;
@@ -1070,7 +1081,10 @@ export class Player {
     window.clearTimeout(this.timer);
     if (clear) {
       this.node?.port.postMessage({ type: 'stopAll' });
-      this.health = { sounding: 0, notes: 0, queued: 0, audioLoad: this.health.audioLoad, dropouts: 0, lostMs: 0 };
+      this.health = {
+        sounding: 0, notes: 0, queued: 0,
+        audioLoad: this.health.audioLoad, dropouts: 0, lostMs: 0,
+      };
       this.events.health?.(this.health);
     }
     this.events.playing?.(false);
