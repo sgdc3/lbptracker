@@ -36,6 +36,7 @@ import {
 import { MasterBus, type MasterSettings } from './audio/master.ts';
 import {
   BLOCK_FRAMES,
+  DECLICK_SECONDS,
   Mixer,
   type LayerSpec,
   type SampleBuffer,
@@ -50,7 +51,7 @@ import {
   evaluateParam,
 } from './envelope.ts';
 import { resolveSlot } from './instrument.ts';
-import { LFO_PARAMS, OUTPUT_PARAMS, STACK_PARAMS } from './params.ts';
+import { LFO_PARAMS, OUTPUT_PARAMS, STACK_PARAMS, echoSendLevel } from './params.ts';
 import { VOICE_POOL_SIZE, allocateVoices } from './polyphony.ts';
 import { channelVolume, schedule, type Sequencer } from '@lbptracker/cwlib/project.ts';
 import { type RInstrument } from './rinstrument.ts';
@@ -152,6 +153,18 @@ export interface RenderOptions {
    * capture of the game at that bar settles it in one listen.
    */
   readonly releaseTail?: boolean;
+  /**
+   * Soften how a note's natural end clicks: a release of at least 20 ms, and a
+   * 20 ms fade on the ladder's tail after the sound ends. See
+   * `VoiceSpec.declick`.
+   *
+   * ⚠️ **Default ON, which is not the engine's.** By the bytes the game clicks
+   * too (`0x1f65`, `0x3093`); the project's owner heard `triangle_wave` and
+   * `e_perc_1` click on *Rhombitruncated* and the 20 ms release silence them,
+   * and asked for them gone. Question 61 in `steering/open-questions.md`; off
+   * renders the engine as read.
+   */
+  readonly declick?: boolean;
   /**
    * Run the reverb. Default true.
    *
@@ -318,6 +331,7 @@ export async function renderSequencer(
     pitchShift = new Map<number, number>(),
     oneShot = 'gate',
     releaseTail: withReleaseTail = false,
+    declick: withDeclick = true,
     reverb: withReverb = true,
     echo: withEcho = true,
     master: masterSettings = null,
@@ -484,8 +498,9 @@ export async function renderSequencer(
     // envelope's release, scaled by the level it had actually reached.
     const gateSeconds = (event.durationSteps * framesPerStep) / RATE;
     const amp = evaluateAdsr(loaded.inst.params, ADSR_PARAMS, event.modulation);
+    const release = withDeclick ? Math.max(amp.release, DECLICK_SECONDS) : amp.release;
     const releaseTail =
-      (amp.release * envelopeLevelAt(amp, gateSeconds) * RATE) / framesPerStep;
+      (release * envelopeLevelAt(amp, gateSeconds) * RATE) / framesPerStep;
     // ❗ **And a voice that runs out of sample gives its record back**, which is
     // the OTHER half of the engine's free condition and was missing here for an
     // afternoon. `sub_0x1c60` frees a record when the envelope reaches zero
@@ -802,13 +817,9 @@ export async function renderSequencer(
       // ⚠️ `voice+0x20` is `Params[26]`, the **drive** -- `0x1ee0` reads it with
       // a `vbroadcastss`, which is how a grep for `vmovss` once missed it and
       // called it an unread send. It is `drive` above.
-      echoSend: (() => {
-        const base = P(OUTPUT_PARAMS.send);
-        const offset = 2 * track.echoSend - 1;
-        const blended = offset < 0 ? base + offset * base : base + offset * (1 - base);
-        return Math.min(1, Math.max(0, blended));
-      })(),
+      echoSend: echoSendLevel(P(OUTPUT_PARAMS.send), 2 * track.echoSend - 1),
       reverbSend: Math.min(1, Math.max(0, track.reverbSend)),
+      declick: withDeclick,
       // Seeded, so the LFO phases are reproducible along with everything else.
       random: rand,
     };

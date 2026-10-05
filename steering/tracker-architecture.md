@@ -34,18 +34,19 @@ function, with `packages/lbp-tracker-lib/dev/render-level.ts` the Node wrapper a
 `packages/lbp-tracker-web/src/render-worker.ts` the browser one. ✔ On 2026-09-02 the two produced
 the *same file* — 368 seconds of `This Is Halloween`, 70,704,044 bytes, one SHA-256.
 
-### The mixer's clock is the engine's block
+### Each voice's clock is the engine's block
 
-The engine derives everything modulation-driven at both ends of a **256-frame block** and ramps
+The engine derives everything modulation-driven at both ends of a **256-frame chunk** and ramps
 across it, and the AudioWorklet's render quantum is 128, so the grid cannot be "the offset within
-this call". Three things follow, all in `mixer.ts`: `Mixer.clock` counts frames modulo the block
-and is handed to every voice, so a 128-frame live call and a whole-song offline call evaluate on
-the same boundaries; a voice evaluates a *segment* — the rest of the block, cut short only at its
-own absolute events (the gate, a cut, our fade) — once, and a caller's slice merely continues it
-(`Voice.segLeft`); and a voice whose envelope ended inside a segment still renders that segment to
-its end before it is dropped, or the ladder's tail would stop at the slice boundary (−33 dB when
-it did). A voice is one of the engine's records and carries its layers inside it
-(`VoiceSpec.layers`), so the pool, the tag and the segment are all per note.
+this call". Three things follow, all in `mixer.ts`: a voice counts its grid in its own rendered
+frames, from its first frame and again from its gate — the two events the engine only takes at a
+chunk's top (*60* in [answered-questions.md](answered-questions.md)) — so a 128-frame live call and
+a whole-song offline call evaluate on the same boundaries; a voice evaluates a *segment* — the rest
+of the block, cut short only at its own events (the gate, a cut, our fade) — once, and a caller's
+slice merely continues it (`Voice.segLeft`); and a voice whose envelope ended inside a segment still
+renders that segment to its end before it is dropped, or the ladder's tail would stop at the slice
+boundary (−33 dB when it did). A voice is one of the engine's records and carries its layers inside
+it (`VoiceSpec.layers`), so the pool, the tag and the segment are all per note.
 `packages/lbp-tracker-lib/test/audio.test.ts` pins "the mixer renders the same audio whatever the
 block size", and it catches a grid mistake within a minute of it being made.
 

@@ -6,6 +6,7 @@ import { readNotes, NOTE_RECORD_SIZE } from '@lbptracker/cwlib/notes.ts';
 import { CHANNEL_HEADROOM, type Sequencer, type Track } from '@lbptracker/cwlib/project.ts';
 import { ALS_BEND_RANGE, LIVE_PALETTE, liveColour, sequencerToAls } from '../src/als.ts';
 import { FOLD_GAIN } from '../src/audio/effects.ts';
+import type { RInstrument } from '../src/rinstrument.ts';
 import { GLUE, LIMITER, MASTER_DEFAULTS, glueLevels } from '../src/audio/master.ts';
 
 /* ---------------------------------------------------------------- fixtures */
@@ -286,8 +287,39 @@ test('the mixer: Live plays each channel at the engine\'s linear gain, and both 
   const [left, right] = liveGains(dial(track, 'Volume'), dial(track, 'Pan'));
   assert.ok(Math.abs(left - 2 * 0.75 * gain) < 1e-9, `left ${left}`);
   assert.ok(Math.abs(right - 2 * 0.25 * gain) < 1e-9, `right ${right}`);
+  // The reverb send is the placement's; the echo send is the engine's, and an
+  // instrument nobody knows sends nothing of its own, so 0.2 mutes it.
   const sends = blocks(track, 'TrackSendHolder').map((s) => Number(value(s, 'Manual')));
-  assert.deepEqual(sends, [0.4, 0.2]);
+  assert.equal(sends[0], 0.4);
+  assert.ok(sends[1] < 0.001, `echo send ${sends[1]}`);
+});
+
+test('the echo send is the engine\'s: the instrument\'s own Params[25], bent by the placement', () => {
+  const params = (send: { x: number; y: number }) =>
+    ({ params: Array.from({ length: 27 }, (_, i) => (i === 25 ? send : { x: 0, y: 0 })) }) as unknown as RInstrument;
+  const echoOf = (echoSend: number, settings?: Map<number, RInstrument>, modulation = 0) => {
+    const { xml } = sequencerToAls(
+      makeSequencer([makeTrack([[{ step: 0, pitch: 60, modulation }], [{ step: 4, pitch: 62, modulation }]], { echoSend })]),
+      { instrumentSettings: settings },
+    );
+    return Number(value(blocks(blocks(xml, 'MidiTrack')[0], 'TrackSendHolder')[1], 'Manual'));
+  };
+  const near = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-9, `${a} against ${b}`);
+  const own = new Map([[1234, params({ x: 0.2, y: 0.2 })]]);
+  // 0.5 leaves the instrument's own send alone, 0 mutes it, 1 forces unity...
+  near(echoOf(0.5, own), 0.2);
+  assert.ok(echoOf(0, own) < 0.001);
+  near(echoOf(1, own), 1);
+  // ...and between, `v + o*v` under 0.5 and `v + o*(1 - v)` over it, o = 2*echoSend - 1.
+  near(echoOf(0.2, own), 0.2 - 0.6 * 0.2);
+  near(echoOf(0.75, own), 0.2 + 0.5 * 0.8);
+  // An instrument with no send of its own echoes only over 0.5 -- the field
+  // written as the send put 0.4 into the echo here, where the game puts none.
+  const none = new Map([[1234, params({ x: 0, y: 0 })]]);
+  assert.ok(echoOf(0.4, none) < 0.001);
+  near(echoOf(0.7, none), 0.4);
+  // The send is read at the modulation the notes open at.
+  near(echoOf(0.5, new Map([[1234, params({ x: 0, y: 0.3 })]]), 1), 0.3);
 });
 
 test('baking the swing moves an odd step and leaves an even one', () => {

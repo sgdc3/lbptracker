@@ -89,6 +89,24 @@ export const OUTPUT_PARAMS = {
   drive: 26,
 } as const;
 
+/**
+ * The echo send a voice plays at: `voice+0x1c = clamp01(bipolar(Params[25],
+ * 2*echoSend - 1))`, `fmodextinput.prx` `0x3c8a`-`0x3d10`.
+ *
+ * ⚠️ **The placement's field is a bipolar offset on the instrument's own
+ * send, not the send.** `v0x1607e9` stores `2*echoSend - 1` and `0x3ca1`
+ * applies it as `v + o*v` when `o < 0` and `v + o*(1 - v)` when `o >= 0`: 0.5
+ * leaves the instrument's send alone, 0 mutes it and 1 forces unity. The one
+ * law the renderer, the mixer and the Ableton export all use.
+ *
+ * @param base `Params[25]` at the note's modulation.
+ * @param offset the placement's `2*echoSend - 1`.
+ */
+export function echoSendLevel(base: number, offset: number): number {
+  const blended = offset < 0 ? base + offset * base : base + offset * (1 - base);
+  return blended < 0 ? 0 : blended > 1 ? 1 : blended;
+}
+
 /** One row per index, for display and for reading the block at a glance. */
 export const PARAM_NAMES: readonly string[] = [
   'stack detune', // 0

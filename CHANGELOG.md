@@ -4,6 +4,18 @@ What changed for the person using LBP Tracker, newest first. The site shows this
 version number in its status bar, so it is written for them: what they can do now that they could
 not before, never how it was done. No `--` or em dash in here; the site's text does without them.
 
+## 0.2.42 (2026-10-05)
+
+- Short notes no longer click at their start and end. On some instruments, the triangle wave most
+  of all, the first and last moments of a note were cut more sharply than in the game, by an
+  amount that depended on where the note fell, so the clicks seemed to come and go at random.
+- Two more clicks are gone, ones the game itself seems to make: the triangle wave's very fast
+  release on low notes, and some hits of the synth percussion kit a moment after they end. The
+  tracker now fades both out over a fiftieth of a second.
+- The Ableton Live export sends each track into the Echo as the game does. Some tracks went into
+  Live's echo far louder than into the game's, often by about 20 dB, and some echoed in Live where
+  the game does not echo them at all.
+
 ## 0.2.41 (2026-10-04)
 
 - The Ableton Live export carries the swing: unless you bake it into the notes, it is a groove in

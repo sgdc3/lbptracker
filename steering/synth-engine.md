@@ -293,18 +293,24 @@ position += N / L                                 ; [state+0x1a4c], in STEPS
 - The position is in steps, proved from the scheduler side too: `0x0d13` shifts a clip's cell index
   left by 4 and compares `cell · 16` against it, so **a board cell is 16 steps**.
 
-❗ **A note begins at the first frame of the block it falls in.** `0x1cc6`–`0x1cdc` computes the
-in-chunk onset offset as `trunc((start − frac(position)) / N)` with `start = voice[+0x3e]/3 < 2`
+❗ **A note begins at the top of a chunk.** `0xa90` renders a chunk first (`0x0c84`, every record)
+and only then, if `floor(position)` changed inside it, walks the notes (`0x0e8d`–`0x0f1c`: `0x3930`
+per record, then `0x280` to start new ones), so a note on a step is first rendered at the top of
+the chunk *after* the one that crossed its step — 0 to 256 frames late. `0x1cc6`–`0x1cdc` computes
+the in-chunk onset offset as `trunc((start − frac(position)) / N)` with `start = voice[+0x3e]/3 < 2`
 and `N` the chunk's frames — a divide where a multiply belongs — which is 0 for every chunk longer
-than one frame. The onset grid is therefore the 256-frame block, 5.33 ms at 48 kHz. **Not
-reproduced, deliberately** — the decision and what would settle it are *3* in
-[open-questions.md](open-questions.md).
+than one frame, so a note on a sub-step is rendered from the top of the first chunk whose end
+passes it (`0x1cb9`), up to a chunk *early*. The onset grid is therefore the 256-frame block,
+5.33 ms at 48 kHz. **Not reproduced, deliberately** — the decision and what would settle it are
+*3* in [open-questions.md](open-questions.md).
 
-### The gate and the ramps — `0x3930`, the per-block note update
+### The gate and the ramps — `0x3930`, the note walk
 
 The function start is `0x3930` (found by the largest `E8` target at or below its stores; it ends in
-a clean epilogue at `0x3f23`) — ⚠️ steering called it `0x38e0` for a while, a stale label. Per
-voice per block it walks the clip's chain:
+a clean epilogue at `0x3f23`) — ⚠️ steering called it `0x38e0` for a while, a stale label. It is
+called for a note as it starts (`0x05bb`, after `0x19e0`) and then once per step, after the chunk
+that crossed it (`0x0eef`) — ⚠️ not once per block, which this section's heading said until
+2026-10-05. Per voice it walks the clip's chain:
 
 ```
 0x3a0a  edx = word [rbx + 0x3c]     ; the record cursor
@@ -326,6 +332,19 @@ and `0x1c60` closes it for good once the playhead's fraction passes `[+0x3f]/3` 
 (endPosition − startPosition + 1)`: `durationSteps` is right to the third of a step, and the
 sub-step decoding is confirmed from the playback side as well as the editor's.
 
+❗ **And the closed gate is first read at the top of the next chunk.** `0x1c60` loads `[+0x10]` once
+per chunk, at `0x1f65`, before both envelope calls; the walk that closes it on a step (`0x3a4b`)
+runs after the chunk that crossed the step, and the close on a sub-step (`0x29b1`) comes after the
+same chunk's envelope calls. So the release starts at a chunk's top, 0 to 256 frames after the
+gate's moment, and — the envelope being evaluated at the chunk's two ends and ramped between — **a
+release shorter than the chunk lasts the whole chunk**: at modulation 0, `triangle_wave`'s 38
+frames, `square_wave`'s 16, `saw_wave`'s 32 all fade over 256 frames, 5.3 ms, in a whole block. The
+attack after an onset the same way: `triangle_wave`'s 12 frames rise over the note's first chunk.
+Where the step clock splits a block (*The clock*, above) that chunk is shorter. `Voice` keeps these
+ramps by starting its segment grid at the note's first frame and again at the gate (*60* in
+[answered-questions.md](answered-questions.md)); by default it also holds such a release to 20 ms,
+which the engine does not (*61* in [open-questions.md](open-questions.md)).
+
 The same function reads the **current and the next** record and sets **three slide rates** from one
 span (`0x3e1e`–`0x3e8a`, `v0x45ac = 1/3`): `[+0x2c] = (nextVolume − volume)/span`,
 `[+0x30] = (nextPitch − pitch)/span`, `[+0x34] = (nextMod − mod)/span`, and zeroes all three when
@@ -343,27 +362,28 @@ modulation, and a renderer that holds it at the note's opening value is wrong on
 notes that move it — 30,170 of the 34,449 that do move some parameter by 0.35 or more, and 26 of
 the 27 parameters move on some note.
 
-It also rewrites both pool-score factors per block: `[+0x04]` from the channel volume times the
+It also rewrites both pool-score factors at every step: `[+0x04]` from the channel volume times the
 clip's `Level` (`0x3b12`), `[+0x0c]` from **the current control point's** velocity (`0x3c29`,
 `bextr eax, [note], 0x810`). A released voice (`0x3963` → `0x3f06`) skips the update and keeps the
 score it had.
 
-## The per-voice renderer — `0x1c60`, once per record per block
+## The per-voice renderer — `0x1c60`, once per record per chunk
 
-Called from `0xa90`'s loop over the 32 records (`0x0c51`–`0x0c97`: `ebx = 0x28; … add rbx, 0xd0;
-cmp rbx, 0x1a28`). Everything modulation-driven is evaluated **twice per chunk, at its start and
-its end** — the two envelopes (`0x203f`/`0x2089`), the pitch ratio (`0x1dc2`/`0x1e63`, the second
-with the slide added), the three LFOs (two `call 0x130` each), the filter's cutoff and resonance
-(`0x2a02`, then `0x2a54` onward with `xmm15`, the end modulation) — and each layer's rate, gain
-and pan become a `{value, step}` pair (`0x2876`, `0x25a5`, `0x274f`) that the per-sample loop
-steps every frame (`0x2d5d`, `0x2d78`, `0x2d8f`). ❗ **Inside a chunk the game applies a linear
-ramp between the two evaluations, not a value held flat.** Only the drive and the two sends are
-chunk constants (`0x1ee0`; `0x2f3f`–`0x2f89`). ❌ This paragraph said "a staircase held for a
-256-frame block" until 2026-09-08 — *44* in [answered-questions.md](answered-questions.md). `Voice`
-in `packages/lbp-tracker-lib/src/audio/mixer.ts` does the same per *segment* — a block of the
-mixer's own frame clock, cut short at the voice's own events — and re-derives at both ends from
-the *interpolated modulation*: `evaluateParam` is affine in it, but the ADSR squares its times and
-the ladder squares its cutoff, so interpolating *those* would not be the same arithmetic.
+Called from `0xa90`'s loop over the 32 records (`0x0c51`–`0x0c97`: `ebx = 0x28; … add rbx, 0xd0; cmp
+rbx, 0x1a28`). Everything modulation-driven is evaluated **twice per chunk, at its start and its
+end** — the two envelopes (`0x203f`/`0x2089`), the pitch ratio (`0x1dc2`/`0x1e63`, the second with
+the slide added), the three LFOs (two `call 0x130` each), the filter's cutoff and resonance
+(`0x2a02`, then `0x2a54` onward with `xmm15`, the end modulation) — and each layer's rate, gain and
+pan become a `{value, step}` pair (`0x2876`, `0x25a5`, `0x274f`) that the per-sample loop steps
+every frame (`0x2d5d`, `0x2d78`, `0x2d8f`). ❗ **Inside a chunk the game applies a linear ramp
+between the two evaluations, not a value held flat.** Only the drive and the two sends are chunk
+constants (`0x1ee0`; `0x2f3f`–`0x2f89`). ❌ This paragraph said "a staircase held for a 256-frame
+block" until 2026-09-08 — *44* in [answered-questions.md](answered-questions.md). `Voice` in
+`packages/lbp-tracker-lib/src/audio/mixer.ts` does the same per *segment* — a block of the voice's
+own grid, which starts at its first frame and again at its gate, cut short at its own events — and
+re-derives at both ends from the *interpolated modulation*: `evaluateParam` is affine in it, but the
+ADSR squares its times and the ladder squares its cutoff, so interpolating *those* would not be the
+same arithmetic.
 
 ### The record's accumulator, its clip, and where the ladder sits
 
@@ -675,8 +695,9 @@ record whose `+0x14 > 0` before asking whether it is free) is **dead**: both cal
 `0x96b`) pass `dil = 0`.
 
 **A record is freed when the sound ends, not when the note does** (measured six ways, *29* in
-[answered-questions.md](answered-questions.md)): when the envelope's level reaches zero at both
-ends of the block (`0x20de`–`0x20f1` → `0x3093`, `[rec] = 0xff`), or when an **unlooped** sample's
+[answered-questions.md](answered-questions.md)): when the envelope's level at the chunk's *end* —
+the second call's return, `0x20e0` — has reached zero (`0x2117` sets the flag, `0x307f` reads it
+once the chunk is rendered, `0x3093` writes `[rec] = 0xff`), or when an **unlooped** sample's
 position passes its frame count (`0x3035`–`0x3069`), or when the chunk-end **volume ramp** is not
 positive (`0x209a`/`0x20de`: the velocity ramp at `t_end`, not the envelope — so a note that opens
 at 0 and *holds* it is freed after one block and never sounds, 3,132 corpus notes, while a fade-in
@@ -687,6 +708,14 @@ therefore plays to the end of its sample whatever its note says; a gated note ri
 release still holding its record. **One record plays every layer of its note** — the per-layer loop
 is inside `0x1c60`, once per record — so a stacked note is one record, not `Numstack`
 (`C4K3 S0NG`: 3,634 notes cut short counting per layer, 1,526 per note).
+
+❗ **Nothing fades a freed record's output.** The ten ladder states at `+0xa4`…`+0xc8` are left as
+they were — `0x19e0`'s memset clears them only when the record is claimed again — and the ladder
+runs after the gain (*The record's accumulator*, above), so whatever it holds when the record is
+freed stops in one frame. With envelope B shutting the cutoff during the release the ladder all
+but freezes and holds a value: `e_perc_1` at full modulation drops +0.0100 to zero 1,281 frames
+after the gate on *Rhombitruncated*'s first bongo hit. What the tracker does about it by default is
+*61* in [open-questions.md](open-questions.md).
 
 **The skip at `0x04d4`** — a record is not allocated when `channelVolume × [clip+0x420]` is not
 positive — tests the clip's `Level`, **not the note's velocity**: 0 of 74,864 corpus clips set

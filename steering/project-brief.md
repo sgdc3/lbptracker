@@ -34,7 +34,7 @@ the file named is where the measurement lives.
 | 10 | compressor | **measured, implemented, off** | `SMS WaveHammer`, last on the sequencer's channel, checked against the module *running* — a decision, below |
 | 11 | output stage | **half** | the game renders 7.1 and a stereo listener hears a fold; the fold's gain is applied and its narrowing is not — a decision, below |
 
-**Nothing in the signal path is unread.** What is left is four decisions and a handful of measured
+**Nothing in the signal path is unread.** What is left is five decisions and a handful of measured
 residues nothing models yet, all in [open-questions.md](open-questions.md).
 
 ### The deliberate deviations
@@ -47,7 +47,8 @@ kept one switch away from the measured behaviour so a capture can settle it.
 | release tail | a voice holds its pool record until its envelope reaches zero | the record is freed at the note's written end (`releaseTail` off) | with the tail on, a listener rejects the render at a named timestamp; with it off, accepts it | *29* in open-questions.md |
 | compressor | `SMS WaveHammer` at −18 dB / 10:1 ends the chain | off by default | the listener judged it wrong the first time it ran; what is unsettled is the crest factor reaching it, not the DSP | *38* |
 | stereo narrowing | the centre feed of the 7.1 upmix folds every pan to `2 − √2` of its width for a stereo listener | the file's own pans; the fold's +4.645 dB gain is applied | the listener asked for the file's own image | *39* |
-| note onsets | a note begins at the first frame of the 256-frame block it falls in | sample-accurate | reproducing it rests on the block grid being song-aligned, which is an inference; a capture would settle it | *3* |
+| a note's end | a release shorter than a chunk lasts one chunk, 5.3 ms, and a freed record's ladder stops in one frame | a release of at least 20 ms and a 20 ms fade on the ladder's tail (`declick` on) | the listener heard both click on *Rhombitruncated*, and heard them go | *61* |
+| note onsets and gates | a note begins, and its gate is read closed, only at the top of a 256-frame chunk | sample-accurate, with the engine's whole-chunk ramp after each | reproducing it rests on the block grid being song-aligned, which is an inference; a capture would settle it | *3* |
 
 ### The lesson the reverb left behind
 

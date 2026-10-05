@@ -26,7 +26,7 @@ import { CONTROLS } from '../controls/kit.ts';
 import { alsProjectFiles, sequencerToAls, type AlsExportResult } from '@lbptracker/lib/als.ts';
 import type { AlsInstrumentSource } from '@lbptracker/lib/als-sampler.ts';
 import { MASTER_DEFAULTS, type MasterSettings } from '@lbptracker/lib/audio/master.ts';
-import { readInstrument, usedSlots } from '@lbptracker/lib/rinstrument.ts';
+import { readInstrument, usedSlots, type RInstrument } from '@lbptracker/lib/rinstrument.ts';
 import { type Sequencer } from '@lbptracker/cwlib/project.ts';
 import { loadResource } from '@lbptracker/cwlib/resource.ts';
 import { webInflate } from '@lbptracker/cwlib/platform/web.ts';
@@ -56,6 +56,39 @@ async function fetchBytes(path: string): Promise<Uint8Array> {
 }
 
 /**
+ * An instrument a song uses, without its samples, fetched once.
+ *
+ * ❗ **Every set needs these, the instruments option or not**: the echo send
+ * the engine plays is the instrument's own `Params[25]`, which the placement
+ * only bends (`AlsExportOptions.instrumentSettings`). A `.rinst` is 149 to
+ * 298 bytes, and only a number off it goes into the set.
+ */
+const settings = new Map<number, Promise<RInstrument | undefined>>();
+function settingsFor(guid: number): Promise<RInstrument | undefined> {
+  let hit = settings.get(guid);
+  if (hit === undefined) {
+    hit = (async () => {
+      const row = rinstIndex?.get(guid);
+      if (!row) return undefined;
+      return readInstrument((await loadResource(await fetchBytes(`fixtures/rinst/${row.file}`), webInflate)).data);
+    })();
+    // A failure is forgotten, so the next export tries again.
+    hit.catch(() => settings.delete(guid));
+    settings.set(guid, hit);
+  }
+  return hit;
+}
+
+async function settingsOf(seq: Sequencer): Promise<Map<number, RInstrument>> {
+  const out = new Map<number, RInstrument>();
+  await Promise.all([...new Set(seq.tracks.map((t) => t.guid))].map(async (guid) => {
+    const instrument = await settingsFor(guid);
+    if (instrument) out.set(guid, instrument);
+  }));
+  return out;
+}
+
+/**
  * The instruments a song uses and the samples they play, fetched once each.
  *
  * Kept across exports: a second export of the same song, or of the next one,
@@ -66,9 +99,8 @@ function sourceFor(guid: number): Promise<AlsInstrumentSource | undefined> {
   let hit = sources.get(guid);
   if (hit === undefined) {
     hit = (async () => {
-      const row = rinstIndex?.get(guid);
-      if (!row) return undefined;
-      const instrument = readInstrument((await loadResource(await fetchBytes(`fixtures/rinst/${row.file}`), webInflate)).data);
+      const instrument = await settingsFor(guid);
+      if (!instrument) return undefined;
       const samples = new Map<number, { name: string; bytes: Uint8Array }>();
       await Promise.all(usedSlots(instrument).map(async ({ guid: sampleGuid }) => {
         const file = smpIndex?.get(sampleGuid)?.file;
@@ -126,21 +158,23 @@ export function mountAlsExport(opts: {
       : undefined;
     button.textContent = withInstruments ? 'Download .zip' : 'Download .als';
     let instruments: Map<number, AlsInstrumentSource> | undefined;
-    if (withInstruments) {
-      setStatus('fetching the instruments and their samples…');
-      try {
-        instruments = await instrumentsOf(seq);
-      } catch (error) {
-        if (mine === generation) setStatus(`could not fetch the instruments: ${(error as Error).message}`, true);
-        return;
-      }
-      if (mine !== generation) return;
+    let instrumentSettings: Map<number, RInstrument> | undefined;
+    // The settings alone are small and kept, so they fetch without a word.
+    if (withInstruments) setStatus('fetching the instruments and their samples…');
+    try {
+      if (withInstruments) instruments = await instrumentsOf(seq);
+      else instrumentSettings = await settingsOf(seq);
+    } catch (error) {
+      if (mine === generation) setStatus(`could not fetch the instruments: ${(error as Error).message}`, true);
+      return;
     }
+    if (mine !== generation) return;
     result = sequencerToAls(seq, {
       bakeSwing: als.on('bakeSwing'),
       mergeRows: als.on('mergeRows'),
       instrumentName: (guid: number) => rinstIndex?.get(guid)?.file.replace('.rinst', ''),
       instruments,
+      instrumentSettings,
       clipSteps,
       masterBus,
     });

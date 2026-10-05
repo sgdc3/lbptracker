@@ -381,6 +381,107 @@ test('the mixer renders the same audio whatever the block size', () => {
   }
 });
 
+// ❗ A one-step `triangle_wave` note clicked at both ends. Its attack and its
+// release are 12 and 38 frames, both shorter than a block, and the engine ramps
+// each across the whole chunk that follows the event -- a note starts and a
+// gate closes only at a chunk's top (`0x1cc6`, `0x1f65`). On the mixer's own
+// block grid the ramp ran to the next boundary instead, so how long a note took
+// to fade depended on where in a block it happened to end: 24 frames for one,
+// 232 for the next.
+test('a stage shorter than a block is ramped across the block after its event, wherever that falls', () => {
+  const flat: SampleBuffer = {
+    channels: [new Float32Array(4800).fill(0.5)],
+    sampleRate: 48000,
+    loop: { start: 0, end: 4800 },
+  };
+  // `triangle_wave` at modulation 0: a stage lasts `param² × 4` seconds.
+  const envelope = { attack: 0.008 ** 2 * 4, decay: 0, sustain: 1, release: 0.014 ** 2 * 4 };
+  // The first call of each pair advances by a 250th of the segment (`0x201f`).
+  const head = 256 / 48000 / 250;
+  for (const start of [0, 100, 250]) {
+    for (const length of [1000, 1100, 1250]) {
+      const mixer = new Mixer(48000);
+      mixer.play({
+        sample: flat, playbackRate: 1, gain: 1, pan: 0,
+        startFrame: start, endFrame: start + length, envelope,
+      });
+      const left = new Float32Array(4096);
+      const right = new Float32Array(4096);
+      mixer.render(left, right);
+      const where = `start ${start}, length ${length}`;
+      const attackS = head / envelope.attack;
+      assert.ok(
+        Math.abs(left[start + 128] - 0.5 * (attackS + (1 - attackS) * 0.5)) < 1e-4,
+        `${where}: half way up at the onset block's middle, ${left[start + 128]}`,
+      );
+      assert.equal(left[start + 256], 0.5, `${where}: full from the second block`);
+      const gate = start + length;
+      const releaseS = 1 - head / envelope.release;
+      assert.ok(
+        Math.abs(left[gate + 128] - 0.5 * releaseS * 0.5) < 1e-4,
+        `${where}: half way down a block after the gate, ${left[gate + 128]}`,
+      );
+      assert.ok(left[gate + 255] > 0, `${where}: still sounding on the block's last frame`);
+      assert.ok(left.subarray(gate + 256).every((v) => v === 0), `${where}: silent after it`);
+    }
+  }
+});
+
+// ❗ Ours, not the engine's (question 61): with `declick` the release lasts at
+// least 20 ms, so `triangle_wave`'s 0.8 ms is no longer stretched over just one
+// block, and the ladder's tail fades instead of stopping when the record would
+// be freed. Without it the voice is the engine's, which the test above pins.
+test('declick holds a short release to 20 ms and fades what a shut ladder holds', () => {
+  const flat: SampleBuffer = {
+    channels: [new Float32Array(4800).fill(0.5)],
+    sampleRate: 48000,
+    loop: { start: 0, end: 4800 },
+  };
+  const run = (declick: boolean, filtered: boolean) => {
+    const mixer = new Mixer(48000);
+    mixer.play({
+      sample: flat, playbackRate: 1, gain: 1, pan: 0,
+      endFrame: 2048,
+      envelope: { attack: 0, decay: 0, sustain: 1, release: 0.014 ** 2 * 4 },
+      // `e_perc_1` at full modulation, in miniature: envelope B shuts the
+      // cutoff within a millisecond of the gate and the ladder freezes on
+      // whatever it held.
+      filter: filtered
+        ? {
+            settings: { cutoff: 0.3, resonance: 0, keyTrack: 0, envAmount: 0.99 },
+            envelope: { attack: 0, decay: 0, sustain: 1, release: 0.001 },
+          }
+        : undefined,
+      declick,
+    });
+    const left = new Float32Array(8192);
+    mixer.render(left, new Float32Array(8192));
+    return left;
+  };
+  const lastSound = (x: Float32Array) => {
+    let i = x.length - 1;
+    while (i > 0 && x[i] === 0) i -= 1;
+    return i;
+  };
+  // The release alone: a block without declick, 20 ms -- 960 frames -- with it.
+  assert.equal(lastSound(run(false, false)), 2048 + 255);
+  const held = lastSound(run(true, false)) - 2048;
+  assert.ok(held >= 960 && held < 960 + 256, `the release lasts ${held} frames`);
+  // The shut ladder: the engine drops what it holds in one frame ...
+  const bare = run(false, true);
+  const end = lastSound(bare);
+  assert.ok(Math.abs(bare[end]) > 0.01, `the engine's last frame holds ${bare[end]}`);
+  // ... and declick takes it down over 20 ms: nothing after the gate moves
+  // faster than the ladder's own fall (0.0024 a frame here, against the
+  // engine's 0.127 in one), and the voice still ends.
+  const soft = run(true, true);
+  let worst = 0;
+  for (let i = 2049; i < soft.length; i += 1) worst = Math.max(worst, Math.abs(soft[i] - soft[i - 1]));
+  assert.ok(worst < 0.005, `the largest step after the gate is ${worst}`);
+  const over = lastSound(soft);
+  assert.ok(over < 2048 + 960 + 256 + 960, `the tail ends at ${over}`);
+});
+
 test('samplesPerStep converts tempo to frames', () => {
   // 120 BPM, 4 steps per beat, 48 kHz -> half a second per beat, 6000 per step.
   assert.equal(samplesPerStep(48000, 120, 4), 6000);

@@ -279,9 +279,10 @@ load 16–36% → 11–26%. Half of that was 1.19 `Math.sin` calls per voice-fra
 **a delay bug it uncovered**: a chunked voice counted its start delay one chunk at a time, so a
 voice starting three minutes into an offline render did 78,000 empty iterations before its first
 sample (the full-song render went from 35.8 s to 63.2 s the moment LFO voices started chunking,
-which is how it was found). ⚠️ The chunk grid has to stay the block's, not the voice's:
+which is how it was found). ⚠️ The chunk grid must not be counted from the caller's slices:
 `delay + 128k` boundaries make an offline and a live render disagree, and `audio.test.ts`'s
-"same audio whatever the block size" caught it within a minute.
+"same audio whatever the block size" caught it within a minute. A grid counted in the voice's
+own rendered frames is a different thing and passes it — *60*.
 
 **Four things measured that were not worth doing**: per-quantum overhead does not exist (128 and
 4,096 frames cost the same to the millisecond); hoisting `this.*` into locals made it 3% *slower*;
@@ -307,6 +308,27 @@ traced them on 2026-09-01 had already called "a start value and the step to walk
 the block". A later, narrower reading replaced a broader earlier one because it was newer. ⚠️
 Count the calls before naming the cadence; when a stack slot holds two of something, ask what the
 second one is; and when a reading contradicts an older commit message, read the older one first.
+
+## 60. One-step `triangle_wave` notes click at both ends — the ramp after an event is a whole chunk
+
+**Answer**: the engine starts a note and reads a closed gate only at the top of a chunk, so a
+stage shorter than a chunk is ramped across the whole chunk after its event — *The gate and the
+ramps* in [synth-engine.md](synth-engine.md). `Voice` starts its segment grid at the note's first
+frame and again at the gate (`gridOrigin` in `mixer.ts`, 2026-10-05); `audio.test.ts` pins it at
+nine onset and gate positions, and fails on the old grid.
+
+Measured on sixteen one-step `triangle_wave` notes at 120 bpm, modulation 0 (attack 12 frames,
+release 38): with the mixer's running clock as the grid, the fade after the gate lasted anything from 38
+to 293 frames depending on where in a block the note ended (48 to 272 on these sixteen), and the energy above 8 kHz in a 256-frame
+window over the end rose to **+16.0 dB** over the sustained note's own (mean +2.1); at the onset,
+up to +0.2 dB. On the voice's grid every end measures −2.3 dB and every onset −8.8 dB.
+
+❌ **A residue was called inaudible because both sides were "the same curve with different
+knots".** The mixer's grid was the global block clock on the argument that a voice in the engine
+always starts at a block's first frame — which is exactly why its grid is *the voice's*: with
+onsets placed to the frame (*3*), the global grid put a knot anywhere in a note's first and last
+block, and for a stage shorter than a block the knot *is* the stage's length. ⚠️ Piecewise-linear
+ramps with different knots are the same sound only while each stage spans several knots.
 
 ## 45. Where the ladder sits — one pair per record, after the sum and a clip
 

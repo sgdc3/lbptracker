@@ -164,6 +164,14 @@ const oneShot = (process.env.LBP_ONESHOT ?? 'gate') as 'full' | 'natural' | 'gat
 const releaseTail = process.env.LBP_RELEASE_TAIL === '1';
 
 /**
+ * `LBP_DECLICK=0` renders a note's end as the engine does: a release shorter
+ * than a chunk ramped across one chunk, and a freed record's ladder stopped in
+ * one frame. See `RenderOptions.declick` and question 61 in open-questions.md
+ * -- the opening seconds of *Rhombitruncated* are the reproducer.
+ */
+const declick = process.env.LBP_DECLICK !== '0';
+
+/**
  * `LBP_NO_REVERB=1` / `LBP_NO_ECHO=1` -- for comparing against a recording of
  * the game with its effects turned off. Each removes that effect's **return**;
  * the sends still feed the output clip, because that is where the engine's
@@ -276,6 +284,7 @@ const result = await renderSequencer(seq, loadInstrument, {
   pitchShift,
   oneShot,
   releaseTail,
+  declick,
   reverb: withReverb,
   echo: withEcho,
 });
@@ -318,7 +327,7 @@ console.log(
 console.log(`pre-normalisation RMS ${result.rms.toFixed(5)}`);
 
 const { pcm, norm } = toPcm16(result.left, result.right);
-const out = `fixtures/level-seq${seq.uid}${oneShot === 'gate' ? '' : `-${oneShot}`}${withReverb ? '' : '-noreverb'}${withEcho ? '' : '-noecho'}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${clip ? '' : '-noclip'}${
+const out = `fixtures/level-seq${seq.uid}${oneShot === 'gate' ? '' : `-${oneShot}`}${withReverb ? '' : '-noreverb'}${withEcho ? '' : '-noecho'}${fromArg ? `-at${Math.round(fromArg)}` : ''}${onlyGuids.length ? `-only${onlyGuids.join('_')}` : ''}${skipGuids.length ? '-skip' : ''}${noKeyTrack ? '-nokeytrack' : ''}${unpitchedGuids.length ? '-unpitchedkit' : ''}${Number.isFinite(voiceLimit) ? '' : '-novoicelimit'}${clip ? '' : '-noclip'}${declick ? '' : '-nodeclick'}${
   pitchShift.size ? `-pitch${[...pitchShift.keys()].join('_')}` : ''
 }${unpitchedPercussion ? '-unpitched' : ''}.wav`;
 await writeFile(out, writeWav(pcm, 2, RATE));

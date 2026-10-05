@@ -62,6 +62,7 @@ self.onmessage = async (event: MessageEvent) => {
      */
     oneShot?: 'full' | 'natural' | 'gate';
     voiceLimit?: number;
+    declick?: boolean;
     reverb?: boolean;
     echo?: boolean;
     clip?: boolean;
@@ -89,6 +90,7 @@ self.onmessage = async (event: MessageEvent) => {
         // Each absent field means the measured default; the page always sends them.
         ...(message.oneShot === undefined ? {} : { oneShot: message.oneShot }),
         ...(message.voiceLimit === undefined ? {} : { voiceLimit: message.voiceLimit }),
+        ...(message.declick === undefined ? {} : { declick: message.declick }),
         ...(message.reverb === undefined ? {} : { reverb: message.reverb }),
         ...(message.echo === undefined ? {} : { echo: message.echo }),
         ...(message.clip === undefined ? {} : { clip: message.clip }),

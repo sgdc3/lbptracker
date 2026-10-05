@@ -425,6 +425,8 @@ function noteOn(note: number, velocity = 96, channel = LOCAL): void {
       // No `endFrame`: the gate stays open until `release` closes it.
       release: adsr ? 0 : Math.round(0.12 * context.sampleRate),
       envelope: adsr,
+      // As the player's voices are: see `RenderOptions.declick`.
+      declick: true,
       filter: overrideFilter() ?? currentFilter(),
       lfos: overrideLfos() ?? currentLfos(),
       tag,
@@ -538,6 +540,7 @@ function playNote(note: number, atSeconds = 0): void {
       ),
       release: adsr ? 0 : Math.round(0.12 * context.sampleRate),
       envelope: adsr,
+      declick: true,
       filter,
       lfos,
     },

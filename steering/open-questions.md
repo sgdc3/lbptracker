@@ -5,8 +5,8 @@ here blocks the build**: the note format, the containers, the level walk, the as
 whole signal path are measured, and import, playback and export are built. What is left is four
 *decisions* where the project knowingly departs from the measured engine, a short list of measured
 residues nothing models yet, one loose end left over from the export, three things about the chip
-tint that only Create Mode can answer, whether the Ableton set opens in Live 12, how its Samplers sound and where its
-swing groove puts the notes, and three
+tint that only Create Mode can answer, whether the Ableton set opens in Live 12, how its Samplers sound, where its
+swing groove puts the notes and whether Live's Delay is the engine's echo, and three
 questions that are not about fidelity at all.
 When one gets resolved, move the answer into the descriptive file it belongs to and delete the
 entry.
@@ -125,14 +125,43 @@ left of this one.
 
 ## 3. Note onsets — sample-accurate, where the engine places them on its block
 
-`0x1cc6`–`0x1cdc` computes the in-chunk onset offset as `trunc((start − frac(p)) / N)`, which is 0
-for every chunk longer than a frame: **a note begins at the first frame of the 256-frame block it
-falls in** ([synth-engine.md](synth-engine.md)), 5.33 ms at 48 kHz. Reproducing it would move every
-onset later by 0 to 5.33 ms and rests on the block grid being song-aligned — `p` is 0 at the first
-block, so it should be, but that is an inference. **What would settle it**: capture a fast unswung
-drum pattern and measure inter-onset intervals against the exact step clock. On a 256-frame grid
-the deviation is a sawtooth with a 5.33 ms range, which is unmistakable; sample-accurate onsets
-have none.
+**A note begins at the top of a chunk** ([synth-engine.md](synth-engine.md)): the one after the
+chunk that crossed its step, or the one its sub-step falls in. Reproducing it would move every
+on-step onset later by 0 to 5.33 ms and every sub-step onset earlier by as much, and rests on the
+block grid being song-aligned — `p` is 0 at the first block, so it should be, but that is an
+inference. The gate is the same deviation: the engine first reads it closed at the next chunk's
+top, 0 to 5.33 ms late, and the tracker closes it on its frame. What the tracker does keep is the
+whole-chunk ramp after each of the two events (*60* in [answered-questions.md](answered-questions.md)),
+so only the timing differs, not the shape. **What would settle it**: capture a fast unswung drum
+pattern and measure inter-onset intervals against the exact step clock. On a 256-frame grid the
+deviation is a sawtooth with a 5.33 ms range, which is unmistakable; sample-accurate onsets have
+none.
+
+## 61. The end of a voice — `RenderOptions.declick`, default **on**
+
+Two ways a note's natural end clicks in the engine as read, both on *Rhombitruncated*
+(`?level=91ab1a669d65557216a37d38717b90c68409d4dc&seq=44112`): a release shorter than a chunk is
+ramped across one chunk (*The gate and the ramps* in [synth-engine.md](synth-engine.md)), and on
+`triangle_wave`'s 0.8 ms release under the intro's octaves, ≈120–175 Hz, that is less than a cycle;
+and a freed record's ladder stops in one frame whatever it holds (*The voice pool*, same file), which
+on `e_perc_1`'s bongo at full modulation is 96 of the kit's 181 transients over the song, always
+1,281 frames after a gate. The project's owner heard both on 2026-10-05, heard the triangle's go
+when its release was forced to 20 ms, and asked for them gone.
+
+What ships: `declick` holds the amplitude release to at least 20 ms (`DECLICK_SECONDS`) and, after
+the sound ends — the release or the note's volume reaching zero, or an unlooped sample running out
+— fades the ladder's output over the same 20 ms instead of stopping it (`Voice.beginTail` in
+`mixer.ts`). A steal is untouched: the engine takes a stolen record mid-sample, and so does this.
+Measured on the song: the kit's voice-end transients 96 → 0, and the triangle alone within −51 dB
+of the render the owner approved by ear. `LBP_DECLICK=0` and `RenderOptions.declick: false` render
+the engine as read.
+
+⚠️ **The bytes say the game clicks too** — `0x1750` squares the release, `0x1f65` reads the gate
+once per chunk, `0x3093` frees with the ladder's states untouched — so this is a deviation that
+removes something the game very likely has. **What would settle it**: capture the first five
+seconds of *Rhombitruncated* from the game. A bongo hit every 0.461 s from 0.257 s with a click
+27 ms after each note's end, and triangle notes ending in 5 ms, mean the engine is as read and
+`declick` stays a choice; clean ends mean something past `0x3093` is unread.
 
 ## Residues — measured, not modelled, not audible so far
 
@@ -141,10 +170,14 @@ have none.
   per-sample delay there. Tap set 10's shortest is 5.019 ms = 241 samples, so preset 3
   (`ReverbSetting` 0) is the one place this could show.
 - **The chunk bounds inside a block.** The engine splits a 256-frame block into chunks at the
-  step clock's `frac(4 · position)` bounds and evaluates its ramps per chunk; the tracker's
-  segments end on the block grid and at the voice's own events. Both are piecewise-linear ramps
-  between the same curve's values, and only the knots differ, by less than a block. Reproducing
-  the engine's bounds needs the sequencer clock inside the mixer, which the keyboard has none of.
+  step clock's `frac(4 · position)` bound and evaluates its ramps per chunk; the tracker's
+  segments are whole blocks counted from a note's first frame and from its gate (*60*). A float32
+  transcription of `0x0ba0`–`0x0c4c` run for two minutes splits 4.2% of blocks at 120 bpm (2.1% at
+  60, 8.5% at 240), and because the bound clusters at step boundaries the chunk after a note's end
+  is a whole block only 75% of the time and shorter than 64 frames 6% of it. So in the game a
+  release shorter than a chunk sometimes fades faster than here — the knots matter whenever a
+  stage is shorter than the chunk it lands in. Reproducing the bounds needs the sequencer clock
+  inside the mixer, which the keyboard has none of.
 - **Whether `q` should reach 3.** With the correct filter reading `musicbox` at full modulation
   has resonance 0.856 at `freq ≈ 0.019`, and the Stilson/Smith compensation grows as the cutoff
   falls, so `q ≈ 3.1`. The coefficient formula matches instruction for instruction; the saturation
@@ -363,6 +396,25 @@ in `data2`. Two of them isolate the cases above:
   odd sixteenths and none off the grid.
 - `Unfinished 33` (uid 110511, the same file) is the off-grid case: swing 75, the corpus's
   highest, with 944 of its 1,436 notes on thirds of a step.
+
+## 59. The Ableton echo — Live's Delay taken to work as the engine's does
+
+The Echo return is Live's Delay at the engine's time and feedback, its fader at `EchoMix`, and each
+part sends into it at the engine's own send ([ableton-interchange.md](ableton-interchange.md),
+*The returns*). The numbers are the engine's, checked over 150 sequencers. How Live uses them is
+taken, not read:
+
+- **The feedback law.** The engine's `n`-th repeat is at `fb^(n−1)` (`0x07c0`,
+  [synth-engine.md](synth-engine.md)); Live's `Feedback` is taken to be the same linear gain in the
+  loop.
+- **The wet level.** Dry/Wet at 100 % is taken to put the delayed signal out at unity. The
+  `DryWetMode` 1 that Live's own empty set carries is not decoded.
+- **The time.** The synced menu was read off the device (4 lit for index 3), not timed.
+
+What would settle all three: Live's meters, as for the Sampler's level (*How it was checked*, same
+file). A sustained sine whose period divides the delay goes into the Echo return at send 1, with
+its fader at 0 dB. If both laws hold, the return's peak box climbs to `1/(1 − fb)` of the input.
+Two or three sets at different feedbacks would separate the two laws.
 
 ## 28. What still will not open — the archive sweep's leftovers, and Bonsai's
 

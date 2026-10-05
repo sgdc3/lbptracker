@@ -26,7 +26,7 @@ import { nodeInflate } from '@lbptracker/cwlib/platform/node.ts';
 import { loadResource } from '@lbptracker/cwlib/resource.ts';
 import { alsProjectFiles, sequencerToAls } from '../src/als.ts';
 import type { AlsInstrumentSource } from '../src/als-sampler.ts';
-import { readInstrument, usedSlots } from '../src/rinstrument.ts';
+import { readInstrument, usedSlots, type RInstrument } from '../src/rinstrument.ts';
 import { MASTER_DEFAULTS } from '../src/audio/master.ts';
 
 const LEVELS = process.env.LBP_LEVELS ?? 'C:/Users/sgdc3/Desktop/LBP/toolkit/tools/sequencerdump/data';
@@ -79,16 +79,34 @@ function check(xml: string): string[] {
   return problems;
 }
 
+const manifest = async (dir: string) => new Map((JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8')) as { guid: number; file: string }[]).map((r) => [r.guid, r.file]));
+
+/**
+ * The instruments a sequencer uses, without their samples, from the extracted
+ * fixtures -- what every set needs, as the page fetches them for every export:
+ * the echo send the engine plays is the instrument's own (`instrumentSettings`).
+ */
+const parsed = new Map<number, RInstrument | undefined>();
+async function loadSettings(seq: Sequencer): Promise<Map<number, RInstrument>> {
+  const rinst = await manifest('fixtures/rinst').catch(() => new Map<number, string>());
+  const out = new Map<number, RInstrument>();
+  for (const guid of new Set(seq.tracks.map((t) => t.guid))) {
+    if (!parsed.has(guid)) {
+      const file = rinst.get(guid);
+      parsed.set(guid, file === undefined ? undefined
+        : readInstrument((await loadResource(new Uint8Array(await readFile(path.join('fixtures/rinst', file))), nodeInflate)).data));
+    }
+    const instrument = parsed.get(guid);
+    if (instrument !== undefined) out.set(guid, instrument);
+  }
+  return out;
+}
+
 /** The instruments a sequencer uses, with their samples, from the extracted fixtures. */
 async function loadInstruments(seq: Sequencer): Promise<Map<number, AlsInstrumentSource>> {
-  const manifest = async (dir: string) => new Map((JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8')) as { guid: number; file: string }[]).map((r) => [r.guid, r.file]));
-  const rinst = await manifest('fixtures/rinst');
   const smp = await manifest('fixtures/smp');
   const out = new Map<number, AlsInstrumentSource>();
-  for (const guid of new Set(seq.tracks.map((t) => t.guid))) {
-    const file = rinst.get(guid);
-    if (!file) continue;
-    const instrument = readInstrument((await loadResource(new Uint8Array(await readFile(path.join('fixtures/rinst', file))), nodeInflate)).data);
+  for (const [guid, instrument] of await loadSettings(seq)) {
     const samples = new Map<number, { name: string; bytes: Uint8Array }>();
     for (const { guid: sampleGuid } of usedSlots(instrument)) {
       const name = smp.get(sampleGuid);
@@ -120,7 +138,8 @@ if (out !== undefined) {
     : [...sequencers].sort((a, b) => b.seq.tracks.length - a.seq.tracks.length)[0];
   if (!pick) throw new Error(`no sequencer ${wantUid} in ${LEVELS}`);
   const instruments = withInstruments ? await loadInstruments(pick.seq) : undefined;
-  const result = sequencerToAls(pick.seq, { instrumentName, bakeSwing, instruments, masterBus });
+  const instrumentSettings = await loadSettings(pick.seq);
+  const result = sequencerToAls(pick.seq, { instrumentName, bakeSwing, instruments, instrumentSettings, masterBus });
   const problems = check(result.xml);
   if (problems.length > 0) throw new Error(problems.join('; '));
   if (instruments) {
@@ -157,7 +176,8 @@ if (out !== undefined) {
   let sampleBytes = 0;
   for (const { level, seq } of sequencers) {
     const instruments = withInstruments ? await loadInstruments(seq) : undefined;
-    const result = sequencerToAls(seq, { instrumentName, instruments, masterBus });
+    const instrumentSettings = await loadSettings(seq);
+    const result = sequencerToAls(seq, { instrumentName, instruments, instrumentSettings, masterBus });
     sampleBytes += result.samples.reduce((n, s) => n + s.bytes.length, 0);
     const problems = check(result.xml);
     if (problems.length > 0) {

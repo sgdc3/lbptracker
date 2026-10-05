@@ -34,7 +34,8 @@
  * | the volume ramp -- and with a Sampler, every note's level | per-note pressure |
  * | the modulation | per-note slide, CC 74 -- with a Sampler, the filter cutoff it gives; its level rides on the pressure |
  * | `level` x the channel's volume, and `pan` | the track's volume and pan, through Live's pan law backwards so each channel gets the engine's gain (`mixerOf`) |
- * | `reverbSend`, `echoSend` | sends A and B, into two return tracks |
+ * | `reverbSend` | send A, into the Reverb return |
+ * | `echoSend` | send B, into the Echo return: the engine's send, the instrument's own `Params[25]` bent by it (`echoSendLevel`) |
  * | the chip's tint | the nearest of Live's 70 colours (`liveColour`), on the track and on each clip |
  * | tempo | the master's tempo |
  * | the tracker's master bus, when asked for | Live's Compressor and Limiter on the master (`als-master.ts`) |
@@ -63,6 +64,9 @@ import {
   type AlsInstrumentSource, type SamplerSample,
 } from './als-sampler.ts';
 import type { MasterSettings } from './audio/master.ts';
+import { evaluateParam } from './envelope.ts';
+import { OUTPUT_PARAMS, echoSendLevel } from './params.ts';
+import type { RInstrument } from './rinstrument.ts';
 import { clipStepsFor } from './song.ts';
 import { swungFrame } from './swing.ts';
 
@@ -124,6 +128,18 @@ export interface AlsExportOptions {
    * the set is then a file of notes and nothing else of the game's.
    */
   readonly instruments?: ReadonlyMap<number, AlsInstrumentSource>;
+  /**
+   * The game's instruments by GUID, without their samples, for what the
+   * engine reads off an instrument into the mix: its own echo send,
+   * `Params[25]`, which the placement's `echoSend` only bends
+   * (`echoSendLevel`). `instruments` supplies it as well; this is for a set
+   * of notes alone, which carries no instrument of the game's but still
+   * plays each part into the echo at the game's level.
+   *
+   * ⚠️ An instrument found in neither is taken to send nothing of its own,
+   * as 33 of the 68 do; the placement's field then still mutes or forces it.
+   */
+  readonly instrumentSettings?: ReadonlyMap<number, RInstrument>;
   /**
    * Each placement's note grid in steps, by its index in `Sequencer.tracks`:
    * how long its chip is on the board, and so its clip.
@@ -1000,6 +1016,47 @@ export function sequencerToAls(sequencer: Sequencer, options: AlsExportOptions =
   parts.forEach((part, index) => {
     for (const placement of part.tracks) partOf.set(placement, index);
   });
+  const sameMixer = (a: MixerState, b: MixerState) =>
+    a.volume === b.volume && a.pan === b.pan && a.sends.every((s, i) => s === b.sends[i]);
+
+  const events = schedule(sequencer);
+  const byPlacement = new Map<number, typeof events>();
+  for (const event of events) {
+    const list = byPlacement.get(event.track) ?? [];
+    list.push(event);
+    byPlacement.set(event.track, list);
+  }
+
+  /**
+   * Each part's echo send as the engine plays it: the instrument's own
+   * `Params[25]` at the modulation the part's notes mostly open at, bent by
+   * the placement's `echoSend` (`echoSendLevel`).
+   *
+   * ❗ **The placement's field is not the send.** It is a bipolar offset: 0.5
+   * leaves the instrument's own send alone, 0 mutes it and 1 forces unity.
+   * Written as the send itself, every part between 0 and 1 went into Live's
+   * echo too loud, a median 19.6 dB over the game where both echo
+   * (`steering/ableton-interchange.md`), and a part at 0.5 or under on an
+   * instrument with no send of its own echoed in Live and not in the game.
+   *
+   * A Live send is one per track, so a note opening at another modulation
+   * takes its part's: 615 of the corpus's 953,791 notes.
+   */
+  const echoSends = parts.map((part) => {
+    const offset = 2 * part.track.echoSend - 1;
+    const send = (options.instruments?.get(part.track.guid)?.instrument
+      ?? options.instrumentSettings?.get(part.track.guid))?.params[OUTPUT_PARAMS.send];
+    if (send === undefined) return echoSendLevel(0, offset);
+    const counts = new Map<number, number>();
+    for (const index of part.tracks) {
+      for (const event of byPlacement.get(index) ?? []) {
+        const m = Math.round(event.modulation * 15);
+        counts.set(m, (counts.get(m) ?? 0) + 1);
+      }
+    }
+    const commonest = [...counts].reduce((best, entry) => (entry[1] > best[1] ? entry : best), [0, -1])[0];
+    return echoSendLevel(evaluateParam(send, commonest / 15), offset);
+  });
   /**
    * A part's mixer, as Live holds it: the engine's gain on each channel, put
    * through Live's pan law backwards.
@@ -1017,27 +1074,19 @@ export function sequencerToAls(sequencer: Sequencer, options: AlsExportOptions =
    *
    * `level` times the channel's volume is the rest of the gain the placement
    * and the mixer own; the instrument's `Params[24]` is the instrument's, and
-   * the instrument is whatever the user loads.
+   * the instrument is whatever the user loads. The echo send is the engine's
+   * (`echoSends`).
    */
-  const mixerOf = (track: Track): MixerState => {
+  const mixerOf = (part: number): MixerState => {
+    const track = parts[part].track;
     const p = Math.min(1, Math.max(0, track.pan));
     const gain = track.level * channelVolume(sequencer, track);
     return {
       volume: gain * Math.SQRT2 * Math.hypot(1 - p, p),
       pan: (4 / Math.PI) * Math.atan2(p, 1 - p) - 1,
-      sends: [track.reverbSend, track.echoSend],
+      sends: [track.reverbSend, echoSends[part]],
     };
   };
-  const sameMixer = (a: MixerState, b: MixerState) =>
-    a.volume === b.volume && a.pan === b.pan && a.sends.every((s, i) => s === b.sends[i]);
-
-  const events = schedule(sequencer);
-  const byPlacement = new Map<number, typeof events>();
-  for (const event of events) {
-    const list = byPlacement.get(event.track) ?? [];
-    list.push(event);
-    byPlacement.set(event.track, list);
-  }
 
   let notes = 0;
   let glides = 0;
@@ -1350,13 +1399,13 @@ export function sequencerToAls(sequencer: Sequencer, options: AlsExportOptions =
     // 2026-09-24 and steps the same way as this now (`mixerEvents` in `midi.ts`).
     starts.sort((a, b) => a.at - b.at);
     let current = starts[0]?.part ?? group[0];
-    const opening = mixerOf(parts[current].track);
+    const opening = mixerOf(current);
     const switches: { at: number; mixer: MixerState }[] = [];
     let held = opening;
     for (const start of starts) {
       if (start.part === current) continue;
       current = start.part;
-      const next = mixerOf(parts[current].track);
+      const next = mixerOf(current);
       if (sameMixer(next, held)) continue;
       switches.push({ at: start.at, mixer: next });
       held = next;

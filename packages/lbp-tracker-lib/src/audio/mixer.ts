@@ -16,7 +16,7 @@ import {
   evaluateParam,
 } from '../envelope.ts';
 import type { InstrumentParam } from '../rinstrument.ts';
-import { LFO_PARAMS, OUTPUT_PARAMS } from '../params.ts';
+import { LFO_PARAMS, OUTPUT_PARAMS, echoSendLevel } from '../params.ts';
 import type { Interpolator } from './interpolate.ts';
 import { INTERPOLATORS, DEFAULT_INTERPOLATOR } from './interpolate.ts';
 import type { LfoSettings } from './lfo.ts';
@@ -192,6 +192,27 @@ export interface VoiceSpec {
    * seconds** and none of them ever went away.
    */
   readonly cutFrame?: number;
+  /**
+   * Soften the two ways a note's natural end clicks. **Ours, not the game's**,
+   * and off here, so a bare `VoiceSpec` is the engine's; `renderSequencer`
+   * turns it on by default (`RenderOptions.declick`).
+   *
+   * 1. The amplitude release lasts at least {@link DECLICK_SECONDS}. The
+   *    engine ramps a shorter one across one chunk, 5.3 ms, and on a low note
+   *    that is less than a cycle: `triangle_wave`'s 0.8 ms release clicks on
+   *    the octaves under *Rhombitruncated*'s intro.
+   * 2. After the sound ends -- the release reaches zero, the note's volume
+   *    does, or an unlooped sample runs out -- the ladder's output fades over
+   *    the same time instead of stopping. The engine frees the record
+   *    (`0x3093`) with the ladder's ten states as they were, so a ladder that
+   *    envelope B has shut holds a value that drops to zero in one frame:
+   *    `e_perc_1`'s bongo, 96 of its 181 transients over that song.
+   *
+   * A steal (`cutFrame`) is untouched: a record handed to another note is
+   * taken mid-sample in the engine and here. *61* in
+   * steering/open-questions.md has the decision and what would settle it.
+   */
+  readonly declick?: boolean;
   /**
    * `Params[26]`, the **drive**, 0..0.95 -- a soft-clip waveshaper on the
    * sampler's output. 0 is a bypass, exactly.
@@ -393,21 +414,44 @@ export interface VoiceSpec {
  * at `0x24a0`-`0x28e3`, two per oscillator) and the filter's cutoff and
  * resonance. The per-sample loop then steps the rate, the gain and the pan by
  * their per-frame increments (`0x2d5d`, `0x2d78`, `0x2d8f`). A `Voice` does the
- * same over a *segment*: a block of this grid, cut short where its own gate,
- * its cut or its caller's buffer end.
+ * same over a *segment*: a block of the voice's own grid, cut short where its
+ * gate, its cut or its caller's buffer end.
  *
- * ⚠️ **The grid is the mixer's running clock, not the offset within one
- * `render` call**: a live render of 128 frames at a time and an offline render
- * of a whole song must evaluate on the same boundaries, and a segment is
- * evaluated once whoever slices it. `packages/lbp-tracker-lib/test/audio.test.ts`
- * pins "the same audio whatever the block size".
+ * ❗ **The grid starts at the note's first frame and starts again where its
+ * gate closes**, because those are the two events the engine only ever takes
+ * at the top of a chunk: a note found by the walk after one chunk (`0x0eef`,
+ * `0x0f1c`) renders from the next chunk's first frame (`0x1cc6`, the onset
+ * offset that is always 0), and a gate closed by the walk (`0x3a4b`) or at a
+ * chunk's end (`0x29b1`) is read once, at the next chunk's top (`0x1f65`). So
+ * a stage shorter than a chunk -- `triangle_wave`'s 0.8 ms release, its 0.3 ms
+ * attack -- is ramped across the whole chunk after the event, 5.3 ms, and
+ * never clicks. ❌ Until 2026-10-05 the grid was the mixer's running clock:
+ * with onsets and gates placed to the frame (*3* in
+ * steering/open-questions.md) that made the ramp after an event as long as
+ * the distance to the next block boundary, 1 to 256 frames, and short notes
+ * clicked at both ends.
  *
- * ⚠️ Where the engine's chunk bounds fall inside a block depends on the step
- * clock (`frac(4 · position)`), which this mixer does not know; its segments
- * end on the block grid instead. Both are piecewise-linear ramps between the
- * same curve's values; only the knots differ, by less than a block.
+ * ⚠️ **The grid is counted in the voice's own rendered frames, not from the
+ * start of one `render` call**: a live render of 128 frames at a time and an
+ * offline render of a whole song must evaluate on the same boundaries, and a
+ * segment is evaluated once whoever slices it.
+ * `packages/lbp-tracker-lib/test/audio.test.ts` pins "the same audio whatever
+ * the block size".
+ *
+ * ⚠️ The engine also splits a block where the step clock's `frac(4 ·
+ * position)` bound falls (`0x0bf2`), which this mixer does not know, so its
+ * chunk after a note's end is sometimes shorter than a block where this one's
+ * never is -- how often is the chunk-bounds residue in
+ * steering/open-questions.md.
  */
 export const BLOCK_FRAMES = 256;
+
+/**
+ * The shortest amplitude release, and the length of the fade on a ladder's
+ * tail, when `VoiceSpec.declick` is on: 20 ms, the release at which the
+ * project's owner stopped hearing `triangle_wave` click (2026-10-05).
+ */
+export const DECLICK_SECONDS = 0.02;
 
 /** What one segment of a voice wrote, and the sends that were live for it. */
 interface RenderedSpan {
@@ -422,14 +466,11 @@ interface RenderedSpan {
  *
  * `clamp01(bipolar(Params[25], offset))` — the instrument's own send bent by
  * the placement's field, which the engine stores as `2*echoSend - 1` so that
- * 0.5 leaves the instrument alone, 0 mutes it and 1 forces unity. Both halves
- * of that curve are in `packages/lbp-tracker-lib/src/render.ts`, which builds the opening value.
+ * 0.5 leaves the instrument alone, 0 mutes it and 1 forces unity
+ * (`echoSendLevel`). `packages/lbp-tracker-lib/src/render.ts` builds the opening value.
  */
 function echoAt(morph: NonNullable<VoiceSpec['morph']>, mod: number): number {
-  const base = evaluateParam(morph.params[OUTPUT_PARAMS.send] ?? { x: 0, y: 0 }, mod);
-  const offset = morph.echoOffset;
-  const blended = offset < 0 ? base + offset * base : base + offset * (1 - base);
-  return blended < 0 ? 0 : blended > 1 ? 1 : blended;
+  return echoSendLevel(evaluateParam(morph.params[OUTPUT_PARAMS.send] ?? { x: 0, y: 0 }, mod), morph.echoOffset);
 }
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -542,6 +583,19 @@ class Voice {
   /** Frames rendered since this voice started: the automation's clock. */
   private elapsed = 0;
   /**
+   * The `elapsed` frame its segment grid counts from: 0, and then the frame
+   * at which the gate was first found closed. See {@link BLOCK_FRAMES}.
+   */
+  private gridOrigin = 0;
+  private gateOpen = true;
+  /** `VoiceSpec.declick`: the release floor in seconds and the tail in frames, or 0. */
+  private readonly minRelease: number;
+  private readonly tailFrames: number;
+  /** Frames of the ladder's faded tail still to render; see `beginTail`. */
+  private tailLeft = 0;
+  private tailGain = 0;
+  private tailStep = 0;
+  /**
    * Radians each LFO has advanced since the note started, shared by the layers.
    *
    * The record stores three phases and advances them once per chunk
@@ -625,6 +679,8 @@ class Voice {
       ? Math.pow(10, -Math.abs(spec.decayDbPerSecond) / 20 / outputRate)
       : 1;
     this.secondsPerFrame = 1 / outputRate;
+    this.minRelease = spec.declick === true ? DECLICK_SECONDS : 0;
+    this.tailFrames = spec.declick === true ? Math.round(DECLICK_SECONDS * outputRate) : 0;
     const draw = spec.random ?? Math.random;
     const layerSpecs: readonly LayerSpec[] =
       spec.layers !== undefined && spec.layers.length > 0
@@ -634,7 +690,10 @@ class Voice {
 
     // What a voice with no morph derives once and reads for both ends.
     const f = this.fixed;
-    if (spec.envelope !== undefined) Object.assign(f.adsr, spec.envelope);
+    if (spec.envelope !== undefined) {
+      Object.assign(f.adsr, spec.envelope);
+      f.adsr.release = Math.max(f.adsr.release, this.minRelease);
+    }
     if (spec.filter !== undefined) {
       Object.assign(f.adsrB, spec.filter.envelope);
       Object.assign(f.filter, spec.filter.settings);
@@ -680,7 +739,7 @@ class Voice {
       out.adsr.attack = time(ADSR_PARAMS.attack);
       out.adsr.decay = time(ADSR_PARAMS.decay);
       out.adsr.sustain = at(ADSR_PARAMS.sustain);
-      out.adsr.release = time(ADSR_PARAMS.release);
+      out.adsr.release = Math.max(time(ADSR_PARAMS.release), this.minRelease);
     }
     const filter = spec.filter;
     if (filter !== undefined) {
@@ -770,8 +829,12 @@ class Voice {
   }
 
   get finished(): boolean {
-    // Being taken away ends any voice; so does running out of sample.
-    if (this.cut <= 0 || this.ended) return true;
+    // Being taken away ends any voice, its faded tail included.
+    if (this.cut <= 0) return true;
+    // Ours: the ladder's tail is faded out after the sound itself has ended.
+    if (this.tailLeft > 0) return false;
+    // Running out of sample ends it; so does the volume or the release reaching zero.
+    if (this.ended) return true;
     // ❗ A segment already evaluated is rendered to its end whoever slices it:
     // the engine frees a record after the chunk in which its level reached
     // zero, having rendered that chunk. Dropping the voice at a caller's slice
@@ -787,14 +850,14 @@ class Voice {
   }
 
   /**
-   * Evaluate the next segment, starting at absolute frame `absFrame`.
+   * Evaluate the next segment, starting at the voice's own frame `elapsed`.
    *
-   * The segment is the rest of the block on the mixer's grid, cut short at the
+   * The segment is the rest of the block on the voice's grid, cut short at the
    * gate's close, at a one-shot's hold running out, at the start of our own
-   * fade, and at the allocator's cut -- every one of them an absolute frame,
-   * so the segmentation is the same whoever slices the render.
+   * fade, and at the allocator's cut -- every one of them a frame of the
+   * voice's own, so the segmentation is the same whoever slices the render.
    */
-  private startSegment(absFrame: number): void {
+  private startSegment(): void {
     const spec = this.spec;
     const held = this.hold > 0 || this.life > 0;
     if (spec.envelope === undefined && !held) {
@@ -802,7 +865,15 @@ class Voice {
       this.segLeft = 0;
       return;
     }
-    const off = absFrame % BLOCK_FRAMES;
+    // A note's own gate closes on a segment's first frame -- `life` and `hold`
+    // both cut one there -- and one `Mixer.release` closes is taken at the
+    // next. Either way the release is a whole block from it, as the engine's
+    // is from the chunk where `0x1f65` first reads the gate closed.
+    if (this.gateOpen && !held) {
+      this.gateOpen = false;
+      this.gridOrigin = this.elapsed;
+    }
+    const off = (this.elapsed - this.gridOrigin) % BLOCK_FRAMES;
     let n = BLOCK_FRAMES - off;
     if (this.life > 0 && this.life < n) n = this.life;
     if (this.hold > 0 && this.hold < n) n = this.hold;
@@ -1109,10 +1180,10 @@ class Voice {
    * against a sixteen-million-frame block it is the difference between seconds
    * and hours.
    *
-   * `gridPhase` is the mixer's frame clock modulo the block, which is what lets
-   * a 128-frame live call and a whole-song offline call evaluate on the same
-   * boundaries -- they are measured to agree frame for frame, and must keep
-   * doing.
+   * A segment outlives the call that started it (`segLeft`), which is what
+   * lets a 128-frame live call and a whole-song offline call evaluate on the
+   * same boundaries -- they are measured to agree frame for frame, and must
+   * keep doing.
    */
   render(
     outLeft: Float32Array,
@@ -1121,7 +1192,6 @@ class Voice {
     interpolate: Interpolator,
     engineSampler: boolean,
     into?: RenderedSpan[],
-    gridPhase = 0,
   ): { begin: number; end: number } {
     // Skip the start delay by arithmetic. Counting it down a frame at a time
     // made every voice walk the whole block before its first sample, so a note
@@ -1139,9 +1209,21 @@ class Voice {
     // release ended inside one still renders that segment to its end and stops
     // there -- the same frame whatever the caller's slicing.
     while (at < frames && !this.finished) {
+      if (this.tailLeft > 0) {
+        const take = Math.min(this.tailLeft, frames - at, this.cut);
+        this.renderTail(outLeft, outRight, at, take);
+        if (begin < 0) begin = at;
+        end = at + take;
+        into?.push({ begin: at, end: at + take, echo: this.curEcho, reverb: this.curReverb });
+        at += take;
+        continue;
+      }
       if (this.segLeft === 0) {
-        this.startSegment(gridPhase + at);
-        if (this.ended) break;
+        this.startSegment();
+        if (this.ended) {
+          this.beginTail();
+          continue;
+        }
       }
       // A cut posted since the segment was evaluated shortens it: the allocator
       // takes the record wherever the voice is.
@@ -1158,15 +1240,56 @@ class Voice {
       }
       this.segLeft -= wrote;
       at += wrote;
-      if (wrote < take) break;
-      // The record is given back after the chunk in which its volume reached
-      // zero -- rendered to the end, then gone, whoever sliced it.
-      if (this.segLeft === 0 && this.silentAfter) {
+      if (wrote < take) {
+        // Layer 0 ran out of an unlooped sample (`ended` is set).
+        this.segLeft = 0;
+        this.beginTail();
+        continue;
+      }
+      // The record is given back after the chunk in which its volume or its
+      // release reached zero -- rendered to the end, then gone, whoever sliced
+      // it.
+      if (
+        this.segLeft === 0 &&
+        (this.silentAfter || (this.spec.envelope !== undefined && this.env.finished))
+      ) {
         this.ended = true;
-        break;
+        this.beginTail();
       }
     }
     return { begin: begin < 0 ? 0 : begin, end };
+  }
+
+  /**
+   * Start the ladder's faded tail, if `VoiceSpec.declick` asked for one and
+   * the ladder is in the path. Ours: the engine stops a freed record's output
+   * in one frame, whatever its ladder holds.
+   *
+   * Called once, where the sound itself ends. A bypassed ladder has nothing
+   * to hold -- the layers have stopped and the bypass passes their silence.
+   */
+  private beginTail(): void {
+    if (this.tailFrames === 0 || this.bypass) return;
+    // A ramping ladder has walked its coefficients to where the sound ended.
+    if (this.rampFilter) ladderCoefficientsInto(this.freq, this.res, this.coefficients);
+    this.tailLeft = this.tailFrames;
+    this.tailGain = 1;
+    this.tailStep = 1 / this.tailFrames;
+  }
+
+  /** The ladders run on silence, their output faded linearly to zero. */
+  private renderTail(outLeft: Float32Array, outRight: Float32Array, at: number, take: number): void {
+    const coefficients = this.coefficients;
+    let gain = this.tailGain;
+    const step = this.tailStep;
+    for (let i = 0; i < take; i += 1) {
+      outLeft[at + i] += this.ladderL.process(0, coefficients) * gain;
+      outRight[at + i] += this.ladderR.process(0, coefficients) * gain;
+      gain -= step;
+    }
+    this.tailGain = gain;
+    this.tailLeft -= take;
+    this.cut -= take;
   }
 }
 
@@ -1175,17 +1298,6 @@ export class Mixer {
   private voices: Voice[] = [];
   private interpolate: Interpolator;
   private engineSampler = true;
-  /**
-   * Frames rendered so far, modulo {@link BLOCK_FRAMES}: the engine's DSP block
-   * clock.
-   *
-   * ❗ **It belongs to the mixer and not to a voice**, because the engine's
-   * blocks run from the moment the channel starts and every voice re-derives its
-   * modulation on the same boundaries. A per-voice counter would put a voice
-   * that began mid-block on its own grid, which the engine cannot do -- a voice
-   * there always starts at a block's first frame.
-   */
-  private clock = 0;
 
   constructor(
     outputRate: number,
@@ -1363,17 +1475,11 @@ export class Mixer {
     const spans: RenderedSpan[] = [];
     const total = this.voices.length;
     let done = 0;
-    // ❗ **The modulation grid belongs to the mixer, not to a render call.** The
-    // engine re-derives once per 256-frame DSP block and those blocks run from
-    // the moment playback starts, so a live render handing over 128 frames at a
-    // time has to know where in that block it is. Every voice gets the same
-    // phase, which is what keeps them stepping together.
-    const phase = this.clock;
     for (const voice of this.voices) {
       if (onVoice && (done & 0xff) === 0) onVoice(done, total);
       done += 1;
       if (!needsSends || !voice.maySend) {
-        voice.render(left, right, frames, this.interpolate, this.engineSampler, undefined, phase);
+        voice.render(left, right, frames, this.interpolate, this.engineSampler);
         continue;
       }
       // The scratch is left clean by whoever used it last, so only the spans
@@ -1381,7 +1487,7 @@ export class Mixer {
       // whose modulation moves reports one span per chunk, each with its own
       // echo send; every other voice reports exactly one.
       spans.length = 0;
-      voice.render(scratchL, scratchR, frames, this.interpolate, this.engineSampler, spans, phase);
+      voice.render(scratchL, scratchR, frames, this.interpolate, this.engineSampler, spans);
       for (const span of spans) {
         const { echo, reverb } = span;
         // ⚠️ **Both sends are hoisted out of the frame loop**, and that is worth
@@ -1411,9 +1517,6 @@ export class Mixer {
       }
     }
     onVoice?.(total, total);
-    // The engine's block clock advances with the audio, not with the caller's
-    // convenience. Wrapping keeps it exact for a render of any length.
-    this.clock = (this.clock + frames) % BLOCK_FRAMES;
     // A voice that ran out mid-block has already written what it had.
     this.voices = this.voices.filter((v) => !v.finished);
   }

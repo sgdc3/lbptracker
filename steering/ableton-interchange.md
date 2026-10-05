@@ -132,7 +132,29 @@ and piano rows came out blue, purple and yellow.
 | `EchoTime` | B, Live's Delay, synced to that many sixteenths when Live's menu has them — 2, 1 and 1.5 beats are 331 of the corpus's 338 sequencers — and in seconds at the song's tempo otherwise |
 | `EchoFeedback` | the Delay's feedback, clamped to 0.95: the engine's own clamp and Live's own maximum |
 | `EchoMix` | return B's fader: the engine's echo is a plain wet gain |
+| a part's `reverbSend` | its send into A, as it stands: the engine's reverb send is the field alone |
+| a part's `echoSend` | its send into B, **the engine's**: the instrument's own `Params[25]`, at the modulation the part's notes mostly open at, bent by the field (`echoSendLevel` in `params.ts`; [synth-engine.md](synth-engine.md), *The output stage*) |
 | the echo feeding the reverb | return B sends into return A at 1, post-fader — the engine adds the echo's wet to all four output lanes, and lanes 2-3 are the reverb's input ([synth-engine.md](synth-engine.md), *The echo*) |
+
+❗ **A part's `echoSend` is not its send.** The engine reads it as a bipolar offset on the
+instrument's own send: 0.5 leaves `Params[25]` alone, 0 mutes it, 1 forces unity. Until 2026-10-05
+the set wrote the field as the send, and the owner suspected the delay's time, level or feedback.
+Measured that day by a throwaway walk of `schedule()` over the 150 sequencers of `export-als.ts`,
+each note's `Params[25]` read out of `fixtures/rinst` at its own modulation: **39,590 of 953,791
+notes went into Live's echo louder than into the game's**, a median 19.6 dB louder where both echo
+(10th percentile 4.4, 90th 31.2), and 9,760 of them echoed in Live and not at all in the game —
+a part at 0.5 or under on an instrument with no send of its own, which 33 of the 68 are. None went
+in quieter. A Live send is one per track, so the 615 notes that open at a modulation whose send is
+not their part's take the part's. Without the Samplers the set still needs each instrument's
+`.rinst` for this (`AlsExportOptions.instrumentSettings`): the page fetches them for every export
+and `export-als.ts` reads them, and an instrument found in neither is taken to send nothing of its
+own.
+
+The time and the feedback were checked the same day, over the same 150: the delay Live is given
+equals the engine's within 2 ms on every one. Every `EchoTime` is on Live's synced menu, and none
+reaches the ring's 2.0 s clamp, which takes a tempo under 30 × `EchoTime`; the 150 run 70 to 240.
+No `EchoFeedback` passes 0.95. Whether Live's Delay *applies* them as the engine does is *59* in
+[open-questions.md](open-questions.md).
 
 Checked in Live on `This Is Halloween`: the Delay reads Sync on both sides with 4 lit, feedback
 54 %, dry/wet 100 %; the Reverb reads predelay 70.0 ms, decay 3.00 s, high shelf 7.00 kHz, reflect
@@ -423,12 +445,12 @@ are read off Live's meters (above). The rest is measured only to be what the fil
 is a Trial that cannot export, so no Sampler here has been compared with the engine by ear or by
 capture; what is unmeasured is *53* in [open-questions.md](open-questions.md).
 
-## Measured over the corpus — `packages/lbp-tracker-lib/dev/export-als.ts`, 2026-09-24, re-run 2026-10-04
+## Measured over the corpus — `packages/lbp-tracker-lib/dev/export-als.ts`, 2026-09-24, re-run 2026-10-05
 
 ```
 150 sequencers, 0 malformed
-3222 tracks from 4909 parts, 3056 mixer switches, 62094 clips from 62158 placements, 953791 notes, 78647 glides, 19.3 MB gzipped
-clamped: 0 keys, 582 bend points; 11528 notes overlap one of their own key
+3222 tracks from 4909 parts, 3047 mixer switches, 62094 clips from 62158 placements, 953791 notes, 78647 glides, 19.3 MB gzipped
+clamped: 0 keys, 582 bend points, 0 slide points; 11528 notes overlap one of their own key
 ```
 
 - **3,222 tracks from 4,909 parts**, with `mergeRows` on (the default): one track per row and
@@ -436,12 +458,13 @@ clamped: 0 keys, 582 bend points; 11528 notes overlap one of their own key
   the two extra are its lanes ([midi-interchange.md](midi-interchange.md)). `This Is Halloween` is
   124 parts on 46 tracks, `Ascetic` 46 on 36. Live imposes no limit either way; what a track costs
   is an instrument to load.
-- ❗ **3,056 mixer switches, and 1,371 of them go back to a part the track has already played.**
+- ❗ **3,047 mixer switches, and 1,368 of them go back to a part the track has already played.**
   Parts sharing a track interleave — A at cell 0, B at cell 2, A again at cell 4 — so the mixer
   steps wherever a part's note starts after another part's, not once per part. Counted twice: by
-  the export, and by a separate walk of the notes on every merged track; both give 3,056. The MIDI
-  export wrote its mixer once per part and was fixed for it; the measurement and the check are in
-  [midi-interchange.md](midi-interchange.md).
+  the export, and by a separate walk of the notes on every merged track; both give 3,047. They gave
+  3,056 and 1,371 while the echo send was the field itself: nine switches were between parts whose
+  fields differ and whose engine sends do not. The MIDI export wrote its mixer once per part and
+  was fixed for it; the measurement and the check are in [midi-interchange.md](midi-interchange.md).
 - The step sits at the new part's first note. The engine fixes a voice's gain when the note starts;
   a Live track's automation moves whatever is still ringing, so a release tail that outlasts the
   switch takes the next part's mixer. Parts share a track only when their notes never overlap, so
